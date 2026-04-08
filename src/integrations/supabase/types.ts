@@ -14,6 +14,59 @@ export type Database = {
   }
   public: {
     Tables: {
+      agent_logs: {
+        Row: {
+          ai_response: string | null
+          created_at: string
+          duration_ms: number | null
+          errors: Json | null
+          id: string
+          model_used: string | null
+          phone_number: string
+          session_blocked: boolean | null
+          tenant_id: string
+          tool_calls: Json | null
+          total_tokens: number | null
+          user_message: string
+        }
+        Insert: {
+          ai_response?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          errors?: Json | null
+          id?: string
+          model_used?: string | null
+          phone_number: string
+          session_blocked?: boolean | null
+          tenant_id: string
+          tool_calls?: Json | null
+          total_tokens?: number | null
+          user_message: string
+        }
+        Update: {
+          ai_response?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          errors?: Json | null
+          id?: string
+          model_used?: string | null
+          phone_number?: string
+          session_blocked?: boolean | null
+          tenant_id?: string
+          tool_calls?: Json | null
+          total_tokens?: number | null
+          user_message?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_logs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           content: string
