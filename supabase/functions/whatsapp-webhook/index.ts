@@ -417,6 +417,44 @@ async function callAIAgent(
   return assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
 }
 
+// ===================== MESSAGE SPLITTING =====================
+
+function splitIntoMessages(text: string): string[] {
+  // Split by sentences ending with . ! or ? followed by space/newline, or by double newlines
+  // But keep short sentences together (min ~20 chars per message to avoid spam)
+  const MIN_PART_LENGTH = 20;
+
+  // First split by double newlines (paragraph breaks)
+  const paragraphs = text.split(/\n{2,}/);
+  const parts: string[] = [];
+
+  for (const para of paragraphs) {
+    // Then split each paragraph by sentence-ending punctuation
+    // Match: period/exclamation/question followed by space or end-of-string
+    const sentences = para.split(/(?<=[.!?])\s+/);
+    let current = "";
+
+    for (const sentence of sentences) {
+      if (!sentence.trim()) continue;
+      if (current.length === 0) {
+        current = sentence;
+      } else if (current.length < MIN_PART_LENGTH) {
+        // Too short, merge with next sentence
+        current += " " + sentence;
+      } else {
+        parts.push(current.trim());
+        current = sentence;
+      }
+    }
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+  }
+
+  // If we ended up with just 1 part, return as-is
+  return parts.length > 0 ? parts : [text];
+}
+
 // ===================== PHONE HELPERS =====================
 
 function extractRemoteJid(payload: any, msg: any): string | undefined {
