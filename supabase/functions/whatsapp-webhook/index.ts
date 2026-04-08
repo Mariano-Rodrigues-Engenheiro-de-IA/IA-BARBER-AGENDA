@@ -245,7 +245,13 @@ Deno.serve(async (req) => {
         .limit(60);
       const history = (historyRaw || []).reverse();
 
-      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+      const directResponse = await maybeHandleDirectCancellationConfirmation(
+        tenant,
+        phoneNumber,
+        history || [],
+        combinedContent,
+      );
+      const aiResponse = directResponse ?? await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
@@ -293,7 +299,8 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error("Webhook error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return new Response(JSON.stringify({ error: errorMessage }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -459,6 +466,152 @@ function normalizePhoneNumber(value: unknown): string | null {
   const digits = raw.replace(/\D/g, "");
   if (digits.length >= 10 && digits.length <= 15) return digits;
   return null;
+}
+
+function normalizePhoneForTrinks(phoneNumber: string): string {
+  let tel = phoneNumber.replace(/\D/g, "");
+  if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+  const ddd = tel.substring(0, 2);
+  let rest = tel.substring(2);
+  if (rest.length === 8) rest = "9" + rest;
+  return ddd + rest;
+}
+
+function normalizeLooseText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isAffirmativeReply(value: string): boolean {
+  const raw = value.trim();
+  if (["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "✅"].includes(raw)) return true;
+
+  const normalized = normalizeLooseText(raw);
+  if (!normalized) return false;
+
+  return /^(sim|s|ok|okay|pode|pode sim|isso|isso mesmo|confirmo|confirmado|certo|beleza|perfeito|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
+}
+
+function getLastAssistantMessage(history: { role: string; content: string }[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message?.role === "assistant" && typeof message.content === "string" && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return null;
+}
+
+function isSingleCancellationConfirmationPrompt(value: string): boolean {
+  const normalized = normalizeLooseText(value);
+  if (!normalized.includes("quer cancelar")) return false;
+  const words = new Set(normalized.split(" "));
+  return words.has("esse") || words.has("esta") || words.has("este");
+}
+
+async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) {
+  if (!tenant?.trinks_api_key || !tenant?.trinks_establishment_id || !phoneNumber) return [];
+
+  const baseUrl = "https://api.trinks.com/v1";
+  const headers: Record<string, string> = {
+    "X-Api-Key": tenant.trinks_api_key,
+    "Accept": "application/json",
+    "estabelecimentoId": tenant.trinks_establishment_id,
+  };
+
+  try {
+    const tel = normalizePhoneForTrinks(phoneNumber);
+    const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+    const cliData = await cliRes.json();
+    const cliList = cliData?.data || cliData;
+    if (!Array.isArray(cliList) || cliList.length === 0) return [];
+
+    const ownerId = cliList[0].id || cliList[0].Id;
+    const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
+    const agData = await agRes.json();
+    const agList = Array.isArray(agData?.data) ? agData.data : [];
+    const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+
+    return agList
+      .filter((a: any) => {
+        const statusName = String(a.status?.nome || "").toLowerCase();
+        return activeStatuses.some((status) => statusName === status || statusName.includes(status));
+      })
+      .map((a: any) => ({
+        id: a.id,
+        status: a.status?.nome,
+        servico: a.servico?.nome,
+        profissional: a.profissional?.nome,
+        clienteId: a.cliente?.id,
+        dataHoraInicio: a.dataHoraInicio,
+      }));
+  } catch (error) {
+    console.error("fetchActiveAppointmentsByPhone error:", error);
+    return [];
+  }
+}
+
+async function maybeHandleDirectCancellationConfirmation(
+  tenant: any,
+  phoneNumber: string,
+  history: { role: string; content: string }[],
+  userMessage: string,
+): Promise<string | null> {
+  if (!isAffirmativeReply(userMessage)) return null;
+
+  const lastAssistantMessage = getLastAssistantMessage(history);
+  if (!lastAssistantMessage || !isSingleCancellationConfirmationPrompt(lastAssistantMessage)) {
+    return null;
+  }
+
+  const activeAgendamentos = await fetchActiveAppointmentsByPhone(tenant, phoneNumber);
+  console.log(
+    `Direct cancel confirmation detected for ${phoneNumber}: ${activeAgendamentos.length} active appointment(s)`,
+  );
+
+  if (activeAgendamentos.length === 0) {
+    return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
+  }
+
+  if (activeAgendamentos.length > 1) {
+    return "Encontrei mais de um agendamento ativo. Me diz qual deles você quer cancelar.";
+  }
+
+  const target = activeAgendamentos[0];
+  const cancelResult = await executeTrinksTool(
+    tenant,
+    {
+      function: {
+        name: "cancelar_agendamento",
+        arguments: JSON.stringify({
+          agendamentoId: target.id,
+          motivo: "Solicitação do cliente",
+        }),
+      },
+    },
+    phoneNumber,
+  );
+
+  console.log("Direct cancel confirmation result:", JSON.stringify(cancelResult).slice(0, 500));
+
+  if (cancelResult?.success) {
+    return "✅ Cancelado! Se precisar remarcar, é só falar.";
+  }
+
+  if (cancelResult?.status === 404) {
+    return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
+  }
+
+  if (cancelResult?.status === 405) {
+    return "Esse agendamento já foi realizado e não pode ser cancelado.";
+  }
+
+  return "Tive um probleminha aqui. Pode tentar novamente?";
 }
 
 function extractPhoneNumber(payload: any, msg: any): { phone: string; source: string } | null {
@@ -1399,6 +1552,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
     }
   } catch (error) {
     console.error(`Trinks tool error (${funcName}):`, error);
-    return { error: `Erro ao executar ${funcName}: ${error.message}` };
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
