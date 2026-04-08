@@ -185,48 +185,33 @@ Deno.serve(async (req) => {
         processed: false,
       });
 
-      // ===== DEBOUNCE: Wait 20 seconds for more messages =====
+      // ===== DEBOUNCE: Wait for more messages, then claim atomically =====
       const DEBOUNCE_MS = 10_000;
       console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
 
-      // Check if newer unprocessed messages arrived — if so, let the latest webhook handle it
-      const { data: pendingMsgs } = await supabase
+      // Atomically claim all unprocessed messages for this phone by marking them as processed
+      // Only the first webhook to execute this UPDATE will get rows; others will get 0 rows
+      const { data: claimed } = await supabase
         .from("chat_messages")
-        .select("id, content, message_id, created_at")
+        .update({ processed: true })
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
         .eq("role", "user")
         .eq("processed", false)
-        .order("created_at", { ascending: false })
-        .limit(1);
+        .select("id, content")
+        .order("created_at", { ascending: true });
 
-      if (!pendingMsgs?.length || pendingMsgs[0].message_id !== messageId) {
-        console.log(`Debounce: not the latest message, skipping (latest: ${pendingMsgs?.[0]?.message_id}, ours: ${messageId})`);
+      if (!claimed?.length) {
+        console.log(`Debounce: no unclaimed messages for ${phoneNumber}, another webhook handled them`);
         return new Response(JSON.stringify({ status: "debounce_skip" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // We are the latest — gather ALL unprocessed user messages and combine
-      const { data: allPending } = await supabase
-        .from("chat_messages")
-        .select("id, content")
-        .eq("tenant_id", tenant.id)
-        .eq("phone_number", phoneNumber)
-        .eq("role", "user")
-        .eq("processed", false)
-        .order("created_at", { ascending: true });
-
-      // Mark all as processed
-      if (allPending?.length) {
-        const ids = allPending.map((m: any) => m.id);
-        await supabase.from("chat_messages").update({ processed: true }).in("id", ids);
-      }
-
       // Combine messages into one
-      const combinedContent = allPending?.map((m: any) => m.content).join("\n") || storedContent;
-      console.log(`Debounce: processing ${allPending?.length || 1} messages combined for ${phoneNumber}`);
+      const combinedContent = claimed.map((m: any) => m.content).join("\n");
+      console.log(`Debounce: processing ${claimed.length} messages combined for ${phoneNumber}`);
 
       // Fetch the 60 most recent messages, then reverse so oldest is first for the AI context
       const { data: historyRaw } = await supabase
