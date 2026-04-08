@@ -281,23 +281,35 @@ export default function TenantFormPage() {
             <div className="glass-card p-6 space-y-4">
               <h3 className="font-semibold text-foreground">Configuração do Agente IA</h3>
               <p className="text-sm text-muted-foreground">
-                Personalize o comportamento do agente de IA para este estabelecimento.
+                Personalize o comportamento do agente de IA para este estabelecimento. O prompt abaixo é anexado às instruções base do agente.
               </p>
               <div className="space-y-2">
-                <Label htmlFor="prompt">Prompt do Sistema</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="prompt">Prompt do Sistema</Label>
+                  <span className="text-xs text-muted-foreground">
+                    {(form.agent_system_prompt as string)?.length || 0} caracteres
+                  </span>
+                </div>
                 <Textarea
                   id="prompt"
-                  rows={8}
+                  rows={20}
+                  className="font-mono text-sm min-h-[300px]"
                   value={form.agent_system_prompt as string}
                   onChange={(e) => handleChange("agent_system_prompt", e.target.value)}
-                  placeholder="Você é um assistente de IA para agendamento e atendimento do [Nome do Estabelecimento]..."
+                  placeholder="Instruções adicionais para o agente: tom de voz, regras do estabelecimento, horários, profissionais, serviços especiais, etc."
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="knowledge">Base de Conhecimento</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="knowledge">Base de Conhecimento</Label>
+                  <span className="text-xs text-muted-foreground">
+                    {(form.agent_knowledge_base as string)?.length || 0} caracteres
+                  </span>
+                </div>
                 <Textarea
                   id="knowledge"
-                  rows={6}
+                  rows={12}
+                  className="font-mono text-sm min-h-[200px]"
                   value={form.agent_knowledge_base as string}
                   onChange={(e) => handleChange("agent_knowledge_base", e.target.value)}
                   placeholder="Informações sobre serviços, preços, horários de funcionamento, políticas do estabelecimento..."
