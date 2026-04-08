@@ -1135,9 +1135,59 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
+        // === PROTEÇÃO 1: Resolver clienteId pelo telefone da conversa ===
+        let resolvedClienteId = args.clienteId;
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+
+          const clienteRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const clienteData = await clienteRes.json();
+          const clientes = clienteData?.data || clienteData;
+          if (Array.isArray(clientes) && clientes.length > 0) {
+            resolvedClienteId = clientes[0].id || clientes[0].Id;
+            console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone ${tel}`);
+          } else {
+            return { error: "Cliente não encontrado. Use buscar_cliente ou cadastrar_cliente primeiro." };
+          }
+        }
+
+        // === PROTEÇÃO 2: Deduplicação — verificar agendamento equivalente existente ===
+        try {
+          const dedupRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
+          const dedupData = await dedupRes.json();
+          const agendamentos = dedupData?.data || [];
+          if (Array.isArray(agendamentos)) {
+            const activeStatuses = ["confirmado", "aguardando confirmação"];
+            const duplicate = agendamentos.find((a: any) => {
+              const statusName = (a.status?.nome || "").toLowerCase();
+              if (!activeStatuses.some(s => statusName.includes(s))) return false;
+              const existingStart = (a.dataHoraInicio || "").replace(" ", "T").substring(0, 19);
+              const newStart = dataHoraInicio.substring(0, 19);
+              return existingStart === newStart &&
+                (a.profissional?.id || a.profissionalId) === args.profissionalId;
+            });
+            if (duplicate) {
+              console.log(`criar_agendamento: DUPLICATE detected, existing id=${duplicate.id}`);
+              return {
+                id: duplicate.id,
+                message: "Agendamento já existe para este horário e profissional.",
+                deduplicated: true,
+              };
+            }
+          }
+        } catch (dedupErr) {
+          console.error("criar_agendamento dedup check failed:", dedupErr);
+          // Continue with creation if dedup check fails
+        }
+
         const body = {
           servicoId: args.servicoId,
-          clienteId: args.clienteId,
+          clienteId: resolvedClienteId,
           profissionalId: args.profissionalId,
           dataHoraInicio,
           duracaoEmMinutos: args.duracaoEmMinutos,
