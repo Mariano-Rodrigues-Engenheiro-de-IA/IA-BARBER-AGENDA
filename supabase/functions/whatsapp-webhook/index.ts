@@ -186,7 +186,7 @@ Deno.serve(async (req) => {
       });
 
       // ===== DEBOUNCE: Wait 20 seconds for more messages =====
-      const DEBOUNCE_MS = 20_000;
+      const DEBOUNCE_MS = 10_000;
       console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
 
