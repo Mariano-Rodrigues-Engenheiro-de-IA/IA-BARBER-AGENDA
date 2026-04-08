@@ -71,8 +71,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id;
-      console.log(`Message from ${phoneNumber}: ${messageContent}`);
+      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
+      console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "msg.key:", JSON.stringify(msg.key || {}));
 
       const { data: tenants, error: tenantError } = await supabase
         .from("tenants")
