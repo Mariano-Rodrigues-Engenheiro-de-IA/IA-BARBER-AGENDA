@@ -420,39 +420,10 @@ async function callAIAgent(
 // ===================== MESSAGE SPLITTING =====================
 
 function splitIntoMessages(text: string): string[] {
-  // Split by sentences ending with . ! or ? followed by space/newline, or by double newlines
-  // But keep short sentences together (min ~20 chars per message to avoid spam)
-  const MIN_PART_LENGTH = 20;
-
-  // First split by double newlines (paragraph breaks)
-  const paragraphs = text.split(/\n{2,}/);
-  const parts: string[] = [];
-
-  for (const para of paragraphs) {
-    // Then split each paragraph by sentence-ending punctuation
-    // Match: period/exclamation/question followed by space or end-of-string
-    const sentences = para.split(/(?<=[.!?])\s+/);
-    let current = "";
-
-    for (const sentence of sentences) {
-      if (!sentence.trim()) continue;
-      if (current.length === 0) {
-        current = sentence;
-      } else if (current.length < MIN_PART_LENGTH) {
-        // Too short, merge with next sentence
-        current += " " + sentence;
-      } else {
-        parts.push(current.trim());
-        current = sentence;
-      }
-    }
-    if (current.trim()) {
-      parts.push(current.trim());
-    }
-  }
-
-  // If we ended up with just 1 part, return as-is
-  return parts.length > 0 ? parts : [text];
+  // Only split by double newlines (paragraph breaks) — NOT by sentences
+  // Splitting by sentences causes contradictory-sounding messages
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+  return paragraphs.length > 1 ? paragraphs : [text];
 }
 
 // ===================== PHONE HELPERS =====================
