@@ -92,12 +92,13 @@ Deno.serve(async (req) => {
     }
 
     // Test Trinks API by listing services
-    const trinksUrl = `https://api.trinks.com/v1/servicos?estabelecimentoId=${tenant.trinks_establishment_id}`;
+    const trinksUrl = `https://api.trinks.com/v1/servicos?estabelecimentoId=${tenant.trinks_establishment_id}&somenteVisiveisCliente=false`;
     const trinksResponse = await fetch(trinksUrl, {
       method: "GET",
       headers: {
         "X-Api-Key": tenant.trinks_api_key,
         "Accept": "application/json",
+        "estabelecimentoId": tenant.trinks_establishment_id,
       },
     });
 
