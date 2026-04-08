@@ -637,7 +637,7 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
         const clienteBody = {
           nome: args.nome,
           email: args.email || "",
-          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+          estabelecimentoId: tenant.trinks_establishment_id,
           telefones: [{
             ddi,
             ddd,
