@@ -17,23 +17,28 @@ Deno.serve(async (req) => {
 
   try {
     const payload = await req.json();
-    console.log("Webhook received:", JSON.stringify(payload).slice(0, 500));
+    console.log("Webhook received:", JSON.stringify(payload).slice(0, 1000));
 
-    // UAZAPI sends different event types; we only care about incoming messages
-    // The payload structure varies, but typically has: event, data
-    const event = payload.event || payload.type;
-    const data = payload.data || payload;
+    // UAZAPI sends EventType (capitalized) or event/type
+    const event = payload.EventType || payload.event || payload.type;
+    console.log("Event type:", event);
 
-    // Only process incoming messages (not sent by us)
+    // Only process incoming messages
     if (event === "messages.upsert" || event === "message" || event === "messages") {
-      const message = data.message || data;
-      const messageContent = message.conversation || message.text || message.body ||
-        message?.extendedTextMessage?.text || message?.message?.conversation ||
-        message?.message?.extendedTextMessage?.text;
+      // UAZAPI wraps message data in various ways
+      const msg = payload.message || payload.data?.message || payload.data || payload;
+      
+      // Extract text content - UAZAPI format
+      const messageContent = msg.conversation || msg.text || msg.body ||
+        msg?.extendedTextMessage?.text || msg?.message?.conversation ||
+        msg?.message?.extendedTextMessage?.text ||
+        payload.text || payload.body;
 
-      // Get sender phone number
-      const remoteJid = message.remoteJid || message.key?.remoteJid || data.remoteJid || data.key?.remoteJid;
-      const fromMe = message.fromMe ?? message.key?.fromMe ?? data.key?.fromMe;
+      // Get sender phone number - UAZAPI uses 'phone' or 'from' or remoteJid
+      const remoteJid = payload.phone || payload.from || msg.remoteJid || msg.key?.remoteJid || payload.remoteJid;
+      const fromMe = payload.fromMe ?? msg.fromMe ?? msg.key?.fromMe;
+      
+      console.log("Parsed - remoteJid:", remoteJid, "fromMe:", fromMe, "content:", messageContent?.slice(0, 100));
 
       // Skip messages sent by us or group messages
       if (fromMe || !remoteJid || remoteJid.endsWith("@g.us")) {
