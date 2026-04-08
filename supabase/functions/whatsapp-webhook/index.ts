@@ -687,13 +687,14 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "buscar_agendamento",
-        description: "Busca os agendamentos de um cliente. ANTES de usar, DEVE ter o clienteId (obtido de buscar_cliente). Se retornar data: [] → cliente não tem agendamentos. Guardar o id do agendamento para cancelar ou editar.",
+        description: "Busca os agendamentos de um cliente. Pode passar clienteId OU telefone (o sistema resolve automaticamente). Se retornar data: [] → cliente não tem agendamentos. Guardar o id do agendamento para cancelar ou editar.",
         parameters: {
           type: "object",
           properties: {
-            clienteId: { type: "integer", description: "ID do cliente (obtido de buscar_cliente)" },
+            clienteId: { type: "integer", description: "ID do cliente (obtido de buscar_cliente). Opcional se telefone for informado." },
+            telefone: { type: "string", description: "Telefone do cliente. Se informado, o sistema busca o clienteId automaticamente." },
           },
-          required: ["clienteId"],
+          required: [],
         },
       },
     },
