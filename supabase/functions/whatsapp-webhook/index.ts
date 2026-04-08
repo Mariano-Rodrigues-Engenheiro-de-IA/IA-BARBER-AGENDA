@@ -25,10 +25,17 @@ Deno.serve(async (req) => {
     if (event === "messages.upsert" || event === "message" || event === "messages") {
       const msg = payload.message || payload.data?.message || payload.data || payload;
 
+      // Detect message type
+      const messageType = msg.messageType || msg.type || payload.messageType || "";
+      const isAudioMessage = /audio|ptt/i.test(messageType);
+      const isImageMessage = /image/i.test(messageType);
+      const hasMedia = isAudioMessage || isImageMessage;
+
       const messageContent = msg.conversation || msg.text || msg.body ||
         msg?.extendedTextMessage?.text || msg?.message?.conversation ||
         msg?.message?.extendedTextMessage?.text ||
-        payload.text || payload.body;
+        payload.text || payload.body ||
+        msg?.imageMessage?.caption || msg?.message?.imageMessage?.caption || "";
 
       const remoteJid = extractRemoteJid(payload, msg);
       const phoneMatch = extractPhoneNumber(payload, msg);
@@ -46,6 +53,8 @@ Deno.serve(async (req) => {
         "phoneNumber:", phoneNumber,
         "phoneSource:", phoneMatch?.source,
         "fromMe:", fromMe,
+        "messageType:", messageType,
+        "hasMedia:", hasMedia,
         "content:", messageContent?.slice(0, 100)
       );
 
@@ -55,8 +64,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (!messageContent) {
-        console.log("No text content in message, skipping");
+      if (!messageContent && !hasMedia) {
+        console.log("No text content or media in message, skipping");
         return new Response(JSON.stringify({ status: "no_text" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
