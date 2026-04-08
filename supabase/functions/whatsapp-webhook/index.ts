@@ -891,7 +891,34 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
         const res = await fetch(url, { headers });
         const text = await res.text();
         console.log(`buscar_agendamento response (${res.status}):`, text.slice(0, 1000));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // Filter to only return ACTIVE agendamentos (not cancelled/finalized)
+          // Status IDs: 4=Confirmado, 1=Aguardando Confirmação → ACTIVE
+          // Status IDs: 9=Cancelado, 6=Finalizado → INACTIVE (remove)
+          if (parsed.data && Array.isArray(parsed.data)) {
+            const activeStatuses = ["Confirmado", "Aguardando Confirmação", "Aguardando confirmação"];
+            parsed.data = parsed.data.filter((a: any) => {
+              const statusName = a.status?.nome || "";
+              return activeStatuses.some(s => statusName.toLowerCase() === s.toLowerCase());
+            });
+            console.log(`buscar_agendamento: filtered to ${parsed.data.length} active agendamentos`);
+            // Simplify response to reduce noise and prevent ID confusion
+            parsed.data = parsed.data.map((a: any) => ({
+              id: a.id,
+              status: a.status?.nome,
+              servico: a.servico?.nome,
+              servicoId: a.servico?.id,
+              profissional: a.profissional?.nome,
+              profissionalId: a.profissional?.id,
+              clienteId: a.cliente?.id,
+              dataHoraInicio: a.dataHoraInicio,
+              duracaoEmMinutos: a.duracaoEmMinutos,
+              valor: a.valor,
+            }));
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "criar_agendamento": {
