@@ -190,28 +190,48 @@ Deno.serve(async (req) => {
       console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
 
-      // Atomically claim all unprocessed messages for this phone by marking them as processed
-      // Only the first webhook to execute this UPDATE will get rows; others will get 0 rows
-      const { data: claimed } = await supabase
+      // Step 1: Find all unprocessed messages for this phone
+      const { data: unclaimed, error: unclaimedErr } = await supabase
         .from("chat_messages")
-        .update({ processed: true })
+        .select("id, content, created_at")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
         .eq("role", "user")
         .eq("processed", false)
-        .select("id, content")
         .order("created_at", { ascending: true });
 
-      if (!claimed?.length) {
+      console.log(`Debounce: found ${unclaimed?.length || 0} unclaimed messages for ${phoneNumber}`, unclaimedErr ? `error: ${unclaimedErr.message}` : "");
+
+      if (!unclaimed?.length) {
         console.log(`Debounce: no unclaimed messages for ${phoneNumber}, another webhook handled them`);
         return new Response(JSON.stringify({ status: "debounce_skip" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Combine messages into one
-      const combinedContent = claimed.map((m: any) => m.content).join("\n");
-      console.log(`Debounce: processing ${claimed.length} messages combined for ${phoneNumber}`);
+      // Step 2: Atomically claim these specific messages by their IDs
+      const unclaimedIds = unclaimed.map((m: any) => m.id);
+      const { data: claimed, error: claimErr } = await supabase
+        .from("chat_messages")
+        .update({ processed: true })
+        .in("id", unclaimedIds)
+        .eq("processed", false)
+        .select("id");
+
+      console.log(`Debounce: claimed ${claimed?.length || 0} of ${unclaimed.length} messages`, claimErr ? `error: ${claimErr.message}` : "");
+
+      if (!claimed?.length) {
+        console.log(`Debounce: claim race lost for ${phoneNumber}, another webhook got them`);
+        return new Response(JSON.stringify({ status: "debounce_skip" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Use the content from the unclaimed query (already ordered by created_at)
+      const claimedIds = new Set(claimed.map((c: any) => c.id));
+      const claimedMessages = unclaimed.filter((m: any) => claimedIds.has(m.id));
+      const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
+      console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
       // Fetch the 60 most recent messages, then reverse so oldest is first for the AI context
       const { data: historyRaw } = await supabase
