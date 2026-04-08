@@ -1205,6 +1205,30 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "cancelar_agendamento": {
+        // === PROTEÇÃO: Verificar propriedade do agendamento ===
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const cliData = await cliRes.json();
+          const cliList = cliData?.data || cliData;
+          if (Array.isArray(cliList) && cliList.length > 0) {
+            const ownerId = cliList[0].id || cliList[0].Id;
+            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
+            const agData = await agRes.json();
+            const agList = agData?.data || [];
+            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            if (!owns) {
+              console.log(`cancelar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
+              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+            }
+          }
+        }
+
         const url = `${baseUrl}/agendamentos/${args.agendamentoId}/status/cancelado`;
         const body = {
           quemCancelou: 1,
