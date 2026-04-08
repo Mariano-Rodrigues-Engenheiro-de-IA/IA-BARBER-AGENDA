@@ -125,16 +125,16 @@ Deno.serve(async (req) => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      const sendResult = await fetch(`${uazapiUrl}/message/send-text`, {
+      const sendResult = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Accept": "application/json",
           "token": uazapiToken,
         },
         body: JSON.stringify({
           number: phoneNumber,
           text: aiResponse,
-          delay: 2000,
         }),
       });
 
