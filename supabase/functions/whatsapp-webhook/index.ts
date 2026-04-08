@@ -37,7 +37,13 @@ Deno.serve(async (req) => {
       const remoteJid = extractRemoteJid(payload, msg);
       const phoneMatch = extractPhoneNumber(payload, msg);
       const phoneNumber = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
-      const fromMe = payload.fromMe ?? msg.fromMe ?? msg.key?.fromMe ?? payload.chat?.lastMessage_fromMe;
+      // UAZAPI echoes bot-sent messages back as webhooks — detect fromMe from multiple sources
+      const fromMe = payload.fromMe === true ||
+        msg.fromMe === true ||
+        msg.key?.fromMe === true ||
+        payload.chat?.lastMessage_fromMe === true ||
+        // If the sender matches the UAZAPI instance owner number, it's our own message
+        (payload.sender && payload.owner && payload.sender === payload.owner);
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
 
       console.log(
@@ -223,7 +229,9 @@ async function callAIAgent(
     messages.push(assistantMessage);
 
     for (const toolCall of assistantMessage.tool_calls) {
+      console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
       const toolResult = await executeTrinksTool(tenant, toolCall);
+      console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
@@ -542,8 +550,16 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
         params.set("estabelecimentoId", tenant.trinks_establishment_id);
         if (args.telefone) params.set("telefone", args.telefone);
         if (args.email) params.set("email", args.email);
-        const res = await fetch(`${baseUrl}/clientes?${params}`, { headers });
-        return await res.json();
+        const url = `${baseUrl}/clientes?${params}`;
+        console.log(`buscar_cliente URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+        console.log(`buscar_cliente response (${res.status}):`, text.slice(0, 500));
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { error: `Trinks API retornou resposta inválida (status ${res.status})`, raw: text.slice(0, 200) };
+        }
       }
 
       case "criar_cliente": {
@@ -557,26 +573,40 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
             estabelecimentoId: parseInt(tenant.trinks_establishment_id),
           }),
         });
-        return await res.json();
+        const text = await res.text();
+        console.log(`criar_cliente response (${res.status}):`, text.slice(0, 500));
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { error: `Trinks API retornou resposta inválida (status ${res.status})`, raw: text.slice(0, 200) };
+        }
       }
 
       case "criar_agendamento": {
+        const agendBody = {
+          servicoId: args.servicoId,
+          clienteId: args.clienteId,
+          profissionalId: args.profissionalId,
+          dataHoraInicio: args.dataHoraInicio,
+          duracaoEmMinutos: args.duracaoEmMinutos,
+          valor: args.valor,
+          observacoes: args.observacoes || "",
+          confirmado: false,
+          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+        };
+        console.log("criar_agendamento body:", JSON.stringify(agendBody));
         const res = await fetch(`${baseUrl}/agendamentos`, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            servicoId: args.servicoId,
-            clienteId: args.clienteId,
-            profissionalId: args.profissionalId,
-            dataHoraInicio: args.dataHoraInicio,
-            duracaoEmMinutos: args.duracaoEmMinutos,
-            valor: args.valor,
-            observacoes: args.observacoes || "",
-            confirmado: false,
-            estabelecimentoId: parseInt(tenant.trinks_establishment_id),
-          }),
+          body: JSON.stringify(agendBody),
         });
-        return await res.json();
+        const text = await res.text();
+        console.log(`criar_agendamento response (${res.status}):`, text.slice(0, 500));
+        try {
+          return JSON.parse(text);
+        } catch {
+          return { error: `Trinks API retornou resposta inválida (status ${res.status})`, raw: text.slice(0, 200) };
+        }
       }
 
       default:
