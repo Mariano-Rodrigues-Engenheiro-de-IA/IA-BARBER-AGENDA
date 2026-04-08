@@ -228,13 +228,16 @@ Deno.serve(async (req) => {
       const combinedContent = allPending?.map((m: any) => m.content).join("\n") || storedContent;
       console.log(`Debounce: processing ${allPending?.length || 1} messages combined for ${phoneNumber}`);
 
-      const { data: history } = await supabase
+      // Fetch the 60 most recent messages, then reverse so oldest is first for the AI context
+      const { data: historyRaw } = await supabase
         .from("chat_messages")
         .select("role, content")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
-        .order("created_at", { ascending: true })
+        .eq("processed", true)
+        .order("created_at", { ascending: false })
         .limit(60);
+      const history = (historyRaw || []).reverse();
 
       const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
 
@@ -1007,7 +1010,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             nome: s.nome || s.Nome,
             descricao: s.descricao || s.Descricao || "",
             preco: s.preco || s.Preco || s.valor || s.Valor,
-            duracao: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
+            duracaoEmMinutos: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
             categoria: s.categoria || s.Categoria,
           }));
         }
@@ -1018,6 +1021,15 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const profId = args.profissionalId;
         const res = await fetch(`${baseUrl}/profissionais/${profId}/servicos`, { headers });
         const data = await res.json();
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((s: any) => ({
+            id: s.id || s.Id,
+            nome: s.nome || s.Nome,
+            duracaoEmMinutos: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
+            preco: s.preco || s.Preco || s.valor || s.Valor,
+          }));
+        }
         return data;
       }
 
@@ -1123,9 +1135,59 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
+        // === PROTEÇÃO 1: Resolver clienteId pelo telefone da conversa ===
+        let resolvedClienteId = args.clienteId;
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+
+          const clienteRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const clienteData = await clienteRes.json();
+          const clientes = clienteData?.data || clienteData;
+          if (Array.isArray(clientes) && clientes.length > 0) {
+            resolvedClienteId = clientes[0].id || clientes[0].Id;
+            console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone ${tel}`);
+          } else {
+            return { error: "Cliente não encontrado. Use buscar_cliente ou cadastrar_cliente primeiro." };
+          }
+        }
+
+        // === PROTEÇÃO 2: Deduplicação — verificar agendamento equivalente existente ===
+        try {
+          const dedupRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
+          const dedupData = await dedupRes.json();
+          const agendamentos = dedupData?.data || [];
+          if (Array.isArray(agendamentos)) {
+            const activeStatuses = ["confirmado", "aguardando confirmação"];
+            const duplicate = agendamentos.find((a: any) => {
+              const statusName = (a.status?.nome || "").toLowerCase();
+              if (!activeStatuses.some(s => statusName.includes(s))) return false;
+              const existingStart = (a.dataHoraInicio || "").replace(" ", "T").substring(0, 19);
+              const newStart = dataHoraInicio.substring(0, 19);
+              return existingStart === newStart &&
+                (a.profissional?.id || a.profissionalId) === args.profissionalId;
+            });
+            if (duplicate) {
+              console.log(`criar_agendamento: DUPLICATE detected, existing id=${duplicate.id}`);
+              return {
+                id: duplicate.id,
+                message: "Agendamento já existe para este horário e profissional.",
+                deduplicated: true,
+              };
+            }
+          }
+        } catch (dedupErr) {
+          console.error("criar_agendamento dedup check failed:", dedupErr);
+          // Continue with creation if dedup check fails
+        }
+
         const body = {
           servicoId: args.servicoId,
-          clienteId: args.clienteId,
+          clienteId: resolvedClienteId,
           profissionalId: args.profissionalId,
           dataHoraInicio,
           duracaoEmMinutos: args.duracaoEmMinutos,
@@ -1143,6 +1205,30 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "cancelar_agendamento": {
+        // === PROTEÇÃO: Verificar propriedade do agendamento ===
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const cliData = await cliRes.json();
+          const cliList = cliData?.data || cliData;
+          if (Array.isArray(cliList) && cliList.length > 0) {
+            const ownerId = cliList[0].id || cliList[0].Id;
+            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
+            const agData = await agRes.json();
+            const agList = agData?.data || [];
+            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            if (!owns) {
+              console.log(`cancelar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
+              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+            }
+          }
+        }
+
         const url = `${baseUrl}/agendamentos/${args.agendamentoId}/status/cancelado`;
         const body = {
           quemCancelou: 1,
@@ -1163,13 +1249,54 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "editar_agendamento": {
+        // === PROTEÇÃO: Verificar propriedade do agendamento ===
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const cliData = await cliRes.json();
+          const cliList = cliData?.data || cliData;
+          if (Array.isArray(cliList) && cliList.length > 0) {
+            const ownerId = cliList[0].id || cliList[0].Id;
+            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
+            const agData = await agRes.json();
+            const agList = agData?.data || [];
+            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            if (!owns) {
+              console.log(`editar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
+              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+            }
+          }
+        }
+
         let dataHoraInicio = args.dataHoraInicio || "";
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
+        // Resolve clienteId from phone
+        let editClienteId = args.clienteId;
+        if (phoneNumber) {
+          let tel2 = phoneNumber.replace(/\D/g, "");
+          if (tel2.startsWith("55") && tel2.length >= 12) tel2 = tel2.substring(2);
+          const ddd2 = tel2.substring(0, 2);
+          let rest2 = tel2.substring(2);
+          if (rest2.length === 8) rest2 = "9" + rest2;
+          tel2 = ddd2 + rest2;
+          const cliRes2 = await fetch(`${baseUrl}/clientes?telefone=${tel2}`, { headers });
+          const cliData2 = await cliRes2.json();
+          const cliList2 = cliData2?.data || cliData2;
+          if (Array.isArray(cliList2) && cliList2.length > 0) {
+            editClienteId = cliList2[0].id || cliList2[0].Id;
+          }
+        }
+
         const body = {
           servicoId: args.servicoId,
-          clienteId: args.clienteId,
+          clienteId: editClienteId,
           profissionalId: args.profissionalId,
           dataHoraInicio,
           duracaoEmMinutos: args.duracaoEmMinutos,
