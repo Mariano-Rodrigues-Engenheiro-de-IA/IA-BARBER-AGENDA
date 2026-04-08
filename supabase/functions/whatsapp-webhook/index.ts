@@ -1057,9 +1057,10 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       case "buscar_agendamento": {
         let clienteId = args.clienteId;
 
-        // Auto-resolve clienteId from telefone if not provided or if provided telefone
-        if (!clienteId && args.telefone) {
-          let tel = (args.telefone || "").replace(/\D/g, "");
+        // ALWAYS resolve clienteId from the conversation phone number to prevent AI hallucinating wrong IDs
+        const resolvePhone = phoneNumber || args.telefone || "";
+        if (resolvePhone) {
+          let tel = resolvePhone.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
           const ddd = tel.substring(0, 2);
           let rest = tel.substring(2);
