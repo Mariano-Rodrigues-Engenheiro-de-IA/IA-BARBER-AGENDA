@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Visão Geral" },
   { to: "/tenants", icon: Building2, label: "Tenants" },
+  { to: "/agent-logs", icon: Activity, label: "Monitor IA" },
   { to: "/settings", icon: Settings, label: "Configurações" },
 ];
 

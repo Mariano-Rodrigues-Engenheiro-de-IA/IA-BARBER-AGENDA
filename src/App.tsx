@@ -60,6 +60,7 @@ function AppRoutes() {
       <Route path="/tenants/new" element={<ProtectedRoute><TenantFormPage /></ProtectedRoute>} />
       <Route path="/tenants/:id" element={<ProtectedRoute><TenantFormPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+      <Route path="/agent-logs" element={<ProtectedRoute><AgentLogsPage /></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
