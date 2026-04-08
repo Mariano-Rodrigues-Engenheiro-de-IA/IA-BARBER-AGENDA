@@ -1010,7 +1010,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             nome: s.nome || s.Nome,
             descricao: s.descricao || s.Descricao || "",
             preco: s.preco || s.Preco || s.valor || s.Valor,
-            duracao: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
+            duracaoEmMinutos: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
             categoria: s.categoria || s.Categoria,
           }));
         }
