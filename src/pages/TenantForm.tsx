@@ -227,6 +227,7 @@ export default function TenantFormPage() {
                   placeholder="Ex: 12345"
                 />
               </div>
+              {isEditing && id && <TrinksTestButton tenantId={id} />}
             </div>
           </TabsContent>
 
