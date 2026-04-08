@@ -1142,7 +1142,7 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria um agendamento para o cliente. ANTES de usar, DEVE ter: clienteId, servicoId, duracaoEmMinutos, valor (de listar_servicos), profissionalId (de listar_profissionais), dataHoraInicio no formato YYYY-MM-DDTHH:mm:ss.",
+        description: "Cria um agendamento para o cliente. ⚠️ SÓ EXECUTE DEPOIS QUE O CLIENTE CONFIRMAR EXPLICITAMENTE (respondeu 'sim', 'ok', 'pode', etc.). NUNCA execute logo após o cliente escolher um horário — primeiro mostre o resumo e AGUARDE confirmação. ANTES de usar, DEVE ter: clienteId, servicoId, duracaoEmMinutos, valor (de listar_servicos), profissionalId (de listar_profissionais), dataHoraInicio no formato YYYY-MM-DDTHH:mm:ss.",
         parameters: {
           type: "object",
           properties: {
