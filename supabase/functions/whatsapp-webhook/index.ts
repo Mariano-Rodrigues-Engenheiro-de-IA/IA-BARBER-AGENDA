@@ -1470,7 +1470,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "cancelar_agendamento": {
-        // === PROTEÇÃO: Verificar propriedade do agendamento ===
+        // === PROTEÇÃO: Verificar propriedade do agendamento + AUTO-CORREÇÃO de IDs ===
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
@@ -1502,13 +1502,26 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
               }));
             const owns = activeAgendamentos.some((a: any) => a.id === args.agendamentoId);
             if (!owns) {
-              console.log(`cancelar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
-              return {
-                code: "agendamento_id_invalido",
-                error: "O agendamento informado não pertence a você.",
-                message: "Use um dos IDs reais de agendamentosAtivos ou execute buscar_agendamento novamente nesta interação.",
-                agendamentosAtivos: activeAgendamentos,
-              };
+              // AUTO-CORREÇÃO: Se o ID é pequeno (1, 2, 3...), mapear para o N-ésimo agendamento ativo
+              const idx = args.agendamentoId;
+              if (Number.isInteger(idx) && idx >= 1 && idx <= activeAgendamentos.length) {
+                const correctedId = activeAgendamentos[idx - 1].id;
+                console.log(`cancelar_agendamento: AUTO-CORRECTED positional id ${idx} → real id ${correctedId}`);
+                args.agendamentoId = correctedId;
+              } else if (activeAgendamentos.length === 1) {
+                // Se só tem 1 ativo e o ID está errado, usa o único disponível
+                const correctedId = activeAgendamentos[0].id;
+                console.log(`cancelar_agendamento: AUTO-CORRECTED invalid id ${args.agendamentoId} → only active id ${correctedId}`);
+                args.agendamentoId = correctedId;
+              } else {
+                console.log(`cancelar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}, cannot auto-correct`);
+                return {
+                  code: "agendamento_id_invalido",
+                  error: "O agendamento informado não pertence a você.",
+                  message: "Use um dos IDs reais de agendamentosAtivos ou execute buscar_agendamento novamente nesta interação.",
+                  agendamentosAtivos: activeAgendamentos,
+                };
+              }
             }
           }
         }
