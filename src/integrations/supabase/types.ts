@@ -14,6 +14,44 @@ export type Database = {
   }
   public: {
     Tables: {
+      chat_messages: {
+        Row: {
+          content: string
+          created_at: string
+          id: string
+          message_id: string | null
+          phone_number: string
+          role: string
+          tenant_id: string
+        }
+        Insert: {
+          content: string
+          created_at?: string
+          id?: string
+          message_id?: string | null
+          phone_number: string
+          role: string
+          tenant_id: string
+        }
+        Update: {
+          content?: string
+          created_at?: string
+          id?: string
+          message_id?: string | null
+          phone_number?: string
+          role?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenants: {
         Row: {
           address: string | null
@@ -29,7 +67,10 @@ export type Database = {
           status: Database["public"]["Enums"]["tenant_status"]
           trinks_api_key: string | null
           trinks_establishment_id: string | null
+          uazapi_token: string | null
+          uazapi_url: string | null
           updated_at: string
+          whatsapp_number: string | null
         }
         Insert: {
           address?: string | null
@@ -45,7 +86,10 @@ export type Database = {
           status?: Database["public"]["Enums"]["tenant_status"]
           trinks_api_key?: string | null
           trinks_establishment_id?: string | null
+          uazapi_token?: string | null
+          uazapi_url?: string | null
           updated_at?: string
+          whatsapp_number?: string | null
         }
         Update: {
           address?: string | null
@@ -61,7 +105,10 @@ export type Database = {
           status?: Database["public"]["Enums"]["tenant_status"]
           trinks_api_key?: string | null
           trinks_establishment_id?: string | null
+          uazapi_token?: string | null
+          uazapi_url?: string | null
           updated_at?: string
+          whatsapp_number?: string | null
         }
         Relationships: []
       }
