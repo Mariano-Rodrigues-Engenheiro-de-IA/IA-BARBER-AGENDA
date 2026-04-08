@@ -25,10 +25,17 @@ Deno.serve(async (req) => {
     if (event === "messages.upsert" || event === "message" || event === "messages") {
       const msg = payload.message || payload.data?.message || payload.data || payload;
 
+      // Detect message type
+      const messageType = msg.messageType || msg.type || payload.messageType || "";
+      const isAudioMessage = /audio|ptt/i.test(messageType);
+      const isImageMessage = /image/i.test(messageType);
+      const hasMedia = isAudioMessage || isImageMessage;
+
       const messageContent = msg.conversation || msg.text || msg.body ||
         msg?.extendedTextMessage?.text || msg?.message?.conversation ||
         msg?.message?.extendedTextMessage?.text ||
-        payload.text || payload.body;
+        payload.text || payload.body ||
+        msg?.imageMessage?.caption || msg?.message?.imageMessage?.caption || "";
 
       const remoteJid = extractRemoteJid(payload, msg);
       const phoneMatch = extractPhoneNumber(payload, msg);
@@ -46,6 +53,8 @@ Deno.serve(async (req) => {
         "phoneNumber:", phoneNumber,
         "phoneSource:", phoneMatch?.source,
         "fromMe:", fromMe,
+        "messageType:", messageType,
+        "hasMedia:", hasMedia,
         "content:", messageContent?.slice(0, 100)
       );
 
@@ -55,8 +64,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (!messageContent) {
-        console.log("No text content in message, skipping");
+      if (!messageContent && !hasMedia) {
+        console.log("No text content or media in message, skipping");
         return new Response(JSON.stringify({ status: "no_text" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -117,11 +126,60 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Download media if present
+      let mediaBase64: string | null = null;
+      let mediaMimeType: string | null = null;
+
+      if (hasMedia && messageId) {
+        try {
+          const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+          const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+
+          // Step 1: Get media download link from UAZAPI
+          console.log(`Downloading media for messageId: ${messageId}`);
+          const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
+            headers: { "token": uazapiTokenMedia },
+          });
+          const linkData = await linkRes.json();
+          const mediaUrl = linkData?.url || linkData?.fileUrl || linkData?.link || linkData?.mediaUrl;
+          console.log("Media link response:", JSON.stringify(linkData).slice(0, 500));
+
+          if (mediaUrl) {
+            // Step 2: Download the actual media file
+            const mediaRes = await fetch(mediaUrl);
+            if (mediaRes.ok) {
+              const mediaBuffer = await mediaRes.arrayBuffer();
+              const bytes = new Uint8Array(mediaBuffer);
+              // Convert to base64
+              let binary = "";
+              for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              mediaBase64 = btoa(binary);
+              mediaMimeType = linkData?.mimetype || mediaRes.headers.get("content-type") || 
+                (isAudioMessage ? "audio/ogg" : "image/jpeg");
+              console.log(`Media downloaded: ${mediaMimeType}, size: ${mediaBase64.length} chars base64`);
+            } else {
+              console.error("Failed to download media:", mediaRes.status);
+            }
+          }
+        } catch (mediaErr) {
+          console.error("Error downloading media:", mediaErr);
+        }
+      }
+
+      // Build text content for storage
+      const storedContent = isAudioMessage 
+        ? (messageContent || "[Áudio recebido]") 
+        : isImageMessage 
+          ? (messageContent || "[Imagem recebida]") 
+          : messageContent;
+
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
         phone_number: phoneNumber,
         role: "user",
-        content: messageContent,
+        content: storedContent,
         message_id: messageId,
       });
 
@@ -133,7 +191,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(60);
 
-      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], messageContent);
+      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], storedContent, mediaBase64, mediaMimeType);
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
@@ -181,7 +239,9 @@ async function callAIAgent(
   tenant: any,
   phoneNumber: string,
   history: { role: string; content: string }[],
-  userMessage: string
+  userMessage: string,
+  mediaBase64?: string | null,
+  mediaMimeType?: string | null,
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -192,8 +252,41 @@ async function callAIAgent(
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 
+  // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
-  if (!(lastMsg?.role === "user" && lastMsg?.content === userMessage)) {
+  const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
+
+  if (mediaBase64 && mediaMimeType) {
+    // Multimodal message with media
+    const contentParts: any[] = [];
+
+    if (mediaMimeType.startsWith("audio/")) {
+      contentParts.push({
+        type: "input_audio",
+        input_audio: { data: mediaBase64, format: mediaMimeType.includes("ogg") ? "ogg" : mediaMimeType.includes("mp3") ? "mp3" : "wav" },
+      });
+      contentParts.push({
+        type: "text",
+        text: userMessage || "O cliente enviou um áudio. Transcreva e responda ao conteúdo.",
+      });
+    } else if (mediaMimeType.startsWith("image/")) {
+      contentParts.push({
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
+      });
+      contentParts.push({
+        type: "text",
+        text: userMessage || "O cliente enviou uma imagem. Descreva o que vê e responda adequadamente.",
+      });
+    }
+
+    if (alreadyHasUserMsg) {
+      // Replace last message with multimodal version
+      messages[messages.length - 1] = { role: "user", content: contentParts };
+    } else {
+      messages.push({ role: "user", content: contentParts });
+    }
+  } else if (!alreadyHasUserMsg) {
     messages.push({ role: "user", content: userMessage });
   }
 
