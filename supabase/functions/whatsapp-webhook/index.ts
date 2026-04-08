@@ -233,13 +233,14 @@ Deno.serve(async (req) => {
       const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
       console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
-      // Fetch the 60 most recent messages, then reverse so oldest is first for the AI context
+      // Fetch the 60 most recent messages (both user processed=true AND assistant messages)
+      // Assistant messages are saved with processed=false by default, so we can't filter on processed
       const { data: historyRaw } = await supabase
         .from("chat_messages")
-        .select("role, content")
+        .select("role, content, processed")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
-        .eq("processed", true)
+        .or("role.eq.assistant,processed.eq.true")
         .order("created_at", { ascending: false })
         .limit(60);
       const history = (historyRaw || []).reverse();
