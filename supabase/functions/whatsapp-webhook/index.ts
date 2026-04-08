@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
       console.log("Parsed - remoteJid:", remoteJid, "fromMe:", fromMe, "content:", messageContent?.slice(0, 100));
 
       // Skip messages sent by us or group messages
-      if (fromMe || !remoteJid || remoteJid.endsWith("@g.us")) {
+      if (fromMe || !remoteJid || String(remoteJid).endsWith("@g.us")) {
         return new Response(JSON.stringify({ status: "skipped" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
