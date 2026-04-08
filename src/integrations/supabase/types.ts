@@ -21,6 +21,7 @@ export type Database = {
           id: string
           message_id: string | null
           phone_number: string
+          processed: boolean
           role: string
           tenant_id: string
         }
@@ -30,6 +31,7 @@ export type Database = {
           id?: string
           message_id?: string | null
           phone_number: string
+          processed?: boolean
           role: string
           tenant_id: string
         }
@@ -39,6 +41,7 @@ export type Database = {
           id?: string
           message_id?: string | null
           phone_number?: string
+          processed?: boolean
           role?: string
           tenant_id?: string
         }
