@@ -381,7 +381,7 @@ async function callAIAgent(
 
     for (const toolCall of assistantMessage.tool_calls) {
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
-      const toolResult = await executeTrinksTool(tenant, toolCall);
+      const toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
       messages.push({
         role: "tool",
@@ -929,7 +929,7 @@ function buildTrinksTools(tenant: any) {
 
 // ===================== TOOL EXECUTION =====================
 
-async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
+async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -1057,9 +1057,10 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
       case "buscar_agendamento": {
         let clienteId = args.clienteId;
 
-        // Auto-resolve clienteId from telefone if not provided or if provided telefone
-        if (!clienteId && args.telefone) {
-          let tel = (args.telefone || "").replace(/\D/g, "");
+        // ALWAYS resolve clienteId from the conversation phone number to prevent AI hallucinating wrong IDs
+        const resolvePhone = phoneNumber || args.telefone || "";
+        if (resolvePhone) {
+          let tel = resolvePhone.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
           const ddd = tel.substring(0, 2);
           let rest = tel.substring(2);
