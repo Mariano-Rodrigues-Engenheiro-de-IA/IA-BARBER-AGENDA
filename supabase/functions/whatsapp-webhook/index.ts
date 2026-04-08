@@ -427,16 +427,32 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_profissionais",
-        description: "Lista os profissionais disponíveis no salão e suas agendas.",
+        description: "Lista os profissionais disponíveis no salão (nome, id, apelido).",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "consultar_agenda",
+        description: "Consulta os agendamentos existentes de um dia específico para verificar horários ocupados. Use para descobrir horários disponíveis.",
         parameters: {
           type: "object",
           properties: {
             data: {
               type: "string",
-              description: "Data para consulta no formato YYYY-MM-DD. Se não informada, usa a data atual.",
+              description: "Data para consulta no formato YYYY-MM-DD",
+            },
+            profissionalId: {
+              type: "integer",
+              description: "ID do profissional (opcional, filtra por profissional)",
             },
           },
-          required: [],
+          required: ["data"],
         },
       },
     },
@@ -531,16 +547,45 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
 
       case "listar_profissionais": {
         const res = await fetch(
-          `${baseUrl}/profissionais/agenda?estabelecimentoId=${tenant.trinks_establishment_id}${args.data ? `&data=${args.data}` : ""}`,
+          `${baseUrl}/profissionais?estabelecimentoId=${tenant.trinks_establishment_id}`,
           { headers }
         );
         const data = await res.json();
-        if (Array.isArray(data)) {
-          return data.map((p: any) => ({
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((p: any) => ({
             id: p.id || p.Id,
             nome: p.nome || p.Nome,
-            agenda: p.agenda || p.Agenda,
+            apelido: p.apelido || p.Apelido,
           })).slice(0, 10);
+        }
+        return data;
+      }
+
+      case "consultar_agenda": {
+        const params = new URLSearchParams();
+        params.set("estabelecimentoId", tenant.trinks_establishment_id);
+        params.set("dataInicio", args.data);
+        params.set("dataFim", args.data);
+        if (args.profissionalId) params.set("profissionalId", String(args.profissionalId));
+        const url = `${baseUrl}/agendamentos?${params}`;
+        console.log(`consultar_agenda URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const data = await res.json();
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return {
+            data: args.data,
+            agendamentos: list.map((a: any) => ({
+              profissional: a.profissional?.nome || a.profissional?.apelido,
+              profissionalId: a.profissional?.id,
+              servico: a.servico?.nome,
+              inicio: a.dataHoraInicio,
+              duracao: a.duracaoEmMinutos,
+              status: a.status?.nome,
+            })),
+            total: data?.totalRecords || list.length,
+          };
         }
         return data;
       }
