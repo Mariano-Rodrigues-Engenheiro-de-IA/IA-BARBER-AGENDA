@@ -26,8 +26,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(session?.user ?? null);
       if (session?.user) {
         supabase.rpc("has_role", { _user_id: session.user.id, _role: "admin" })
-          .then(({ data }) => setIsAdmin(!!data))
-          .finally(() => setLoading(false));
+          .then(({ data }) => {
+            setIsAdmin(!!data);
+            setLoading(false);
+          });
       } else {
         setLoading(false);
       }
