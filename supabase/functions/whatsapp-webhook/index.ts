@@ -1027,7 +1027,31 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
         const res = await fetch(url, { headers });
         const text = await res.text();
         console.log(`listar_horarios response (${res.status}):`, text.slice(0, 1000));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          
+          // Filter out past times when querying today
+          const now = new Date();
+          const brasiliaOffset = -3 * 60;
+          const brasiliaTime = new Date(now.getTime() + (now.getTimezoneOffset() + brasiliaOffset) * 60000);
+          const todayStr = `${brasiliaTime.getFullYear()}-${String(brasiliaTime.getMonth() + 1).padStart(2, '0')}-${String(brasiliaTime.getDate()).padStart(2, '0')}`;
+          const currentHHMM = `${String(brasiliaTime.getHours()).padStart(2, '0')}:${String(brasiliaTime.getMinutes()).padStart(2, '0')}`;
+          
+          if (args.data === todayStr) {
+            const profissionais = parsed?.data || parsed;
+            if (Array.isArray(profissionais)) {
+              for (const prof of profissionais) {
+                if (Array.isArray(prof.horariosVagos)) {
+                  const before = prof.horariosVagos.length;
+                  prof.horariosVagos = prof.horariosVagos.filter((h: string) => h > currentHHMM);
+                  console.log(`Filtered past times for ${prof.nome || prof.id}: ${before} → ${prof.horariosVagos.length} (now: ${currentHHMM})`);
+                }
+              }
+            }
+          }
+          
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "buscar_agendamento": {
