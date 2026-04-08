@@ -380,6 +380,15 @@ Deno.serve(async (req) => {
 
 // ===================== AI AGENT =====================
 
+interface AgentResult {
+  response: string;
+  toolCalls: { name: string; args: any; result: any; blocked?: boolean }[];
+  errors: string[];
+  model: string;
+  durationMs: number;
+  sessionBlocked: boolean;
+}
+
 async function callAIAgent(
   tenant: any,
   phoneNumber: string,
@@ -387,7 +396,12 @@ async function callAIAgent(
   userMessage: string,
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
-): Promise<string> {
+): Promise<AgentResult> {
+  const startTime = Date.now();
+  const logToolCalls: AgentResult["toolCalls"] = [];
+  const logErrors: string[] = [];
+  let sessionBlocked = false;
+  const modelUsed = "google/gemini-2.5-flash";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
