@@ -520,10 +520,27 @@ function buildSystemPrompt(tenant: any, phoneNumber: string): string {
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
+  // Pre-calculate day-of-week name and next 7 days map
+  const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+  const todayDow = brTime.getUTCDay();
+  const todayName = dayNames[todayDow];
+  
+  // Build a map: "segunda" -> "2026-04-13", "terça" -> "2026-04-14", etc.
+  const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+  const nextDaysMap: string[] = [];
+  for (let i = 1; i <= 7; i++) {
+    const futureDate = new Date(brTime.getTime() + i * 24 * 60 * 60 * 1000);
+    const dow = futureDate.getUTCDay();
+    const dateStr = futureDate.toISOString().split("T")[0];
+    nextDaysMap.push(`- ${shortDayNames[dow]} → ${dateStr}`);
+  }
+  const nextDaysReference = nextDaysMap.join("\n");
+
   // Format phone for display
   const telefone = phoneNumber;
 
   return `🗓️ DATA E HORA ATUAL: ${dateComplete}
+📅 HOJE É: ${todayName}
 📞 TELEFONE DO CLIENTE: ${telefone}
 
 ------------------------------------------
@@ -566,12 +583,12 @@ Para cada horário da lista horariosVagos:
 
 ## 🚨 REGRA — INTERPRETAÇÃO DE DIAS DA SEMANA
 
-Quando o cliente disser um dia da semana (segunda, terça, quarta, quinta, sexta, sábado, domingo):
-- SEMPRE interprete como o **PRÓXIMO** dia da semana a partir da data atual.
-- Se hoje é terça e o cliente diz "sábado", é o sábado DESTA semana (mais próximo).
-- Se hoje é domingo e o cliente diz "quinta", é a quinta da semana que vem.
+Quando o cliente disser um dia da semana, use ESTA TABELA PRÉ-CALCULADA (NÃO calcule por conta própria):
+
+${nextDaysReference}
+
+Exemplo: se o cliente diz "sábado", procure "sábado →" na tabela acima e use a data correspondente.
 - NUNCA pergunte "qual sábado?" ou "de qual semana?" — é sempre o mais próximo.
-- Calcule a data correta usando a data atual: ${dateComplete}
 
 ------------------------------------------
 
