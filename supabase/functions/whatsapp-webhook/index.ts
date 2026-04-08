@@ -469,7 +469,8 @@ async function callAIAgent(
   if (!response.ok) {
     const errText = await response.text();
     console.error("AI gateway error:", response.status, errText);
-    return "Desculpe, estou com dificuldades técnicas no momento. Por favor, tente novamente em instantes.";
+    logErrors.push(`AI gateway error: ${response.status} ${errText.slice(0, 200)}`);
+    return { response: "Desculpe, estou com dificuldades técnicas no momento. Por favor, tente novamente em instantes.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
   }
 
   let result = await response.json();
