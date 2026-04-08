@@ -222,9 +222,9 @@ async function callAIAgent(
   let result = await response.json();
   let assistantMessage = result.choices?.[0]?.message;
 
-  // Handle tool calls (up to 3 rounds)
+  // Handle tool calls (up to 5 rounds)
   let rounds = 0;
-  while (assistantMessage?.tool_calls && rounds < 3) {
+  while (assistantMessage?.tool_calls && rounds < 5) {
     rounds++;
     messages.push(assistantMessage);
 
