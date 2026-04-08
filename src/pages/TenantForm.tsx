@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, Eye, EyeOff } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { supabase } from "@/integrations/supabase/client";
 
 function slugify(text: string) {
   return text
@@ -17,6 +18,52 @@ function slugify(text: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
+}
+
+function TrinksTestButton({ tenantId }: { tenantId: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("test-trinks-connection", {
+        body: { tenant_id: tenantId },
+      });
+      if (error) throw error;
+      setResult(data);
+      if (data?.success) {
+        toast.success(data.message);
+      } else {
+        toast.error(data?.message || "Falha na conexão");
+      }
+    } catch (err: any) {
+      setResult({ success: false, message: err.message || "Erro ao testar conexão" });
+      toast.error(err.message || "Erro ao testar conexão");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="pt-4 border-t border-border space-y-3">
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : (
+          <Plug className="w-4 h-4 mr-2" />
+        )}
+        {testing ? "Testando..." : "Testar Conexão"}
+      </Button>
+      {result && (
+        <div className={`flex items-center gap-2 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
+          {result.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {result.message}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function TenantFormPage() {
@@ -226,6 +273,7 @@ export default function TenantFormPage() {
                   placeholder="Ex: 12345"
                 />
               </div>
+              {isEditing && id && <TrinksTestButton tenantId={id} />}
             </div>
           </TabsContent>
 
