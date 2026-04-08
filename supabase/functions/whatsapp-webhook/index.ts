@@ -406,13 +406,14 @@ async function callAIAgent(
     const contentParts: any[] = [];
 
     if (mediaMimeType.startsWith("audio/")) {
+      // Use image_url style data URL which works universally with Lovable AI gateway
       contentParts.push({
-        type: "input_audio",
-        input_audio: { data: mediaBase64, format: mediaMimeType.includes("ogg") ? "ogg" : mediaMimeType.includes("mp3") ? "mp3" : "wav" },
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
       contentParts.push({
         type: "text",
-        text: userMessage || "O cliente enviou um áudio. Transcreva e responda ao conteúdo.",
+        text: userMessage || "O cliente enviou um áudio. Transcreva o que foi dito e responda ao conteúdo. NÃO peça para o cliente repetir em texto.",
       });
     } else if (mediaMimeType.startsWith("image/")) {
       contentParts.push({
