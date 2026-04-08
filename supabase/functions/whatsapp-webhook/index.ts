@@ -95,6 +95,28 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ❌ = reset memory for this user
+      if (messageContent.trim() === "❌") {
+        const { error: delError } = await supabase
+          .from("chat_messages")
+          .delete()
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber);
+        console.log(`Memory reset for ${phoneNumber}:`, delError ? delError.message : "OK");
+
+        const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+        const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+        await fetch(`${uazapiUrl}/send/text`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa." }),
+        });
+
+        return new Response(JSON.stringify({ status: "memory_reset" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
         phone_number: phoneNumber,
