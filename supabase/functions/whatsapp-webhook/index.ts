@@ -510,7 +510,7 @@ function buildTrinksTools(tenant: any) {
             servicoId: { type: "integer", description: "ID do serviço" },
             clienteId: { type: "integer", description: "ID do cliente" },
             profissionalId: { type: "integer", description: "ID do profissional" },
-            dataHoraInicio: { type: "string", description: "Data e hora no formato YYYY-MM-DD HH:MM" },
+            dataHoraInicio: { type: "string", description: "Data e hora no formato ISO 8601: YYYY-MM-DDTHH:MM:SS (ex: 2026-04-08T16:00:00)" },
             duracaoEmMinutos: { type: "integer", description: "Duração em minutos" },
             valor: { type: "number", description: "Valor do serviço" },
             observacoes: { type: "string", description: "Observações opcionais" },
@@ -637,7 +637,7 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
         const clienteBody = {
           nome: args.nome,
           email: args.email || "",
-          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+          estabelecimentoId: tenant.trinks_establishment_id,
           telefones: [{
             ddi,
             ddd,
@@ -661,16 +661,27 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
       }
 
       case "criar_agendamento": {
+        // Ensure dataHoraInicio is ISO 8601 format
+        let dataHoraInicio = args.dataHoraInicio || "";
+        // Convert "YYYY-MM-DD HH:MM" to "YYYY-MM-DDTHH:MM:SS"
+        if (dataHoraInicio.includes(" ")) {
+          dataHoraInicio = dataHoraInicio.replace(" ", "T");
+        }
+        // Ensure seconds are included
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) {
+          dataHoraInicio += ":00";
+        }
+
         const agendBody = {
           servicoId: args.servicoId,
           clienteId: args.clienteId,
           profissionalId: args.profissionalId,
-          dataHoraInicio: args.dataHoraInicio,
+          dataHoraInicio,
           duracaoEmMinutos: args.duracaoEmMinutos,
           valor: args.valor,
           observacoes: args.observacoes || "",
           confirmado: false,
-          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+          estabelecimentoId: tenant.trinks_establishment_id, // string per API docs
         };
         console.log("criar_agendamento body:", JSON.stringify(agendBody));
         const res = await fetch(`${baseUrl}/agendamentos`, {
