@@ -175,13 +175,58 @@ Deno.serve(async (req) => {
           ? (messageContent || "[Imagem recebida]") 
           : messageContent;
 
+      // Save message as unprocessed for debounce queue
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
         phone_number: phoneNumber,
         role: "user",
         content: storedContent,
         message_id: messageId,
+        processed: false,
       });
+
+      // ===== DEBOUNCE: Wait 20 seconds for more messages =====
+      const DEBOUNCE_MS = 20_000;
+      console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
+      await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
+
+      // Check if newer unprocessed messages arrived — if so, let the latest webhook handle it
+      const { data: pendingMsgs } = await supabase
+        .from("chat_messages")
+        .select("id, content, message_id, created_at")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .eq("role", "user")
+        .eq("processed", false)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (!pendingMsgs?.length || pendingMsgs[0].message_id !== messageId) {
+        console.log(`Debounce: not the latest message, skipping (latest: ${pendingMsgs?.[0]?.message_id}, ours: ${messageId})`);
+        return new Response(JSON.stringify({ status: "debounce_skip" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // We are the latest — gather ALL unprocessed user messages and combine
+      const { data: allPending } = await supabase
+        .from("chat_messages")
+        .select("id, content")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .eq("role", "user")
+        .eq("processed", false)
+        .order("created_at", { ascending: true });
+
+      // Mark all as processed
+      if (allPending?.length) {
+        const ids = allPending.map((m: any) => m.id);
+        await supabase.from("chat_messages").update({ processed: true }).in("id", ids);
+      }
+
+      // Combine messages into one
+      const combinedContent = allPending?.map((m: any) => m.content).join("\n") || storedContent;
+      console.log(`Debounce: processing ${allPending?.length || 1} messages combined for ${phoneNumber}`);
 
       const { data: history } = await supabase
         .from("chat_messages")
@@ -191,7 +236,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(60);
 
-      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], storedContent, mediaBase64, mediaMimeType);
+      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
@@ -200,23 +245,36 @@ Deno.serve(async (req) => {
         content: aiResponse,
       });
 
+      // ===== SPLIT RESPONSE: Send each sentence as a separate message =====
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      const sendResult = await fetch(`${uazapiUrl}/send/text`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "token": uazapiToken,
-        },
-        body: JSON.stringify({ number: phoneNumber, text: aiResponse }),
-      });
+      // Split by sentence-ending punctuation followed by space/newline
+      const messageParts = splitIntoMessages(aiResponse);
 
-      const sendData = await sendResult.json();
-      console.log("UAZAPI send result:", JSON.stringify(sendData));
+      for (let i = 0; i < messageParts.length; i++) {
+        const part = messageParts[i].trim();
+        if (!part) continue;
 
-      return new Response(JSON.stringify({ status: "ok", response: aiResponse.slice(0, 100) }), {
+        // Small delay between messages to feel natural (except first)
+        if (i > 0) {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+
+        const sendResult = await fetch(`${uazapiUrl}/send/text`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "token": uazapiToken,
+          },
+          body: JSON.stringify({ number: phoneNumber, text: part }),
+        });
+        const sendData = await sendResult.json();
+        console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
+      }
+
+      return new Response(JSON.stringify({ status: "ok", parts: messageParts.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -357,6 +415,44 @@ async function callAIAgent(
   }
 
   return assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+}
+
+// ===================== MESSAGE SPLITTING =====================
+
+function splitIntoMessages(text: string): string[] {
+  // Split by sentences ending with . ! or ? followed by space/newline, or by double newlines
+  // But keep short sentences together (min ~20 chars per message to avoid spam)
+  const MIN_PART_LENGTH = 20;
+
+  // First split by double newlines (paragraph breaks)
+  const paragraphs = text.split(/\n{2,}/);
+  const parts: string[] = [];
+
+  for (const para of paragraphs) {
+    // Then split each paragraph by sentence-ending punctuation
+    // Match: period/exclamation/question followed by space or end-of-string
+    const sentences = para.split(/(?<=[.!?])\s+/);
+    let current = "";
+
+    for (const sentence of sentences) {
+      if (!sentence.trim()) continue;
+      if (current.length === 0) {
+        current = sentence;
+      } else if (current.length < MIN_PART_LENGTH) {
+        // Too short, merge with next sentence
+        current += " " + sentence;
+      } else {
+        parts.push(current.trim());
+        current = sentence;
+      }
+    }
+    if (current.trim()) {
+      parts.push(current.trim());
+    }
+  }
+
+  // If we ended up with just 1 part, return as-is
+  return parts.length > 0 ? parts : [text];
 }
 
 // ===================== PHONE HELPERS =====================
