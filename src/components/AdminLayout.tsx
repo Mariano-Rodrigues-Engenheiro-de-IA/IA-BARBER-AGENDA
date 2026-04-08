@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { Scissors, LayoutDashboard, Building2, LogOut, Settings } from "lucide-react";
+import { Scissors, LayoutDashboard, Building2, LogOut, Settings, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
