@@ -532,15 +532,16 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
           { headers }
         );
         const data = await res.json();
-        // Return simplified list
-        if (Array.isArray(data)) {
-          return data.map((s: any) => ({
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((s: any) => ({
             id: s.id || s.Id,
             nome: s.nome || s.Nome,
+            descricao: s.descricao || s.Descricao || "",
             preco: s.preco || s.Preco || s.valor || s.Valor,
-            duracao: s.duracao || s.Duracao || s.duracaoEmMinutos || s.DuracaoEmMinutos,
+            duracao: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao || s.Duracao,
             categoria: s.categoria || s.Categoria,
-          })).slice(0, 20);
+          })).slice(0, 25);
         }
         return data;
       }
@@ -608,15 +609,35 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
       }
 
       case "criar_cliente": {
+        // Parse phone: expect full BR number like 62999887766 or 5562999887766
+        let ddi = "55";
+        let ddd = "";
+        let numero = args.telefone || "";
+        if (numero.startsWith("55") && numero.length >= 12) {
+          ddi = "55";
+          ddd = numero.substring(2, 4);
+          numero = numero.substring(4);
+        } else if (numero.length >= 10) {
+          ddd = numero.substring(0, 2);
+          numero = numero.substring(2);
+        }
+
+        const clienteBody = {
+          nome: args.nome,
+          email: args.email || "",
+          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+          telefones: [{
+            ddi,
+            ddd,
+            numero,
+            tipoId: 1,
+          }],
+        };
+        console.log("criar_cliente body:", JSON.stringify(clienteBody));
         const res = await fetch(`${baseUrl}/clientes`, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nome: args.nome,
-            telefone: args.telefone,
-            email: args.email || "",
-            estabelecimentoId: parseInt(tenant.trinks_establishment_id),
-          }),
+          body: JSON.stringify(clienteBody),
         });
         const text = await res.text();
         console.log(`criar_cliente response (${res.status}):`, text.slice(0, 500));
