@@ -1249,13 +1249,54 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "editar_agendamento": {
+        // === PROTEÇÃO: Verificar propriedade do agendamento ===
+        if (phoneNumber) {
+          let tel = phoneNumber.replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const cliData = await cliRes.json();
+          const cliList = cliData?.data || cliData;
+          if (Array.isArray(cliList) && cliList.length > 0) {
+            const ownerId = cliList[0].id || cliList[0].Id;
+            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
+            const agData = await agRes.json();
+            const agList = agData?.data || [];
+            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            if (!owns) {
+              console.log(`editar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
+              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+            }
+          }
+        }
+
         let dataHoraInicio = args.dataHoraInicio || "";
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
+        // Resolve clienteId from phone
+        let editClienteId = args.clienteId;
+        if (phoneNumber) {
+          let tel2 = phoneNumber.replace(/\D/g, "");
+          if (tel2.startsWith("55") && tel2.length >= 12) tel2 = tel2.substring(2);
+          const ddd2 = tel2.substring(0, 2);
+          let rest2 = tel2.substring(2);
+          if (rest2.length === 8) rest2 = "9" + rest2;
+          tel2 = ddd2 + rest2;
+          const cliRes2 = await fetch(`${baseUrl}/clientes?telefone=${tel2}`, { headers });
+          const cliData2 = await cliRes2.json();
+          const cliList2 = cliData2?.data || cliData2;
+          if (Array.isArray(cliList2) && cliList2.length > 0) {
+            editClienteId = cliList2[0].id || cliList2[0].Id;
+          }
+        }
+
         const body = {
           servicoId: args.servicoId,
-          clienteId: args.clienteId,
+          clienteId: editClienteId,
           profissionalId: args.profissionalId,
           dataHoraInicio,
           duracaoEmMinutos: args.duracaoEmMinutos,
