@@ -544,14 +544,16 @@ async function callAIAgent(
     if (!response.ok) {
       const errText = await response.text();
       console.error("AI gateway error (tool round):", response.status, errText);
-      return "Desculpe, tive um problema ao consultar o sistema. Tente novamente.";
+      logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
+      return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
     result = await response.json();
     assistantMessage = result.choices?.[0]?.message;
   }
 
-  return assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+  const finalResponse = assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+  return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
 // ===================== MESSAGE SPLITTING =====================
