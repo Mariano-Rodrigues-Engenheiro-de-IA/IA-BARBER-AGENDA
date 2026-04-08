@@ -222,9 +222,9 @@ async function callAIAgent(
   let result = await response.json();
   let assistantMessage = result.choices?.[0]?.message;
 
-  // Handle tool calls (up to 3 rounds)
+  // Handle tool calls (up to 5 rounds)
   let rounds = 0;
-  while (assistantMessage?.tool_calls && rounds < 3) {
+  while (assistantMessage?.tool_calls && rounds < 5) {
     rounds++;
     messages.push(assistantMessage);
 
@@ -388,8 +388,17 @@ function buildSystemPrompt(tenant: any): string {
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
+  const now = new Date();
+  const dataAtual = now.toISOString().split("T")[0];
+  const horaAtual = now.toISOString().split("T")[1].substring(0, 5);
+  const diasSemana = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+  const diaSemana = diasSemana[now.getDay()];
+
   return `Você é um assistente virtual de agendamento e atendimento do ${tenant.name}.
 Seu objetivo é ajudar clientes a agendar serviços, consultar horários disponíveis e responder dúvidas.
+
+DATA E HORA ATUAL: ${dataAtual} (${diaSemana}), ${horaAtual} (horário UTC, Brasília = UTC-3).
+IMPORTANTE: Ao usar ferramentas de agenda, use SEMPRE datas no formato YYYY-MM-DD com o ANO CORRETO (${now.getFullYear()}).
 
 REGRAS:
 - Seja cordial, objetivo e profissional.
@@ -402,6 +411,9 @@ REGRAS:
 - Se não puder atender, sugira que o cliente entre em contato diretamente com o estabelecimento.
 - NUNCA invente informações sobre horários ou serviços. Sempre consulte as ferramentas.
 - Mantenha respostas curtas e adequadas para WhatsApp (evite textos muito longos).
+- Quando o cliente informar o telefone, tente buscar pelo número SEM o código do país (ex: para 5561983012868, busque por 61983012868).
+- Se buscar_cliente retornar vazio, cadastre o cliente com criar_cliente e continue o fluxo.
+- Após ter serviço, profissional, cliente e horário confirmados, use criar_agendamento imediatamente. NÃO peça confirmação extra desnecessária.
 
 ${customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : ""}
 ${knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : ""}`;
@@ -427,16 +439,32 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_profissionais",
-        description: "Lista os profissionais disponíveis no salão e suas agendas.",
+        description: "Lista os profissionais disponíveis no salão (nome, id, apelido).",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "consultar_agenda",
+        description: "Consulta os agendamentos existentes de um dia específico para verificar horários ocupados. Use para descobrir horários disponíveis.",
         parameters: {
           type: "object",
           properties: {
             data: {
               type: "string",
-              description: "Data para consulta no formato YYYY-MM-DD. Se não informada, usa a data atual.",
+              description: "Data para consulta no formato YYYY-MM-DD",
+            },
+            profissionalId: {
+              type: "integer",
+              description: "ID do profissional (opcional, filtra por profissional)",
             },
           },
-          required: [],
+          required: ["data"],
         },
       },
     },
@@ -516,31 +544,61 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
           { headers }
         );
         const data = await res.json();
-        // Return simplified list
-        if (Array.isArray(data)) {
-          return data.map((s: any) => ({
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((s: any) => ({
             id: s.id || s.Id,
             nome: s.nome || s.Nome,
+            descricao: s.descricao || s.Descricao || "",
             preco: s.preco || s.Preco || s.valor || s.Valor,
-            duracao: s.duracao || s.Duracao || s.duracaoEmMinutos || s.DuracaoEmMinutos,
+            duracao: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao || s.Duracao,
             categoria: s.categoria || s.Categoria,
-          })).slice(0, 20);
+          })).slice(0, 25);
         }
         return data;
       }
 
       case "listar_profissionais": {
         const res = await fetch(
-          `${baseUrl}/profissionais/agenda?estabelecimentoId=${tenant.trinks_establishment_id}${args.data ? `&data=${args.data}` : ""}`,
+          `${baseUrl}/profissionais?estabelecimentoId=${tenant.trinks_establishment_id}`,
           { headers }
         );
         const data = await res.json();
-        if (Array.isArray(data)) {
-          return data.map((p: any) => ({
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((p: any) => ({
             id: p.id || p.Id,
             nome: p.nome || p.Nome,
-            agenda: p.agenda || p.Agenda,
+            apelido: p.apelido || p.Apelido,
           })).slice(0, 10);
+        }
+        return data;
+      }
+
+      case "consultar_agenda": {
+        const params = new URLSearchParams();
+        params.set("estabelecimentoId", tenant.trinks_establishment_id);
+        params.set("dataInicio", args.data);
+        params.set("dataFim", args.data);
+        if (args.profissionalId) params.set("profissionalId", String(args.profissionalId));
+        const url = `${baseUrl}/agendamentos?${params}`;
+        console.log(`consultar_agenda URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const data = await res.json();
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return {
+            data: args.data,
+            agendamentos: list.map((a: any) => ({
+              profissional: a.profissional?.nome || a.profissional?.apelido,
+              profissionalId: a.profissional?.id,
+              servico: a.servico?.nome,
+              inicio: a.dataHoraInicio,
+              duracao: a.duracaoEmMinutos,
+              status: a.status?.nome,
+            })),
+            total: data?.totalRecords || list.length,
+          };
         }
         return data;
       }
@@ -563,15 +621,35 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
       }
 
       case "criar_cliente": {
+        // Parse phone: expect full BR number like 62999887766 or 5562999887766
+        let ddi = "55";
+        let ddd = "";
+        let numero = args.telefone || "";
+        if (numero.startsWith("55") && numero.length >= 12) {
+          ddi = "55";
+          ddd = numero.substring(2, 4);
+          numero = numero.substring(4);
+        } else if (numero.length >= 10) {
+          ddd = numero.substring(0, 2);
+          numero = numero.substring(2);
+        }
+
+        const clienteBody = {
+          nome: args.nome,
+          email: args.email || "",
+          estabelecimentoId: parseInt(tenant.trinks_establishment_id),
+          telefones: [{
+            ddi,
+            ddd,
+            numero,
+            tipoId: 1,
+          }],
+        };
+        console.log("criar_cliente body:", JSON.stringify(clienteBody));
         const res = await fetch(`${baseUrl}/clientes`, {
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nome: args.nome,
-            telefone: args.telefone,
-            email: args.email || "",
-            estabelecimentoId: parseInt(tenant.trinks_establishment_id),
-          }),
+          body: JSON.stringify(clienteBody),
         });
         const text = await res.text();
         console.log(`criar_cliente response (${res.status}):`, text.slice(0, 500));
