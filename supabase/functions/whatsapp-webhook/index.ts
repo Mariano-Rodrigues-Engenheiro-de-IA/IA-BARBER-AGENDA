@@ -1021,6 +1021,15 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const profId = args.profissionalId;
         const res = await fetch(`${baseUrl}/profissionais/${profId}/servicos`, { headers });
         const data = await res.json();
+        const list = data?.data || data;
+        if (Array.isArray(list)) {
+          return list.map((s: any) => ({
+            id: s.id || s.Id,
+            nome: s.nome || s.Nome,
+            duracaoEmMinutos: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
+            preco: s.preco || s.Preco || s.valor || s.Valor,
+          }));
+        }
         return data;
       }
 
