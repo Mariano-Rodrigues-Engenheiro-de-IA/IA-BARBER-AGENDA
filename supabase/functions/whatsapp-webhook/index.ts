@@ -687,13 +687,14 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "buscar_agendamento",
-        description: "Busca os agendamentos de um cliente. ANTES de usar, DEVE ter o clienteId (obtido de buscar_cliente). Se retornar data: [] → cliente não tem agendamentos. Guardar o id do agendamento para cancelar ou editar.",
+        description: "Busca os agendamentos de um cliente. Pode passar clienteId OU telefone (o sistema resolve automaticamente). Se retornar data: [] → cliente não tem agendamentos. Guardar o id do agendamento para cancelar ou editar.",
         parameters: {
           type: "object",
           properties: {
-            clienteId: { type: "integer", description: "ID do cliente (obtido de buscar_cliente)" },
+            clienteId: { type: "integer", description: "ID do cliente (obtido de buscar_cliente). Opcional se telefone for informado." },
+            telefone: { type: "string", description: "Telefone do cliente. Se informado, o sistema busca o clienteId automaticamente." },
           },
-          required: ["clienteId"],
+          required: [],
         },
       },
     },
@@ -858,7 +859,34 @@ async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
       }
 
       case "buscar_agendamento": {
-        const url = `${baseUrl}/agendamentos?clienteId=${args.clienteId}`;
+        let clienteId = args.clienteId;
+
+        // Auto-resolve clienteId from telefone if not provided or if provided telefone
+        if (!clienteId && args.telefone) {
+          let tel = (args.telefone || "").replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const ddd = tel.substring(0, 2);
+          let rest = tel.substring(2);
+          if (rest.length === 8) rest = "9" + rest;
+          tel = ddd + rest;
+
+          console.log(`buscar_agendamento: resolving clienteId from telefone ${tel}`);
+          const clienteRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const clienteData = await clienteRes.json();
+          const clientes = clienteData?.data || clienteData;
+          if (Array.isArray(clientes) && clientes.length > 0) {
+            clienteId = clientes[0].id || clientes[0].Id;
+            console.log(`buscar_agendamento: resolved clienteId=${clienteId}`);
+          } else {
+            return { data: [], message: "Cliente não encontrado com esse telefone" };
+          }
+        }
+
+        if (!clienteId) {
+          return { error: "clienteId ou telefone é obrigatório" };
+        }
+
+        const url = `${baseUrl}/agendamentos?clienteId=${clienteId}`;
         console.log(`buscar_agendamento URL: ${url}`);
         const res = await fetch(url, { headers });
         const text = await res.text();
