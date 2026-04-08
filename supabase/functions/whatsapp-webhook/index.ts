@@ -929,7 +929,7 @@ function buildTrinksTools(tenant: any) {
 
 // ===================== TOOL EXECUTION =====================
 
-async function executeTrinksTool(tenant: any, toolCall: any): Promise<any> {
+async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
