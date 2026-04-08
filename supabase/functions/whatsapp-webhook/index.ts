@@ -322,7 +322,31 @@ Deno.serve(async (req) => {
         history || [],
         combinedContent,
       );
-      const aiResponse = directResponse ?? await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+
+      let aiResponse: string;
+      let agentResult: AgentResult | null = null;
+
+      if (directResponse) {
+        aiResponse = directResponse;
+      } else {
+        agentResult = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+        aiResponse = agentResult.response;
+      }
+
+      // Log to agent_logs
+      await supabase.from("agent_logs").insert({
+        tenant_id: tenant.id,
+        phone_number: phoneNumber,
+        user_message: combinedContent,
+        ai_response: aiResponse,
+        tool_calls: agentResult?.toolCalls || [],
+        errors: agentResult?.errors || [],
+        model_used: agentResult?.model || "direct_handler",
+        duration_ms: agentResult?.durationMs || 0,
+        session_blocked: agentResult?.sessionBlocked || false,
+      }).then(({ error }) => {
+        if (error) console.error("Failed to log agent execution:", error.message);
+      });
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
