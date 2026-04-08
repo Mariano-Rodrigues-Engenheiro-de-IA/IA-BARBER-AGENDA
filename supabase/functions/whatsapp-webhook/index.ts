@@ -463,13 +463,35 @@ async function callAIAgent(
 
   // Handle tool calls (up to 8 rounds for complex flows)
   let rounds = 0;
+  // SESSION STATE: track successful criar_agendamento to block duplicates
+  const sessionState = { criarAgendamentoSuccessId: null as number | null };
+
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
     messages.push(assistantMessage);
 
     for (const toolCall of assistantMessage.tool_calls) {
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
-      const toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
+
+      let toolResult: any;
+
+      // TRAVA: Se já criou um agendamento nesta sessão, bloqueia nova criação
+      if (toolCall.function.name === "criar_agendamento" && sessionState.criarAgendamentoSuccessId) {
+        console.log(`criar_agendamento BLOCKED: already created id=${sessionState.criarAgendamentoSuccessId} in this session`);
+        toolResult = {
+          id: sessionState.criarAgendamentoSuccessId,
+          message: "Agendamento já foi criado com sucesso nesta interação. NÃO crie outro. Confirme o agendamento existente ao cliente.",
+          blocked: true,
+        };
+      } else {
+        toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
+        // Track successful creation
+        if (toolCall.function.name === "criar_agendamento" && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
+          sessionState.criarAgendamentoSuccessId = toolResult.id;
+          console.log(`criar_agendamento: session locked with id=${toolResult.id}`);
+        }
+      }
+
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
       messages.push({
         role: "tool",
