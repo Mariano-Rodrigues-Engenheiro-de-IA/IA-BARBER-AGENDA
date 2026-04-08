@@ -126,11 +126,60 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Download media if present
+      let mediaBase64: string | null = null;
+      let mediaMimeType: string | null = null;
+
+      if (hasMedia && messageId) {
+        try {
+          const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+          const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+
+          // Step 1: Get media download link from UAZAPI
+          console.log(`Downloading media for messageId: ${messageId}`);
+          const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
+            headers: { "token": uazapiTokenMedia },
+          });
+          const linkData = await linkRes.json();
+          const mediaUrl = linkData?.url || linkData?.fileUrl || linkData?.link || linkData?.mediaUrl;
+          console.log("Media link response:", JSON.stringify(linkData).slice(0, 500));
+
+          if (mediaUrl) {
+            // Step 2: Download the actual media file
+            const mediaRes = await fetch(mediaUrl);
+            if (mediaRes.ok) {
+              const mediaBuffer = await mediaRes.arrayBuffer();
+              const bytes = new Uint8Array(mediaBuffer);
+              // Convert to base64
+              let binary = "";
+              for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              mediaBase64 = btoa(binary);
+              mediaMimeType = linkData?.mimetype || mediaRes.headers.get("content-type") || 
+                (isAudioMessage ? "audio/ogg" : "image/jpeg");
+              console.log(`Media downloaded: ${mediaMimeType}, size: ${mediaBase64.length} chars base64`);
+            } else {
+              console.error("Failed to download media:", mediaRes.status);
+            }
+          }
+        } catch (mediaErr) {
+          console.error("Error downloading media:", mediaErr);
+        }
+      }
+
+      // Build text content for storage
+      const storedContent = isAudioMessage 
+        ? (messageContent || "[Áudio recebido]") 
+        : isImageMessage 
+          ? (messageContent || "[Imagem recebida]") 
+          : messageContent;
+
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
         phone_number: phoneNumber,
         role: "user",
-        content: messageContent,
+        content: storedContent,
         message_id: messageId,
       });
 
@@ -142,7 +191,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(60);
 
-      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], messageContent);
+      const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], storedContent, mediaBase64, mediaMimeType);
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
