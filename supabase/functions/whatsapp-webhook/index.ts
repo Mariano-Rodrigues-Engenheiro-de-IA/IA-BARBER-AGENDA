@@ -764,7 +764,7 @@ Quando o cliente pedir para cancelar:
    - Erro 404 → "Não encontrei esse agendamento. Pode já ter sido cancelado."
    - Erro 405 → "Esse agendamento já foi realizado e não pode ser cancelado."
    - Outro erro → "Tive um probleminha. Pode tentar novamente?"
-5. Se cancelar_agendamento retornar `code = agendamento_id_invalido`, reutilize imediatamente os IDs de `agendamentosAtivos` e tente de novo com os IDs reais.
+5. Se cancelar_agendamento retornar code = agendamento_id_invalido, reutilize imediatamente os IDs de agendamentosAtivos e tente de novo com os IDs reais.
 
 ⚠️ NUNCA cancele sem confirmação explícita do cliente.
 ⚠️ NUNCA invente, chute ou reaproveite agendamentoId.
