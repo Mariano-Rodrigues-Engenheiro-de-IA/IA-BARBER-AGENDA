@@ -322,7 +322,31 @@ Deno.serve(async (req) => {
         history || [],
         combinedContent,
       );
-      const aiResponse = directResponse ?? await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+
+      let aiResponse: string;
+      let agentResult: AgentResult | null = null;
+
+      if (directResponse) {
+        aiResponse = directResponse;
+      } else {
+        agentResult = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+        aiResponse = agentResult.response;
+      }
+
+      // Log to agent_logs
+      await supabase.from("agent_logs").insert({
+        tenant_id: tenant.id,
+        phone_number: phoneNumber,
+        user_message: combinedContent,
+        ai_response: aiResponse,
+        tool_calls: agentResult?.toolCalls || [],
+        errors: agentResult?.errors || [],
+        model_used: agentResult?.model || "direct_handler",
+        duration_ms: agentResult?.durationMs || 0,
+        session_blocked: agentResult?.sessionBlocked || false,
+      }).then(({ error }) => {
+        if (error) console.error("Failed to log agent execution:", error.message);
+      });
 
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
@@ -380,6 +404,15 @@ Deno.serve(async (req) => {
 
 // ===================== AI AGENT =====================
 
+interface AgentResult {
+  response: string;
+  toolCalls: { name: string; args: any; result: any; blocked?: boolean }[];
+  errors: string[];
+  model: string;
+  durationMs: number;
+  sessionBlocked: boolean;
+}
+
 async function callAIAgent(
   tenant: any,
   phoneNumber: string,
@@ -387,7 +420,12 @@ async function callAIAgent(
   userMessage: string,
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
-): Promise<string> {
+): Promise<AgentResult> {
+  const startTime = Date.now();
+  const logToolCalls: AgentResult["toolCalls"] = [];
+  const logErrors: string[] = [];
+  let sessionBlocked = false;
+  const modelUsed = "google/gemini-2.5-flash";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -455,7 +493,8 @@ async function callAIAgent(
   if (!response.ok) {
     const errText = await response.text();
     console.error("AI gateway error:", response.status, errText);
-    return "Desculpe, estou com dificuldades técnicas no momento. Por favor, tente novamente em instantes.";
+    logErrors.push(`AI gateway error: ${response.status} ${errText.slice(0, 200)}`);
+    return { response: "Desculpe, estou com dificuldades técnicas no momento. Por favor, tente novamente em instantes.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
   }
 
   let result = await response.json();
@@ -474,6 +513,7 @@ async function callAIAgent(
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
+      let wasBlocked = false;
 
       // TRAVA: Se já criou um agendamento nesta sessão, bloqueia nova criação
       if (toolCall.function.name === "criar_agendamento" && sessionState.criarAgendamentoSuccessId) {
@@ -483,6 +523,8 @@ async function callAIAgent(
           message: "Agendamento já foi criado com sucesso nesta interação. NÃO crie outro. Confirme o agendamento existente ao cliente.",
           blocked: true,
         };
+        wasBlocked = true;
+        sessionBlocked = true;
       } else {
         toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
         // Track successful creation
@@ -490,6 +532,15 @@ async function callAIAgent(
           sessionState.criarAgendamentoSuccessId = toolResult.id;
           console.log(`criar_agendamento: session locked with id=${toolResult.id}`);
         }
+      }
+
+      // Log this tool call
+      let parsedArgs: any;
+      try { parsedArgs = JSON.parse(toolCall.function.arguments); } catch { parsedArgs = toolCall.function.arguments; }
+      logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: wasBlocked });
+
+      if (toolResult?.error) {
+        logErrors.push(`Tool ${toolCall.function.name}: ${JSON.stringify(toolResult.error).slice(0, 200)}`);
       }
 
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
@@ -517,14 +568,16 @@ async function callAIAgent(
     if (!response.ok) {
       const errText = await response.text();
       console.error("AI gateway error (tool round):", response.status, errText);
-      return "Desculpe, tive um problema ao consultar o sistema. Tente novamente.";
+      logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
+      return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
     result = await response.json();
     assistantMessage = result.choices?.[0]?.message;
   }
 
-  return assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+  const finalResponse = assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+  return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
 // ===================== MESSAGE SPLITTING =====================
