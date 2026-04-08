@@ -381,7 +381,7 @@ async function callAIAgent(
 
     for (const toolCall of assistantMessage.tool_calls) {
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
-      const toolResult = await executeTrinksTool(tenant, toolCall);
+      const toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
       messages.push({
         role: "tool",
