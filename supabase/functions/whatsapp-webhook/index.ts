@@ -71,8 +71,8 @@ Deno.serve(async (req) => {
         });
       }
 
-      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id;
-      console.log(`Message from ${phoneNumber}: ${messageContent}`);
+      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
+      console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "msg.key:", JSON.stringify(msg.key || {}));
 
       const { data: tenants, error: tenantError } = await supabase
         .from("tenants")
@@ -135,33 +135,104 @@ Deno.serve(async (req) => {
           const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
           const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-          // Step 1: Get media download link from UAZAPI
           console.log(`Downloading media for messageId: ${messageId}`);
-          const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
-            headers: { "token": uazapiTokenMedia },
-          });
-          const linkData = await linkRes.json();
-          const mediaUrl = linkData?.url || linkData?.fileUrl || linkData?.link || linkData?.mediaUrl;
-          console.log("Media link response:", JSON.stringify(linkData).slice(0, 500));
 
-          if (mediaUrl) {
-            // Step 2: Download the actual media file
-            const mediaRes = await fetch(mediaUrl);
-            if (mediaRes.ok) {
-              const mediaBuffer = await mediaRes.arrayBuffer();
-              const bytes = new Uint8Array(mediaBuffer);
-              // Convert to base64
-              let binary = "";
-              for (let i = 0; i < bytes.length; i++) {
-                binary += String.fromCharCode(bytes[i]);
+          // Try getBase64 first (returns base64 directly, most reliable)
+          let gotMedia = false;
+          try {
+            const b64Res = await fetch(`${uazapiUrlMedia}/getBase64/${messageId}`, {
+              headers: { "token": uazapiTokenMedia },
+            });
+            const b64Data = await b64Res.json();
+            console.log("getBase64 response status:", b64Res.status, "keys:", Object.keys(b64Data || {}));
+            const base64Content = b64Data?.base64 || b64Data?.data || b64Data?.file;
+            if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
+              // base64 may come as data:mimetype;base64,XXXX or just raw base64
+              if (base64Content.startsWith("data:")) {
+                const [header, data] = base64Content.split(",", 2);
+                mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                mediaBase64 = data;
+              } else {
+                mediaBase64 = base64Content;
+                mediaMimeType = b64Data?.mimetype || (isAudioMessage ? "audio/ogg" : "image/jpeg");
               }
-              mediaBase64 = btoa(binary);
-              mediaMimeType = linkData?.mimetype || mediaRes.headers.get("content-type") || 
-                (isAudioMessage ? "audio/ogg" : "image/jpeg");
-              console.log(`Media downloaded: ${mediaMimeType}, size: ${mediaBase64.length} chars base64`);
-            } else {
-              console.error("Failed to download media:", mediaRes.status);
+              gotMedia = true;
+              console.log(`Media via getBase64: ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
             }
+          } catch (e) {
+            console.log("getBase64 failed:", e);
+          }
+
+          // Fallback: try getLink + download
+          if (!gotMedia) {
+            try {
+              const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
+                headers: { "token": uazapiTokenMedia },
+              });
+              const linkData = await linkRes.json();
+              const mediaUrl = linkData?.url || linkData?.fileUrl || linkData?.link || linkData?.mediaUrl;
+              console.log("getLink response:", JSON.stringify(linkData).slice(0, 500));
+
+              if (mediaUrl) {
+                const mediaRes = await fetch(mediaUrl);
+                if (mediaRes.ok) {
+                  const mediaBuffer = await mediaRes.arrayBuffer();
+                  const bytes = new Uint8Array(mediaBuffer);
+                  let binary = "";
+                  for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                  }
+                  mediaBase64 = btoa(binary);
+                  mediaMimeType = linkData?.mimetype || mediaRes.headers.get("content-type") || 
+                    (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                  gotMedia = true;
+                  console.log(`Media via getLink: ${mediaMimeType}, size: ${mediaBase64.length} chars`);
+                }
+              }
+            } catch (e) {
+              console.log("getLink failed:", e);
+            }
+          }
+
+          // Fallback: try downloadMedia
+          if (!gotMedia) {
+            try {
+              const dlRes = await fetch(`${uazapiUrlMedia}/downloadMedia/${messageId}`, {
+                headers: { "token": uazapiTokenMedia },
+              });
+              if (dlRes.ok) {
+                const ct = dlRes.headers.get("content-type") || "";
+                if (ct.includes("json")) {
+                  const dlData = await dlRes.json();
+                  console.log("downloadMedia JSON response:", Object.keys(dlData || {}));
+                  const base64Content = dlData?.base64 || dlData?.data || dlData?.file;
+                  if (base64Content && base64Content.length > 100) {
+                    mediaBase64 = base64Content;
+                    mediaMimeType = dlData?.mimetype || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                    gotMedia = true;
+                  }
+                } else {
+                  const buf = await dlRes.arrayBuffer();
+                  const bytes = new Uint8Array(buf);
+                  let binary = "";
+                  for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                  }
+                  mediaBase64 = btoa(binary);
+                  mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                  gotMedia = true;
+                }
+                if (gotMedia) console.log(`Media via downloadMedia: ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
+              } else {
+                console.log("downloadMedia failed:", dlRes.status);
+              }
+            } catch (e) {
+              console.log("downloadMedia error:", e);
+            }
+          }
+
+          if (!gotMedia) {
+            console.error("All media download methods failed for messageId:", messageId);
           }
         } catch (mediaErr) {
           console.error("Error downloading media:", mediaErr);
@@ -335,13 +406,14 @@ async function callAIAgent(
     const contentParts: any[] = [];
 
     if (mediaMimeType.startsWith("audio/")) {
+      // Use image_url style data URL which works universally with Lovable AI gateway
       contentParts.push({
-        type: "input_audio",
-        input_audio: { data: mediaBase64, format: mediaMimeType.includes("ogg") ? "ogg" : mediaMimeType.includes("mp3") ? "mp3" : "wav" },
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
       contentParts.push({
         type: "text",
-        text: userMessage || "O cliente enviou um áudio. Transcreva e responda ao conteúdo.",
+        text: userMessage || "O cliente enviou um áudio. Transcreva o que foi dito e responda ao conteúdo. NÃO peça para o cliente repetir em texto.",
       });
     } else if (mediaMimeType.startsWith("image/")) {
       contentParts.push({
