@@ -388,8 +388,17 @@ function buildSystemPrompt(tenant: any): string {
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
+  const now = new Date();
+  const dataAtual = now.toISOString().split("T")[0];
+  const horaAtual = now.toISOString().split("T")[1].substring(0, 5);
+  const diasSemana = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+  const diaSemana = diasSemana[now.getDay()];
+
   return `Você é um assistente virtual de agendamento e atendimento do ${tenant.name}.
 Seu objetivo é ajudar clientes a agendar serviços, consultar horários disponíveis e responder dúvidas.
+
+DATA E HORA ATUAL: ${dataAtual} (${diaSemana}), ${horaAtual} (horário UTC, Brasília = UTC-3).
+IMPORTANTE: Ao usar ferramentas de agenda, use SEMPRE datas no formato YYYY-MM-DD com o ANO CORRETO (${now.getFullYear()}).
 
 REGRAS:
 - Seja cordial, objetivo e profissional.
@@ -402,6 +411,9 @@ REGRAS:
 - Se não puder atender, sugira que o cliente entre em contato diretamente com o estabelecimento.
 - NUNCA invente informações sobre horários ou serviços. Sempre consulte as ferramentas.
 - Mantenha respostas curtas e adequadas para WhatsApp (evite textos muito longos).
+- Quando o cliente informar o telefone, tente buscar pelo número SEM o código do país (ex: para 5561983012868, busque por 61983012868).
+- Se buscar_cliente retornar vazio, cadastre o cliente com criar_cliente e continue o fluxo.
+- Após ter serviço, profissional, cliente e horário confirmados, use criar_agendamento imediatamente. NÃO peça confirmação extra desnecessária.
 
 ${customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : ""}
 ${knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : ""}`;
