@@ -510,7 +510,7 @@ function buildTrinksTools(tenant: any) {
             servicoId: { type: "integer", description: "ID do serviço" },
             clienteId: { type: "integer", description: "ID do cliente" },
             profissionalId: { type: "integer", description: "ID do profissional" },
-            dataHoraInicio: { type: "string", description: "Data e hora no formato YYYY-MM-DD HH:MM" },
+            dataHoraInicio: { type: "string", description: "Data e hora no formato ISO 8601: YYYY-MM-DDTHH:MM:SS (ex: 2026-04-08T16:00:00)" },
             duracaoEmMinutos: { type: "integer", description: "Duração em minutos" },
             valor: { type: "number", description: "Valor do serviço" },
             observacoes: { type: "string", description: "Observações opcionais" },
