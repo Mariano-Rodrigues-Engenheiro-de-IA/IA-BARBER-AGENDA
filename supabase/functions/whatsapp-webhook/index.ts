@@ -751,17 +751,23 @@ Execute criar_agendamento com todos os IDs obtidos das ferramentas.
 Quando o cliente pedir para cancelar:
 
 1. Execute buscar_cliente para obter o clienteId
-2. Execute buscar_agendamento com o clienteId
+2. Execute buscar_agendamento com o clienteId NESSA INTERAÇÃO
    - Sem agendamento ativo → "Não encontrei agendamento no seu nome."
    - Com agendamento → mostre e pergunte: "É esse que quer cancelar?"
    - Com múltiplos → liste e pergunte qual
-3. Após confirmação → execute cancelar_agendamento com agendamentoId e motivo
+3. Se o cliente responder "os 2", "os dois", "ambos" ou "todos":
+   - Execute buscar_agendamento NOVAMENTE nessa interação
+   - Use APENAS os IDs reais retornados agora
+   - Execute cancelar_agendamento uma vez para cada ID real
+4. Para cancelamento unitário, após confirmação → execute cancelar_agendamento com agendamentoId e motivo
    - Sucesso → "✅ Cancelado! Se precisar remarcar, é só falar."
    - Erro 404 → "Não encontrei esse agendamento. Pode já ter sido cancelado."
    - Erro 405 → "Esse agendamento já foi realizado e não pode ser cancelado."
    - Outro erro → "Tive um probleminha. Pode tentar novamente?"
+5. Se cancelar_agendamento retornar `code = agendamento_id_invalido`, reutilize imediatamente os IDs de `agendamentosAtivos` e tente de novo com os IDs reais.
 
 ⚠️ NUNCA cancele sem confirmação explícita do cliente.
+⚠️ NUNCA invente, chute ou reaproveite agendamentoId.
 
 ------------------------------------------
 
@@ -930,11 +936,11 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "cancelar_agendamento",
-        description: "Cancela um agendamento. ANTES de usar, DEVE ter: agendamentoId (de buscar_agendamento). Envie agendamentoId e motivo.",
+        description: "Cancela um agendamento. Use SOMENTE agendamentoId real vindo de buscar_agendamento na interação atual. Se o cliente pedir 'os 2', 'ambos' ou 'todos', chame esta ferramenta uma vez para cada ID real. Se a ferramenta retornar code='agendamento_id_invalido', reutilize imediatamente os IDs de agendamentosAtivos.",
         parameters: {
           type: "object",
           properties: {
-            agendamentoId: { type: "integer", description: "ID do agendamento (obtido de buscar_agendamento)" },
+            agendamentoId: { type: "integer", description: "ID real do agendamento (obtido de buscar_agendamento na interação atual)" },
             motivo: { type: "string", description: "Motivo do cancelamento" },
           },
           required: ["agendamentoId", "motivo"],
@@ -1254,11 +1260,30 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             const ownerId = cliList[0].id || cliList[0].Id;
             const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
             const agData = await agRes.json();
-            const agList = agData?.data || [];
-            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            const agList = Array.isArray(agData?.data) ? agData.data : [];
+            const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+            const activeAgendamentos = agList
+              .filter((a: any) => {
+                const statusName = String(a.status?.nome || "").toLowerCase();
+                return activeStatuses.some((status) => statusName === status || statusName.includes(status));
+              })
+              .map((a: any) => ({
+                id: a.id,
+                status: a.status?.nome,
+                servico: a.servico?.nome,
+                profissional: a.profissional?.nome,
+                clienteId: a.cliente?.id,
+                dataHoraInicio: a.dataHoraInicio,
+              }));
+            const owns = activeAgendamentos.some((a: any) => a.id === args.agendamentoId);
             if (!owns) {
               console.log(`cancelar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
-              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+              return {
+                code: "agendamento_id_invalido",
+                error: "O agendamento informado não pertence a você.",
+                message: "Use um dos IDs reais de agendamentosAtivos ou execute buscar_agendamento novamente nesta interação.",
+                agendamentosAtivos: activeAgendamentos,
+              };
             }
           }
         }
@@ -1298,11 +1323,30 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             const ownerId = cliList[0].id || cliList[0].Id;
             const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
             const agData = await agRes.json();
-            const agList = agData?.data || [];
-            const owns = Array.isArray(agList) && agList.some((a: any) => a.id === args.agendamentoId);
+            const agList = Array.isArray(agData?.data) ? agData.data : [];
+            const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+            const activeAgendamentos = agList
+              .filter((a: any) => {
+                const statusName = String(a.status?.nome || "").toLowerCase();
+                return activeStatuses.some((status) => statusName === status || statusName.includes(status));
+              })
+              .map((a: any) => ({
+                id: a.id,
+                status: a.status?.nome,
+                servico: a.servico?.nome,
+                profissional: a.profissional?.nome,
+                clienteId: a.cliente?.id,
+                dataHoraInicio: a.dataHoraInicio,
+              }));
+            const owns = activeAgendamentos.some((a: any) => a.id === args.agendamentoId);
             if (!owns) {
               console.log(`editar_agendamento: ownership check FAILED for agendamentoId=${args.agendamentoId}`);
-              return { error: "O agendamento informado não pertence a você. Use buscar_agendamento para obter o ID correto." };
+              return {
+                code: "agendamento_id_invalido",
+                error: "O agendamento informado não pertence a você.",
+                message: "Use um dos IDs reais de agendamentosAtivos ou execute buscar_agendamento novamente nesta interação.",
+                agendamentosAtivos: activeAgendamentos,
+              };
             }
           }
         }
