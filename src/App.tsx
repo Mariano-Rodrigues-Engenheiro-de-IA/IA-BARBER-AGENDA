@@ -10,6 +10,7 @@ import DashboardPage from "@/pages/Dashboard";
 import TenantsPage from "@/pages/Tenants";
 import TenantFormPage from "@/pages/TenantForm";
 import SettingsPage from "@/pages/Settings";
+import AgentLogsPage from "@/pages/AgentLogs";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
