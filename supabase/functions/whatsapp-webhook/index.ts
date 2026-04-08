@@ -239,7 +239,9 @@ async function callAIAgent(
   tenant: any,
   phoneNumber: string,
   history: { role: string; content: string }[],
-  userMessage: string
+  userMessage: string,
+  mediaBase64?: string | null,
+  mediaMimeType?: string | null,
 ): Promise<string> {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
@@ -250,8 +252,41 @@ async function callAIAgent(
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 
+  // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
-  if (!(lastMsg?.role === "user" && lastMsg?.content === userMessage)) {
+  const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
+
+  if (mediaBase64 && mediaMimeType) {
+    // Multimodal message with media
+    const contentParts: any[] = [];
+
+    if (mediaMimeType.startsWith("audio/")) {
+      contentParts.push({
+        type: "input_audio",
+        input_audio: { data: mediaBase64, format: mediaMimeType.includes("ogg") ? "ogg" : mediaMimeType.includes("mp3") ? "mp3" : "wav" },
+      });
+      contentParts.push({
+        type: "text",
+        text: userMessage || "O cliente enviou um áudio. Transcreva e responda ao conteúdo.",
+      });
+    } else if (mediaMimeType.startsWith("image/")) {
+      contentParts.push({
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
+      });
+      contentParts.push({
+        type: "text",
+        text: userMessage || "O cliente enviou uma imagem. Descreva o que vê e responda adequadamente.",
+      });
+    }
+
+    if (alreadyHasUserMsg) {
+      // Replace last message with multimodal version
+      messages[messages.length - 1] = { role: "user", content: contentParts };
+    } else {
+      messages.push({ role: "user", content: contentParts });
+    }
+  } else if (!alreadyHasUserMsg) {
     messages.push({ role: "user", content: userMessage });
   }
 
