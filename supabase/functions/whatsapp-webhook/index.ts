@@ -228,13 +228,16 @@ Deno.serve(async (req) => {
       const combinedContent = allPending?.map((m: any) => m.content).join("\n") || storedContent;
       console.log(`Debounce: processing ${allPending?.length || 1} messages combined for ${phoneNumber}`);
 
-      const { data: history } = await supabase
+      // Fetch the 60 most recent messages, then reverse so oldest is first for the AI context
+      const { data: historyRaw } = await supabase
         .from("chat_messages")
         .select("role, content")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
-        .order("created_at", { ascending: true })
+        .eq("processed", true)
+        .order("created_at", { ascending: false })
         .limit(60);
+      const history = (historyRaw || []).reverse();
 
       const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
 
