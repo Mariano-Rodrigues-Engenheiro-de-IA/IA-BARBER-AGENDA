@@ -55,8 +55,8 @@ Deno.serve(async (req) => {
       }
 
       // Extract phone number from JID (remove @s.whatsapp.net)
-      const phoneNumber = remoteJid.replace("@s.whatsapp.net", "").replace("@c.us", "");
-      const messageId = message.key?.id || message.id || data.key?.id;
+      const phoneNumber = String(remoteJid).replace("@s.whatsapp.net", "").replace("@c.us", "");
+      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id;
 
       console.log(`Message from ${phoneNumber}: ${messageContent}`);
 
