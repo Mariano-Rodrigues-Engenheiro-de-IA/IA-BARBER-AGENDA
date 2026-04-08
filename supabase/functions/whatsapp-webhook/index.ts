@@ -34,14 +34,27 @@ Deno.serve(async (req) => {
         msg?.message?.extendedTextMessage?.text ||
         payload.text || payload.body;
 
-      // Get sender phone number - UAZAPI uses 'phone' or 'from' or remoteJid
-      const remoteJid = payload.phone || payload.from || msg.remoteJid || msg.key?.remoteJid || payload.remoteJid;
-      const fromMe = payload.fromMe ?? msg.fromMe ?? msg.key?.fromMe;
-      
-      console.log("Parsed - remoteJid:", remoteJid, "fromMe:", fromMe, "content:", messageContent?.slice(0, 100));
+      const remoteJid = extractRemoteJid(payload, msg);
+      const phoneMatch = extractPhoneNumber(payload, msg);
+      const phoneNumber = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
+      const fromMe = payload.fromMe ?? msg.fromMe ?? msg.key?.fromMe ?? payload.chat?.lastMessage_fromMe;
+      const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
+
+      console.log(
+        "Parsed - remoteJid:",
+        remoteJid,
+        "phoneNumber:",
+        phoneNumber,
+        "phoneSource:",
+        phoneMatch?.source,
+        "fromMe:",
+        fromMe,
+        "content:",
+        messageContent?.slice(0, 100)
+      );
 
       // Skip messages sent by us or group messages
-      if (fromMe || !remoteJid || String(remoteJid).endsWith("@g.us")) {
+      if (fromMe || !phoneNumber || isGroupMessage) {
         return new Response(JSON.stringify({ status: "skipped" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -54,8 +67,6 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Extract phone number from JID (remove @s.whatsapp.net)
-      const phoneNumber = String(remoteJid).replace("@s.whatsapp.net", "").replace("@c.us", "");
       const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id;
 
       console.log(`Message from ${phoneNumber}: ${messageContent}`);
@@ -245,6 +256,124 @@ async function callAIAgent(
   }
 
   return assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+}
+
+function extractRemoteJid(payload: any, msg: any): string | undefined {
+  const candidates = [
+    payload.phone,
+    payload.from,
+    payload.remoteJid,
+    payload.sender,
+    payload.senderId,
+    payload.chat?.remoteJid,
+    payload.chat?.from,
+    payload.chat?.jid,
+    payload.data?.remoteJid,
+    msg.remoteJid,
+    msg.from,
+    msg.phone,
+    msg.key?.remoteJid,
+    msg.key?.participant,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function normalizePhoneNumber(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  const raw = String(value).trim();
+  if (!raw || /^https?:\/\//i.test(raw)) return null;
+
+  const jidMatch = raw.match(/(\d{10,15})@(s\.whatsapp\.net|c\.us)$/i);
+  if (jidMatch) return jidMatch[1];
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length >= 10 && digits.length <= 15) {
+    return digits;
+  }
+
+  return null;
+}
+
+function extractPhoneNumber(payload: any, msg: any): { phone: string; source: string } | null {
+  const directCandidates: Array<[string, unknown]> = [
+    ["payload.phone", payload.phone],
+    ["payload.from", payload.from],
+    ["payload.remoteJid", payload.remoteJid],
+    ["payload.sender", payload.sender],
+    ["payload.senderId", payload.senderId],
+    ["payload.chat.phone", payload.chat?.phone],
+    ["payload.chat.number", payload.chat?.number],
+    ["payload.chat.whatsapp", payload.chat?.whatsapp],
+    ["payload.chat.whatsappNumber", payload.chat?.whatsappNumber],
+    ["payload.chat.phoneNumber", payload.chat?.phoneNumber],
+    ["payload.chat.contactPhone", payload.chat?.contactPhone],
+    ["payload.chat.customerPhone", payload.chat?.customerPhone],
+    ["payload.chat.lead_phone", payload.chat?.lead_phone],
+    ["payload.chat.leadPhone", payload.chat?.leadPhone],
+    ["payload.chat.lead_whatsapp", payload.chat?.lead_whatsapp],
+    ["payload.data.phone", payload.data?.phone],
+    ["msg.phone", msg.phone],
+    ["msg.from", msg.from],
+    ["msg.remoteJid", msg.remoteJid],
+    ["msg.key.remoteJid", msg.key?.remoteJid],
+  ];
+
+  for (const [source, candidate] of directCandidates) {
+    const normalized = normalizePhoneNumber(candidate);
+    if (normalized) {
+      return { phone: normalized, source };
+    }
+  }
+
+  const keyPattern = /(phone|number|whatsapp|remotejid|jid|from|sender|contact|lead)/i;
+  const visited = new WeakSet<object>();
+  const queue: Array<{ path: string; value: unknown }> = [
+    { path: "payload", value: payload },
+    { path: "msg", value: msg },
+  ];
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current?.value || typeof current.value !== "object") continue;
+
+    const objectValue = current.value as Record<string, unknown>;
+    if (visited.has(objectValue)) continue;
+    visited.add(objectValue);
+
+    const entries = Object.entries(objectValue).sort(([a], [b]) => {
+      return Number(keyPattern.test(b)) - Number(keyPattern.test(a));
+    });
+
+    for (const [key, value] of entries) {
+      const path = `${current.path}.${key}`;
+
+      if (value && typeof value === "object") {
+        queue.push({ path, value });
+        continue;
+      }
+
+      const normalized = normalizePhoneNumber(value);
+      if (!normalized) continue;
+
+      if (keyPattern.test(key)) {
+        return { phone: normalized, source: path };
+      }
+
+      if (typeof value === "string" && /@(s\.whatsapp\.net|c\.us)$/i.test(value)) {
+        return { phone: normalized, source: path };
+      }
+    }
+  }
+
+  return null;
 }
 
 function buildSystemPrompt(tenant: any): string {
