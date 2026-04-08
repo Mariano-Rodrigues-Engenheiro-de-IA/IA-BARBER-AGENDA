@@ -131,7 +131,7 @@ Deno.serve(async (req) => {
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
         .order("created_at", { ascending: true })
-        .limit(30);
+        .limit(60);
 
       const aiResponse = await callAIAgent(tenant, phoneNumber, history || [], messageContent);
 
