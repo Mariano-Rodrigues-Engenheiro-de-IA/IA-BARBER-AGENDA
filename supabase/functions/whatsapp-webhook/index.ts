@@ -1413,11 +1413,9 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           const parsed = JSON.parse(text);
           
           // Filter out past times when querying today
-          const now = new Date();
-          const brasiliaOffset = -3 * 60;
-          const brasiliaTime = new Date(now.getTime() + (now.getTimezoneOffset() + brasiliaOffset) * 60000);
-          const todayStr = `${brasiliaTime.getFullYear()}-${String(brasiliaTime.getMonth() + 1).padStart(2, '0')}-${String(brasiliaTime.getDate()).padStart(2, '0')}`;
-          const currentHHMM = `${String(brasiliaTime.getHours()).padStart(2, '0')}:${String(brasiliaTime.getMinutes()).padStart(2, '0')}`;
+          const br = getBrasiliaDate();
+          const todayStr = br.todayDate;
+          const currentHHMM = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}`;
           
           if (args.data === todayStr) {
             const profissionais = parsed?.data || parsed;
