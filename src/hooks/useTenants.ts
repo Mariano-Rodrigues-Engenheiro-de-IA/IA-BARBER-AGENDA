@@ -6,13 +6,15 @@ export type Tenant = Tables<"tenants">;
 export type TenantInsert = TablesInsert<"tenants">;
 export type TenantUpdate = TablesUpdate<"tenants">;
 
+const TENANT_LIST_COLUMNS = "id,name,slug,phone,email,address,status,trinks_api_key,trinks_establishment_id,uazapi_token,uazapi_url,whatsapp_number,created_at,updated_at" as const;
+
 export function useTenants() {
   return useQuery({
     queryKey: ["tenants"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("tenants")
-        .select("*")
+        .select(TENANT_LIST_COLUMNS)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data as Tenant[];
