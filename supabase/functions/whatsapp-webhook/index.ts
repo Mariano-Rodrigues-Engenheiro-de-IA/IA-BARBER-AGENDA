@@ -812,35 +812,65 @@ function extractPhoneNumber(payload: any, msg: any): { phone: string; source: st
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string): string {
+function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate: string; year: number; month: number; day: number; hours: number; minutes: number } {
   const now = new Date();
-  // Brasília = UTC-3
-  const brTime = new Date(now.getTime() - 3 * 60 * 60 * 1000);
-  const dateComplete = brTime.toISOString().replace("Z", "").split(".")[0];
+  // Use Intl to get accurate Brasília time (handles DST automatically)
+  const brFormatter = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = brFormatter.formatToParts(now);
+  const get = (type: string) => parts.find(p => p.type === type)?.value || "0";
+  const year = parseInt(get("year"));
+  const month = parseInt(get("month"));
+  const day = parseInt(get("day"));
+  const hours = parseInt(get("hour"));
+  const minutes = parseInt(get("minute"));
+  const seconds = parseInt(get("second"));
+
+  const dateComplete = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  const todayDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  // Calculate day of week from the actual Brasília date
+  const brDate = new Date(Date.UTC(year, month - 1, day));
+  const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
+  const todayName = dayNames[brDate.getUTCDay()];
+
+  return { dateComplete, todayName, todayDate, year, month, day, hours, minutes };
+}
+
+function buildSystemPrompt(tenant: any, phoneNumber: string): string {
+  const br = getBrasiliaDate();
+  const dateComplete = br.dateComplete;
+  const todayName = br.todayName;
+  const todayDate = br.todayDate;
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // Pre-calculate day-of-week name and next 7 days map
-  const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
-  const todayDow = brTime.getUTCDay();
-  const todayName = dayNames[todayDow];
-  
   // Build a map: "segunda" -> "2026-04-13", "terça" -> "2026-04-14", etc.
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const nextDaysMap: string[] = [];
   for (let i = 1; i <= 7; i++) {
-    const futureDate = new Date(brTime.getTime() + i * 24 * 60 * 60 * 1000);
+    const futureDate = new Date(Date.UTC(br.year, br.month - 1, br.day + i));
     const dow = futureDate.getUTCDay();
-    const dateStr = futureDate.toISOString().split("T")[0];
+    const dateStr = `${futureDate.getUTCFullYear()}-${String(futureDate.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDate.getUTCDate()).padStart(2, '0')}`;
     nextDaysMap.push(`- ${shortDayNames[dow]} → ${dateStr}`);
   }
   const nextDaysReference = nextDaysMap.join("\n");
 
-  // Format phone for display
   const telefone = phoneNumber;
 
-  return `🗓️ DATA E HORA ATUAL: ${dateComplete}
-📅 HOJE É: ${todayName}
+  console.log(`buildSystemPrompt: Brasília date=${todayDate} time=${dateComplete} day=${todayName}`);
+
+  return `🚨🚨🚨 REGRA INVIOLÁVEL — DATA DE HOJE 🚨🚨🚨
+A data de HOJE é EXATAMENTE: ${todayDate} (${todayName})
+Hora atual em Brasília: ${dateComplete}
+NUNCA diga que hoje é outro dia. Se o histórico mencionar outra data, IGNORE — use APENAS esta.
+
+🗓️ DATA E HORA ATUAL: ${dateComplete}
+📅 HOJE É: ${todayName} (${todayDate})
 📞 TELEFONE DO CLIENTE: ${telefone}
 
 ------------------------------------------
