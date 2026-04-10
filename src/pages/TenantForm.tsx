@@ -176,6 +176,7 @@ export default function TenantFormPage() {
         <Tabs defaultValue="general" className="space-y-6">
           <TabsList className="bg-muted">
             <TabsTrigger value="general">Geral</TabsTrigger>
+            <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
             <TabsTrigger value="api">Integração API</TabsTrigger>
             <TabsTrigger value="agent">Agente IA</TabsTrigger>
           </TabsList>
