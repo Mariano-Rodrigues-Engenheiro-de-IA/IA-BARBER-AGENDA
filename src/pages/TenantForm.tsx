@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
@@ -89,6 +89,8 @@ export default function TenantFormPage() {
     onebeleza_token: "",
     onebeleza_celular: "",
     booking_link: "",
+    uazapi_url: "",
+    uazapi_token: "",
     agent_system_prompt: "",
     agent_knowledge_base: "",
   });
@@ -109,6 +111,8 @@ export default function TenantFormPage() {
         onebeleza_token: (existing as any).onebeleza_token ?? "",
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
         booking_link: (existing as any).booking_link ?? "",
+        uazapi_url: existing.uazapi_url ?? "",
+        uazapi_token: existing.uazapi_token ?? "",
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
       });
