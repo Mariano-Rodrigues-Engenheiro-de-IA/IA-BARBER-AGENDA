@@ -78,7 +78,6 @@ Deno.serve(async (req) => {
       const { data: tenants, error: tenantError } = await supabase
         .from("tenants")
         .select("*")
-        .not("uazapi_token", "is", null)
         .eq("status", "active");
 
       if (tenantError || !tenants?.length) {
