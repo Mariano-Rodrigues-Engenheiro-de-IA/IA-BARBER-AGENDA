@@ -1,60 +1,111 @@
 
-Diagnóstico
 
-- Eu conferi os logs do webhook e o agendamento duplicado não veio de um webhook repetido.
-- O que aconteceu foi isto:
-  - 1ª criação: a IA chamou `criar_agendamento` logo depois que o cliente enviou só o horário `15:40` e criou o agendamento `485518287`.
-  - 2ª criação: depois que o cliente respondeu `Sim`, a IA chamou `criar_agendamento` de novo e criou o `485518538`.
-- Então a causa raiz é: hoje a regra de “esperar confirmação final” está só no prompt. No código, a ferramenta `criar_agendamento` ainda faz o POST sem uma trava real de confirmação e sem deduplicação.
+# Arquitetura Multi-API: Trinks + One Beleza + Sem API
 
-Plano de correção
+## Resumo
 
-1. Endurecer `criar_agendamento` no código
-- Antes de criar, validar no histórico recente se a última mensagem do cliente é uma confirmação explícita (`sim`, `ok`, `pode`, `isso`, etc.).
-- Validar também se a assistente tinha acabado de mandar uma mensagem de confirmação do resumo do agendamento.
-- Se não estiver nesse estado, a ferramenta não cria e devolve um bloqueio claro para a IA pedir confirmação em vez de agendar.
+Transformar o webhook de um sistema hardcoded para Trinks em uma arquitetura plugável onde cada tenant escolhe seu provedor de agendamento: **Trinks**, **One Beleza**, ou **Nenhum** (link direto no WhatsApp).
 
-2. Adicionar trava anti-duplicidade no servidor
-- Antes do POST, buscar os agendamentos ativos do cliente.
-- Se já existir um agendamento ativo equivalente, não criar outro.
-- Considerar como duplicado pelo menos: mesmo `clienteId`, mesmo `profissionalId` e mesma `dataHoraInicio` (e aproveitar `servicoId` quando vier consistente).
-- Nesse caso, retornar o `id` já existente como sucesso deduplicado, para a IA não tentar recriar.
+## O Que Muda
 
-3. Aproveitar o ajuste no mesmo ponto crítico
-- Em `criar_agendamento`, resolver o `clienteId` sempre pelo telefone da conversa, sem confiar no ID enviado pelo modelo.
-- Normalizar `dataHoraInicio` antes de comparar/criar, para a checagem de duplicidade não falhar por diferença de formato.
+### 1. Banco de Dados
 
-4. Corrigir um ponto de contexto que aumenta risco de erro
-- Ajustar a leitura do histórico para realmente usar as mensagens mais recentes da conversa, não as mais antigas.
-- Isso reduz deriva de contexto e ajuda a IA a respeitar melhor o estado atual da confirmação.
+Adicionar coluna `api_provider` na tabela `tenants`:
 
-Arquivos impactados
+- Valores: `trinks`, `onebeleza`, `none` (default: `trinks`)
+- Adicionar campos para One Beleza: `onebeleza_token`, `onebeleza_celular` (celular fixo usado nas chamadas API)
+- O campo `trinks_api_key` e `trinks_establishment_id` continuam existindo, usados apenas quando `api_provider = 'trinks'`
 
-- `supabase/functions/whatsapp-webhook/index.ts`
-- Possivelmente uma migration apenas se eu decidir adicionar uma proteção extra de replay por `message_id`, mas a correção principal do bug atual fica toda no webhook.
+### 2. Webhook: Arquitetura de Providers
 
-Como implementar
+Refatorar `whatsapp-webhook/index.ts` para ter uma interface de provider:
 
-- Criar helpers no webhook para:
-  - detectar confirmação explícita
-  - ler a janela recente da conversa
-  - resolver `clienteId` pelo telefone
-  - localizar agendamento ativo equivalente
-- Alterar o case `criar_agendamento` para:
-  1. normalizar dados
-  2. validar estado de confirmação
-  3. checar duplicidade existente
-  4. só então fazer o POST real
+```text
+whatsapp-webhook/index.ts
+  │
+  ├── buildTools(tenant)        ← escolhe tools baseado em api_provider
+  ├── executeTool(tenant, ...)  ← despacha para provider correto
+  │
+  ├── providers/trinks    ← código atual (já existe)
+  │     buildTrinksTools()
+  │     executeTrinksTool()
+  │
+  ├── providers/onebeleza ← NOVO
+  │     buildOneBelezaTools()
+  │     executeOneBelezaTool()
+  │
+  └── providers/none      ← NOVO
+        buildNoneTools()   ← sem tools de agendamento
+```
 
-Validação
+Como edge functions suportam apenas 1 arquivo (`index.ts`), todo o código fica no mesmo arquivo mas organizado em seções claras.
 
-- Fluxo 1: cliente escolhe um horário (`15:40`) → a IA deve apenas confirmar, sem criar.
-- Fluxo 2: cliente responde `Sim` → deve existir exatamente 1 criação.
-- Fluxo 3: cliente manda `Sim` de novo ou a IA tenta repetir a chamada → não deve criar novo agendamento.
-- Conferir nos logs que há no máximo um `criar_agendamento response (201)` para o mesmo slot.
+### 3. Provider One Beleza: Ferramentas
 
-Detalhes técnicos
+Baseado na API documentada e nos nodes n8n, as ferramentas seriam:
 
-- O ponto principal hoje está no case `criar_agendamento` de `executeTrinksTool()`.
-- O prompt já manda “não agendar sem confirmação” e “não executar duas vezes”, mas isso não basta; precisa virar regra obrigatória no código.
-- Vou manter a correção no backend do agente, sem depender de mudar o prompt do painel para resolver esse bug.
+| Ferramenta | Endpoint One Beleza | Método |
+|---|---|---|
+| `buscar_cliente` | `/api/Clientes/GetClientePeloNumero?Celular=...` | GET |
+| `cadastrar_cliente` | `/api/OLoginChatBot/CadastrarUsuario` (host diferente: onetotemapi) | POST |
+| `buscar_servicos` | `/api/Servicos/RetornarGrupoServicos?celular=...` | GET |
+| `buscar_barbeiros_por_servico` | `/api/Profissionais/PesquisarProfissionais?celular=...&servicosId=...` | GET |
+| `buscar_datas_disponiveis` | `/api/Agendamento/RetornarDatasPorServico?celular=...&servicosid=...&profissionalid=...` | GET |
+| `buscar_horarios` | `/api/Agendamento/HorariosPorProfissionaisByDataServico?celular=...&date=...&servicoId=...&ProfissionalId=...` | POST |
+| `agendar` | `/api/Agendamento/MarcarAgendamentoForm?celular=...` (form-data) | POST |
+| `buscar_agendamentos_dia` | `/api/Agendamento/GetTodosAgendamentosDia?date=...` | GET |
+| `confirmar_agendamento` | `/api/Agendamento/ConfirmarAgendamento?agendasId=...&celular=...` | POST |
+| `desmarcar_agendamento` | `/api/Agendamento/DesmarcarAgendamento?celular=...&agendasId=...` | DELETE |
+
+Diferenças chave vs Trinks:
+- Autenticação: Bearer Token (header `Authorization`)
+- O `celular` vai na URL como query param (fixo por tenant)
+- Agendar usa `multipart/form-data` (não JSON)
+- Fluxo sequencial obrigatório: Servico → Barbeiro → Datas → Horarios → Agendar
+- Cancelamento = DELETE (não PATCH)
+- Tem endpoint de confirmação de agendamento (Trinks nao tem)
+
+### 4. Provider "Nenhum" (Sem API)
+
+- Sem ferramentas de agendamento
+- O agente apenas conversa e pode enviar um link de agendamento (configurável no tenant)
+- Adicionar campo `booking_link` no tenant para o link que o agente deve enviar
+
+### 5. System Prompt: Adaptação por Provider
+
+O prompt base permanece o mesmo (tom de voz, regras de data, etc). A seção de ferramentas e fluxo de agendamento muda conforme o provider:
+
+- **Trinks**: prompt atual (já funciona)
+- **One Beleza**: fluxo sequencial de 5 passos (servico → barbeiro → datas → horarios → agendar), adaptar nomes das ferramentas
+- **None**: sem fluxo de agendamento, apenas orientar o cliente ao link
+
+### 6. Admin UI: Seletor de Provider
+
+No `TenantForm.tsx`, aba "Integração API":
+- Dropdown: "Provedor de Agendamento" → Trinks / One Beleza / Nenhum
+- Mostrar/esconder campos conforme seleção:
+  - **Trinks**: X-Api-Key + Establishment ID (já existe)
+  - **One Beleza**: Bearer Token + Celular da conta
+  - **Nenhum**: Link de agendamento
+
+### 7. Tenant lookup no webhook
+
+Atualmente o webhook pega o primeiro tenant ativo. Precisa mudar para match por `whatsapp_number` (campo que já existe na tabela) para funcionar multi-tenant de verdade.
+
+## Etapas de Implementação
+
+1. Migration: adicionar `api_provider`, `onebeleza_token`, `onebeleza_celular`, `booking_link` ao `tenants`
+2. Refatorar webhook: extrair Trinks para seção isolada, criar dispatcher por provider
+3. Implementar provider One Beleza: tools + executor
+4. Implementar provider None: sem tools
+5. Adaptar `buildSystemPrompt` para variar por provider
+6. Atualizar `TenantForm.tsx`: seletor de provider + campos condicionais
+7. Fix tenant lookup: match por `whatsapp_number` em vez de `LIMIT 1`
+8. Atualizar memórias do projeto
+
+## Detalhes Tecnic -- Seguranca
+
+- Tokens One Beleza ficam no banco (como já acontece com Trinks)
+- Cada tenant tem suas credenciais isoladas
+- RLS já protege acesso aos tenants
+
