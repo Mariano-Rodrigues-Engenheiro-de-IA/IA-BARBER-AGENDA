@@ -2196,7 +2196,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         
         const res = await fetch(url, {
           method: "POST",
-          headers: { "Authorization": `Bearer ${tenant.onebeleza_token}` },
+          headers: { "Authorization": bearerToken },
           body: formData,
         });
         const text = await res.text();
