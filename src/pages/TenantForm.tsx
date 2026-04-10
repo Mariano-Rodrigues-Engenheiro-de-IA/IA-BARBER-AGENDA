@@ -65,8 +65,58 @@ function TrinksTestButton({ tenantId }: { tenantId: string }) {
     </div>
   );
 }
+function UazapiTestButton({ url, token }: { url: string; token: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
 
-export default function TenantFormPage() {
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${url}/status`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data) {
+        const connected = data.connected || data.status === "CONNECTED" || data.state === "open";
+        setResult({
+          success: connected,
+          message: connected ? "WhatsApp conectado!" : "Instância encontrada, mas WhatsApp não conectado",
+        });
+        toast[connected ? "success" : "warning"](connected ? "WhatsApp conectado!" : "WhatsApp não conectado");
+      } else {
+        setResult({ success: false, message: "Falha ao conectar na instância" });
+        toast.error("Falha ao conectar na instância");
+      }
+    } catch (err: any) {
+      setResult({ success: false, message: err.message || "Erro ao testar conexão" });
+      toast.error(err.message || "Erro ao testar conexão");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="pt-4 border-t border-border space-y-3">
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : (
+          <Plug className="w-4 h-4 mr-2" />
+        )}
+        {testing ? "Testando..." : "Testar Conexão WhatsApp"}
+      </Button>
+      {result && (
+        <div className={`flex items-center gap-2 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
+          {result.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {result.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
   const { id } = useParams();
   const navigate = useNavigate();
   const isEditing = !!id;
