@@ -88,13 +88,25 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Try to match by whatsapp_number first, fallback to first tenant
-      let tenant = tenants.find((t: any) => {
-        if (!t.whatsapp_number) return false;
-        const normalized = t.whatsapp_number.replace(/\D/g, "");
-        return phoneNumber.includes(normalized) || normalized.includes(phoneNumber);
-      });
-      // Also try matching from the receiving number in payload
+      // 1) Match by UAZAPI BaseUrl from payload (most reliable for multi-tenant)
+      const incomingBaseUrl = (payload.BaseUrl || "").replace(/\/+$/, "").toLowerCase();
+      let tenant = incomingBaseUrl
+        ? tenants.find((t: any) => {
+            if (!t.uazapi_url) return false;
+            return t.uazapi_url.replace(/\/+$/, "").toLowerCase() === incomingBaseUrl;
+          })
+        : null;
+
+      // 2) Match by whatsapp_number
+      if (!tenant) {
+        tenant = tenants.find((t: any) => {
+          if (!t.whatsapp_number) return false;
+          const normalized = t.whatsapp_number.replace(/\D/g, "");
+          return phoneNumber.includes(normalized) || normalized.includes(phoneNumber);
+        });
+      }
+
+      // 3) Match from owner/receiving number in payload
       if (!tenant) {
         const ownerNumber = payload.owner || payload.to || payload.chat?.owner || "";
         const ownerDigits = String(ownerNumber).replace(/\D/g, "");
@@ -106,6 +118,7 @@ Deno.serve(async (req) => {
           });
         }
       }
+
       if (!tenant) tenant = tenants[0]; // fallback
 
       const provider: string = tenant.api_provider || "trinks";
