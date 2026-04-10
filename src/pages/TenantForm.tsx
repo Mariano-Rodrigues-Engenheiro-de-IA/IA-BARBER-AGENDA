@@ -266,7 +266,53 @@ export default function TenantFormPage() {
             </div>
           </TabsContent>
 
-          <TabsContent value="api" className="space-y-4">
+          <TabsContent value="whatsapp" className="space-y-4">
+            <div className="glass-card p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-semibold text-foreground">Conexão Uazapi (WhatsApp)</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Configure a conexão com a instância Uazapi deste estabelecimento para enviar e receber mensagens via WhatsApp.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="uazapi_url">URL da Instância</Label>
+                <Input
+                  id="uazapi_url"
+                  value={form.uazapi_url as string}
+                  onChange={(e) => handleChange("uazapi_url", e.target.value)}
+                  placeholder="https://sua-instancia.uazapi.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  URL base da sua instância Uazapi (ex: https://zyloia.uazapi.com)
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="uazapi_token">Token da Instância</Label>
+                <div className="relative">
+                  <Input
+                    id="uazapi_token"
+                    type={showApiKey ? "text" : "password"}
+                    value={form.uazapi_token as string}
+                    onChange={(e) => handleChange("uazapi_token", e.target.value)}
+                    placeholder="Token de autenticação Uazapi"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              {isEditing && id && form.uazapi_url && form.uazapi_token && (
+                <UazapiTestButton url={form.uazapi_url as string} token={form.uazapi_token as string} />
+              )}
+            </div>
+          </TabsContent>
+
             <div className="glass-card p-6 space-y-4">
               <h3 className="font-semibold text-foreground">Provedor de Agendamento</h3>
               <p className="text-sm text-muted-foreground">
