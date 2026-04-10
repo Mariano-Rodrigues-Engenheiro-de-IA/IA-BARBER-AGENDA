@@ -82,8 +82,12 @@ export default function TenantFormPage() {
     email: "",
     address: "",
     status: "active",
+    api_provider: "trinks",
     trinks_api_key: "",
     trinks_establishment_id: "",
+    onebeleza_token: "",
+    onebeleza_celular: "",
+    booking_link: "",
     agent_system_prompt: "",
     agent_knowledge_base: "",
   });
@@ -97,8 +101,12 @@ export default function TenantFormPage() {
         email: existing.email ?? "",
         address: existing.address ?? "",
         status: existing.status,
+        api_provider: (existing as any).api_provider ?? "trinks",
         trinks_api_key: existing.trinks_api_key ?? "",
         trinks_establishment_id: existing.trinks_establishment_id ?? "",
+        onebeleza_token: (existing as any).onebeleza_token ?? "",
+        onebeleza_celular: (existing as any).onebeleza_celular ?? "",
+        booking_link: (existing as any).booking_link ?? "",
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
       });
@@ -136,6 +144,7 @@ export default function TenantFormPage() {
   };
 
   const isSaving = createTenant.isPending || updateTenant.isPending;
+  const provider = (form as any).api_provider || "trinks";
 
   if (isEditing && loadingTenant) {
     return <div className="text-muted-foreground">Carregando...</div>;
@@ -240,40 +249,121 @@ export default function TenantFormPage() {
 
           <TabsContent value="api" className="space-y-4">
             <div className="glass-card p-6 space-y-4">
-              <h3 className="font-semibold text-foreground">Credenciais API Trinks</h3>
+              <h3 className="font-semibold text-foreground">Provedor de Agendamento</h3>
               <p className="text-sm text-muted-foreground">
-                Insira as credenciais de acesso à API Trinks deste estabelecimento.
+                Escolha o sistema de agendamento usado por este estabelecimento.
               </p>
-              <div className="space-y-2">
-                <Label htmlFor="trinks_api_key">X-Api-Key</Label>
-                <div className="relative">
-                  <Input
-                    id="trinks_api_key"
-                    type={showApiKey ? "text" : "password"}
-                    value={form.trinks_api_key as string}
-                    onChange={(e) => handleChange("trinks_api_key", e.target.value)}
-                    placeholder="Chave de API do Trinks"
-                    className="pr-10"
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                  >
-                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+              <div className="space-y-2 max-w-xs">
+                <Label>Provedor</Label>
+                <Select
+                  value={provider}
+                  onValueChange={(v) => handleChange("api_provider" as any, v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="trinks">Trinks</SelectItem>
+                    <SelectItem value="onebeleza">One Beleza</SelectItem>
+                    <SelectItem value="none">Nenhum (link direto)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Trinks fields */}
+              {provider === "trinks" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais Trinks</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="trinks_api_key">X-Api-Key</Label>
+                    <div className="relative">
+                      <Input
+                        id="trinks_api_key"
+                        type={showApiKey ? "text" : "password"}
+                        value={form.trinks_api_key as string}
+                        onChange={(e) => handleChange("trinks_api_key", e.target.value)}
+                        placeholder="Chave de API do Trinks"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="trinks_id">ID do Estabelecimento (Trinks)</Label>
+                    <Input
+                      id="trinks_id"
+                      value={form.trinks_establishment_id as string}
+                      onChange={(e) => handleChange("trinks_establishment_id", e.target.value)}
+                      placeholder="Ex: 12345"
+                    />
+                  </div>
+                  {isEditing && id && <TrinksTestButton tenantId={id} />}
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="trinks_id">ID do Estabelecimento (Trinks)</Label>
-                <Input
-                  id="trinks_id"
-                  value={form.trinks_establishment_id as string}
-                  onChange={(e) => handleChange("trinks_establishment_id", e.target.value)}
-                  placeholder="Ex: 12345"
-                />
-              </div>
-              {isEditing && id && <TrinksTestButton tenantId={id} />}
+              )}
+
+              {/* One Beleza fields */}
+              {provider === "onebeleza" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais One Beleza</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="onebeleza_token">Bearer Token</Label>
+                    <div className="relative">
+                      <Input
+                        id="onebeleza_token"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).onebeleza_token || ""}
+                        onChange={(e) => handleChange("onebeleza_token" as any, e.target.value)}
+                        placeholder="Token de autenticação One Beleza"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="onebeleza_celular">Celular da Conta (One Beleza)</Label>
+                    <Input
+                      id="onebeleza_celular"
+                      value={(form as any).onebeleza_celular || ""}
+                      onChange={(e) => handleChange("onebeleza_celular" as any, e.target.value)}
+                      placeholder="Ex: 31999762442"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Número usado nas chamadas à API One Beleza (sem código do país)
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* None fields */}
+              {provider === "none" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Link de Agendamento</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="booking_link">URL de Agendamento</Label>
+                    <Input
+                      id="booking_link"
+                      value={(form as any).booking_link || ""}
+                      onChange={(e) => handleChange("booking_link" as any, e.target.value)}
+                      placeholder="https://link-de-agendamento.com"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      O agente enviará este link quando o cliente quiser agendar
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </TabsContent>
 
