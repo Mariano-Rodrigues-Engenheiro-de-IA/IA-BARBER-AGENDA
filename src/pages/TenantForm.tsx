@@ -78,7 +78,8 @@ function UazapiTestButton({ url, token }: { url: string; token: string }) {
       });
       const data = await res.json();
       if (res.ok && data) {
-        const connected = data.connected || data.status === "CONNECTED" || data.state === "open";
+        const inst = data?.status?.checked_instance;
+        const connected = inst?.connection_status === "connected" || inst?.is_healthy === true || data.connected || data.status === "CONNECTED" || data.state === "open";
         setResult({
           success: connected,
           message: connected ? "WhatsApp conectado!" : "Instância encontrada, mas WhatsApp não conectado",
