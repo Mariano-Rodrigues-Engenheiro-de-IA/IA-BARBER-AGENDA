@@ -2082,8 +2082,10 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
 
   const baseUrl = "https://onechatbotapi.azurewebsites.net";
   const celular = tenant.onebeleza_celular || "";
+  const rawToken = (tenant.onebeleza_token || "").trim();
+  const bearerToken = rawToken.startsWith("Bearer ") ? rawToken : `Bearer ${rawToken}`;
   const authHeaders: Record<string, string> = {
-    "Authorization": `Bearer ${tenant.onebeleza_token}`,
+    "Authorization": bearerToken,
     "Accept": "application/json",
   };
 
@@ -2194,7 +2196,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         
         const res = await fetch(url, {
           method: "POST",
-          headers: { "Authorization": `Bearer ${tenant.onebeleza_token}` },
+          headers: { "Authorization": bearerToken },
           body: formData,
         });
         const text = await res.text();
