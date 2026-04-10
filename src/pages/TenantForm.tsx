@@ -116,7 +116,7 @@ function UazapiTestButton({ url, token }: { url: string; token: string }) {
   );
 }
 
-
+export default function TenantFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isEditing = !!id;
