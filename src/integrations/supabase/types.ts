@@ -114,10 +114,14 @@ export type Database = {
           agent_knowledge_base: string | null
           agent_settings: Json | null
           agent_system_prompt: string | null
+          api_provider: Database["public"]["Enums"]["api_provider"]
+          booking_link: string | null
           created_at: string
           email: string | null
           id: string
           name: string
+          onebeleza_celular: string | null
+          onebeleza_token: string | null
           phone: string | null
           slug: string
           status: Database["public"]["Enums"]["tenant_status"]
@@ -133,10 +137,14 @@ export type Database = {
           agent_knowledge_base?: string | null
           agent_settings?: Json | null
           agent_system_prompt?: string | null
+          api_provider?: Database["public"]["Enums"]["api_provider"]
+          booking_link?: string | null
           created_at?: string
           email?: string | null
           id?: string
           name: string
+          onebeleza_celular?: string | null
+          onebeleza_token?: string | null
           phone?: string | null
           slug: string
           status?: Database["public"]["Enums"]["tenant_status"]
@@ -152,10 +160,14 @@ export type Database = {
           agent_knowledge_base?: string | null
           agent_settings?: Json | null
           agent_system_prompt?: string | null
+          api_provider?: Database["public"]["Enums"]["api_provider"]
+          booking_link?: string | null
           created_at?: string
           email?: string | null
           id?: string
           name?: string
+          onebeleza_celular?: string | null
+          onebeleza_token?: string | null
           phone?: string | null
           slug?: string
           status?: Database["public"]["Enums"]["tenant_status"]
@@ -203,6 +215,7 @@ export type Database = {
       }
     }
     Enums: {
+      api_provider: "trinks" | "onebeleza" | "none"
       app_role: "admin"
       tenant_status: "active" | "inactive" | "suspended"
     }
@@ -332,6 +345,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      api_provider: ["trinks", "onebeleza", "none"],
       app_role: ["admin"],
       tenant_status: ["active", "inactive", "suspended"],
     },

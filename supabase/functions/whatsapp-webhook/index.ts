@@ -74,12 +74,12 @@ Deno.serve(async (req) => {
       const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
       console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "msg.key:", JSON.stringify(msg.key || {}));
 
+      // ===== TENANT LOOKUP: match by whatsapp_number =====
       const { data: tenants, error: tenantError } = await supabase
         .from("tenants")
         .select("*")
         .not("uazapi_token", "is", null)
-        .eq("status", "active")
-        .limit(1);
+        .eq("status", "active");
 
       if (tenantError || !tenants?.length) {
         console.error("No tenant found:", tenantError);
@@ -89,7 +89,28 @@ Deno.serve(async (req) => {
         });
       }
 
-      const tenant = tenants[0];
+      // Try to match by whatsapp_number first, fallback to first tenant
+      let tenant = tenants.find((t: any) => {
+        if (!t.whatsapp_number) return false;
+        const normalized = t.whatsapp_number.replace(/\D/g, "");
+        return phoneNumber.includes(normalized) || normalized.includes(phoneNumber);
+      });
+      // Also try matching from the receiving number in payload
+      if (!tenant) {
+        const ownerNumber = payload.owner || payload.to || payload.chat?.owner || "";
+        const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+        if (ownerDigits) {
+          tenant = tenants.find((t: any) => {
+            if (!t.whatsapp_number) return false;
+            const normalized = t.whatsapp_number.replace(/\D/g, "");
+            return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
+          });
+        }
+      }
+      if (!tenant) tenant = tenants[0]; // fallback
+
+      const provider: string = tenant.api_provider || "trinks";
+      console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}`);
 
       if (messageId) {
         const { data: existing } = await supabase
@@ -137,7 +158,6 @@ Deno.serve(async (req) => {
 
           console.log(`Downloading media for messageId: ${messageId}`);
 
-          // Try getBase64 first (returns base64 directly, most reliable)
           let gotMedia = false;
           try {
             const b64Res = await fetch(`${uazapiUrlMedia}/getBase64/${messageId}`, {
@@ -147,7 +167,6 @@ Deno.serve(async (req) => {
             console.log("getBase64 response status:", b64Res.status, "keys:", Object.keys(b64Data || {}));
             const base64Content = b64Data?.base64 || b64Data?.data || b64Data?.file;
             if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-              // base64 may come as data:mimetype;base64,XXXX or just raw base64
               if (base64Content.startsWith("data:")) {
                 const [header, data] = base64Content.split(",", 2);
                 mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
@@ -163,7 +182,6 @@ Deno.serve(async (req) => {
             console.log("getBase64 failed:", e);
           }
 
-          // Fallback: try getLink + download
           if (!gotMedia) {
             try {
               const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
@@ -194,7 +212,6 @@ Deno.serve(async (req) => {
             }
           }
 
-          // Fallback: try downloadMedia
           if (!gotMedia) {
             try {
               const dlRes = await fetch(`${uazapiUrlMedia}/downloadMedia/${messageId}`, {
@@ -261,7 +278,6 @@ Deno.serve(async (req) => {
       console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
 
-      // Step 1: Find all unprocessed messages for this phone
       const { data: unclaimed, error: unclaimedErr } = await supabase
         .from("chat_messages")
         .select("id, content, created_at")
@@ -280,7 +296,6 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Step 2: Atomically claim these specific messages by their IDs
       const unclaimedIds = unclaimed.map((m: any) => m.id);
       const { data: claimed, error: claimErr } = await supabase
         .from("chat_messages")
@@ -298,14 +313,11 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Use the content from the unclaimed query (already ordered by created_at)
       const claimedIds = new Set(claimed.map((c: any) => c.id));
       const claimedMessages = unclaimed.filter((m: any) => claimedIds.has(m.id));
       const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
       console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
-      // Fetch the 60 most recent messages (both user processed=true AND assistant messages)
-      // Assistant messages are saved with processed=false by default, so we can't filter on processed
       const { data: historyRaw } = await supabase
         .from("chat_messages")
         .select("role, content, processed")
@@ -316,12 +328,11 @@ Deno.serve(async (req) => {
         .limit(60);
       const history = (historyRaw || []).reverse();
 
-      const directResponse = await maybeHandleDirectCancellationConfirmation(
-        tenant,
-        phoneNumber,
-        history || [],
-        combinedContent,
-      );
+      // Provider-specific direct handlers
+      let directResponse: string | null = null;
+      if (provider === "trinks") {
+        directResponse = await maybeHandleDirectCancellationConfirmation(tenant, phoneNumber, history || [], combinedContent);
+      }
 
       let aiResponse: string;
       let agentResult: AgentResult | null = null;
@@ -329,7 +340,7 @@ Deno.serve(async (req) => {
       if (directResponse) {
         aiResponse = directResponse;
       } else {
-        agentResult = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, mediaBase64, mediaMimeType);
+        agentResult = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
         aiResponse = agentResult.response;
       }
 
@@ -355,18 +366,16 @@ Deno.serve(async (req) => {
         content: aiResponse,
       });
 
-      // ===== SPLIT RESPONSE: Send each sentence as a separate message =====
+      // ===== SPLIT RESPONSE: Send each paragraph as a separate message =====
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      // Split by sentence-ending punctuation followed by space/newline
       const messageParts = splitIntoMessages(aiResponse);
 
       for (let i = 0; i < messageParts.length; i++) {
         const part = messageParts[i].trim();
         if (!part) continue;
 
-        // Small delay between messages to feel natural (except first)
         if (i > 0) {
           await new Promise((r) => setTimeout(r, 1500));
         }
@@ -418,6 +427,7 @@ async function callAIAgent(
   phoneNumber: string,
   history: { role: string; content: string }[],
   userMessage: string,
+  provider: string,
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
 ): Promise<AgentResult> {
@@ -429,7 +439,7 @@ async function callAIAgent(
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -440,11 +450,9 @@ async function callAIAgent(
   const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
 
   if (mediaBase64 && mediaMimeType) {
-    // Multimodal message with media
     const contentParts: any[] = [];
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Use image_url style data URL which works universally with Lovable AI gateway
       contentParts.push({
         type: "image_url",
         image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
@@ -465,7 +473,6 @@ async function callAIAgent(
     }
 
     if (alreadyHasUserMsg) {
-      // Replace last message with multimodal version
       messages[messages.length - 1] = { role: "user", content: contentParts };
     } else {
       messages.push({ role: "user", content: contentParts });
@@ -474,7 +481,8 @@ async function callAIAgent(
     messages.push({ role: "user", content: userMessage });
   }
 
-  const tools = buildTrinksTools(tenant);
+  // ===== PROVIDER DISPATCHER: build tools based on provider =====
+  const tools = buildToolsForProvider(provider, tenant);
 
   let response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -500,9 +508,8 @@ async function callAIAgent(
   let result = await response.json();
   let assistantMessage = result.choices?.[0]?.message;
 
-  // Handle tool calls (up to 8 rounds for complex flows)
+  // Handle tool calls (up to 8 rounds)
   let rounds = 0;
-  // SESSION STATE: track successful criar_agendamento to block duplicates
   const sessionState = { criarAgendamentoSuccessId: null as number | null };
 
   while (assistantMessage?.tool_calls && rounds < 8) {
@@ -515,9 +522,10 @@ async function callAIAgent(
       let toolResult: any;
       let wasBlocked = false;
 
-      // TRAVA: Se já criou um agendamento nesta sessão, bloqueia nova criação
-      if (toolCall.function.name === "criar_agendamento" && sessionState.criarAgendamentoSuccessId) {
-        console.log(`criar_agendamento BLOCKED: already created id=${sessionState.criarAgendamentoSuccessId} in this session`);
+      // Block duplicate scheduling across all providers
+      const isSchedulingTool = ["criar_agendamento", "agendar"].includes(toolCall.function.name);
+      if (isSchedulingTool && sessionState.criarAgendamentoSuccessId) {
+        console.log(`${toolCall.function.name} BLOCKED: already created id=${sessionState.criarAgendamentoSuccessId} in this session`);
         toolResult = {
           id: sessionState.criarAgendamentoSuccessId,
           message: "Agendamento já foi criado com sucesso nesta interação. NÃO crie outro. Confirme o agendamento existente ao cliente.",
@@ -526,15 +534,15 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
       } else {
-        toolResult = await executeTrinksTool(tenant, toolCall, phoneNumber);
+        // ===== PROVIDER DISPATCHER: execute tool based on provider =====
+        toolResult = await executeToolForProvider(provider, tenant, toolCall, phoneNumber);
         // Track successful creation
-        if (toolCall.function.name === "criar_agendamento" && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
+        if (isSchedulingTool && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
           sessionState.criarAgendamentoSuccessId = toolResult.id;
-          console.log(`criar_agendamento: session locked with id=${toolResult.id}`);
+          console.log(`${toolCall.function.name}: session locked with id=${toolResult.id}`);
         }
       }
 
-      // Log this tool call
       let parsedArgs: any;
       try { parsedArgs = JSON.parse(toolCall.function.arguments); } catch { parsedArgs = toolCall.function.arguments; }
       logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: wasBlocked });
@@ -580,11 +588,37 @@ async function callAIAgent(
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
+// ===================== PROVIDER DISPATCHER =====================
+
+function buildToolsForProvider(provider: string, tenant: any): any[] | undefined {
+  switch (provider) {
+    case "trinks":
+      return buildTrinksTools(tenant);
+    case "onebeleza":
+      return buildOneBelezaTools(tenant);
+    case "none":
+      return buildNoneTools(tenant);
+    default:
+      return buildTrinksTools(tenant);
+  }
+}
+
+async function executeToolForProvider(provider: string, tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  switch (provider) {
+    case "trinks":
+      return executeTrinksTool(tenant, toolCall, phoneNumber);
+    case "onebeleza":
+      return executeOneBelezaTool(tenant, toolCall, phoneNumber);
+    case "none":
+      return executeNoneTool(tenant, toolCall);
+    default:
+      return executeTrinksTool(tenant, toolCall, phoneNumber);
+  }
+}
+
 // ===================== MESSAGE SPLITTING =====================
 
 function splitIntoMessages(text: string): string[] {
-  // Only split by double newlines (paragraph breaks) — NOT by sentences
-  // Splitting by sentences causes contradictory-sounding messages
   const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
   return paragraphs.length > 1 ? paragraphs : [text];
 }
@@ -810,11 +844,10 @@ function extractPhoneNumber(payload: any, msg: any): { phone: string; source: st
   return null;
 }
 
-// ===================== SYSTEM PROMPT =====================
+// ===================== DATE/TIME HELPERS =====================
 
 function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate: string; year: number; month: number; day: number; hours: number; minutes: number } {
   const now = new Date();
-  // Use Intl to get accurate Brasília time (handles DST automatically)
   const brFormatter = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
     year: "numeric", month: "2-digit", day: "2-digit",
@@ -833,7 +866,6 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
   const dateComplete = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   const todayDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
-  // Calculate day of week from the actual Brasília date
   const brDate = new Date(Date.UTC(year, month - 1, day));
   const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
   const todayName = dayNames[brDate.getUTCDay()];
@@ -841,7 +873,9 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
   return { dateComplete, todayName, todayDate, year, month, day, hours, minutes };
 }
 
-function buildSystemPrompt(tenant: any, phoneNumber: string): string {
+// ===================== SYSTEM PROMPT =====================
+
+function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
@@ -849,7 +883,6 @@ function buildSystemPrompt(tenant: any, phoneNumber: string): string {
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // Build a map: "segunda" -> "2026-04-13", "terça" -> "2026-04-14", etc.
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const nextDaysMap: string[] = [];
   for (let i = 1; i <= 7; i++) {
@@ -862,9 +895,9 @@ function buildSystemPrompt(tenant: any, phoneNumber: string): string {
 
   const telefone = phoneNumber;
 
-  console.log(`buildSystemPrompt: Brasília date=${todayDate} time=${dateComplete} day=${todayName}`);
+  console.log(`buildSystemPrompt: provider=${provider}, Brasília date=${todayDate} time=${dateComplete} day=${todayName}`);
 
-  return `🚨🚨🚨 REGRA INVIOLÁVEL — DATA DE HOJE 🚨🚨🚨
+  const basePrompt = `🚨🚨🚨 REGRA INVIOLÁVEL — DATA DE HOJE 🚨🚨🚨
 A data de HOJE é EXATAMENTE: ${todayDate} (${todayName})
 Hora atual em Brasília: ${dateComplete}
 NUNCA diga que hoje é outro dia. Se o histórico mencionar outra data, IGNORE — use APENAS esta.
@@ -899,7 +932,7 @@ Você agenda, cancela e remarca horários diretamente nesta conversa.
 Hora atual: ${dateComplete}
 
 **Se o agendamento for HOJE:**
-Para cada horário da lista horariosVagos:
+Para cada horário da lista:
 - horário ≤ hora atual → ❌ DESCARTE
 - horário > hora atual → ✅ PODE OFERECER
 
@@ -922,26 +955,6 @@ Exemplo: se o cliente diz "sábado", procure "sábado →" na tabela acima e use
 
 ------------------------------------------
 
-## 🚨 REGRA ABSOLUTA — HORÁRIOS
-
-NUNCA cite, sugira ou confirme qualquer horário sem antes executar LISTAR HORARIOS nessa interação.
-
-❌ PROIBIDO: qualquer horário baseado em suposição ou memória
-✅ CORRETO: execute listar_horarios → use APENAS horariosVagos → ofereça
-
-Se o cliente perguntar um horário específico ANTES de você listar:
-→ "Me diz o serviço e o dia que já verifico pra você!"
-
-------------------------------------------
-
-## ⚠️ COMO LER O RETORNO DE LISTAR HORARIOS
-
-A ferramenta retorna dois campos:
-- horariosVagos → ✅ USE APENAS ESTE
-- intervalosVagos → ❌ IGNORE COMPLETAMENTE (campo obsoleto)
-
-------------------------------------------
-
 ## 🔒 REGRAS GERAIS
 
 ### O QUE NUNCA FAZER
@@ -951,28 +964,15 @@ A ferramenta retorna dois campos:
 - Perguntar preferência de barbeiro mais de uma vez
 - Repetir informações que o cliente já disse
 - Listar horários sem saber o serviço primeiro
-- Citar horários sem ter executado listar_horarios nessa interação
-- Agendar em horário fora da lista de listar_horarios
-- Confirmar agendamento sem executar criar_agendamento com sucesso
+- Citar horários sem ter executado a ferramenta de horários nessa interação
+- Agendar em horário fora da lista de horários
+- Confirmar agendamento sem executar a ferramenta de agendar com sucesso
 - Enviar duas mensagens seguidas com o mesmo conteúdo
 
 ### O QUE SEMPRE FAZER
 - Usar "valor" ao invés de "custa"
 - Buscar o cliente silenciosamente na primeira interação
 - Consultar ferramentas para obter IDs — nunca inventar
-- Usar APENAS horariosVagos (nunca intervalosVagos)
-
-------------------------------------------
-
-## 🔶 REGRA CRÍTICA: IDs
-
-Cada ID tem uma fonte obrigatória:
-- clienteId → buscar_cliente
-- agendamentoId → buscar_agendamento
-- servicoId → listar_servicos
-- profissionalId → listar_profissionais ✅ (NUNCA de listar_servicos_profissional ❌)
-
-NUNCA invente ou reutilize IDs de chamadas anteriores.
 
 ------------------------------------------
 
@@ -994,28 +994,6 @@ Mensagens longas são proibidas. Sempre curtas e em tom de conversa.
 
 ------------------------------------------
 
-## 🔶 STATUS DOS AGENDAMENTOS
-
-- "Confirmado" ou "Aguardando Confirmação" → ATIVO
-- "Cancelado" → já cancelado, não tente cancelar de novo
-- "Finalizado" → já aconteceu, não pode cancelar/editar
-
-Só mostre agendamentos com status ATIVO ao cliente.
-
-------------------------------------------
-
-## 🚨 REGRA ABSOLUTA — CANCELAR / EDITAR AGENDAMENTO
-
-ANTES de cancelar ou editar qualquer agendamento, você DEVE OBRIGATORIAMENTE:
-1. Executar buscar_agendamento para obter o ID REAL do agendamento
-2. Usar SOMENTE o ID retornado pela ferramenta buscar_agendamento
-3. NUNCA usar um ID que você "lembra" de uma conversa anterior
-
-Se buscar_agendamento retornar vazio → "Não encontrei nenhum agendamento ativo pra você."
-Se der erro na API → tente buscar_agendamento novamente UMA vez antes de pedir pro cliente tentar de novo.
-
-------------------------------------------
-
 ## 🎯 APRESENTAÇÃO INICIAL
 
 Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ disse:
@@ -1023,7 +1001,70 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
 - Barbeiro mencionado? → pule a pergunta de barbeiro
 - Dia mencionado? → pule a pergunta de dia
 
-**SÓ PERGUNTE O QUE O CLIENTE NÃO DISSE.**
+**SÓ PERGUNTE O QUE O CLIENTE NÃO DISSE.**`;
+
+  // Provider-specific prompt sections
+  let providerPrompt = "";
+
+  if (provider === "trinks") {
+    providerPrompt = buildTrinksPromptSection(tenant);
+  } else if (provider === "onebeleza") {
+    providerPrompt = buildOneBelezaPromptSection(tenant);
+  } else if (provider === "none") {
+    providerPrompt = buildNonePromptSection(tenant);
+  }
+
+  const customSection = customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : "";
+  const knowledgeSection = knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : "";
+
+  return basePrompt + "\n\n" + providerPrompt + customSection + knowledgeSection;
+}
+
+// ===================== TRINKS PROMPT SECTION =====================
+
+function buildTrinksPromptSection(_tenant: any): string {
+  return `
+------------------------------------------
+
+## 🚨 REGRA ABSOLUTA — HORÁRIOS (TRINKS)
+
+NUNCA cite, sugira ou confirme qualquer horário sem antes executar LISTAR HORARIOS nessa interação.
+
+❌ PROIBIDO: qualquer horário baseado em suposição ou memória
+✅ CORRETO: execute listar_horarios → use APENAS horariosVagos → ofereça
+
+Se o cliente perguntar um horário específico ANTES de você listar:
+→ "Me diz o serviço e o dia que já verifico pra você!"
+
+------------------------------------------
+
+## ⚠️ COMO LER O RETORNO DE LISTAR HORARIOS
+
+A ferramenta retorna dois campos:
+- horariosVagos → ✅ USE APENAS ESTE
+- intervalosVagos → ❌ IGNORE COMPLETAMENTE (campo obsoleto)
+
+------------------------------------------
+
+## 🔶 REGRA CRÍTICA: IDs
+
+Cada ID tem uma fonte obrigatória:
+- clienteId → buscar_cliente
+- agendamentoId → buscar_agendamento
+- servicoId → listar_servicos
+- profissionalId → listar_profissionais ✅ (NUNCA de listar_servicos_profissional ❌)
+
+NUNCA invente ou reutilize IDs de chamadas anteriores.
+
+------------------------------------------
+
+## 🔶 STATUS DOS AGENDAMENTOS
+
+- "Confirmado" ou "Aguardando Confirmação" → ATIVO
+- "Cancelado" → já cancelado, não tente cancelar de novo
+- "Finalizado" → já aconteceu, não pode cancelar/editar
+
+Só mostre agendamentos com status ATIVO ao cliente.
 
 ------------------------------------------
 
@@ -1142,13 +1183,132 @@ Quando o cliente pedir para remarcar:
 | buscar_agendamento | Cliente quer ver, cancelar ou editar |
 | criar_agendamento | Após confirmação final |
 | cancelar_agendamento | Cliente confirma cancelamento |
-| editar_agendamento | Cliente quer mudar horário/dia |
-
-${customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : ""}
-${knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : ""}`;
+| editar_agendamento | Cliente quer mudar horário/dia |`;
 }
 
-// ===================== TOOLS =====================
+// ===================== ONE BELEZA PROMPT SECTION =====================
+
+function buildOneBelezaPromptSection(_tenant: any): string {
+  return `
+------------------------------------------
+
+## 🚨 REGRA ABSOLUTA — HORÁRIOS (ONE BELEZA)
+
+NUNCA cite, sugira ou confirme qualquer horário sem antes executar buscar_horarios nessa interação.
+
+❌ PROIBIDO: qualquer horário baseado em suposição ou memória
+✅ CORRETO: execute buscar_horarios → use os horários retornados → ofereça
+
+------------------------------------------
+
+## 🔶 REGRA CRÍTICA: IDs (ONE BELEZA)
+
+Cada ID tem uma fonte obrigatória:
+- servicoId → buscar_servicos
+- profissionalId → buscar_barbeiros_por_servico
+- datas disponíveis → buscar_datas_disponiveis
+- horarioInicio + horarioFim → buscar_horarios
+
+NUNCA invente ou reutilize IDs de chamadas anteriores.
+
+------------------------------------------
+
+## 🔷 FLUXO DE AGENDAMENTO (ONE BELEZA)
+
+### PASSO 0 — BUSCAR CLIENTE (silencioso, sempre primeiro)
+
+Execute buscar_cliente silenciosamente.
+- Cliente encontrado → prossiga
+- Cliente não encontrado → pergunte o nome e execute cadastrar_cliente
+
+### PASSO 1 — SERVIÇO
+Pergunte o serviço desejado → execute buscar_servicos → obtenha o servicoId
+
+### PASSO 2 — BARBEIRO/PROFISSIONAL
+Pergunte preferência → execute buscar_barbeiros_por_servico com o servicoId → obtenha profissionalId
+Se "qualquer um" → use o primeiro da lista.
+
+### PASSO 3 — DATA
+Pergunte o dia → execute buscar_datas_disponiveis com servicoId + profissionalId
+- Data na lista → prossiga
+- Data não na lista → "Esse dia não tem vaga. Quer ver outro dia?"
+
+### PASSO 4 — HORÁRIO
+Execute buscar_horarios com servicoId + profissionalId + data → obtenha horarioInicio e horarioFim
+
+**Se for hoje:** filtre horários ≤ hora atual.
+
+### PASSO 5 — CONFIRMAÇÃO
+"Confirmando: [SERVIÇO] com [BARBEIRO] [DATA] às [HORA]. Posso confirmar?"
+AGUARDE A RESPOSTA.
+
+### PASSO 6 — EXECUTAR AGENDAR
+Execute agendar com: dataAg, servicoId, profissionalId, horarioInicio, horarioFim
+
+✅ SUCESSO → "✅ Agendado! Te esperamos [dia] às [hora]! 💈"
+❌ "Já existe um evento no horário" → buscar_horarios novamente e ofereça alternativas
+❌ OUTRO ERRO → "Tive um probleminha na agenda aqui. Pode tentar novamente?"
+
+🚨 NUNCA diga "✅ Agendado" sem retorno de sucesso.
+🚨 NUNCA execute agendar mais de uma vez para o mesmo pedido.
+
+------------------------------------------
+
+## 🔷 FLUXO DE CANCELAMENTO (ONE BELEZA)
+
+1. Execute buscar_agendamentos_dia para encontrar o agendamento
+2. Confirme com o cliente qual cancelar
+3. Execute desmarcar_agendamento com agendasId
+
+------------------------------------------
+
+## 🔷 FLUXO DE CONFIRMAÇÃO (ONE BELEZA)
+
+1. Execute buscar_agendamentos_dia para encontrar o agendamento
+2. Execute confirmar_agendamento com agendasId
+
+------------------------------------------
+
+## 🛠️ FERRAMENTAS DISPONÍVEIS (ONE BELEZA)
+
+| Ferramenta | Quando usar |
+|---|---|
+| buscar_cliente | Sempre primeiro, silenciosamente |
+| cadastrar_cliente | Só se cliente não existe |
+| buscar_servicos | Para obter servicoId |
+| buscar_barbeiros_por_servico | Para obter profissionalId (requer servicoId) |
+| buscar_datas_disponiveis | Para verificar datas (requer servicoId + profissionalId) |
+| buscar_horarios | Para obter horários (requer servicoId + profissionalId + data) |
+| agendar | Após confirmação final (requer todos os dados acima) |
+| buscar_agendamentos_dia | Para ver agendamentos de um dia |
+| confirmar_agendamento | Para confirmar agendamento |
+| desmarcar_agendamento | Para cancelar agendamento |`;
+}
+
+// ===================== NONE PROMPT SECTION =====================
+
+function buildNonePromptSection(tenant: any): string {
+  const bookingLink = tenant.booking_link || "";
+  return `
+------------------------------------------
+
+## 📋 MODO SEM AGENDAMENTO AUTOMÁTICO
+
+Este estabelecimento NÃO possui sistema de agendamento integrado.
+
+${bookingLink ? `Quando o cliente quiser agendar, envie o link de agendamento: ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
+
+Você pode:
+- Responder dúvidas sobre serviços, preços e horários de funcionamento
+- Fornecer informações gerais do estabelecimento
+- Enviar o link de agendamento quando solicitado
+
+Você NÃO pode:
+- Criar, cancelar ou editar agendamentos
+- Consultar disponibilidade de horários em tempo real`;
+}
+
+// ===================== TRINKS TOOLS =====================
 
 function buildTrinksTools(tenant: any) {
   if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return undefined;
@@ -1300,7 +1460,168 @@ function buildTrinksTools(tenant: any) {
   ];
 }
 
-// ===================== TOOL EXECUTION =====================
+// ===================== ONE BELEZA TOOLS =====================
+
+function buildOneBelezaTools(tenant: any) {
+  if (!tenant.onebeleza_token || !tenant.onebeleza_celular) return undefined;
+
+  return [
+    {
+      type: "function",
+      function: {
+        name: "buscar_cliente",
+        description: "Busca um cliente pelo telefone. Use SEMPRE como primeira ação. Se retornar vazio → cliente não existe, usar cadastrar_cliente.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cadastrar_cliente",
+        description: "Cadastra um novo cliente. Use quando buscar_cliente retornar vazio.",
+        parameters: {
+          type: "object",
+          properties: {
+            nome: { type: "string", description: "Nome do cliente" },
+          },
+          required: ["nome"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_servicos",
+        description: "Lista todos os serviços disponíveis separados por grupos. Retorna servicoId necessário para os próximos passos.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_barbeiros_por_servico",
+        description: "Lista profissionais habilitados para um serviço. Requer servicoId (com S no final) de buscar_servicos.",
+        parameters: {
+          type: "object",
+          properties: {
+            servicosId: { type: "string", description: "ID do serviço (com S no final) retornado por buscar_servicos" },
+          },
+          required: ["servicosId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_datas_disponiveis",
+        description: "Lista datas em que o profissional tem vagas para o serviço. Requer servicoId + profissionalId dos passos anteriores.",
+        parameters: {
+          type: "object",
+          properties: {
+            servicosId: { type: "string", description: "ID do serviço (com S no final)" },
+            profissionalid: { type: "string", description: "ID do profissional (tudo minúsculo)" },
+          },
+          required: ["servicosId", "profissionalid"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_horarios",
+        description: "Lista horários disponíveis em um dia específico. Retorna horarioInicio e horarioFim no formato HH:MM:SS. Se for hoje, filtre horários passados.",
+        parameters: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Data no formato YYYY-MM-DD" },
+            servicoId: { type: "string", description: "ID do serviço (sem S no final)" },
+            ProfissionalId: { type: "string", description: "ID do profissional (P maiúsculo)" },
+          },
+          required: ["date", "servicoId", "ProfissionalId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "agendar",
+        description: "Cria o agendamento. ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE. Requer todos os dados dos passos anteriores.",
+        parameters: {
+          type: "object",
+          properties: {
+            dataAg: { type: "string", description: "Data no formato YYYY-MM-DD" },
+            servicoId: { type: "string", description: "ID do serviço" },
+            profissionalId: { type: "string", description: "ID do profissional" },
+            horarioInicio: { type: "string", description: "Horário início no formato HH:MM:SS" },
+            horarioFim: { type: "string", description: "Horário fim no formato HH:MM:SS" },
+          },
+          required: ["dataAg", "servicoId", "profissionalId", "horarioInicio", "horarioFim"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_agendamentos_dia",
+        description: "Busca todos os agendamentos de um dia específico. Útil para confirmação e lembretes.",
+        parameters: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Data no formato YYYY-MM-DD" },
+          },
+          required: ["date"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "confirmar_agendamento",
+        description: "Confirma um agendamento existente.",
+        parameters: {
+          type: "object",
+          properties: {
+            agendasId: { type: "string", description: "ID do agendamento a confirmar" },
+          },
+          required: ["agendasId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "desmarcar_agendamento",
+        description: "Desmarca/cancela um agendamento existente.",
+        parameters: {
+          type: "object",
+          properties: {
+            agendasId: { type: "string", description: "ID do agendamento a desmarcar" },
+          },
+          required: ["agendasId"],
+        },
+      },
+    },
+  ];
+}
+
+// ===================== NONE TOOLS =====================
+
+function buildNoneTools(tenant: any) {
+  if (!tenant.booking_link) return undefined;
+
+  return [
+    {
+      type: "function",
+      function: {
+        name: "enviar_link_agendamento",
+        description: "Envia o link de agendamento para o cliente quando ele quiser marcar um horário.",
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    },
+  ];
+}
+
+// ===================== TRINKS TOOL EXECUTION =====================
 
 async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
@@ -1317,10 +1638,8 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
   try {
     switch (funcName) {
       case "buscar_cliente": {
-        // Normalize phone: remove country code, ensure 9-digit mobile
         let tel = (args.telefone || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-        // Ensure 9-digit mobile format
         const ddd = tel.substring(0, 2);
         let rest = tel.substring(2);
         if (rest.length === 8) rest = "9" + rest;
@@ -1412,7 +1731,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         try {
           const parsed = JSON.parse(text);
           
-          // Filter out past times when querying today
           const br = getBrasiliaDate();
           const todayStr = br.todayDate;
           const currentHHMM = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}`;
@@ -1437,7 +1755,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       case "buscar_agendamento": {
         let clienteId = args.clienteId;
 
-        // ALWAYS resolve clienteId from the conversation phone number to prevent AI hallucinating wrong IDs
         const resolvePhone = phoneNumber || args.telefone || "";
         if (resolvePhone) {
           let tel = resolvePhone.replace(/\D/g, "");
@@ -1470,9 +1787,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         console.log(`buscar_agendamento response (${res.status}):`, text.slice(0, 1000));
         try {
           const parsed = JSON.parse(text);
-          // Filter to only return ACTIVE agendamentos (not cancelled/finalized)
-          // Status IDs: 4=Confirmado, 1=Aguardando Confirmação → ACTIVE
-          // Status IDs: 9=Cancelado, 6=Finalizado → INACTIVE (remove)
           if (parsed.data && Array.isArray(parsed.data)) {
             const activeStatuses = ["Confirmado", "Aguardando Confirmação", "Aguardando confirmação"];
             parsed.data = parsed.data.filter((a: any) => {
@@ -1480,7 +1794,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
               return activeStatuses.some(s => statusName.toLowerCase() === s.toLowerCase());
             });
             console.log(`buscar_agendamento: filtered to ${parsed.data.length} active agendamentos`);
-            // Simplify response to reduce noise and prevent ID confusion
             parsed.data = parsed.data.map((a: any) => ({
               id: a.id,
               status: a.status?.nome,
@@ -1503,7 +1816,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
-        // === PROTEÇÃO 1: Resolver clienteId pelo telefone da conversa ===
         let resolvedClienteId = args.clienteId;
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
@@ -1524,7 +1836,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           }
         }
 
-        // === PROTEÇÃO 2: Deduplicação — verificar agendamento equivalente existente ===
         try {
           const dedupRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
           const dedupData = await dedupRes.json();
@@ -1550,7 +1861,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           }
         } catch (dedupErr) {
           console.error("criar_agendamento dedup check failed:", dedupErr);
-          // Continue with creation if dedup check fails
         }
 
         const body = {
@@ -1573,7 +1883,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "cancelar_agendamento": {
-        // === PROTEÇÃO: Verificar propriedade do agendamento + AUTO-CORREÇÃO de IDs ===
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
@@ -1605,14 +1914,12 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
               }));
             const owns = activeAgendamentos.some((a: any) => a.id === args.agendamentoId);
             if (!owns) {
-              // AUTO-CORREÇÃO: Se o ID é pequeno (1, 2, 3...), mapear para o N-ésimo agendamento ativo
               const idx = args.agendamentoId;
               if (Number.isInteger(idx) && idx >= 1 && idx <= activeAgendamentos.length) {
                 const correctedId = activeAgendamentos[idx - 1].id;
                 console.log(`cancelar_agendamento: AUTO-CORRECTED positional id ${idx} → real id ${correctedId}`);
                 args.agendamentoId = correctedId;
               } else if (activeAgendamentos.length === 1) {
-                // Se só tem 1 ativo e o ID está errado, usa o único disponível
                 const correctedId = activeAgendamentos[0].id;
                 console.log(`cancelar_agendamento: AUTO-CORRECTED invalid id ${args.agendamentoId} → only active id ${correctedId}`);
                 args.agendamentoId = correctedId;
@@ -1649,7 +1956,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "editar_agendamento": {
-        // === PROTEÇÃO: Verificar propriedade do agendamento ===
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
@@ -1707,7 +2013,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
-        // Resolve clienteId from phone
         let editClienteId = args.clienteId;
         if (phoneNumber) {
           let tel2 = phoneNumber.replace(/\D/g, "");
@@ -1754,4 +2059,212 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
     const errorMessage = error instanceof Error ? error.message : String(error);
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
+}
+
+// ===================== ONE BELEZA TOOL EXECUTION =====================
+
+async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+  let args: any = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const baseUrl = "https://onechatbotapi.azurewebsites.net";
+  const celular = tenant.onebeleza_celular || "";
+  const authHeaders: Record<string, string> = {
+    "Authorization": `Bearer ${tenant.onebeleza_token}`,
+    "Accept": "application/json",
+  };
+
+  try {
+    switch (funcName) {
+      case "buscar_cliente": {
+        // Use the client's phone number for lookup, normalized
+        let tel = (phoneNumber || "").replace(/\D/g, "");
+        if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+        
+        const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`;
+        console.log(`[OneBeleza] buscar_cliente URL: ${url}`);
+        const res = await fetch(url, { headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_cliente response (${res.status}):`, text.slice(0, 500));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "cadastrar_cliente": {
+        let tel = (phoneNumber || "").replace(/\D/g, "");
+        if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+        
+        // cadastrar uses a different host: onetotemapi
+        const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
+        const body = { celular: tel, nome: args.nome || "Cliente" };
+        console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { ...authHeaders, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[OneBeleza] cadastrar_cliente response (${res.status}):`, text.slice(0, 500));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "buscar_servicos": {
+        const url = `${baseUrl}/api/Servicos/RetornarGrupoServicos?celular=${celular}`;
+        console.log(`[OneBeleza] buscar_servicos URL: ${url}`);
+        const res = await fetch(url, { headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_servicos response (${res.status}):`, text.slice(0, 1000));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "buscar_barbeiros_por_servico": {
+        const url = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${args.servicosId}`;
+        console.log(`[OneBeleza] buscar_barbeiros URL: ${url}`);
+        const res = await fetch(url, { headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_barbeiros response (${res.status}):`, text.slice(0, 1000));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "buscar_datas_disponiveis": {
+        const url = `${baseUrl}/api/Agendamento/RetornarDatasPorServico?celular=${celular}&servicosid=${args.servicosId}&profissionalid=${args.profissionalid}`;
+        console.log(`[OneBeleza] buscar_datas URL: ${url}`);
+        const res = await fetch(url, { headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_datas response (${res.status}):`, text.slice(0, 1000));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "buscar_horarios": {
+        const url = `${baseUrl}/api/Agendamento/HorariosPorProfissionaisByDataServico?celular=${celular}&date=${args.date}&servicoId=${args.servicoId}&ProfissionalId=${args.ProfissionalId}`;
+        console.log(`[OneBeleza] buscar_horarios URL: ${url}`);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: authHeaders,
+        });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_horarios response (${res.status}):`, text.slice(0, 1000));
+        try {
+          const parsed = JSON.parse(text);
+          
+          // Filter past times if today
+          const br = getBrasiliaDate();
+          if (args.date === br.todayDate) {
+            const currentHHMMSS = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}:00`;
+            if (Array.isArray(parsed)) {
+              for (const item of parsed) {
+                if (item.horarioInicio && item.horarioInicio <= currentHHMMSS) {
+                  item._filtered = true;
+                }
+              }
+              const filtered = parsed.filter((item: any) => !item._filtered);
+              console.log(`[OneBeleza] Filtered past times: ${parsed.length} → ${filtered.length}`);
+              return filtered;
+            }
+          }
+          
+          return parsed;
+        } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "agendar": {
+        const url = `${baseUrl}/api/Agendamento/MarcarAgendamentoForm?celular=${celular}`;
+        
+        // Build multipart form data
+        const formData = new FormData();
+        formData.append("dataAg", args.dataAg || "");
+        formData.append("servicoId", String(args.servicoId || ""));
+        formData.append("profissionalId", String(args.profissionalId || ""));
+        formData.append("horarioInicio", args.horarioInicio || "");
+        formData.append("horarioFim", args.horarioFim || "");
+        
+        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${args.dataAg} servicoId=${args.servicoId} profissionalId=${args.profissionalId} horarioInicio=${args.horarioInicio} horarioFim=${args.horarioFim}`);
+        
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${tenant.onebeleza_token}` },
+          body: formData,
+        });
+        const text = await res.text();
+        console.log(`[OneBeleza] agendar response (${res.status}):`, text.slice(0, 500));
+        
+        if (res.status === 200 || res.status === 201) {
+          try { 
+            const parsed = JSON.parse(text);
+            return { id: parsed.id || parsed.Id || true, success: true, ...parsed };
+          } catch { 
+            return { id: true, success: true, message: text.slice(0, 200) };
+          }
+        }
+        
+        // Handle "Já existe um evento no horário" error
+        if (res.status === 400 && text.includes("evento no hor")) {
+          return { error: "Já existe um evento no horário.", conflict: true };
+        }
+        
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "buscar_agendamentos_dia": {
+        const url = `${baseUrl}/api/Agendamento/GetTodosAgendamentosDia?date=${args.date}`;
+        console.log(`[OneBeleza] buscar_agendamentos_dia URL: ${url}`);
+        const res = await fetch(url, { headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_agendamentos_dia response (${res.status}):`, text.slice(0, 1000));
+        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+      }
+
+      case "confirmar_agendamento": {
+        const url = `${baseUrl}/api/Agendamento/ConfirmarAgendamento?agendasId=${args.agendasId}&celular=${celular}`;
+        console.log(`[OneBeleza] confirmar_agendamento URL: ${url}`);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: authHeaders,
+        });
+        const text = await res.text();
+        console.log(`[OneBeleza] confirmar_agendamento response (${res.status}):`, text.slice(0, 500));
+        if (res.status === 200) {
+          return { success: true, message: "Agendamento confirmado com sucesso" };
+        }
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "desmarcar_agendamento": {
+        const url = `${baseUrl}/api/Agendamento/DesmarcarAgendamento?celular=${celular}&agendasId=${args.agendasId}`;
+        console.log(`[OneBeleza] desmarcar_agendamento URL: ${url}`);
+        const res = await fetch(url, {
+          method: "DELETE",
+          headers: authHeaders,
+        });
+        const text = await res.text();
+        console.log(`[OneBeleza] desmarcar_agendamento response (${res.status}):`, text.slice(0, 500));
+        if (res.status === 200 || res.status === 204) {
+          return { success: true, message: "Agendamento desmarcado com sucesso" };
+        }
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      default:
+        return { error: `Unknown OneBeleza tool: ${funcName}` };
+    }
+  } catch (error) {
+    console.error(`OneBeleza tool error (${funcName}):`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
+  }
+}
+
+// ===================== NONE TOOL EXECUTION =====================
+
+async function executeNoneTool(tenant: any, toolCall: any): Promise<any> {
+  const funcName = toolCall.function.name;
+
+  if (funcName === "enviar_link_agendamento") {
+    return {
+      link: tenant.booking_link || "Link não configurado",
+      message: `Link de agendamento: ${tenant.booking_link || "não configurado"}`,
+    };
+  }
+
+  return { error: `Unknown tool: ${funcName}` };
 }
