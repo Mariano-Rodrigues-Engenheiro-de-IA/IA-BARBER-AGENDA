@@ -313,6 +313,7 @@ export default function TenantFormPage() {
             </div>
           </TabsContent>
 
+          <TabsContent value="api" className="space-y-4">
             <div className="glass-card p-6 space-y-4">
               <h3 className="font-semibold text-foreground">Provedor de Agendamento</h3>
               <p className="text-sm text-muted-foreground">
