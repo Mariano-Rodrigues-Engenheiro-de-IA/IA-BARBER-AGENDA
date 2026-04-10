@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
@@ -65,6 +65,56 @@ function TrinksTestButton({ tenantId }: { tenantId: string }) {
     </div>
   );
 }
+function UazapiTestButton({ url, token }: { url: string; token: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const res = await fetch(`${url}/status`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data) {
+        const connected = data.connected || data.status === "CONNECTED" || data.state === "open";
+        setResult({
+          success: connected,
+          message: connected ? "WhatsApp conectado!" : "Instância encontrada, mas WhatsApp não conectado",
+        });
+        toast[connected ? "success" : "warning"](connected ? "WhatsApp conectado!" : "WhatsApp não conectado");
+      } else {
+        setResult({ success: false, message: "Falha ao conectar na instância" });
+        toast.error("Falha ao conectar na instância");
+      }
+    } catch (err: any) {
+      setResult({ success: false, message: err.message || "Erro ao testar conexão" });
+      toast.error(err.message || "Erro ao testar conexão");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="pt-4 border-t border-border space-y-3">
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? (
+          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+        ) : (
+          <Plug className="w-4 h-4 mr-2" />
+        )}
+        {testing ? "Testando..." : "Testar Conexão WhatsApp"}
+      </Button>
+      {result && (
+        <div className={`flex items-center gap-2 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
+          {result.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {result.message}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function TenantFormPage() {
   const { id } = useParams();
@@ -89,6 +139,8 @@ export default function TenantFormPage() {
     onebeleza_token: "",
     onebeleza_celular: "",
     booking_link: "",
+    uazapi_url: "",
+    uazapi_token: "",
     agent_system_prompt: "",
     agent_knowledge_base: "",
   });
@@ -109,6 +161,8 @@ export default function TenantFormPage() {
         onebeleza_token: (existing as any).onebeleza_token ?? "",
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
         booking_link: (existing as any).booking_link ?? "",
+        uazapi_url: existing.uazapi_url ?? "",
+        uazapi_token: existing.uazapi_token ?? "",
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
       });
@@ -172,6 +226,7 @@ export default function TenantFormPage() {
         <Tabs defaultValue="general" className="space-y-6">
           <TabsList className="bg-muted">
             <TabsTrigger value="general">Geral</TabsTrigger>
+            <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
             <TabsTrigger value="api">Integração API</TabsTrigger>
             <TabsTrigger value="agent">Agente IA</TabsTrigger>
           </TabsList>
@@ -258,6 +313,53 @@ export default function TenantFormPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="whatsapp" className="space-y-4">
+            <div className="glass-card p-6 space-y-4">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-semibold text-foreground">Conexão Uazapi (WhatsApp)</h3>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Configure a conexão com a instância Uazapi deste estabelecimento para enviar e receber mensagens via WhatsApp.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="uazapi_url">URL da Instância</Label>
+                <Input
+                  id="uazapi_url"
+                  value={form.uazapi_url as string}
+                  onChange={(e) => handleChange("uazapi_url", e.target.value)}
+                  placeholder="https://sua-instancia.uazapi.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  URL base da sua instância Uazapi (ex: https://zyloia.uazapi.com)
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="uazapi_token">Token da Instância</Label>
+                <div className="relative">
+                  <Input
+                    id="uazapi_token"
+                    type={showApiKey ? "text" : "password"}
+                    value={form.uazapi_token as string}
+                    onChange={(e) => handleChange("uazapi_token", e.target.value)}
+                    placeholder="Token de autenticação Uazapi"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              {isEditing && id && form.uazapi_url && form.uazapi_token && (
+                <UazapiTestButton url={form.uazapi_url as string} token={form.uazapi_token as string} />
+              )}
             </div>
           </TabsContent>
 
