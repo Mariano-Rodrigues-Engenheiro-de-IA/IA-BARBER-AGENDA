@@ -81,6 +81,7 @@ export default function TenantFormPage() {
     phone: "",
     email: "",
     address: "",
+    whatsapp_number: "",
     status: "active",
     api_provider: "trinks",
     trinks_api_key: "",
@@ -100,6 +101,7 @@ export default function TenantFormPage() {
         phone: existing.phone ?? "",
         email: existing.email ?? "",
         address: existing.address ?? "",
+        whatsapp_number: existing.whatsapp_number ?? "",
         status: existing.status,
         api_provider: (existing as any).api_provider ?? "trinks",
         trinks_api_key: existing.trinks_api_key ?? "",
@@ -218,6 +220,18 @@ export default function TenantFormPage() {
                     placeholder="(11) 99999-9999"
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="whatsapp_number">Número WhatsApp (do estabelecimento)</Label>
+                <Input
+                  id="whatsapp_number"
+                  value={form.whatsapp_number as string}
+                  onChange={(e) => handleChange("whatsapp_number", e.target.value)}
+                  placeholder="5511999999999 (com código do país)"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Número que recebe mensagens dos clientes. Usado para identificar o tenant.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="address">Endereço</Label>
