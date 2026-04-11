@@ -1,111 +1,86 @@
 
 
-# Arquitetura Multi-API: Trinks + One Beleza + Sem API
+# Ferramentas Customizáveis por Tenant
 
 ## Resumo
 
-Transformar o webhook de um sistema hardcoded para Trinks em uma arquitetura plugável onde cada tenant escolhe seu provedor de agendamento: **Trinks**, **One Beleza**, ou **Nenhum** (link direto no WhatsApp).
+Adicionar uma aba "Ferramentas" no formulário de tenant onde o admin pode cadastrar ferramentas de envio (PIX, localização, imagem, áudio, documento, link) que a IA aciona automaticamente via UAZAPI. Sem migration de banco -- usa o campo `agent_settings` (JSONB) que já existe.
 
-## O Que Muda
+## Mudanças
 
-### 1. Banco de Dados
+### 1. TenantForm.tsx — Nova aba "Ferramentas"
 
-Adicionar coluna `api_provider` na tabela `tenants`:
+- Adicionar 5a aba no TabsList: "Ferramentas" (ícone Wrench)
+- Ler/salvar `agent_settings.custom_tools[]` do tenant
+- Interface CRUD:
+  - Lista de ferramentas com nome, tipo, status (switch on/off), botões editar/excluir
+  - Dialog para adicionar/editar ferramenta com campos:
+    - Nome de exibição (ex: "Enviar PIX")
+    - Tipo (dropdown: Texto, Imagem, Áudio, Localização, Documento, Link)
+    - Campos de configuração dinâmicos conforme tipo selecionado
+    - Instrução para o prompt (textarea - quando a IA deve usar)
+    - Switch ativo/inativo
+- Templates prontos (botões rápidos): PIX, Localização, Catálogo de Serviços, Link Agendamento, Escalar Humano
+- O `agent_settings` é salvo junto com o resto do form no submit
 
-- Valores: `trinks`, `onebeleza`, `none` (default: `trinks`)
-- Adicionar campos para One Beleza: `onebeleza_token`, `onebeleza_celular` (celular fixo usado nas chamadas API)
-- O campo `trinks_api_key` e `trinks_establishment_id` continuam existindo, usados apenas quando `api_provider = 'trinks'`
+### 2. Webhook (index.ts) — Injeção e execução dinâmica
 
-### 2. Webhook: Arquitetura de Providers
+**buildToolsForProvider():**
+- Após montar tools do provider, ler `tenant.agent_settings?.custom_tools`
+- Para cada ferramenta `enabled: true`, gerar tool definition OpenAI-format e concatenar
 
-Refatorar `whatsapp-webhook/index.ts` para ter uma interface de provider:
+**buildSystemPrompt():**
+- Injetar seção "FERRAMENTAS CUSTOMIZADAS" com as `prompt_instruction` de cada ferramenta ativa
 
-```text
-whatsapp-webhook/index.ts
-  │
-  ├── buildTools(tenant)        ← escolhe tools baseado em api_provider
-  ├── executeTool(tenant, ...)  ← despacha para provider correto
-  │
-  ├── providers/trinks    ← código atual (já existe)
-  │     buildTrinksTools()
-  │     executeTrinksTool()
-  │
-  ├── providers/onebeleza ← NOVO
-  │     buildOneBelezaTools()
-  │     executeOneBelezaTool()
-  │
-  └── providers/none      ← NOVO
-        buildNoneTools()   ← sem tools de agendamento
+**Nova função executeCustomTool():**
+- Mapeia tipo para endpoint UAZAPI:
+  - `send_text` → POST `/send/text` (texto fixo)
+  - `send_image` → POST `/send/media` (type: image, URL + caption)
+  - `send_audio` → POST `/send/media` (type: audio, URL, ptt: true)
+  - `send_location` → POST `/send/location` (lat, lng, name)
+  - `send_document` → POST `/send/media` (type: document, URL + caption)
+  - `send_link` → POST `/send/text` (URL fixa)
+
+**executeToolForProvider():**
+- Se tool name não pertence a nenhum provider, verificar se é custom tool e despachar para `executeCustomTool()`
+
+### 3. Estrutura de dados (agent_settings)
+
+```json
+{
+  "custom_tools": [
+    {
+      "id": "uuid",
+      "name": "enviar_pix",
+      "display_name": "Enviar PIX",
+      "description": "Envia a chave PIX para o cliente",
+      "type": "send_text",
+      "config": { "text": "Chave PIX: 11999998888" },
+      "prompt_instruction": "Use quando o cliente perguntar sobre PIX",
+      "enabled": true
+    }
+  ]
+}
 ```
 
-Como edge functions suportam apenas 1 arquivo (`index.ts`), todo o código fica no mesmo arquivo mas organizado em seções claras.
+### 4. Tipos de ferramenta e seus campos de config
 
-### 3. Provider One Beleza: Ferramentas
+| Tipo | Campos | Uso |
+|------|--------|-----|
+| send_text | text | PIX, informações fixas |
+| send_image | url, caption | Catálogo, promoções |
+| send_audio | url | Mensagem de boas-vindas |
+| send_location | latitude, longitude, name | Endereço |
+| send_document | url, caption | Tabela de preços |
+| send_link | url | Redes sociais, agendamento |
 
-Baseado na API documentada e nos nodes n8n, as ferramentas seriam:
+### 5. Memória do projeto
 
-| Ferramenta | Endpoint One Beleza | Método |
-|---|---|---|
-| `buscar_cliente` | `/api/Clientes/GetClientePeloNumero?Celular=...` | GET |
-| `cadastrar_cliente` | `/api/OLoginChatBot/CadastrarUsuario` (host diferente: onetotemapi) | POST |
-| `buscar_servicos` | `/api/Servicos/RetornarGrupoServicos?celular=...` | GET |
-| `buscar_barbeiros_por_servico` | `/api/Profissionais/PesquisarProfissionais?celular=...&servicosId=...` | GET |
-| `buscar_datas_disponiveis` | `/api/Agendamento/RetornarDatasPorServico?celular=...&servicosid=...&profissionalid=...` | GET |
-| `buscar_horarios` | `/api/Agendamento/HorariosPorProfissionaisByDataServico?celular=...&date=...&servicoId=...&ProfissionalId=...` | POST |
-| `agendar` | `/api/Agendamento/MarcarAgendamentoForm?celular=...` (form-data) | POST |
-| `buscar_agendamentos_dia` | `/api/Agendamento/GetTodosAgendamentosDia?date=...` | GET |
-| `confirmar_agendamento` | `/api/Agendamento/ConfirmarAgendamento?agendasId=...&celular=...` | POST |
-| `desmarcar_agendamento` | `/api/Agendamento/DesmarcarAgendamento?celular=...&agendasId=...` | DELETE |
+Atualizar `mem://features/ai-agent.md` com a seção de custom tools.
 
-Diferenças chave vs Trinks:
-- Autenticação: Bearer Token (header `Authorization`)
-- O `celular` vai na URL como query param (fixo por tenant)
-- Agendar usa `multipart/form-data` (não JSON)
-- Fluxo sequencial obrigatório: Servico → Barbeiro → Datas → Horarios → Agendar
-- Cancelamento = DELETE (não PATCH)
-- Tem endpoint de confirmação de agendamento (Trinks nao tem)
+## Arquivos modificados
 
-### 4. Provider "Nenhum" (Sem API)
-
-- Sem ferramentas de agendamento
-- O agente apenas conversa e pode enviar um link de agendamento (configurável no tenant)
-- Adicionar campo `booking_link` no tenant para o link que o agente deve enviar
-
-### 5. System Prompt: Adaptação por Provider
-
-O prompt base permanece o mesmo (tom de voz, regras de data, etc). A seção de ferramentas e fluxo de agendamento muda conforme o provider:
-
-- **Trinks**: prompt atual (já funciona)
-- **One Beleza**: fluxo sequencial de 5 passos (servico → barbeiro → datas → horarios → agendar), adaptar nomes das ferramentas
-- **None**: sem fluxo de agendamento, apenas orientar o cliente ao link
-
-### 6. Admin UI: Seletor de Provider
-
-No `TenantForm.tsx`, aba "Integração API":
-- Dropdown: "Provedor de Agendamento" → Trinks / One Beleza / Nenhum
-- Mostrar/esconder campos conforme seleção:
-  - **Trinks**: X-Api-Key + Establishment ID (já existe)
-  - **One Beleza**: Bearer Token + Celular da conta
-  - **Nenhum**: Link de agendamento
-
-### 7. Tenant lookup no webhook
-
-Atualmente o webhook pega o primeiro tenant ativo. Precisa mudar para match por `whatsapp_number` (campo que já existe na tabela) para funcionar multi-tenant de verdade.
-
-## Etapas de Implementação
-
-1. Migration: adicionar `api_provider`, `onebeleza_token`, `onebeleza_celular`, `booking_link` ao `tenants`
-2. Refatorar webhook: extrair Trinks para seção isolada, criar dispatcher por provider
-3. Implementar provider One Beleza: tools + executor
-4. Implementar provider None: sem tools
-5. Adaptar `buildSystemPrompt` para variar por provider
-6. Atualizar `TenantForm.tsx`: seletor de provider + campos condicionais
-7. Fix tenant lookup: match por `whatsapp_number` em vez de `LIMIT 1`
-8. Atualizar memórias do projeto
-
-## Detalhes Tecnic -- Seguranca
-
-- Tokens One Beleza ficam no banco (como já acontece com Trinks)
-- Cada tenant tem suas credenciais isoladas
-- RLS já protege acesso aos tenants
+- `src/pages/TenantForm.tsx` — nova aba + CRUD de ferramentas
+- `supabase/functions/whatsapp-webhook/index.ts` — injeção dinâmica + executeCustomTool
+- `.lovable/memory/features/ai-agent.md` — documentar custom tools
 
