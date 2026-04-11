@@ -983,28 +983,77 @@ async function callAIAgent(
   const lastMsg = messages[messages.length - 1];
   const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
 
+  const normalizeMediaPromptText = (text: string) =>
+    text
+      .replace(/\[Áudio recebido\]/gi, "")
+      .replace(/\[Imagem recebida\]/gi, "")
+      .replace(/\[Vídeo recebido\]/gi, "")
+      .replace(/\[Video recebido\]/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const buildMediaInstruction = () => {
+    const cleanedText = normalizeMediaPromptText(userMessage || "");
+
+    if (mediaMimeType?.startsWith("audio/")) {
+      return cleanedText
+        ? `O cliente enviou um áudio com esta mensagem complementar: "${cleanedText}". Transcreva o áudio em pt-BR e responda ao conteúdo. NÃO peça para repetir em texto.`
+        : "O cliente enviou um áudio. Transcreva o que foi dito em pt-BR e responda ao conteúdo. NÃO peça para o cliente repetir em texto.";
+    }
+
+    if (mediaMimeType?.startsWith("image/")) {
+      return cleanedText
+        ? `O cliente enviou uma imagem com esta mensagem complementar: "${cleanedText}". Analise a imagem e responda considerando também esse texto.`
+        : "O cliente enviou uma imagem. Analise o que aparece nela e responda de forma útil e objetiva.";
+    }
+
+    return cleanedText || userMessage || "O cliente enviou uma mídia.";
+  };
+
+  const inferAudioFormat = (mimeType: string) => {
+    if (/wav/i.test(mimeType)) return "wav";
+    if (/mpeg|mp3/i.test(mimeType)) return "mp3";
+    if (/ogg|opus/i.test(mimeType)) return "mp3";
+    return "mp3";
+  };
+
   if (mediaBase64 && mediaMimeType) {
     const contentParts: any[] = [];
+    const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
       contentParts.push({
-        type: "image_url",
-        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
+        type: "input_audio",
+        input_audio: {
+          data: mediaBase64,
+          format: inferAudioFormat(mediaMimeType),
+        },
       });
       contentParts.push({
         type: "text",
-        text: userMessage || "O cliente enviou um áudio. Transcreva o que foi dito e responda ao conteúdo. NÃO peça para o cliente repetir em texto.",
+        text: mediaInstruction,
       });
     } else if (mediaMimeType.startsWith("image/")) {
       contentParts.push({
+        type: "text",
+        text: mediaInstruction,
+      });
+      contentParts.push({
         type: "image_url",
         image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
+    } else {
       contentParts.push({
         type: "text",
-        text: userMessage || "O cliente enviou uma imagem. Descreva o que vê e responda adequadamente.",
+        text: mediaInstruction,
       });
     }
+
+    console.log("Sending multimodal message to AI:", {
+      mediaMimeType,
+      partTypes: contentParts.map((part) => part.type),
+      instruction: mediaInstruction.slice(0, 160),
+    });
 
     if (alreadyHasUserMsg) {
       messages[messages.length - 1] = { role: "user", content: contentParts };
