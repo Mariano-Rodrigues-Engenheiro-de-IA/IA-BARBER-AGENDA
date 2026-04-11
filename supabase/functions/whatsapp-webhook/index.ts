@@ -1376,7 +1376,8 @@ Leia o conteúdo completo do retorno antes de responder ao cliente.
 ⚠️ CHECKLIST ANTES DE USAR FERRAMENTAS:
 - Consultei a ferramenta correta para obter este ID?
 - O ID é um número GRANDE (não 1, 2, 3, 4)?
-- Estou usando o nome EXATO do parâmetro conforme cada ferramenta?
+- Estou usando o nome EXATO do parâmetro conforme cada ferramenta?`;
+}
 
 // ===================== NONE PROMPT SECTION =====================
 
