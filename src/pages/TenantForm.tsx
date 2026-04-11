@@ -677,6 +677,13 @@ export default function TenantFormPage() {
       } else {
         setCustomTools([]);
       }
+      // Load follow-up settings
+      if (settings && typeof settings === "object" && settings.follow_up) {
+        const fu = settings.follow_up;
+        setFollowUpEnabled(fu.enabled !== false);
+        setFollowUpDelay(fu.delay_minutes || 30);
+        setFollowUpMessage(fu.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
+      }
     }
   }, [existing]);
 
