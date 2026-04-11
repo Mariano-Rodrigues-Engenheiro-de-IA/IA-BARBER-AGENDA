@@ -720,14 +720,14 @@ export default function TenantFormPage() {
 
       if (isEditing && id) {
         await updateTenant.mutateAsync({ id, ...payload } as any);
-        toast.success("Tenant atualizado!");
+        toast.success("Empresa atualizada!");
       } else {
         await createTenant.mutateAsync(payload as any);
-        toast.success("Tenant criado!");
+        toast.success("Empresa criada!");
       }
       navigate("/tenants");
     } catch (error: any) {
-      toast.error(error.message || "Erro ao salvar tenant");
+      toast.error(error.message || "Erro ao salvar empresa");
     }
   };
 
@@ -746,7 +746,7 @@ export default function TenantFormPage() {
         </Button>
         <div>
           <h2 className="text-2xl font-bold text-foreground">
-            {isEditing ? "Editar Tenant" : "Novo Tenant"}
+            {isEditing ? "Editar Empresa" : "Nova Empresa"}
           </h2>
           <p className="text-muted-foreground mt-1">
             {isEditing ? "Atualize as informações do estabelecimento" : "Cadastre um novo salão ou barbearia"}

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Search, Trash2, Pencil, Building2 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -32,18 +33,18 @@ export default function TenantsPage() {
     if (!deleteId) return;
     try {
       await deleteTenant.mutateAsync(deleteId);
-      toast.success("Tenant removido com sucesso");
+      toast.success("Empresa removida com sucesso");
     } catch {
-      toast.error("Erro ao remover tenant");
+      toast.error("Erro ao remover empresa");
     }
     setDeleteId(null);
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-foreground">Tenants</h2>
+          <h2 className="text-2xl font-bold text-foreground">Empresas</h2>
           <p className="text-muted-foreground mt-1">
             Gerencie salões e barbearias cadastrados
           </p>
@@ -51,7 +52,7 @@ export default function TenantsPage() {
         <Button asChild>
           <Link to="/tenants/new">
             <Plus className="w-4 h-4 mr-2" />
-            Novo Tenant
+            Nova Empresa
           </Link>
         </Button>
       </div>
@@ -68,62 +69,77 @@ export default function TenantsPage() {
 
       <div className="glass-card overflow-hidden">
         {isLoading ? (
-          <div className="p-8 text-center text-muted-foreground">Carregando...</div>
+          <div className="p-6 space-y-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-48" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+                <Skeleton className="h-6 w-16 rounded-full" />
+              </div>
+            ))}
+          </div>
         ) : !filtered?.length ? (
           <div className="p-12 text-center text-muted-foreground">
             <Building2 className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p>{search ? "Nenhum resultado encontrado" : "Nenhum tenant cadastrado"}</p>
+            <p>{search ? "Nenhum resultado encontrado" : "Nenhuma empresa cadastrada"}</p>
           </div>
         ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-border text-left">
-                <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Nome</th>
-                <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Contato</th>
-                <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
-                <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">API Trinks</th>
-                <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {filtered.map((tenant) => (
-                <tr key={tenant.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="p-4">
-                    <p className="font-medium text-foreground">{tenant.name}</p>
-                    <p className="text-xs text-muted-foreground">{tenant.slug}</p>
-                  </td>
-                  <td className="p-4 text-sm text-muted-foreground">
-                    {tenant.email || tenant.phone || "—"}
-                  </td>
-                  <td className="p-4">
-                    <StatusBadge status={tenant.status} />
-                  </td>
-                  <td className="p-4">
-                    {tenant.trinks_api_key ? (
-                      <span className="text-xs text-accent">Configurado</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Pendente</span>
-                    )}
-                  </td>
-                  <td className="p-4 text-right space-x-1">
-                    <Button variant="ghost" size="icon" asChild>
-                      <Link to={`/tenants/${tenant.id}`}>
-                        <Pencil className="w-4 h-4" />
-                      </Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="hover:text-destructive"
-                      onClick={() => setDeleteId(tenant.id)}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border text-left">
+                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Nome</th>
+                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Contato</th>
+                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">API</th>
+                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider text-right">Ações</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map((tenant, idx) => (
+                  <tr
+                    key={tenant.id}
+                    className={`hover:bg-muted/30 transition-colors ${idx % 2 === 1 ? "bg-muted/10" : ""}`}
+                  >
+                    <td className="p-4">
+                      <p className="font-medium text-foreground">{tenant.name}</p>
+                      <p className="text-xs text-muted-foreground">{tenant.slug}</p>
+                    </td>
+                    <td className="p-4 text-sm text-muted-foreground hidden sm:table-cell">
+                      {tenant.email || tenant.phone || "—"}
+                    </td>
+                    <td className="p-4">
+                      <StatusBadge status={tenant.status} />
+                    </td>
+                    <td className="p-4 hidden md:table-cell">
+                      {tenant.trinks_api_key ? (
+                        <span className="text-xs text-accent">Configurado</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Pendente</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-right space-x-1">
+                      <Button variant="ghost" size="icon" asChild>
+                        <Link to={`/tenants/${tenant.id}`}>
+                          <Pencil className="w-4 h-4" />
+                        </Link>
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="hover:text-destructive"
+                        onClick={() => setDeleteId(tenant.id)}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -132,7 +148,7 @@ export default function TenantsPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar exclusão</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta ação não pode ser desfeita. O tenant e todas as suas configurações serão removidos permanentemente.
+              Esta ação não pode ser desfeita. A empresa e todas as suas configurações serão removidas permanentemente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -149,9 +165,9 @@ export default function TenantsPage() {
 
 function StatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; className: string }> = {
-    active: { label: "Ativo", className: "bg-accent/10 text-accent" },
-    inactive: { label: "Inativo", className: "bg-muted text-muted-foreground" },
-    suspended: { label: "Suspenso", className: "bg-warning/10 text-warning" },
+    active: { label: "Ativa", className: "bg-accent/10 text-accent" },
+    inactive: { label: "Inativa", className: "bg-muted text-muted-foreground" },
+    suspended: { label: "Suspensa", className: "bg-warning/10 text-warning" },
   };
   const c = config[status] ?? config.inactive;
   return (
