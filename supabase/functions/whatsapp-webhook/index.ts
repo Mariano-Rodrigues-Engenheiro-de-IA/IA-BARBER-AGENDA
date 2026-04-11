@@ -1005,19 +1005,48 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
       } else {
-        // Validate desmarcar/confirmar agendasId against known IDs
+        // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
-        if (isAgendaIdTool && sessionState.validAgendasIds.length > 0) {
+        if (isAgendaIdTool && provider === "onebeleza") {
+          // If validAgendasIds is empty (new invocation), auto-fetch agendamentos
+          if (sessionState.validAgendasIds.length === 0) {
+            console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds empty, auto-fetching agendamentos...`);
+            const today = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().split("T")[0];
+            const fetchResult = await executeToolForProvider(provider, tenant, {
+              ...toolCall,
+              function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: today }) },
+            }, phoneNumber);
+            if (Array.isArray(fetchResult)) {
+              sessionState.validAgendasIds = fetchResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+              // Also store full agenda data for smart matching
+              (sessionState as any).oneBelezaAgendaOptions = fetchResult;
+              console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}]`);
+            }
+          }
+
           const usedId = toPositiveInteger(parsedArgs.agendasId);
-          if (usedId && !sessionState.validAgendasIds.includes(usedId)) {
-            console.log(`${toolCall.function.name} BLOCKED: agendasId ${usedId} not in valid list [${sessionState.validAgendasIds}]`);
-            toolResult = {
-              error: `agendasId ${usedId} é inválido. Os IDs reais retornados por buscar_agendamentos_dia são: ${sessionState.validAgendasIds.join(", ")}. Use APENAS esses IDs.`,
-              validIds: sessionState.validAgendasIds,
-              blocked: true,
-            };
-            wasBlocked = true;
-            sessionBlocked = true;
+          if (usedId && sessionState.validAgendasIds.length > 0 && !sessionState.validAgendasIds.includes(usedId)) {
+            // Try to find the best match from conversation context
+            const correctedId = reconcileOneBelezaAgendaId(usedId, sessionState, messages);
+            if (correctedId) {
+              console.log(`[OneBeleza] ${toolCall.function.name} auto-corrected agendasId: ${usedId} → ${correctedId}`);
+              parsedArgs.agendasId = String(correctedId);
+              toolCallToExecute = {
+                ...toolCall,
+                function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+              };
+            } else {
+              console.log(`${toolCall.function.name} BLOCKED: agendasId ${usedId} not in valid list [${sessionState.validAgendasIds}], no match found`);
+              toolResult = {
+                error: `agendasId ${usedId} é inválido. Os IDs reais são: ${sessionState.validAgendasIds.join(", ")}. Use APENAS esses IDs.`,
+                validIds: sessionState.validAgendasIds,
+                blocked: true,
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            }
+          } else if (usedId && sessionState.validAgendasIds.length === 0) {
+            console.log(`${toolCall.function.name} WARNING: no valid agenda IDs found, proceeding with AI's ID ${usedId}`);
           }
         }
 
