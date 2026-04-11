@@ -199,7 +199,7 @@ Deno.serve(async (req) => {
                   console.log(`Media via POST /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
                 }
                 // Check if response has a URL instead of base64
-                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.link || dlData?.mediaUrl;
+                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
                 if (!gotMedia && mediaUrl) {
                   const mediaRes = await fetch(mediaUrl);
                   if (mediaRes.ok) {
