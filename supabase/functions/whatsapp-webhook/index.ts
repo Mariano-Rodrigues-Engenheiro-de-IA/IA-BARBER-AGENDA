@@ -1563,17 +1563,17 @@ function buildOneBelezaTools(tenant: any) {
       type: "function",
       function: {
         name: "agendar",
-        description: "Cria o agendamento. ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE. Requer todos os dados dos passos anteriores.",
-        parameters: {
-          type: "object",
-          properties: {
-            dataAg: { type: "string", description: "Data no formato YYYY-MM-DD" },
-            servicoId: { type: "string", description: "ID do serviço" },
-            profissionalId: { type: "string", description: "ID do profissional" },
-            horarioInicio: { type: "string", description: "Horário início no formato HH:MM:SS" },
-            horarioFim: { type: "string", description: "Horário fim no formato HH:MM:SS" },
-          },
-          required: ["dataAg", "servicoId", "profissionalId", "horarioInicio", "horarioFim"],
+        description: "Cria o agendamento. ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE. IMPORTANTE: servicoId deve ser o valor EXATO de 'servicosId' retornado por buscar_servicos (ex: 2461, 2462). profissionalId deve ser o valor EXATO de 'profissionalId' retornado por buscar_barbeiros_por_servico (ex: 40658). NUNCA invente esses IDs.",
+         parameters: {
+           type: "object",
+           properties: {
+             dataAg: { type: "string", description: "Data no formato YYYY-MM-DD" },
+             servicoId: { type: "string", description: "EXATO 'servicosId' retornado por buscar_servicos. Ex: '2461'. NUNCA invente." },
+             profissionalId: { type: "string", description: "EXATO 'profissionalId' retornado por buscar_barbeiros_por_servico. Ex: '40658'. NUNCA invente." },
+             horarioInicio: { type: "string", description: "Horário início no formato HH:MM:SS retornado por buscar_horarios" },
+             horarioFim: { type: "string", description: "Horário fim no formato HH:MM:SS retornado por buscar_horarios" },
+           },
+           required: ["dataAg", "servicoId", "profissionalId", "horarioInicio", "horarioFim"],
         },
       },
     },
