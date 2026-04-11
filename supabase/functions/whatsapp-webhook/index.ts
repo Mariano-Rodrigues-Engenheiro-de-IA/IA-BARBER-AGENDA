@@ -1458,7 +1458,17 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   const customSection = customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : "";
   const knowledgeSection = knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : "";
 
-  return basePrompt + "\n\n" + providerPrompt + customSection + knowledgeSection;
+  // Inject custom tools instructions
+  const enabledCustomTools = getEnabledCustomTools(tenant);
+  let customToolsSection = "";
+  if (enabledCustomTools.length > 0) {
+    const toolInstructions = enabledCustomTools.map((ct: any) =>
+      `- **${ct.display_name}** (ferramenta: ${ct.name}): ${ct.prompt_instruction}`
+    ).join("\n");
+    customToolsSection = `\n\n------------------------------------------\n\n## 🔧 FERRAMENTAS CUSTOMIZADAS\n\nVocê tem acesso às seguintes ferramentas extras. Use conforme as instruções:\n\n${toolInstructions}\n\n⚠️ Quando usar uma ferramenta customizada, a mensagem/mídia será enviada DIRETAMENTE ao cliente. Após executar, confirme ao cliente que enviou (ex: "Enviei a localização!" ou "Mandei a chave PIX!"). NÃO repita o conteúdo da ferramenta na mensagem de texto.`;
+  }
+
+  return basePrompt + "\n\n" + providerPrompt + customToolsSection + customSection + knowledgeSection;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================
