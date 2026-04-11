@@ -1,86 +1,67 @@
 
 
-# Ferramentas Customizáveis por Tenant
+# Correção: Recebimento de Mídia + Ferramentas Customizadas UAZAPI
 
-## Resumo
+## Problemas Identificados
 
-Adicionar uma aba "Ferramentas" no formulário de tenant onde o admin pode cadastrar ferramentas de envio (PIX, localização, imagem, áudio, documento, link) que a IA aciona automaticamente via UAZAPI. Sem migration de banco -- usa o campo `agent_settings` (JSONB) que já existe.
+### 1. IA nao recebe audio/imagem do usuario
+Os logs mostram `getBase64 response status: 404`, `getLink response: 404`, `downloadMedia failed: 404`. O codigo usa endpoints antigos (`/getBase64/{id}`, `/getLink/{id}`, `/downloadMedia/{id}`) que nao existem no UAZAPI v2. O endpoint correto e `POST /message/download` com `{id}` no body JSON.
 
-## Mudanças
+### 2. Ferramenta de envio de midia (catalogo/imagem/audio/documento)
+O codigo usa FormData para enviar ao `/send/media`, mas a UAZAPI aceita JSON simples: `{number, type, file, caption}` onde `file` pode ser uma URL publica ou string base64. Nao precisa de FormData.
 
-### 1. TenantForm.tsx — Nova aba "Ferramentas"
+### 3. Ferramenta de localizacao
+Falta o campo `address` no payload. A UAZAPI exige `{number, name, address, latitude, longitude}`. Tambem falta o campo `address` na UI e no config da ferramenta.
 
-- Adicionar 5a aba no TabsList: "Ferramentas" (ícone Wrench)
-- Ler/salvar `agent_settings.custom_tools[]` do tenant
-- Interface CRUD:
-  - Lista de ferramentas com nome, tipo, status (switch on/off), botões editar/excluir
-  - Dialog para adicionar/editar ferramenta com campos:
-    - Nome de exibição (ex: "Enviar PIX")
-    - Tipo (dropdown: Texto, Imagem, Áudio, Localização, Documento, Link)
-    - Campos de configuração dinâmicos conforme tipo selecionado
-    - Instrução para o prompt (textarea - quando a IA deve usar)
-    - Switch ativo/inativo
-- Templates prontos (botões rápidos): PIX, Localização, Catálogo de Serviços, Link Agendamento, Escalar Humano
-- O `agent_settings` é salvo junto com o resto do form no submit
+## Mudancas
 
-### 2. Webhook (index.ts) — Injeção e execução dinâmica
+### `supabase/functions/whatsapp-webhook/index.ts`
 
-**buildToolsForProvider():**
-- Após montar tools do provider, ler `tenant.agent_settings?.custom_tools`
-- Para cada ferramenta `enabled: true`, gerar tool definition OpenAI-format e concatenar
+**A) Corrigir download de midia recebida (linhas ~162-265)**
+- Substituir os 3 metodos falhando (`/getBase64`, `/getLink`, `/downloadMedia`) por uma unica chamada ao endpoint correto: `POST /message/download` com body `{id: messageId}`
+- A resposta retorna base64 ou URL do arquivo
+- Manter fallback: se `/message/download` falhar, tentar `GET /message/download/{id}` como alternativa
 
-**buildSystemPrompt():**
-- Injetar seção "FERRAMENTAS CUSTOMIZADAS" com as `prompt_instruction` de cada ferramenta ativa
+**B) Corrigir envio de midia nas custom tools (linhas ~1362-1403)**
+- Trocar FormData por JSON body: `{number, type, file, caption}` onde `file` = URL configurada
+- Endpoint continua `/send/media` mas com Content-Type JSON
+- Para audio PTT, usar `type: "ptt"` em vez de `"audio"`
 
-**Nova função executeCustomTool():**
-- Mapeia tipo para endpoint UAZAPI:
-  - `send_text` → POST `/send/text` (texto fixo)
-  - `send_image` → POST `/send/media` (type: image, URL + caption)
-  - `send_audio` → POST `/send/media` (type: audio, URL, ptt: true)
-  - `send_location` → POST `/send/location` (lat, lng, name)
-  - `send_document` → POST `/send/media` (type: document, URL + caption)
-  - `send_link` → POST `/send/text` (URL fixa)
+**C) Corrigir envio de localizacao (linhas ~1405-1422)**
+- Adicionar campo `address` ao payload: `{number, name, address, latitude, longitude}`
 
-**executeToolForProvider():**
-- Se tool name não pertence a nenhum provider, verificar se é custom tool e despachar para `executeCustomTool()`
+### `src/pages/TenantForm.tsx`
 
-### 3. Estrutura de dados (agent_settings)
+**D) Adicionar campo "Endereco" na UI de localizacao**
+- Adicionar campo `address` ao tipo `CustomToolConfig`
+- Adicionar Input de "Endereco" no formulario de `send_location`
+- Atualizar template de Localizacao com campo `address`
 
-```json
-{
-  "custom_tools": [
-    {
-      "id": "uuid",
-      "name": "enviar_pix",
-      "display_name": "Enviar PIX",
-      "description": "Envia a chave PIX para o cliente",
-      "type": "send_text",
-      "config": { "text": "Chave PIX: 11999998888" },
-      "prompt_instruction": "Use quando o cliente perguntar sobre PIX",
-      "enabled": true
-    }
-  ]
-}
+### `mem://features/ai-agent.md`
+
+- Documentar endpoints corretos da UAZAPI v2
+
+## Detalhes Tecnicos
+
+```text
+ANTES (404):
+  GET /getBase64/{messageId}     → 404
+  GET /getLink/{messageId}       → 404
+  GET /downloadMedia/{messageId} → 404
+
+DEPOIS:
+  POST /message/download  body: {id: messageId}  → base64/url
+
+ANTES (send_media custom tool):
+  POST /send/media  FormData(number, type, file blob)
+
+DEPOIS:
+  POST /send/media  JSON {number, type, file: "https://...", caption}
+
+ANTES (send_location):
+  {number, lat, lng, name}
+
+DEPOIS:
+  {number, latitude, longitude, name, address}
 ```
-
-### 4. Tipos de ferramenta e seus campos de config
-
-| Tipo | Campos | Uso |
-|------|--------|-----|
-| send_text | text | PIX, informações fixas |
-| send_image | url, caption | Catálogo, promoções |
-| send_audio | url | Mensagem de boas-vindas |
-| send_location | latitude, longitude, name | Endereço |
-| send_document | url, caption | Tabela de preços |
-| send_link | url | Redes sociais, agendamento |
-
-### 5. Memória do projeto
-
-Atualizar `mem://features/ai-agent.md` com a seção de custom tools.
-
-## Arquivos modificados
-
-- `src/pages/TenantForm.tsx` — nova aba + CRUD de ferramentas
-- `supabase/functions/whatsapp-webhook/index.ts` — injeção dinâmica + executeCustomTool
-- `.lovable/memory/features/ai-agent.md` — documentar custom tools
 
