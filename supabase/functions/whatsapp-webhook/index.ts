@@ -423,7 +423,9 @@ Deno.serve(async (req) => {
       // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called or link appears in response =====
       if (provider === "none") {
         const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
-        const linkInResponse = tenant.booking_link && aiResponse && aiResponse.includes(tenant.booking_link);
+        // Fallback: detect if the AI included a URL in the response (booking link from knowledge base, etc.)
+        const urlPattern = /https?:\/\/[^\s)"]+/i;
+        const linkInResponse = aiResponse && urlPattern.test(aiResponse);
         
         if (linkToolCalled || linkInResponse) {
           const settings = tenant.agent_settings || {};
