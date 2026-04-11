@@ -1022,12 +1022,10 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
+      // Gemini accepts audio via image_url data URI (NOT input_audio which is OpenAI-only)
       contentParts.push({
-        type: "input_audio",
-        input_audio: {
-          data: mediaBase64,
-          format: inferAudioFormat(mediaMimeType),
-        },
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
       contentParts.push({
         type: "text",
