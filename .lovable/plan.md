@@ -1,67 +1,34 @@
 
 
-# Correção: Recebimento de Mídia + Ferramentas Customizadas UAZAPI
+# Melhorias de Layout — Zaylo IA
 
-## Problemas Identificados
+## Mudanças solicitadas
 
-### 1. IA nao recebe audio/imagem do usuario
-Os logs mostram `getBase64 response status: 404`, `getLink response: 404`, `downloadMedia failed: 404`. O codigo usa endpoints antigos (`/getBase64/{id}`, `/getLink/{id}`, `/downloadMedia/{id}`) que nao existem no UAZAPI v2. O endpoint correto e `POST /message/download` com `{id}` no body JSON.
+1. **Logo**: Substituir o ícone de tesoura (Scissors) pela logo enviada — no sidebar e na tela de login
+2. **Nome**: "AgendaIA" → "Zaylo IA" (sidebar + login)
+3. **Tenants → Empresas**: Renomear em todo o painel (menu, títulos, botões, textos, dashboard cards)
 
-### 2. Ferramenta de envio de midia (catalogo/imagem/audio/documento)
-O codigo usa FormData para enviar ao `/send/media`, mas a UAZAPI aceita JSON simples: `{number, type, file, caption}` onde `file` pode ser uma URL publica ou string base64. Nao precisa de FormData.
+## Ideias de melhoria de layout e UX
 
-### 3. Ferramenta de localizacao
-Falta o campo `address` no payload. A UAZAPI exige `{number, name, address, latitude, longitude}`. Tambem falta o campo `address` na UI e no config da ferramenta.
+4. **Breadcrumbs**: Adicionar navegação breadcrumb no topo de cada página (ex: "Empresas > Editar Barbearia do Régis")
+5. **Skeleton loading**: Substituir textos "Carregando..." por skeletons animados nos cards e tabelas
+6. **Avatar do usuário**: Mostrar iniciais do e-mail em um avatar no rodapé do sidebar, com dropdown para perfil/sair
+7. **Contadores no menu**: Badges com contagem ao lado de "Empresas" (ex: "12") e "Monitor IA" (ex: "3 erros")
+8. **Responsividade mobile**: Sidebar colapsável com hamburger menu para telas menores
+9. **Página de boas-vindas no Dashboard**: Cards com ações rápidas (Nova Empresa, Ver Logs, Configurações) em vez de só estatísticas
+10. **Tema de cores na tabela**: Linhas alternadas com leve diferença de fundo para facilitar leitura
 
-## Mudancas
+## Arquivos afetados
 
-### `supabase/functions/whatsapp-webhook/index.ts`
+- `src/components/AdminLayout.tsx` — Logo, nome, menu labels, avatar, badges
+- `src/pages/Login.tsx` — Logo, nome
+- `src/pages/Tenants.tsx` — Renomear "Tenant" → "Empresa" em todos os textos
+- `src/pages/Dashboard.tsx` — Renomear labels, adicionar ações rápidas
+- `src/pages/TenantForm.tsx` — Título do formulário
+- `public/` — Arquivo da logo
+- `index.html` — Favicon (se quiser usar a logo)
 
-**A) Corrigir download de midia recebida (linhas ~162-265)**
-- Substituir os 3 metodos falhando (`/getBase64`, `/getLink`, `/downloadMedia`) por uma unica chamada ao endpoint correto: `POST /message/download` com body `{id: messageId}`
-- A resposta retorna base64 ou URL do arquivo
-- Manter fallback: se `/message/download` falhar, tentar `GET /message/download/{id}` como alternativa
+## Aguardando
 
-**B) Corrigir envio de midia nas custom tools (linhas ~1362-1403)**
-- Trocar FormData por JSON body: `{number, type, file, caption}` onde `file` = URL configurada
-- Endpoint continua `/send/media` mas com Content-Type JSON
-- Para audio PTT, usar `type: "ptt"` em vez de `"audio"`
-
-**C) Corrigir envio de localizacao (linhas ~1405-1422)**
-- Adicionar campo `address` ao payload: `{number, name, address, latitude, longitude}`
-
-### `src/pages/TenantForm.tsx`
-
-**D) Adicionar campo "Endereco" na UI de localizacao**
-- Adicionar campo `address` ao tipo `CustomToolConfig`
-- Adicionar Input de "Endereco" no formulario de `send_location`
-- Atualizar template de Localizacao com campo `address`
-
-### `mem://features/ai-agent.md`
-
-- Documentar endpoints corretos da UAZAPI v2
-
-## Detalhes Tecnicos
-
-```text
-ANTES (404):
-  GET /getBase64/{messageId}     → 404
-  GET /getLink/{messageId}       → 404
-  GET /downloadMedia/{messageId} → 404
-
-DEPOIS:
-  POST /message/download  body: {id: messageId}  → base64/url
-
-ANTES (send_media custom tool):
-  POST /send/media  FormData(number, type, file blob)
-
-DEPOIS:
-  POST /send/media  JSON {number, type, file: "https://...", caption}
-
-ANTES (send_location):
-  {number, lat, lng, name}
-
-DEPOIS:
-  {number, latitude, longitude, name, address}
-```
+- **Imagem da logo** para prosseguir com a implementação
 
