@@ -420,10 +420,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called =====
-      if (provider === "none" && agentResult?.toolCalls?.length) {
-        const linkToolCalled = agentResult.toolCalls.some((tc: any) => tc.name === "enviar_link_agendamento");
-        if (linkToolCalled) {
+      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called or link appears in response =====
+      if (provider === "none") {
+        const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
+        const linkInResponse = tenant.booking_link && aiResponse && aiResponse.includes(tenant.booking_link);
+        
+        if (linkToolCalled || linkInResponse) {
           const settings = tenant.agent_settings || {};
           const fuConfig = settings.follow_up || {};
           const fuEnabled = fuConfig.enabled !== false; // default true
@@ -438,7 +440,7 @@ Deno.serve(async (req) => {
               follow_up_at: followUpAt,
               follow_up_message: fuMessage,
             });
-            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay)`);
+            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay), toolCalled=${linkToolCalled}, linkInResponse=${linkInResponse}`);
           }
         }
       }
