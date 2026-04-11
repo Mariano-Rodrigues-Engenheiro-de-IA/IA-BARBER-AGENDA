@@ -1,113 +1,70 @@
 
-Objetivo
 
-Blindar o fluxo da One Beleza contra alucinação de IDs em serviço, profissional, data, horário e agendamento. O melhor caminho não é “reforçar prompt”, e sim tirar da IA a responsabilidade de lembrar números.
+## Plano: Corrigir Echo de Áudio + Cancelamento para Datas Futuras + Exportar Prompt
 
-Diagnóstico do problema atual
+### Problemas Identificados
 
-- Hoje o `sessionState` da One Beleza só existe dentro de uma única execução do webhook. Em cada nova mensagem do cliente, ele começa vazio.
-- Nas próximas mensagens, a IA recebe só histórico textual de `chat_messages`; ela não recebe os resultados estruturados das ferramentas anteriores. Então ela tenta “lembrar” IDs pelo texto e pode trocar números.
-- Isso aparece exatamente no caso que você relatou: nos logs, `buscar_barbeiros_por_servico` retornou `profissionalId=40658`, mas depois `buscar_horarios` foi chamado com `ProfissionalId=40659`, gerando 500.
-- A blindagem atual está incompleta:
-  - `agendar` já tem validação razoável.
-  - `confirmar/desmarcar` já têm correção parcial de `agendasId`.
-  - Mas `buscar_datas_disponiveis` e `buscar_horarios` ainda aceitam IDs alucinados antes da validação final.
-- Ou seja: o erro acontece no meio do fluxo, antes de chegar na proteção mais forte.
+**1. Echo de áudio** — Quando o cliente envia um áudio, a IA transcreve e REPETE a transcrição como primeira parte da resposta. Exemplo nos logs:
+- Parte 1/2: `"Houve um imprevisto, cara, vou ter que cancelar meu corte da segunda-feira, valeu."` (repetição da transcrição)
+- Parte 2/2: `"Entendi! Sem problemas. Não quer agendar para outro dia?"` (resposta real)
 
-Melhor caminho
+**Causa**: O prompt de áudio diz "Transcreva o que foi dito e responda". A IA interpreta literalmente e escreve a transcrição + resposta. Precisa mudar a instrução para "Entenda o áudio e responda ao conteúdo, SEM repetir/transcrever o que foi dito".
 
-Criar uma camada determinística de “estado estruturado da conversa + resolvedor de IDs” no backend.
+**2. Auto-fetch de cancelamento usa data errada** — Linha 1489: quando `desmarcar_agendamento` é chamado sem `validAgendasIds`, o sistema busca agendamentos de `today`. Se o agendamento é para outro dia (ex: 13/04), não encontra e falha.
 
-Na prática:
-- a IA escolhe a opção humana (“João Paulo”, “segunda”, “esse horário”);
-- o backend traduz isso para IDs válidos;
-- e qualquer chamada com ID errado é corrigida ou bloqueada antes de bater na API da One Beleza.
+**Causa**: `const today = ...` hardcoded. Precisa extrair a data do `sessionState.selectedDate`, dos args da tool, ou do contexto da conversa.
 
-Plano de implementação
+**3. Exportar prompt** — Vou gerar o prompt completo do código e salvar como arquivo para você revisar.
 
-1. Persistir estado estruturado por conversa
-- Criar uma tabela de estado por `tenant_id + phone_number`.
-- Salvar nela:
-  - serviços válidos retornados
-  - profissionais válidos por serviço
-  - datas válidas por serviço + profissional
-  - slots válidos por serviço + profissional + data
-  - agendas válidas do dia
-  - seleção atual: serviço, profissional, data, slot e agenda-alvo
-- Limpar esse estado quando o cliente mandar `❌`.
-- Expirar estado antigo por inatividade.
+---
 
-2. Validar e corrigir IDs em todas as ferramentas One Beleza
-- Antes de executar cada tool, criar uma camada de resolução:
-  - `buscar_barbeiros_por_servico`: validar `servicosId`
-  - `buscar_datas_disponiveis`: validar `servicosId + profissionalid`
-  - `buscar_horarios`: validar `servicoId + ProfissionalId + date`
-  - `agendar`: continuar exigindo slot exato
-  - `confirmar_agendamento` / `desmarcar_agendamento`: usar agenda válida do estado
-- Regra:
-  - se houver 1 candidato válido, autocorrigir
-  - se houver ambiguidade, bloquear e fazer a IA perguntar de novo
-  - nunca deixar ID “suspeito” seguir para a API
+### Mudanças
 
-3. Resolver escolhas por contexto, não por memória do modelo
-- Quando o cliente responder:
-  - “segunda”
-  - “qualquer um”
-  - “João Paulo”
-  - “esse horário”
-- o backend vai casar isso com o estado salvo da conversa.
-- Assim, a IA não precisa lembrar que João Paulo era `40658`; o sistema já sabe.
+**Arquivo**: `supabase/functions/whatsapp-webhook/index.ts`
 
-4. Transformar remarcação em fluxo explícito
-- Hoje a One Beleza não está blindada como fluxo completo de remarcação.
-- Vou tratar remarcação como sequência determinística:
-  - localizar agendamento correto
-  - escolher novo slot válido
-  - confirmar com o cliente
-  - executar com IDs resolvidos pelo backend
-- Isso evita improviso de agenda antiga + slot novo.
+**Correção 1 — Parar echo de áudio (linhas ~1326-1329)**
+- Mudar instrução de áudio de "Transcreva o que foi dito em pt-BR e responda" para "Entenda o conteúdo do áudio e responda diretamente. NÃO transcreva nem repita o que o cliente disse."
+- Adicionar regra no prompt base: "Quando receber áudio, NUNCA repita o que o cliente disse entre aspas."
 
-5. Melhorar observabilidade no Monitor do Agente
-- Enriquecer `tool_calls` com:
-  - `originalArgs`
-  - `resolvedArgs`
-  - `correctionReason`
-  - snapshot resumido do estado usado
-- No monitor, destacar quando:
-  - um ID foi autocorrigido
-  - uma chamada foi bloqueada
-  - o valor veio do estado persistido
-- Isso vai facilitar muito depurar casos reais.
+**Correção 2 — Auto-fetch de cancelamento para data correta (linhas ~1487-1498)**
+- Ao invés de usar `today`, extrair a data:
+  1. Do `sessionState.selectedDate` (se já foi definida na conversa)
+  2. Dos `parsedArgs` da tool (se a IA passou uma data)
+  3. Das mensagens recentes (regex para "segunda", "dia 13", datas YYYY-MM-DD)
+  4. Fallback: buscar nos últimos 7 dias (today + próximos 7 dias) em paralelo
 
-6. Ajustar o prompt para a nova arquitetura
-- Manter as regras de sequência.
-- Reduzir a dependência de “copiar ID manualmente do retorno”.
-- A regra principal passa a ser:
-  - a IA escolhe a opção correta
-  - o backend garante o ID correto
+**Correção 3 — Gerar arquivo com prompt completo**
+- Script que monta o prompt como aparece para o modelo e salva em `/mnt/documents/prompt_completo.md`
 
-O que isso resolve no seu caso
+---
 
-- Depois que `buscar_barbeiros_por_servico` retorna `40658`, esse profissional fica salvo como seleção válida.
-- Quando o cliente responde “pode ser segunda”, o próximo `buscar_horarios` não depende mais da IA lembrar o número.
-- O backend reaproveita/corrige para `40658`.
-- Resultado: para de acontecer o cenário `40659 -> 500 -> "tive um probleminha"`.
+### Detalhes Técnicos
 
-Detalhes técnicos
+Instrução de áudio atual:
+```
+"O cliente enviou um áudio. Transcreva o que foi dito em pt-BR e responda ao conteúdo."
+```
 
-- Arquivo principal: `supabase/functions/whatsapp-webhook/index.ts`
-- Mudança de banco: nova tabela de estado de conversa
-- Blindagens já existentes e que serão reaproveitadas:
-  - `reconcileOneBelezaAgendaId(...)`
-  - `reconcileOneBelezaSchedulingArgs(...)`
-  - `buildOneBelezaSchedulingValidationResult(...)`
-- Principal lacuna atual:
-  - o estado não sobrevive entre mensagens
-  - e a validação não cobre as etapas intermediárias do fluxo
+Nova instrução:
+```
+"O cliente enviou um áudio. Entenda o conteúdo e responda diretamente. NÃO repita, transcreva ou cite entre aspas o que o cliente disse."
+```
 
-Validação depois da implementação
+Auto-fetch de cancelamento atual:
+```typescript
+const today = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().split("T")[0];
+```
 
-- Reproduzir o caso “João Paulo / segunda-feira” e confirmar uso consistente de `40658`
-- Testar cancelamento, confirmação e remarcação
-- Validar casos com mais de um agendamento no dia
-- Conferir no Monitor do Agente quando houve autocorreção ou bloqueio
+Novo: tentar extrair data do contexto:
+```typescript
+const targetDate = sessionState.selectedDate 
+  || extractDateFromArgs(parsedArgs) 
+  || extractDateFromMessages(messages) 
+  || todayBrasilia;
+```
+
+Também adicionar ao prompt base na seção "O QUE NUNCA FAZER":
+```
+- Repetir, transcrever ou citar entre aspas o que o cliente disse em áudio
+```
+
