@@ -1,6 +1,6 @@
 ---
 name: AI Agent WhatsApp
-description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools
+description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools + follow-up system
 type: feature
 ---
 - WhatsApp integration via UAZAPI (subdomain: zyloia)
@@ -29,6 +29,16 @@ type: feature
 ## None Provider
 - No scheduling tools, just enviar_link_agendamento
 - Uses tenant.booking_link to send scheduling URL
+
+## Follow-up System (None Provider)
+- Table: follow_ups (tenant_id, phone_number, status, follow_up_at, follow_up_message)
+- Status flow: pending → sent | confirmed | expired
+- When enviar_link_agendamento executes, creates follow-up record with configurable delay
+- Client confirmation detected via regex patterns (agendei, marquei, confirmei, etc.)
+- Edge function: process-followups runs via pg_cron every 5 min
+- Configurable per tenant in agent_settings.follow_up: { enabled, delay_minutes, message }
+- Default: enabled, 30 min delay, 1 follow-up max
+- UI in TenantForm "Integração API" tab under "none" provider
 
 ## Custom Tools (Dynamic per Tenant)
 - Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
