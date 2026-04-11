@@ -5,8 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +21,403 @@ function slugify(text: string) {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
 }
+
+// ===================== CUSTOM TOOLS TYPES =====================
+
+interface CustomToolConfig {
+  text?: string;
+  url?: string;
+  caption?: string;
+  latitude?: number;
+  longitude?: number;
+  name?: string;
+}
+
+interface CustomTool {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human";
+  config: CustomToolConfig;
+  prompt_instruction: string;
+  enabled: boolean;
+}
+
+const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
+  send_text: "Texto",
+  send_image: "Imagem",
+  send_audio: "Áudio",
+  send_location: "Localização",
+  send_document: "Documento",
+  send_link: "Link",
+  escalate_human: "Escalar Humano",
+};
+
+const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
+  {
+    name: "enviar_pix",
+    display_name: "Enviar PIX",
+    description: "Envia a chave PIX do estabelecimento",
+    type: "send_text",
+    config: { text: "Chave PIX: (preencha aqui)" },
+    prompt_instruction: "Use quando o cliente perguntar sobre pagamento via PIX ou pedir a chave PIX.",
+    enabled: true,
+  },
+  {
+    name: "enviar_localizacao",
+    display_name: "Localização",
+    description: "Envia a localização do estabelecimento",
+    type: "send_location",
+    config: { latitude: -15.7942, longitude: -47.8822, name: "(nome do local)" },
+    prompt_instruction: "Use quando o cliente perguntar onde fica, pedir endereço ou localização.",
+    enabled: true,
+  },
+  {
+    name: "enviar_catalogo",
+    display_name: "Catálogo de Serviços",
+    description: "Envia imagem do catálogo/tabela de preços",
+    type: "send_image",
+    config: { url: "https://exemplo.com/catalogo.jpg", caption: "Nosso catálogo de serviços 💈" },
+    prompt_instruction: "Use quando o cliente pedir catálogo, tabela de preços ou lista de serviços com preços.",
+    enabled: true,
+  },
+  {
+    name: "enviar_link_agendamento",
+    display_name: "Link de Agendamento",
+    description: "Envia o link para agendamento online",
+    type: "send_link",
+    config: { url: "https://exemplo.com/agendar" },
+    prompt_instruction: "Use quando o cliente quiser agendar pelo site ou pedir o link de agendamento.",
+    enabled: true,
+  },
+  {
+    name: "escalar_humano",
+    display_name: "Escalar para Humano",
+    description: "Transfere o atendimento para um humano",
+    type: "escalate_human",
+    config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
+    prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
+    enabled: true,
+  },
+];
+
+function generateToolId(): string {
+  return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 10);
+}
+
+function slugifyToolName(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/(^_|_$)+/g, "");
+}
+
+// ===================== TOOL CONFIG FIELDS =====================
+
+function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (config: CustomToolConfig) => void }) {
+  const config = tool.config;
+
+  switch (tool.type) {
+    case "send_text":
+    case "escalate_human":
+      return (
+        <div className="space-y-2">
+          <Label>Texto a enviar</Label>
+          <Textarea
+            rows={3}
+            value={config.text || ""}
+            onChange={(e) => onChange({ ...config, text: e.target.value })}
+            placeholder="Ex: Chave PIX: 11999998888 (Nome)"
+          />
+        </div>
+      );
+    case "send_image":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>URL da Imagem</Label>
+            <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/imagem.jpg" />
+          </div>
+          <div className="space-y-2">
+            <Label>Legenda (opcional)</Label>
+            <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Descrição da imagem" />
+          </div>
+        </div>
+      );
+    case "send_audio":
+      return (
+        <div className="space-y-2">
+          <Label>URL do Áudio</Label>
+          <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/audio.mp3" />
+        </div>
+      );
+    case "send_location":
+      return (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label>Latitude</Label>
+              <Input type="number" step="any" value={config.latitude ?? ""} onChange={(e) => onChange({ ...config, latitude: parseFloat(e.target.value) || 0 })} placeholder="-15.7942" />
+            </div>
+            <div className="space-y-2">
+              <Label>Longitude</Label>
+              <Input type="number" step="any" value={config.longitude ?? ""} onChange={(e) => onChange({ ...config, longitude: parseFloat(e.target.value) || 0 })} placeholder="-47.8822" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <Label>Nome do Local</Label>
+            <Input value={config.name || ""} onChange={(e) => onChange({ ...config, name: e.target.value })} placeholder="Barbearia Exemplo" />
+          </div>
+        </div>
+      );
+    case "send_document":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>URL do Documento</Label>
+            <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/tabela.pdf" />
+          </div>
+          <div className="space-y-2">
+            <Label>Legenda (opcional)</Label>
+            <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Tabela de preços atualizada" />
+          </div>
+        </div>
+      );
+    case "send_link":
+      return (
+        <div className="space-y-2">
+          <Label>URL</Label>
+          <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com" />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+// ===================== CUSTOM TOOLS TAB =====================
+
+function CustomToolsTab({
+  tools,
+  onChange,
+}: {
+  tools: CustomTool[];
+  onChange: (tools: CustomTool[]) => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
+
+  const openNew = () => {
+    setEditingTool({
+      id: generateToolId(),
+      name: "",
+      display_name: "",
+      description: "",
+      type: "send_text",
+      config: {},
+      prompt_instruction: "",
+      enabled: true,
+    });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (tool: CustomTool) => {
+    setEditingTool({ ...tool, config: { ...tool.config } });
+    setDialogOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!editingTool?.display_name.trim()) {
+      toast.error("Nome de exibição é obrigatório");
+      return;
+    }
+    if (!editingTool?.prompt_instruction.trim()) {
+      toast.error("Instrução para o prompt é obrigatória");
+      return;
+    }
+
+    const toolToSave = {
+      ...editingTool,
+      name: editingTool.name || slugifyToolName(editingTool.display_name),
+    };
+
+    const existingIndex = tools.findIndex((t) => t.id === toolToSave.id);
+    if (existingIndex >= 0) {
+      const updated = [...tools];
+      updated[existingIndex] = toolToSave;
+      onChange(updated);
+    } else {
+      onChange([...tools, toolToSave]);
+    }
+    setDialogOpen(false);
+    setEditingTool(null);
+  };
+
+  const handleDelete = (id: string) => {
+    onChange(tools.filter((t) => t.id !== id));
+  };
+
+  const handleToggle = (id: string) => {
+    onChange(tools.map((t) => (t.id === id ? { ...t, enabled: !t.enabled } : t)));
+  };
+
+  const addFromTemplate = (template: Omit<CustomTool, "id">) => {
+    const newTool: CustomTool = { ...template, id: generateToolId() };
+    setEditingTool(newTool);
+    setDialogOpen(true);
+  };
+
+  return (
+    <div className="glass-card p-6 space-y-6">
+      <div>
+        <h3 className="font-semibold text-foreground flex items-center gap-2">
+          <Wrench className="w-5 h-5 text-primary" />
+          Ferramentas Customizadas
+        </h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Cadastre ferramentas que a IA pode acionar durante a conversa (PIX, localização, imagens, etc.)
+        </p>
+      </div>
+
+      {/* Templates */}
+      <div className="space-y-2">
+        <Label className="text-xs text-muted-foreground uppercase tracking-wider">Templates rápidos</Label>
+        <div className="flex flex-wrap gap-2">
+          {TOOL_TEMPLATES.map((tpl) => (
+            <Button
+              key={tpl.name}
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => addFromTemplate(tpl)}
+            >
+              <Plus className="w-3 h-3 mr-1" />
+              {tpl.display_name}
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tool list */}
+      {tools.length > 0 && (
+        <div className="space-y-2">
+          {tools.map((tool) => (
+            <div
+              key={tool.id}
+              className="flex items-center justify-between p-3 rounded-lg border border-border bg-background/50"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <Switch
+                  checked={tool.enabled}
+                  onCheckedChange={() => handleToggle(tool.id)}
+                />
+                <div className="min-w-0">
+                  <div className="font-medium text-sm text-foreground truncate">{tool.display_name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {TOOL_TYPE_LABELS[tool.type]} · {tool.enabled ? "Ativo" : "Inativo"}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(tool)}>
+                  <Pencil className="w-4 h-4" />
+                </Button>
+                <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(tool.id)}>
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tools.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground text-sm">
+          Nenhuma ferramenta cadastrada. Use os templates acima ou crie uma nova.
+        </div>
+      )}
+
+      <Button type="button" variant="outline" onClick={openNew}>
+        <Plus className="w-4 h-4 mr-2" />
+        Adicionar Ferramenta
+      </Button>
+
+      {/* Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingTool && tools.some((t) => t.id === editingTool.id) ? "Editar" : "Nova"} Ferramenta</DialogTitle>
+          </DialogHeader>
+          {editingTool && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nome de Exibição</Label>
+                <Input
+                  value={editingTool.display_name}
+                  onChange={(e) => setEditingTool({ ...editingTool, display_name: e.target.value })}
+                  placeholder="Ex: Enviar PIX"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Descrição curta</Label>
+                <Input
+                  value={editingTool.description}
+                  onChange={(e) => setEditingTool({ ...editingTool, description: e.target.value })}
+                  placeholder="O que esta ferramenta faz"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Tipo</Label>
+                <Select
+                  value={editingTool.type}
+                  onValueChange={(v) => setEditingTool({ ...editingTool, type: v as CustomTool["type"], config: {} })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(TOOL_TYPE_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <ToolConfigFields tool={editingTool} onChange={(config) => setEditingTool({ ...editingTool, config })} />
+              <div className="space-y-2">
+                <Label>Instrução para o Prompt</Label>
+                <Textarea
+                  rows={3}
+                  value={editingTool.prompt_instruction}
+                  onChange={(e) => setEditingTool({ ...editingTool, prompt_instruction: e.target.value })}
+                  placeholder="Descreva QUANDO a IA deve usar esta ferramenta. Ex: Use quando o cliente perguntar sobre pagamento via PIX."
+                />
+                <p className="text-xs text-muted-foreground">
+                  Essa instrução é adicionada ao prompt do sistema para guiar a IA.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={editingTool.enabled}
+                  onCheckedChange={(checked) => setEditingTool({ ...editingTool, enabled: checked })}
+                />
+                <Label>Ativa</Label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+            <Button type="button" onClick={handleSave}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ===================== TEST BUTTONS =====================
 
 function TrinksTestButton({ tenantId }: { tenantId: string }) {
   const [testing, setTesting] = useState(false);
@@ -49,11 +448,7 @@ function TrinksTestButton({ tenantId }: { tenantId: string }) {
   return (
     <div className="pt-4 border-t border-border space-y-3">
       <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
-        {testing ? (
-          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-        ) : (
-          <Plug className="w-4 h-4 mr-2" />
-        )}
+        {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
         {testing ? "Testando..." : "Testar Conexão"}
       </Button>
       {result && (
@@ -65,6 +460,7 @@ function TrinksTestButton({ tenantId }: { tenantId: string }) {
     </div>
   );
 }
+
 function UazapiTestButton({ url, token }: { url: string; token: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -100,11 +496,7 @@ function UazapiTestButton({ url, token }: { url: string; token: string }) {
   return (
     <div className="pt-4 border-t border-border space-y-3">
       <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
-        {testing ? (
-          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-        ) : (
-          <Plug className="w-4 h-4 mr-2" />
-        )}
+        {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
         {testing ? "Testando..." : "Testar Conexão WhatsApp"}
       </Button>
       {result && (
@@ -117,6 +509,8 @@ function UazapiTestButton({ url, token }: { url: string; token: string }) {
   );
 }
 
+// ===================== MAIN FORM =====================
+
 export default function TenantFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -126,6 +520,7 @@ export default function TenantFormPage() {
   const updateTenant = useUpdateTenant();
 
   const [showApiKey, setShowApiKey] = useState(false);
+  const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
@@ -167,6 +562,13 @@ export default function TenantFormPage() {
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
       });
+      // Load custom tools from agent_settings
+      const settings = (existing as any).agent_settings;
+      if (settings && typeof settings === "object" && Array.isArray(settings.custom_tools)) {
+        setCustomTools(settings.custom_tools);
+      } else {
+        setCustomTools([]);
+      }
     }
   }, [existing]);
 
@@ -187,11 +589,20 @@ export default function TenantFormPage() {
       return;
     }
     try {
+      // Merge custom_tools into agent_settings
+      const currentSettings = (existing as any)?.agent_settings ?? {};
+      const agentSettings = {
+        ...(typeof currentSettings === "object" ? currentSettings : {}),
+        custom_tools: customTools,
+      };
+
+      const payload = { ...form, agent_settings: agentSettings };
+
       if (isEditing && id) {
-        await updateTenant.mutateAsync({ id, ...form });
+        await updateTenant.mutateAsync({ id, ...payload } as any);
         toast.success("Tenant atualizado!");
       } else {
-        await createTenant.mutateAsync(form);
+        await createTenant.mutateAsync(payload as any);
         toast.success("Tenant criado!");
       }
       navigate("/tenants");
@@ -230,6 +641,10 @@ export default function TenantFormPage() {
             <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
             <TabsTrigger value="api">Integração API</TabsTrigger>
             <TabsTrigger value="agent">Agente IA</TabsTrigger>
+            <TabsTrigger value="tools" className="flex items-center gap-1">
+              <Wrench className="w-3.5 h-3.5" />
+              Ferramentas
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-4">
@@ -387,7 +802,6 @@ export default function TenantFormPage() {
                 </Select>
               </div>
 
-              {/* Trinks fields */}
               {provider === "trinks" && (
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="text-sm font-medium text-foreground">Credenciais Trinks</h4>
@@ -424,7 +838,6 @@ export default function TenantFormPage() {
                 </div>
               )}
 
-              {/* One Beleza fields */}
               {provider === "onebeleza" && (
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="text-sm font-medium text-foreground">Credenciais One Beleza</h4>
@@ -463,7 +876,6 @@ export default function TenantFormPage() {
                 </div>
               )}
 
-              {/* None fields */}
               {provider === "none" && (
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="text-sm font-medium text-foreground">Link de Agendamento</h4>
@@ -523,6 +935,10 @@ export default function TenantFormPage() {
                 />
               </div>
             </div>
+          </TabsContent>
+
+          <TabsContent value="tools" className="space-y-4">
+            <CustomToolsTab tools={customTools} onChange={setCustomTools} />
           </TabsContent>
         </Tabs>
 
