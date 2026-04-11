@@ -306,9 +306,11 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
 function CustomToolsTab({
   tools,
   onChange,
+  tenantId,
 }: {
   tools: CustomTool[];
   onChange: (tools: CustomTool[]) => void;
+  tenantId?: string;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
@@ -488,7 +490,7 @@ function CustomToolsTab({
                   </SelectContent>
                 </Select>
               </div>
-              <ToolConfigFields tool={editingTool} onChange={(config) => setEditingTool({ ...editingTool, config })} />
+              <ToolConfigFields tool={editingTool} onChange={(config) => setEditingTool({ ...editingTool, config })} tenantId={tenantId} />
               <div className="space-y-2">
                 <Label>Instrução para o Prompt</Label>
                 <Textarea
@@ -1041,7 +1043,7 @@ export default function TenantFormPage() {
           </TabsContent>
 
           <TabsContent value="tools" className="space-y-4">
-            <CustomToolsTab tools={customTools} onChange={setCustomTools} />
+            <CustomToolsTab tools={customTools} onChange={setCustomTools} tenantId={id} />
           </TabsContent>
         </Tabs>
 
