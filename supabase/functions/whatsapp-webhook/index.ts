@@ -777,13 +777,20 @@ async function callAIAgent(
 
   // Handle tool calls (up to 8 rounds)
   let rounds = 0;
-  const sessionState = { criarAgendamentoSuccessId: null as number | null, validAgendasIds: [] as number[] };
+  const sessionState: AgentSessionState = {
+    criarAgendamentoSuccessId: null,
+    validAgendasIds: [],
+    oneBelezaServiceOptions: [],
+    oneBelezaProfessionalOptions: [],
+    oneBelezaSlotOptions: [],
+  };
 
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
     messages.push(assistantMessage);
 
     for (const toolCall of assistantMessage.tool_calls) {
+      const parsedArgs = parseToolArguments(toolCall.function.arguments);
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
@@ -804,9 +811,7 @@ async function callAIAgent(
         // Validate desmarcar/confirmar agendasId against known IDs
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
         if (isAgendaIdTool && sessionState.validAgendasIds.length > 0) {
-          let parsedA: any;
-          try { parsedA = JSON.parse(toolCall.function.arguments); } catch { parsedA = {}; }
-          const usedId = parseInt(parsedA.agendasId, 10);
+          const usedId = toPositiveInteger(parsedArgs.agendasId);
           if (usedId && !sessionState.validAgendasIds.includes(usedId)) {
             console.log(`${toolCall.function.name} BLOCKED: agendasId ${usedId} not in valid list [${sessionState.validAgendasIds}]`);
             toolResult = {
@@ -815,6 +820,17 @@ async function callAIAgent(
               blocked: true,
             };
             wasBlocked = true;
+            sessionBlocked = true;
+          }
+        }
+
+        if (!toolResult && provider === "onebeleza" && toolCall.function.name === "agendar") {
+          toolResult = buildOneBelezaSchedulingValidationResult(parsedArgs, sessionState);
+
+          if (toolResult) {
+            console.log(`[OneBeleza] agendar BLOCKED by session validation:`, JSON.stringify(toolResult).slice(0, 1000));
+            wasBlocked = true;
+            sessionBlocked = true;
           }
         }
 
@@ -834,10 +850,31 @@ async function callAIAgent(
           sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
+          sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
+          console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
+        }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
+          const professionalOptions = extractOneBelezaProfessionalOptions(toolResult, parsedArgs);
+          sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+            [...sessionState.oneBelezaProfessionalOptions, ...professionalOptions],
+            (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+          );
+          console.log(`Tracked OneBeleza professional IDs: [${sessionState.oneBelezaProfessionalOptions.map((option) => option.profissionalId).join(", ")}]`);
+        }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_horarios") {
+          const slotOptions = extractOneBelezaSlotOptions(toolResult, parsedArgs);
+          sessionState.oneBelezaSlotOptions = dedupeByKey(
+            [...sessionState.oneBelezaSlotOptions, ...slotOptions],
+            (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
+          );
+          console.log(`Tracked OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+        }
       }
 
-      let parsedArgs: any;
-      try { parsedArgs = JSON.parse(toolCall.function.arguments); } catch { parsedArgs = toolCall.function.arguments; }
       logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: wasBlocked });
 
       if (toolResult?.error) {
