@@ -1562,6 +1562,7 @@ Cada ferramenta depende do retorno da anterior para funcionar.
 ❌ É PROIBIDO usar IDs que não vieram do retorno de uma ferramenta executada nessa conversa.
 ❌ É PROIBIDO inventar, assumir ou reutilizar IDs de conversas anteriores.
 ✅ CADA ID SÓ EXISTE APÓS A FERRAMENTA QUE O RETORNA SER EXECUTADA.
+✅ Se uma ferramenta retornar erro com validServiceOptions, validProfessionalOptions ou validSlotOptions, copie EXATAMENTE um dos valores listados e tente de novo.
 
 ### PASSO 0 — BUSCAR CLIENTE (silencioso, sempre primeiro)
 Execute buscar_cliente silenciosamente.
