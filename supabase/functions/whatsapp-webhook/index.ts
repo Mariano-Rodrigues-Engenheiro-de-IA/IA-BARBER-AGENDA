@@ -477,6 +477,40 @@ function toPositiveInteger(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+// Reconcile a hallucinated agendasId to the correct one from validAgendasIds
+function reconcileOneBelezaAgendaId(
+  hallucinated: number,
+  sessionState: AgentSessionState,
+  messages: any[],
+): number | null {
+  const validIds = sessionState.validAgendasIds;
+  const agendaOptions = (sessionState as any).oneBelezaAgendaOptions as any[] | undefined;
+
+  if (validIds.length === 1) return validIds[0];
+
+  if (agendaOptions && agendaOptions.length > 0) {
+    const lastAssistantMsg = [...messages].reverse().find((m: any) => m.role === "assistant" && typeof m.content === "string");
+    const assistantText = lastAssistantMsg?.content || "";
+
+    const timeMatch = assistantText.match(/(\d{1,2})[h:](\d{2})/);
+    if (timeMatch) {
+      const mentionedTime = `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
+      const matchByTime = agendaOptions.find((a: any) => (a.horarioInicio || "").substring(0, 5) === mentionedTime);
+      if (matchByTime) return matchByTime.agendasId;
+    }
+
+    for (const agenda of agendaOptions) {
+      if (agenda.descricaoServico && assistantText.toLowerCase().includes(agenda.descricaoServico.toLowerCase())) {
+        const serviceMatches = agendaOptions.filter((a: any) => a.descricaoServico?.toLowerCase() === agenda.descricaoServico.toLowerCase());
+        if (serviceMatches.length === 1) return serviceMatches[0].agendasId;
+      }
+    }
+  }
+
+  console.log(`[OneBeleza] reconcileAgendaId: fallback to first valid ID ${validIds[0]}`);
+  return validIds[0];
+}
+
 function dedupeByKey<T>(items: T[], getKey: (item: T) => string): T[] {
   const seen = new Set<string>();
   const deduped: T[] = [];
