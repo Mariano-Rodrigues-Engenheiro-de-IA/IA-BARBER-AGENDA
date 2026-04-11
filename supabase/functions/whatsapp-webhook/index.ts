@@ -394,6 +394,55 @@ Deno.serve(async (req) => {
         aiResponse = agentResult.response;
       }
 
+      // ===== FOLLOW-UP: Check if client confirmed booking =====
+      if (provider === "none") {
+        const confirmPatterns = [
+          /agend(ei|ado|ou)/i, /marqu?e(i|ado|ou)/i, /confirm(ei|ado|ou)/i,
+          /fiz\s*(o\s*)?(meu\s*)?(agendamento|horário|reserva)/i,
+          /já\s*(agend|marqu)/i, /feito/i, /consegui.*agend/i, /reserv(ei|ado|ou)/i,
+        ];
+        const isConfirmation = confirmPatterns.some((p) => p.test(combinedContent));
+        if (isConfirmation) {
+          const { data: pendingFU } = await supabase
+            .from("follow_ups")
+            .select("id")
+            .eq("tenant_id", tenant.id)
+            .eq("phone_number", phoneNumber)
+            .eq("status", "pending")
+            .limit(10);
+          if (pendingFU?.length) {
+            await supabase
+              .from("follow_ups")
+              .update({ status: "confirmed", confirmed_at: new Date().toISOString() })
+              .in("id", pendingFU.map((f: any) => f.id));
+            console.log(`Follow-up: marked ${pendingFU.length} as confirmed for ${phoneNumber}`);
+          }
+        }
+      }
+
+      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called =====
+      if (provider === "none" && agentResult?.toolCalls?.length) {
+        const linkToolCalled = agentResult.toolCalls.some((tc: any) => tc.name === "enviar_link_agendamento");
+        if (linkToolCalled) {
+          const settings = tenant.agent_settings || {};
+          const fuConfig = settings.follow_up || {};
+          const fuEnabled = fuConfig.enabled !== false; // default true
+          const fuDelayMin = fuConfig.delay_minutes || 30;
+          const fuMessage = fuConfig.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊";
+
+          if (fuEnabled) {
+            const followUpAt = new Date(Date.now() + fuDelayMin * 60 * 1000).toISOString();
+            await supabase.from("follow_ups").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              follow_up_at: followUpAt,
+              follow_up_message: fuMessage,
+            });
+            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay)`);
+          }
+        }
+      }
+
       // Log to agent_logs
       await supabase.from("agent_logs").insert({
         tenant_id: tenant.id,
