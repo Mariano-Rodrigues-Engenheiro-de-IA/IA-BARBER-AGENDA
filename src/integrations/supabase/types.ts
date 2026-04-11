@@ -108,6 +108,53 @@ export type Database = {
           },
         ]
       }
+      follow_ups: {
+        Row: {
+          confirmed_at: string | null
+          created_at: string
+          follow_up_at: string
+          follow_up_message: string | null
+          id: string
+          link_sent_at: string
+          phone_number: string
+          sent_at: string | null
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          confirmed_at?: string | null
+          created_at?: string
+          follow_up_at: string
+          follow_up_message?: string | null
+          id?: string
+          link_sent_at?: string
+          phone_number: string
+          sent_at?: string | null
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          confirmed_at?: string | null
+          created_at?: string
+          follow_up_at?: string
+          follow_up_message?: string | null
+          id?: string
+          link_sent_at?: string
+          phone_number?: string
+          sent_at?: string | null
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "follow_ups_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenants: {
         Row: {
           address: string | null

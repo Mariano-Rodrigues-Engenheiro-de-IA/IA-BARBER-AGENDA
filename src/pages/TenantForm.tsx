@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
@@ -626,6 +626,9 @@ export default function TenantFormPage() {
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
+  const [followUpEnabled, setFollowUpEnabled] = useState(true);
+  const [followUpDelay, setFollowUpDelay] = useState(30);
+  const [followUpMessage, setFollowUpMessage] = useState("Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
@@ -674,6 +677,13 @@ export default function TenantFormPage() {
       } else {
         setCustomTools([]);
       }
+      // Load follow-up settings
+      if (settings && typeof settings === "object" && settings.follow_up) {
+        const fu = settings.follow_up;
+        setFollowUpEnabled(fu.enabled !== false);
+        setFollowUpDelay(fu.delay_minutes || 30);
+        setFollowUpMessage(fu.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
+      }
     }
   }, [existing]);
 
@@ -699,6 +709,11 @@ export default function TenantFormPage() {
       const agentSettings = {
         ...(typeof currentSettings === "object" ? currentSettings : {}),
         custom_tools: customTools,
+        follow_up: {
+          enabled: followUpEnabled,
+          delay_minutes: followUpDelay,
+          message: followUpMessage,
+        },
       };
 
       const payload = { ...form, agent_settings: agentSettings };
@@ -995,6 +1010,50 @@ export default function TenantFormPage() {
                     <p className="text-xs text-muted-foreground">
                       O agente enviará este link quando o cliente quiser agendar
                     </p>
+                  </div>
+
+                  {/* Follow-up Section */}
+                  <div className="space-y-4 pt-4 border-t border-border">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-primary" />
+                      <h4 className="text-sm font-medium text-foreground">Follow-up Automático</h4>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Se o cliente não confirmar que agendou, a IA envia uma mensagem de lembrete automaticamente.
+                    </p>
+                    <div className="flex items-center gap-3">
+                      <Switch
+                        checked={followUpEnabled}
+                        onCheckedChange={setFollowUpEnabled}
+                      />
+                      <Label>{followUpEnabled ? "Ativado" : "Desativado"}</Label>
+                    </div>
+                    {followUpEnabled && (
+                      <div className="space-y-4">
+                        <div className="space-y-2 max-w-xs">
+                          <Label>Tempo para envio (minutos)</Label>
+                          <Input
+                            type="number"
+                            min={5}
+                            max={1440}
+                            value={followUpDelay}
+                            onChange={(e) => setFollowUpDelay(parseInt(e.target.value) || 30)}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Após enviar o link, aguarda esse tempo antes de enviar o lembrete
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Mensagem de Follow-up</Label>
+                          <Textarea
+                            rows={3}
+                            value={followUpMessage}
+                            onChange={(e) => setFollowUpMessage(e.target.value)}
+                            placeholder="Oi! Vi que te mandei o link pra agendar..."
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
