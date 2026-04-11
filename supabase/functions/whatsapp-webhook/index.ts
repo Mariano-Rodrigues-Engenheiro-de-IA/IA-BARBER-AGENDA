@@ -199,7 +199,7 @@ Deno.serve(async (req) => {
                   console.log(`Media via POST /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
                 }
                 // Check if response has a URL instead of base64
-                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.link || dlData?.mediaUrl;
+                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
                 if (!gotMedia && mediaUrl) {
                   const mediaRes = await fetch(mediaUrl);
                   if (mediaRes.ok) {
@@ -246,19 +246,38 @@ Deno.serve(async (req) => {
                 const ct = dlRes2.headers.get("content-type") || "";
                 if (ct.includes("json")) {
                   const dlData = await dlRes2.json();
-                  const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
-                  if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-                    if (base64Content.startsWith("data:")) {
-                      const [header, data] = base64Content.split(",", 2);
-                      mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                      mediaBase64 = data;
-                    } else {
-                      mediaBase64 = base64Content;
-                      mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    }
-                    gotMedia = true;
-                    console.log(`Media via GET /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-                  }
+                   const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
+                   if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
+                     if (base64Content.startsWith("data:")) {
+                       const [header, data] = base64Content.split(",", 2);
+                       mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                       mediaBase64 = data;
+                     } else {
+                       mediaBase64 = base64Content;
+                       mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                     }
+                     gotMedia = true;
+                     console.log(`Media via GET /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
+                   }
+                   // Check URL-based response
+                   if (!gotMedia) {
+                     const mediaUrl2 = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
+                     if (mediaUrl2) {
+                       const mediaRes2 = await fetch(mediaUrl2);
+                       if (mediaRes2.ok) {
+                         const mediaBuffer2 = await mediaRes2.arrayBuffer();
+                         const bytes2 = new Uint8Array(mediaBuffer2);
+                         let binary2 = "";
+                         for (let i = 0; i < bytes2.length; i++) {
+                           binary2 += String.fromCharCode(bytes2[i]);
+                         }
+                         mediaBase64 = btoa(binary2);
+                         mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes2.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                         gotMedia = true;
+                         console.log(`Media via GET /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
+                       }
+                     }
+                   }
                 } else {
                   const buf = await dlRes2.arrayBuffer();
                   if (buf.byteLength > 100) {
