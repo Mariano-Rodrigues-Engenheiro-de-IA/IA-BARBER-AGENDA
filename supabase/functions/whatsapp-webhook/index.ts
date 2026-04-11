@@ -2328,16 +2328,19 @@ function buildNonePromptSection(tenant: any): string {
 
 Este estabelecimento NÃO possui sistema de agendamento integrado.
 
-${bookingLink ? `Quando o cliente quiser agendar, envie o link de agendamento: ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
+${bookingLink ? `🚨 REGRA OBRIGATÓRIA: Quando o cliente quiser agendar, você DEVE usar a ferramenta "enviar_link_agendamento". NUNCA cole o link diretamente no texto da mensagem. SEMPRE use a ferramenta.
+
+Link de agendamento (referência): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
 
 Você pode:
 - Responder dúvidas sobre serviços, preços e horários de funcionamento
 - Fornecer informações gerais do estabelecimento
-- Enviar o link de agendamento quando solicitado
+- Enviar o link de agendamento quando solicitado (SEMPRE via ferramenta enviar_link_agendamento)
 
 Você NÃO pode:
 - Criar, cancelar ou editar agendamentos
-- Consultar disponibilidade de horários em tempo real`;
+- Consultar disponibilidade de horários em tempo real
+- Escrever o link de agendamento diretamente no texto (USE A FERRAMENTA)`;
 }
 
 // ===================== TRINKS TOOLS =====================
