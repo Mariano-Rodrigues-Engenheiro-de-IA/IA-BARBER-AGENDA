@@ -30,8 +30,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md animate-fade-in">
         <div className="glass-card p-8 space-y-6">
           <div className="text-center space-y-2">
-            <div className="mx-auto w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center glow-primary">
-              <img src={logoZaylo} alt="Zaylo IA" className="w-10 h-10 object-contain" />
+            <div className="mx-auto">
+              <img src={logoZaylo} alt="Zaylo IA" className="w-20 h-20 rounded-2xl object-contain" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">Zaylo IA</h1>
             <p className="text-sm text-muted-foreground">
