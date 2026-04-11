@@ -2203,7 +2203,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         formData.append("horarioInicio", aHorarioInicio);
         formData.append("horarioFim", aHorarioFim);
         
-        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${args.dataAg} servicoId=${args.servicoId} profissionalId=${args.profissionalId} horarioInicio=${args.horarioInicio} horarioFim=${args.horarioFim}`);
+        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim}`);
         
         const res = await fetch(url, {
           method: "POST",
