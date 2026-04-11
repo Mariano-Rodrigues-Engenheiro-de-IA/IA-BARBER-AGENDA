@@ -508,6 +508,17 @@ function normalizeOneBelezaDate(value: unknown): string {
   return normalized;
 }
 
+function normalizeOneBelezaTime(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+
+  if (/^\d{2}:\d{2}$/.test(normalized)) {
+    return `${normalized}:00`;
+  }
+
+  return normalized;
+}
+
 function extractOneBelezaServiceOptions(toolResult: any): OneBelezaServiceOption[] {
   if (!Array.isArray(toolResult)) return [];
 
@@ -613,6 +624,87 @@ function extractOneBelezaSlotOptions(toolResult: any, args: any): OneBelezaSlotO
   );
 }
 
+function buildNormalizedOneBelezaAgendarArgs(parsedArgs: any, slot: OneBelezaSlotOption): any {
+  return {
+    ...parsedArgs,
+    dataNumero: slot.date,
+    servicoid: String(slot.servicoId),
+    profissionalId: String(slot.profissionalId),
+    horarioInicio: slot.horarioInicio,
+    horarioFim: slot.horarioFim,
+  };
+}
+
+function reconcileOneBelezaSchedulingArgs(
+  parsedArgs: any,
+  sessionState: AgentSessionState,
+): { args: any; adjusted: boolean; corrected: boolean } {
+  const servicoId = toPositiveInteger(parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId);
+  const profissionalId = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalid);
+  const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
+  const horarioInicio = normalizeOneBelezaTime(parsedArgs?.horarioInicio);
+  const horarioFim = normalizeOneBelezaTime(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal);
+
+  const normalizedArgs = {
+    ...parsedArgs,
+    ...(dataNumero ? { dataNumero } : {}),
+    ...(servicoId ? { servicoid: String(servicoId) } : {}),
+    ...(profissionalId ? { profissionalId: String(profissionalId) } : {}),
+    ...(horarioInicio ? { horarioInicio } : {}),
+    ...(horarioFim ? { horarioFim } : {}),
+  };
+
+  if (!servicoId || !profissionalId || !dataNumero || !horarioInicio) {
+    return {
+      args: normalizedArgs,
+      adjusted: JSON.stringify(normalizedArgs) !== JSON.stringify(parsedArgs),
+      corrected: false,
+    };
+  }
+
+  const validSlotOptions = sessionState.oneBelezaSlotOptions.filter((slot) => {
+    if (slot.servicoId !== servicoId) return false;
+    if (slot.profissionalId !== profissionalId) return false;
+    if (slot.date !== dataNumero) return false;
+    return true;
+  });
+
+  if (validSlotOptions.length === 0) {
+    return {
+      args: normalizedArgs,
+      adjusted: JSON.stringify(normalizedArgs) !== JSON.stringify(parsedArgs),
+      corrected: false,
+    };
+  }
+
+  const exactMatch = validSlotOptions.find(
+    (slot) => slot.horarioInicio === horarioInicio && slot.horarioFim === horarioFim,
+  );
+  if (exactMatch) {
+    const exactArgs = buildNormalizedOneBelezaAgendarArgs(normalizedArgs, exactMatch);
+    return {
+      args: exactArgs,
+      adjusted: JSON.stringify(exactArgs) !== JSON.stringify(parsedArgs),
+      corrected: false,
+    };
+  }
+
+  const startOnlyMatch = validSlotOptions.find((slot) => slot.horarioInicio === horarioInicio);
+  if (!startOnlyMatch) {
+    return {
+      args: normalizedArgs,
+      adjusted: JSON.stringify(normalizedArgs) !== JSON.stringify(parsedArgs),
+      corrected: false,
+    };
+  }
+
+  return {
+    args: buildNormalizedOneBelezaAgendarArgs(normalizedArgs, startOnlyMatch),
+    adjusted: true,
+    corrected: horarioFim !== startOnlyMatch.horarioFim,
+  };
+}
+
 function buildOneBelezaSchedulingValidationResult(
   parsedArgs: any,
   sessionState: AgentSessionState,
@@ -641,8 +733,8 @@ function buildOneBelezaSchedulingValidationResult(
   const servicoId = toPositiveInteger(parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId);
   const profissionalId = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalid);
   const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
-  const horarioInicio = String(parsedArgs?.horarioInicio ?? "").trim();
-  const horarioFim = String(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal ?? "").trim();
+  const horarioInicio = normalizeOneBelezaTime(parsedArgs?.horarioInicio);
+  const horarioFim = normalizeOneBelezaTime(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal);
 
   if (!servicoId || !sessionState.oneBelezaServiceOptions.some((option) => option.servicosId === servicoId)) {
     return {
@@ -893,7 +985,9 @@ async function callAIAgent(
     messages.push(assistantMessage);
 
     for (const toolCall of assistantMessage.tool_calls) {
-      const parsedArgs = parseToolArguments(toolCall.function.arguments);
+      let parsedArgs = parseToolArguments(toolCall.function.arguments);
+      const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
+      let toolCallToExecute = toolCall;
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
@@ -929,6 +1023,29 @@ async function callAIAgent(
 
         if (!toolResult && provider === "onebeleza" && toolCall.function.name === "agendar") {
           await hydrateOneBelezaSessionStateFromProvider(tenant, parsedArgs, sessionState);
+          const reconciledSchedulingArgs = reconcileOneBelezaSchedulingArgs(parsedArgs, sessionState);
+          parsedArgs = reconciledSchedulingArgs.args;
+
+          if (reconciledSchedulingArgs.adjusted) {
+            toolCallToExecute = {
+              ...toolCall,
+              function: {
+                ...toolCall.function,
+                arguments: JSON.stringify(parsedArgs),
+              },
+            };
+          }
+
+          if (reconciledSchedulingArgs.corrected) {
+            console.log(
+              `[OneBeleza] agendar auto-corrected slot args:`,
+              JSON.stringify({
+                originalArgs: originalParsedArgs,
+                resolvedArgs: parsedArgs,
+              }).slice(0, 1000),
+            );
+          }
+
           toolResult = buildOneBelezaSchedulingValidationResult(parsedArgs, sessionState);
 
           if (toolResult) {
@@ -940,7 +1057,7 @@ async function callAIAgent(
 
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-          toolResult = await executeToolForProvider(provider, tenant, toolCall, phoneNumber);
+          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
         }
 
         // Track successful creation
@@ -2911,8 +3028,8 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         const aDataAg = normalizedArgs["datanumero"] || normalizedArgs["dataag"] || normalizedArgs["data"] || "";
         const aServicoId = normalizedArgs["servicoid"] || normalizedArgs["servicosid"] || "";
         const aProfissionalId = normalizedArgs["profissionalid"] || "";
-        const aHorarioInicio = normalizedArgs["horarioinicio"] || "";
-        const aHorarioFim = normalizedArgs["horariofim"] || "";
+        const aHorarioInicio = normalizeOneBelezaTime(normalizedArgs["horarioinicio"] || "");
+        const aHorarioFim = normalizeOneBelezaTime(normalizedArgs["horariofim"] || "");
 
         // Validate IDs are not small/invented numbers
         const sIdNum = parseInt(aServicoId, 10);
