@@ -24,6 +24,7 @@ type: feature
 - agendar uses multipart/form-data (POST)
 - desmarcar uses DELETE method
 - Sequential flow: Servico → Barbeiro → Datas → Horarios → Agendar
+- Auto-correction: reconcileOneBelezaAgendaId auto-corrects hallucinated agendasId values
 
 ## None Provider
 - No scheduling tools, just enviar_link_agendamento
@@ -38,9 +39,14 @@ type: feature
 - Prompt instructions injected into buildSystemPrompt() as "FERRAMENTAS CUSTOMIZADAS" section
 - UI: CRUD in TenantForm.tsx "Ferramentas" tab with templates (PIX, Localização, Catálogo, Link, Escalar Humano)
 
+## UAZAPI v2 Endpoints
+- Media download: POST /message/download with body {id: messageId} (fallback: GET /message/download/{id})
+- Send text: POST /send/text with JSON {number, text}
+- Send media: POST /send/media with JSON {number, type, file, caption} — type: "image"|"ptt"|"document", file = URL
+- Send location: POST /send/location with JSON {number, latitude, longitude, name, address}
+
 ## Common
 - Conversation history stored in chat_messages table (tenant_id + phone_number), last 60 msgs
-- UAZAPI API: POST /send/text with header "token"
 - System prompt adapted per provider with shared base (date, tone, rules)
 - Tool call rounds: up to 8
 - Brasília timezone (UTC-3) injected in prompt
