@@ -1,6 +1,6 @@
 ---
 name: AI Agent WhatsApp
-description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools + follow-up system
+description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools + follow-up system + persistent state
 type: feature
 ---
 - WhatsApp integration via UAZAPI (subdomain: zyloia)
@@ -8,6 +8,20 @@ type: feature
 - **Multi-provider architecture**: tenant.api_provider enum (trinks | onebeleza | none)
 - Tenant lookup: matches by whatsapp_number, fallback to first active tenant
 - Provider dispatcher: buildToolsForProvider() + executeToolForProvider()
+
+## Persistent Conversation State (One Beleza)
+- Table: conversation_state (tenant_id + phone_number, unique)
+- Persists: services, professionals, slots, selected IDs across messages
+- Loaded at start of callAIAgent(), saved after all tool rounds
+- Expires after 2 hours of inactivity
+- Cleared on ❌ reset alongside chat_messages
+
+## ID Resolution Layer (One Beleza)
+- resolveOneBelezaToolArgs() validates/corrects IDs before API calls
+- Covers: buscar_barbeiros_por_servico, buscar_datas_disponiveis, buscar_horarios, agendar
+- Uses persisted state to auto-correct hallucinated IDs
+- Single valid option → auto-correct; ambiguous → block with valid options
+- Enhanced logging: originalArgs, resolvedArgs, correctionReason in tool_calls
 
 ## Trinks Provider
 - 10 tools: buscar_cliente, cadastrar_cliente, listar_profissionais, listar_servicos, listar_servicos_profissional, listar_horarios, buscar_agendamento, criar_agendamento, cancelar_agendamento, editar_agendamento
@@ -60,5 +74,5 @@ type: feature
 - System prompt adapted per provider with shared base (date, tone, rules)
 - Tool call rounds: up to 8
 - Brasília timezone (UTC-3) injected in prompt
-- ❌ emoji resets conversation memory for that user
+- ❌ emoji resets conversation memory + conversation_state for that user
 - Debounce: 10s window, atomic claim
