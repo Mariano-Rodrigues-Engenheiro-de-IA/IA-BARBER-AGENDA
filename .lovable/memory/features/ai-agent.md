@@ -1,6 +1,6 @@
 ---
 name: AI Agent WhatsApp
-description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None)
+description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools
 type: feature
 ---
 - WhatsApp integration via UAZAPI (subdomain: zyloia)
@@ -28,6 +28,15 @@ type: feature
 ## None Provider
 - No scheduling tools, just enviar_link_agendamento
 - Uses tenant.booking_link to send scheduling URL
+
+## Custom Tools (Dynamic per Tenant)
+- Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
+- Each tool: { id, name, display_name, description, type, config, prompt_instruction, enabled }
+- Types: send_text, send_image, send_audio, send_location, send_document, send_link, escalate_human
+- Injected dynamically into buildToolsForProvider() as OpenAI tool definitions
+- Executed via executeCustomTool() → UAZAPI endpoints (/send/text, /send/media, /send/location)
+- Prompt instructions injected into buildSystemPrompt() as "FERRAMENTAS CUSTOMIZADAS" section
+- UI: CRUD in TenantForm.tsx "Ferramentas" tab with templates (PIX, Localização, Catálogo, Link, Escalar Humano)
 
 ## Common
 - Conversation history stored in chat_messages table (tenant_id + phone_number), last 60 msgs
