@@ -2195,11 +2195,23 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         for (const [k, v] of Object.entries(args)) {
           normalizedArgs[k.toLowerCase()] = String(v ?? "");
         }
-        const aDataAg = normalizedArgs["dataag"] || "";
-        const aServicoId = normalizedArgs["servicoid"] || "";
+        const aDataAg = normalizedArgs["datanumero"] || normalizedArgs["dataag"] || normalizedArgs["data"] || "";
+        const aServicoId = normalizedArgs["servicoid"] || normalizedArgs["servicosid"] || "";
         const aProfissionalId = normalizedArgs["profissionalid"] || "";
         const aHorarioInicio = normalizedArgs["horarioinicio"] || "";
         const aHorarioFim = normalizedArgs["horariofim"] || "";
+
+        // Validate IDs are not small/invented numbers
+        const sIdNum = parseInt(aServicoId, 10);
+        const pIdNum = parseInt(aProfissionalId, 10);
+        if (aServicoId && sIdNum > 0 && sIdNum <= 10) {
+          console.error(`[OneBeleza] agendar BLOCKED: servicoId=${aServicoId} is suspiciously small (likely invented)`);
+          return { error: "servicoId inválido. Execute buscar_servicos novamente e use o servicosId retornado (número grande, ex: 2461).", blocked: true };
+        }
+        if (aProfissionalId && pIdNum > 0 && pIdNum <= 10) {
+          console.error(`[OneBeleza] agendar BLOCKED: profissionalId=${aProfissionalId} is suspiciously small (likely invented)`);
+          return { error: "profissionalId inválido. Execute buscar_barbeiros_por_servico novamente e use o profissionalId retornado (número grande, ex: 40658).", blocked: true };
+        }
         
         // Build multipart form data
         const formData = new FormData();
