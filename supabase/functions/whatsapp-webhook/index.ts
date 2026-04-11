@@ -2184,15 +2184,26 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "agendar": {
         const url = `${baseUrl}/api/Agendamento/MarcarAgendamentoForm?celular=${celular}`;
         
+        // Normalize args keys to handle case variations (e.g. servicoid → servicoId)
+        const normalizedArgs: Record<string, string> = {};
+        for (const [k, v] of Object.entries(args)) {
+          normalizedArgs[k.toLowerCase()] = String(v ?? "");
+        }
+        const aDataAg = normalizedArgs["dataag"] || "";
+        const aServicoId = normalizedArgs["servicoid"] || "";
+        const aProfissionalId = normalizedArgs["profissionalid"] || "";
+        const aHorarioInicio = normalizedArgs["horarioinicio"] || "";
+        const aHorarioFim = normalizedArgs["horariofim"] || "";
+        
         // Build multipart form data
         const formData = new FormData();
-        formData.append("dataAg", args.dataAg || "");
-        formData.append("servicoId", String(args.servicoId || ""));
-        formData.append("profissionalId", String(args.profissionalId || ""));
-        formData.append("horarioInicio", args.horarioInicio || "");
-        formData.append("horarioFim", args.horarioFim || "");
+        formData.append("dataAg", aDataAg);
+        formData.append("servicoId", aServicoId);
+        formData.append("profissionalId", aProfissionalId);
+        formData.append("horarioInicio", aHorarioInicio);
+        formData.append("horarioFim", aHorarioFim);
         
-        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${args.dataAg} servicoId=${args.servicoId} profissionalId=${args.profissionalId} horarioInicio=${args.horarioInicio} horarioFim=${args.horarioFim}`);
+        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim}`);
         
         const res = await fetch(url, {
           method: "POST",
