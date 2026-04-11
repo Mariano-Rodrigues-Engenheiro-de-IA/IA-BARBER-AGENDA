@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
@@ -116,9 +116,95 @@ function slugifyToolName(text: string): string {
     .replace(/(^_|_$)+/g, "");
 }
 
+// ===================== MEDIA UPLOAD COMPONENT =====================
+
+function MediaUploadField({ 
+  label, 
+  url, 
+  accept, 
+  tenantId,
+  folder,
+  onUrlChange 
+}: { 
+  label: string; 
+  url: string; 
+  accept: string; 
+  tenantId?: string;
+  folder: string;
+  onUrlChange: (url: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [mode, setMode] = useState<"upload" | "url">(url && !url.includes("tenant-media") ? "url" : "upload");
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const id = tenantId || "new";
+    const ext = file.name.split(".").pop();
+    const path = `${id}/${folder}/${Date.now()}.${ext}`;
+
+    setUploading(true);
+    try {
+      const { error } = await supabase.storage.from("tenant-media").upload(path, file, { upsert: true });
+      if (error) throw error;
+
+      const { data: urlData } = supabase.storage.from("tenant-media").getPublicUrl(path);
+      onUrlChange(urlData.publicUrl);
+      toast.success("Arquivo enviado com sucesso!");
+    } catch (err: any) {
+      toast.error("Erro ao enviar arquivo: " + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>{label}</Label>
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-foreground underline"
+          onClick={() => setMode(mode === "upload" ? "url" : "upload")}
+        >
+          {mode === "upload" ? "Usar URL" : "Fazer upload"}
+        </button>
+      </div>
+
+      {mode === "upload" ? (
+        <div className="space-y-2">
+          {url ? (
+            <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50 border border-border">
+              <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+              <span className="text-sm text-foreground truncate flex-1">{url.split("/").pop()}</span>
+              <button type="button" onClick={() => onUrlChange("")} className="text-muted-foreground hover:text-destructive">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          ) : null}
+          <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-border rounded-md cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors">
+            {uploading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : (
+              <Upload className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className="text-sm text-muted-foreground">
+              {uploading ? "Enviando..." : url ? "Trocar arquivo" : "Clique para enviar"}
+            </span>
+            <input type="file" accept={accept} className="hidden" onChange={handleFileUpload} disabled={uploading} />
+          </label>
+        </div>
+      ) : (
+        <Input value={url} onChange={(e) => onUrlChange(e.target.value)} placeholder="https://exemplo.com/arquivo" />
+      )}
+    </div>
+  );
+}
+
 // ===================== TOOL CONFIG FIELDS =====================
 
-function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (config: CustomToolConfig) => void }) {
+function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onChange: (config: CustomToolConfig) => void; tenantId?: string }) {
   const config = tool.config;
 
   switch (tool.type) {
@@ -138,10 +224,14 @@ function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (con
     case "send_image":
       return (
         <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>URL da Imagem</Label>
-            <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/imagem.jpg" />
-          </div>
+          <MediaUploadField
+            label="Imagem"
+            url={config.url || ""}
+            accept="image/*"
+            tenantId={tenantId}
+            folder="images"
+            onUrlChange={(url) => onChange({ ...config, url })}
+          />
           <div className="space-y-2">
             <Label>Legenda (opcional)</Label>
             <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Descrição da imagem" />
@@ -150,10 +240,14 @@ function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (con
       );
     case "send_audio":
       return (
-        <div className="space-y-2">
-          <Label>URL do Áudio</Label>
-          <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/audio.mp3" />
-        </div>
+        <MediaUploadField
+          label="Áudio"
+          url={config.url || ""}
+          accept="audio/*"
+          tenantId={tenantId}
+          folder="audio"
+          onUrlChange={(url) => onChange({ ...config, url })}
+        />
       );
     case "send_location":
       return (
@@ -181,10 +275,14 @@ function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (con
     case "send_document":
       return (
         <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>URL do Documento</Label>
-            <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com/tabela.pdf" />
-          </div>
+          <MediaUploadField
+            label="Documento"
+            url={config.url || ""}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+            tenantId={tenantId}
+            folder="documents"
+            onUrlChange={(url) => onChange({ ...config, url })}
+          />
           <div className="space-y-2">
             <Label>Legenda (opcional)</Label>
             <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Tabela de preços atualizada" />
@@ -208,9 +306,11 @@ function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (con
 function CustomToolsTab({
   tools,
   onChange,
+  tenantId,
 }: {
   tools: CustomTool[];
   onChange: (tools: CustomTool[]) => void;
+  tenantId?: string;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
@@ -390,7 +490,7 @@ function CustomToolsTab({
                   </SelectContent>
                 </Select>
               </div>
-              <ToolConfigFields tool={editingTool} onChange={(config) => setEditingTool({ ...editingTool, config })} />
+              <ToolConfigFields tool={editingTool} onChange={(config) => setEditingTool({ ...editingTool, config })} tenantId={tenantId} />
               <div className="space-y-2">
                 <Label>Instrução para o Prompt</Label>
                 <Textarea
@@ -943,7 +1043,7 @@ export default function TenantFormPage() {
           </TabsContent>
 
           <TabsContent value="tools" className="space-y-4">
-            <CustomToolsTab tools={customTools} onChange={setCustomTools} />
+            <CustomToolsTab tools={customTools} onChange={setCustomTools} tenantId={id} />
           </TabsContent>
         </Tabs>
 
