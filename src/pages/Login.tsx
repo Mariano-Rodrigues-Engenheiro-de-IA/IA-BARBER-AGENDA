@@ -3,8 +3,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Scissors } from "lucide-react";
 import { toast } from "sonner";
+import logoZaylo from "@/assets/logo-zaylo.png";
 
 export default function LoginPage() {
   const { signIn } = useAuth();
@@ -30,10 +30,10 @@ export default function LoginPage() {
       <div className="w-full max-w-md animate-fade-in">
         <div className="glass-card p-8 space-y-6">
           <div className="text-center space-y-2">
-            <div className="mx-auto w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center glow-primary">
-              <Scissors className="w-7 h-7 text-primary" />
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center glow-primary">
+              <img src={logoZaylo} alt="Zaylo IA" className="w-10 h-10 object-contain" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">AgendaIA</h1>
+            <h1 className="text-2xl font-bold text-foreground">Zaylo IA</h1>
             <p className="text-sm text-muted-foreground">
               Painel de administração do ecossistema
             </p>
@@ -45,7 +45,7 @@ export default function LoginPage() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@agendaia.com"
+                placeholder="admin@zaylo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
