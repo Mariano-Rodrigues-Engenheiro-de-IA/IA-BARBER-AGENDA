@@ -420,10 +420,14 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called =====
-      if (provider === "none" && agentResult?.toolCalls?.length) {
-        const linkToolCalled = agentResult.toolCalls.some((tc: any) => tc.name === "enviar_link_agendamento");
-        if (linkToolCalled) {
+      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called or link appears in response =====
+      if (provider === "none") {
+        const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
+        // Fallback: detect if the AI included a URL in the response (booking link from knowledge base, etc.)
+        const urlPattern = /https?:\/\/[^\s)"]+/i;
+        const linkInResponse = aiResponse && urlPattern.test(aiResponse);
+        
+        if (linkToolCalled || linkInResponse) {
           const settings = tenant.agent_settings || {};
           const fuConfig = settings.follow_up || {};
           const fuEnabled = fuConfig.enabled !== false; // default true
@@ -438,7 +442,7 @@ Deno.serve(async (req) => {
               follow_up_at: followUpAt,
               follow_up_message: fuMessage,
             });
-            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay)`);
+            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay), toolCalled=${linkToolCalled}, linkInResponse=${linkInResponse}`);
           }
         }
       }
@@ -2328,16 +2332,19 @@ function buildNonePromptSection(tenant: any): string {
 
 Este estabelecimento NÃO possui sistema de agendamento integrado.
 
-${bookingLink ? `Quando o cliente quiser agendar, envie o link de agendamento: ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
+${bookingLink ? `🚨 REGRA OBRIGATÓRIA: Quando o cliente quiser agendar, você DEVE usar a ferramenta "enviar_link_agendamento". NUNCA cole o link diretamente no texto da mensagem. SEMPRE use a ferramenta.
+
+Link de agendamento (referência): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
 
 Você pode:
 - Responder dúvidas sobre serviços, preços e horários de funcionamento
 - Fornecer informações gerais do estabelecimento
-- Enviar o link de agendamento quando solicitado
+- Enviar o link de agendamento quando solicitado (SEMPRE via ferramenta enviar_link_agendamento)
 
 Você NÃO pode:
 - Criar, cancelar ou editar agendamentos
-- Consultar disponibilidade de horários em tempo real`;
+- Consultar disponibilidade de horários em tempo real
+- Escrever o link de agendamento diretamente no texto (USE A FERRAMENTA)`;
 }
 
 // ===================== TRINKS TOOLS =====================
@@ -2646,7 +2653,7 @@ function buildNoneTools(tenant: any) {
       type: "function",
       function: {
         name: "enviar_link_agendamento",
-        description: "Envia o link de agendamento para o cliente quando ele quiser marcar um horário.",
+        description: "OBRIGATÓRIO: Use esta ferramenta SEMPRE que o cliente quiser agendar. Ela envia o link de agendamento. NUNCA escreva o link no texto manualmente — use ESTA ferramenta.",
         parameters: { type: "object", properties: {}, required: [] },
       },
     },
