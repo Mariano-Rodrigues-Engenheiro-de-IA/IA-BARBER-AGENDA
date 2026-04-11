@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AlertTriangle, CheckCircle, Clock, ChevronDown, ChevronUp, Search, Phone, Bot, Wrench } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertTriangle, CheckCircle, Clock, ChevronDown, ChevronUp, Search, Phone, Bot, Wrench, Maximize2 } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -30,6 +31,7 @@ export default function AgentLogsPage() {
   const [filterPhone, setFilterPhone] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "errors" | "blocked">("all");
   const [page, setPage] = useState(0);
+  const [jsonDialog, setJsonDialog] = useState<{ title: string; data: any } | null>(null);
   const PAGE_SIZE = 20;
 
   const { data: tenants } = useQuery({
@@ -217,16 +219,26 @@ export default function AgentLogsPage() {
                               </div>
                               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                                 <div>
-                                  <span className="text-xs text-muted-foreground">Argumentos:</span>
-                                  <ScrollArea className="max-h-32">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs text-muted-foreground">Argumentos:</span>
+                                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => { e.stopPropagation(); setJsonDialog({ title: `${tc.name} — Argumentos`, data: tc.args }); }}>
+                                      <Maximize2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                  <ScrollArea className="max-h-40">
                                     <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
                                       {JSON.stringify(tc.args, null, 2)}
                                     </pre>
                                   </ScrollArea>
                                 </div>
                                 <div>
-                                  <span className="text-xs text-muted-foreground">Resultado:</span>
-                                  <ScrollArea className="max-h-32">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs text-muted-foreground">Resultado:</span>
+                                    <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => { e.stopPropagation(); setJsonDialog({ title: `${tc.name} — Resultado`, data: tc.result }); }}>
+                                      <Maximize2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                  <ScrollArea className="max-h-40">
                                     <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
                                       {JSON.stringify(tc.result, null, 2)}
                                     </pre>
@@ -288,6 +300,19 @@ export default function AgentLogsPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={!!jsonDialog} onOpenChange={() => setJsonDialog(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="font-mono text-sm">{jsonDialog?.title}</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="max-h-[65vh]">
+            <pre className="text-xs bg-muted p-4 rounded whitespace-pre-wrap break-words">
+              {jsonDialog ? JSON.stringify(jsonDialog.data, null, 2) : ""}
+            </pre>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
