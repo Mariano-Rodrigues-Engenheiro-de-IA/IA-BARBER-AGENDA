@@ -434,6 +434,261 @@ interface AgentResult {
   sessionBlocked: boolean;
 }
 
+interface OneBelezaServiceOption {
+  servicosId: number;
+  descricao: string;
+}
+
+interface OneBelezaProfessionalOption {
+  servicosId: number | null;
+  profissionalId: number;
+  nomeProfissional: string;
+}
+
+interface OneBelezaSlotOption {
+  date: string;
+  servicoId: number;
+  profissionalId: number;
+  horarioInicio: string;
+  horarioFim: string;
+}
+
+interface AgentSessionState {
+  criarAgendamentoSuccessId: number | null;
+  validAgendasIds: number[];
+  oneBelezaServiceOptions: OneBelezaServiceOption[];
+  oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
+  oneBelezaSlotOptions: OneBelezaSlotOption[];
+}
+
+function parseToolArguments(rawArgs?: string): any {
+  try {
+    return JSON.parse(rawArgs || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function toPositiveInteger(value: unknown): number | null {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return null;
+
+  const parsed = parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function dedupeByKey<T>(items: T[], getKey: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+
+  for (const item of items) {
+    const key = getKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+
+  return deduped;
+}
+
+function extractOneBelezaServiceOptions(toolResult: any): OneBelezaServiceOption[] {
+  if (!Array.isArray(toolResult)) return [];
+
+  const options: OneBelezaServiceOption[] = [];
+
+  for (const groupOrService of toolResult) {
+    const groupedServices = Array.isArray(groupOrService?.servicos)
+      ? groupOrService.servicos
+      : [groupOrService];
+
+    for (const service of groupedServices) {
+      const servicosId = toPositiveInteger(service?.servicosId ?? service?.servicoId ?? service?.id);
+      if (!servicosId) continue;
+
+      options.push({
+        servicosId,
+        descricao: String(service?.descricao || groupOrService?.descricao || `Serviço ${servicosId}`),
+      });
+    }
+  }
+
+  return dedupeByKey(options, (option) => String(option.servicosId));
+}
+
+function extractOneBelezaProfessionalOptions(toolResult: any, args: any): OneBelezaProfessionalOption[] {
+  if (!Array.isArray(toolResult)) return [];
+
+  const servicosId = toPositiveInteger(args?.servicosId ?? args?.servicoId ?? args?.servicoid);
+  const options = toolResult.flatMap((item: any) => {
+    const profissionalId = toPositiveInteger(item?.profissionalId ?? item?.id);
+    if (!profissionalId) return [];
+
+    return [{
+      servicosId,
+      profissionalId,
+      nomeProfissional: String(item?.nomeProfissional || item?.nome || item?.descricao || `Profissional ${profissionalId}`),
+    }];
+  });
+
+  return dedupeByKey(options, (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`);
+}
+
+function extractOneBelezaSlotOptions(toolResult: any, args: any): OneBelezaSlotOption[] {
+  if (!Array.isArray(toolResult)) return [];
+
+  const date = String(args?.date ?? args?.dataNumero ?? args?.dataAg ?? args?.data ?? "").trim();
+  const fallbackServiceId = toPositiveInteger(args?.servicoId ?? args?.servicoid ?? args?.servicosId);
+  const fallbackProfessionalId = toPositiveInteger(args?.ProfissionalId ?? args?.profissionalId ?? args?.profissionalid);
+  const slots: OneBelezaSlotOption[] = [];
+
+  const pushSlot = (
+    servicoIdValue: unknown,
+    profissionalIdValue: unknown,
+    horarioInicioValue: unknown,
+    horarioFimValue: unknown,
+  ) => {
+    const servicoId = toPositiveInteger(servicoIdValue);
+    const profissionalId = toPositiveInteger(profissionalIdValue);
+    const horarioInicio = String(horarioInicioValue ?? "").trim();
+    const horarioFim = String(horarioFimValue ?? "").trim();
+
+    if (!date || !servicoId || !profissionalId || !horarioInicio || !horarioFim) return;
+
+    slots.push({
+      date,
+      servicoId,
+      profissionalId,
+      horarioInicio,
+      horarioFim,
+    });
+  };
+
+  for (const item of toolResult) {
+    if (Array.isArray(item?.disponibilidades)) {
+      const itemServiceId = toPositiveInteger(item?.servicoId ?? item?.servicosId ?? fallbackServiceId);
+
+      for (const disponibilidade of item.disponibilidades) {
+        const itemProfessionalId = toPositiveInteger(disponibilidade?.profissionalId ?? fallbackProfessionalId);
+        const horarios = Array.isArray(disponibilidade?.horarios) ? disponibilidade.horarios : [];
+
+        for (const horario of horarios) {
+          pushSlot(
+            itemServiceId,
+            itemProfessionalId,
+            horario?.horarioInicio,
+            horario?.horarioFinal ?? horario?.horarioFim,
+          );
+        }
+      }
+    }
+
+    pushSlot(
+      item?.servicoId ?? fallbackServiceId,
+      item?.profissionalId ?? fallbackProfessionalId,
+      item?.horarioInicio,
+      item?.horarioFinal ?? item?.horarioFim,
+    );
+  }
+
+  return dedupeByKey(
+    slots,
+    (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
+  );
+}
+
+function buildOneBelezaSchedulingValidationResult(
+  parsedArgs: any,
+  sessionState: AgentSessionState,
+): any | null {
+  if (sessionState.oneBelezaServiceOptions.length === 0) {
+    return {
+      error: "Antes de agendar, execute buscar_servicos nesta interação e use um servicosId real do retorno.",
+      blocked: true,
+    };
+  }
+
+  if (sessionState.oneBelezaProfessionalOptions.length === 0) {
+    return {
+      error: "Antes de agendar, execute buscar_barbeiros_por_servico nesta interação e use um profissionalId real do retorno.",
+      blocked: true,
+    };
+  }
+
+  if (sessionState.oneBelezaSlotOptions.length === 0) {
+    return {
+      error: "Antes de agendar, execute buscar_horarios nesta interação e use exatamente um horário retornado.",
+      blocked: true,
+    };
+  }
+
+  const servicoId = toPositiveInteger(parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId);
+  const profissionalId = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalid);
+  const dataNumero = String(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data ?? "").trim();
+  const horarioInicio = String(parsedArgs?.horarioInicio ?? "").trim();
+  const horarioFim = String(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal ?? "").trim();
+
+  if (!servicoId || !sessionState.oneBelezaServiceOptions.some((option) => option.servicosId === servicoId)) {
+    return {
+      error: `servicoId ${servicoId ?? "(ausente)"} inválido. Use APENAS um servicosId real retornado por buscar_servicos nesta interação.`,
+      validServiceOptions: sessionState.oneBelezaServiceOptions,
+      blocked: true,
+    };
+  }
+
+  const validProfessionalOptions = dedupeByKey(
+    sessionState.oneBelezaProfessionalOptions.filter((option) => option.servicosId === servicoId || option.servicosId === null),
+    (option) => String(option.profissionalId),
+  );
+
+  if (
+    validProfessionalOptions.length > 0 &&
+    (!profissionalId || !validProfessionalOptions.some((option) => option.profissionalId === profissionalId))
+  ) {
+    return {
+      error: `profissionalId ${profissionalId ?? "(ausente)"} inválido para o serviço ${servicoId}. Use APENAS um profissionalId real retornado por buscar_barbeiros_por_servico nesta interação.`,
+      validProfessionalOptions,
+      blocked: true,
+    };
+  }
+
+  if (!dataNumero || !horarioInicio || !horarioFim) {
+    return {
+      error: "dataNumero, horarioInicio e horarioFim são obrigatórios e devem vir EXATAMENTE do retorno de buscar_horarios.",
+      validSlotOptions: sessionState.oneBelezaSlotOptions.slice(0, 20),
+      blocked: true,
+    };
+  }
+
+  const validSlotOptions = sessionState.oneBelezaSlotOptions.filter((slot) => {
+    if (slot.servicoId !== servicoId) return false;
+    if (profissionalId && slot.profissionalId !== profissionalId) return false;
+    if (slot.date !== dataNumero) return false;
+    return true;
+  });
+
+  if (validSlotOptions.length === 0) {
+    return {
+      error: `A combinação serviço=${servicoId}, profissional=${profissionalId ?? "(ausente)"} e data=${dataNumero || "(ausente)"} não foi retornada por buscar_horarios nesta interação.`,
+      validSlotOptions: sessionState.oneBelezaSlotOptions.slice(0, 20),
+      blocked: true,
+    };
+  }
+
+  const matchingSlot = validSlotOptions.find(
+    (slot) => slot.horarioInicio === horarioInicio && slot.horarioFim === horarioFim,
+  );
+
+  if (!matchingSlot) {
+    return {
+      error: `Horário ${horarioInicio} → ${horarioFim} inválido para serviço=${servicoId}, profissional=${profissionalId ?? "(ausente)"} e data=${dataNumero}. Use APENAS uma combinação EXATA retornada por buscar_horarios nesta interação.`,
+      validSlotOptions: validSlotOptions.slice(0, 20),
+      blocked: true,
+    };
+  }
+
+  return null;
+}
+
 async function callAIAgent(
   tenant: any,
   phoneNumber: string,
@@ -522,13 +777,20 @@ async function callAIAgent(
 
   // Handle tool calls (up to 8 rounds)
   let rounds = 0;
-  const sessionState = { criarAgendamentoSuccessId: null as number | null, validAgendasIds: [] as number[] };
+  const sessionState: AgentSessionState = {
+    criarAgendamentoSuccessId: null,
+    validAgendasIds: [],
+    oneBelezaServiceOptions: [],
+    oneBelezaProfessionalOptions: [],
+    oneBelezaSlotOptions: [],
+  };
 
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
     messages.push(assistantMessage);
 
     for (const toolCall of assistantMessage.tool_calls) {
+      const parsedArgs = parseToolArguments(toolCall.function.arguments);
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
@@ -549,9 +811,7 @@ async function callAIAgent(
         // Validate desmarcar/confirmar agendasId against known IDs
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
         if (isAgendaIdTool && sessionState.validAgendasIds.length > 0) {
-          let parsedA: any;
-          try { parsedA = JSON.parse(toolCall.function.arguments); } catch { parsedA = {}; }
-          const usedId = parseInt(parsedA.agendasId, 10);
+          const usedId = toPositiveInteger(parsedArgs.agendasId);
           if (usedId && !sessionState.validAgendasIds.includes(usedId)) {
             console.log(`${toolCall.function.name} BLOCKED: agendasId ${usedId} not in valid list [${sessionState.validAgendasIds}]`);
             toolResult = {
@@ -560,6 +820,17 @@ async function callAIAgent(
               blocked: true,
             };
             wasBlocked = true;
+            sessionBlocked = true;
+          }
+        }
+
+        if (!toolResult && provider === "onebeleza" && toolCall.function.name === "agendar") {
+          toolResult = buildOneBelezaSchedulingValidationResult(parsedArgs, sessionState);
+
+          if (toolResult) {
+            console.log(`[OneBeleza] agendar BLOCKED by session validation:`, JSON.stringify(toolResult).slice(0, 1000));
+            wasBlocked = true;
+            sessionBlocked = true;
           }
         }
 
@@ -579,10 +850,31 @@ async function callAIAgent(
           sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
+          sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
+          console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
+        }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
+          const professionalOptions = extractOneBelezaProfessionalOptions(toolResult, parsedArgs);
+          sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+            [...sessionState.oneBelezaProfessionalOptions, ...professionalOptions],
+            (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+          );
+          console.log(`Tracked OneBeleza professional IDs: [${sessionState.oneBelezaProfessionalOptions.map((option) => option.profissionalId).join(", ")}]`);
+        }
+
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_horarios") {
+          const slotOptions = extractOneBelezaSlotOptions(toolResult, parsedArgs);
+          sessionState.oneBelezaSlotOptions = dedupeByKey(
+            [...sessionState.oneBelezaSlotOptions, ...slotOptions],
+            (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
+          );
+          console.log(`Tracked OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+        }
       }
 
-      let parsedArgs: any;
-      try { parsedArgs = JSON.parse(toolCall.function.arguments); } catch { parsedArgs = toolCall.function.arguments; }
       logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: wasBlocked });
 
       if (toolResult?.error) {
@@ -1270,6 +1562,7 @@ Cada ferramenta depende do retorno da anterior para funcionar.
 ❌ É PROIBIDO usar IDs que não vieram do retorno de uma ferramenta executada nessa conversa.
 ❌ É PROIBIDO inventar, assumir ou reutilizar IDs de conversas anteriores.
 ✅ CADA ID SÓ EXISTE APÓS A FERRAMENTA QUE O RETORNA SER EXECUTADA.
+✅ Se uma ferramenta retornar erro com validServiceOptions, validProfessionalOptions ou validSlotOptions, copie EXATAMENTE um dos valores listados e tente de novo.
 
 ### PASSO 0 — BUSCAR CLIENTE (silencioso, sempre primeiro)
 Execute buscar_cliente silenciosamente.
