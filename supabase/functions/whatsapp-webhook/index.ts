@@ -522,7 +522,7 @@ async function callAIAgent(
 
   // Handle tool calls (up to 8 rounds)
   let rounds = 0;
-  const sessionState = { criarAgendamentoSuccessId: null as number | null };
+  const sessionState = { criarAgendamentoSuccessId: null as number | null, validAgendasIds: [] as number[] };
 
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
@@ -546,12 +546,38 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
       } else {
-        // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-        toolResult = await executeToolForProvider(provider, tenant, toolCall, phoneNumber);
+        // Validate desmarcar/confirmar agendasId against known IDs
+        const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
+        if (isAgendaIdTool && sessionState.validAgendasIds.length > 0) {
+          let parsedA: any;
+          try { parsedA = JSON.parse(toolCall.function.arguments); } catch { parsedA = {}; }
+          const usedId = parseInt(parsedA.agendasId, 10);
+          if (usedId && !sessionState.validAgendasIds.includes(usedId)) {
+            console.log(`${toolCall.function.name} BLOCKED: agendasId ${usedId} not in valid list [${sessionState.validAgendasIds}]`);
+            toolResult = {
+              error: `agendasId ${usedId} é inválido. Os IDs reais retornados por buscar_agendamentos_dia são: ${sessionState.validAgendasIds.join(", ")}. Use APENAS esses IDs.`,
+              validIds: sessionState.validAgendasIds,
+              blocked: true,
+            };
+            wasBlocked = true;
+          }
+        }
+
+        if (!toolResult) {
+          // ===== PROVIDER DISPATCHER: execute tool based on provider =====
+          toolResult = await executeToolForProvider(provider, tenant, toolCall, phoneNumber);
+        }
+
         // Track successful creation
         if (isSchedulingTool && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
           sessionState.criarAgendamentoSuccessId = toolResult.id;
           console.log(`${toolCall.function.name}: session locked with id=${toolResult.id}`);
+        }
+
+        // Track valid agendasIds from buscar_agendamentos_dia
+        if (toolCall.function.name === "buscar_agendamentos_dia" && Array.isArray(toolResult)) {
+          sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+          console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
       }
 
@@ -1347,7 +1373,12 @@ Leia o conteúdo completo do retorno antes de responder ao cliente.
 
 1. Execute buscar_agendamentos_dia para encontrar o agendamento
 2. Confirme com o cliente qual cancelar
-3. Execute desmarcar_agendamento com agendasId
+3. Execute desmarcar_agendamento com o agendasId EXATO retornado por buscar_agendamentos_dia
+
+🚨 REGRA ABSOLUTA DE CANCELAMENTO:
+- O agendasId DEVE ser o número EXATO retornado por buscar_agendamentos_dia nesta conversa.
+- NUNCA invente ou deduza um agendasId. Se buscar_agendamentos_dia retornou agendasId=77782 e agendasId=77961, use EXATAMENTE esses números.
+- Se o cliente pedir para cancelar todos, execute desmarcar_agendamento UMA VEZ PARA CADA agendasId retornado.
 
 ------------------------------------------
 
