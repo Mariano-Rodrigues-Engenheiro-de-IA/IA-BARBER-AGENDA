@@ -31,6 +31,7 @@ interface CustomToolConfig {
   latitude?: number;
   longitude?: number;
   name?: string;
+  address?: string;
 }
 
 interface CustomTool {
@@ -69,7 +70,7 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     display_name: "Localização",
     description: "Envia a localização do estabelecimento",
     type: "send_location",
-    config: { latitude: -15.7942, longitude: -47.8822, name: "(nome do local)" },
+    config: { latitude: -15.7942, longitude: -47.8822, name: "(nome do local)", address: "(endereço completo)" },
     prompt_instruction: "Use quando o cliente perguntar onde fica, pedir endereço ou localização.",
     enabled: true,
   },
@@ -170,6 +171,10 @@ function ToolConfigFields({ tool, onChange }: { tool: CustomTool; onChange: (con
           <div className="space-y-2">
             <Label>Nome do Local</Label>
             <Input value={config.name || ""} onChange={(e) => onChange({ ...config, name: e.target.value })} placeholder="Barbearia Exemplo" />
+          </div>
+          <div className="space-y-2">
+            <Label>Endereço</Label>
+            <Input value={config.address || ""} onChange={(e) => onChange({ ...config, address: e.target.value })} placeholder="Rua Exemplo, 123 - Bairro, Cidade - UF" />
           </div>
         </div>
       );

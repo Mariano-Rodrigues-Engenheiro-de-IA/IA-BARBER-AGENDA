@@ -171,77 +171,54 @@ Deno.serve(async (req) => {
           console.log(`Downloading media for messageId: ${messageId}`);
 
           let gotMedia = false;
+
+          // UAZAPI v2: POST /message/download with {id} in JSON body
           try {
-            const b64Res = await fetch(`${uazapiUrlMedia}/getBase64/${messageId}`, {
-              headers: { "token": uazapiTokenMedia },
+            const dlRes = await fetch(`${uazapiUrlMedia}/message/download`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiTokenMedia },
+              body: JSON.stringify({ id: messageId }),
             });
-            const b64Data = await b64Res.json();
-            console.log("getBase64 response status:", b64Res.status, "keys:", Object.keys(b64Data || {}));
-            const base64Content = b64Data?.base64 || b64Data?.data || b64Data?.file;
-            if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-              if (base64Content.startsWith("data:")) {
-                const [header, data] = base64Content.split(",", 2);
-                mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                mediaBase64 = data;
-              } else {
-                mediaBase64 = base64Content;
-                mediaMimeType = b64Data?.mimetype || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-              }
-              gotMedia = true;
-              console.log(`Media via getBase64: ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-            }
-          } catch (e) {
-            console.log("getBase64 failed:", e);
-          }
-
-          if (!gotMedia) {
-            try {
-              const linkRes = await fetch(`${uazapiUrlMedia}/getLink/${messageId}`, {
-                headers: { "token": uazapiTokenMedia },
-              });
-              const linkData = await linkRes.json();
-              const mediaUrl = linkData?.url || linkData?.fileUrl || linkData?.link || linkData?.mediaUrl;
-              console.log("getLink response:", JSON.stringify(linkData).slice(0, 500));
-
-              if (mediaUrl) {
-                const mediaRes = await fetch(mediaUrl);
-                if (mediaRes.ok) {
-                  const mediaBuffer = await mediaRes.arrayBuffer();
-                  const bytes = new Uint8Array(mediaBuffer);
-                  let binary = "";
-                  for (let i = 0; i < bytes.length; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                  }
-                  mediaBase64 = btoa(binary);
-                  mediaMimeType = linkData?.mimetype || mediaRes.headers.get("content-type") || 
-                    (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                  gotMedia = true;
-                  console.log(`Media via getLink: ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                }
-              }
-            } catch (e) {
-              console.log("getLink failed:", e);
-            }
-          }
-
-          if (!gotMedia) {
-            try {
-              const dlRes = await fetch(`${uazapiUrlMedia}/downloadMedia/${messageId}`, {
-                headers: { "token": uazapiTokenMedia },
-              });
-              if (dlRes.ok) {
-                const ct = dlRes.headers.get("content-type") || "";
-                if (ct.includes("json")) {
-                  const dlData = await dlRes.json();
-                  console.log("downloadMedia JSON response:", Object.keys(dlData || {}));
-                  const base64Content = dlData?.base64 || dlData?.data || dlData?.file;
-                  if (base64Content && base64Content.length > 100) {
+            console.log(`POST /message/download status: ${dlRes.status}`);
+            if (dlRes.ok) {
+              const ct = dlRes.headers.get("content-type") || "";
+              if (ct.includes("json")) {
+                const dlData = await dlRes.json();
+                console.log("message/download JSON keys:", Object.keys(dlData || {}));
+                const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
+                if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
+                  if (base64Content.startsWith("data:")) {
+                    const [header, data] = base64Content.split(",", 2);
+                    mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                    mediaBase64 = data;
+                  } else {
                     mediaBase64 = base64Content;
-                    mediaMimeType = dlData?.mimetype || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    gotMedia = true;
+                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
                   }
-                } else {
-                  const buf = await dlRes.arrayBuffer();
+                  gotMedia = true;
+                  console.log(`Media via POST /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
+                }
+                // Check if response has a URL instead of base64
+                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.link || dlData?.mediaUrl;
+                if (!gotMedia && mediaUrl) {
+                  const mediaRes = await fetch(mediaUrl);
+                  if (mediaRes.ok) {
+                    const mediaBuffer = await mediaRes.arrayBuffer();
+                    const bytes = new Uint8Array(mediaBuffer);
+                    let binary = "";
+                    for (let i = 0; i < bytes.length; i++) {
+                      binary += String.fromCharCode(bytes[i]);
+                    }
+                    mediaBase64 = btoa(binary);
+                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                    gotMedia = true;
+                    console.log(`Media via POST /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
+                  }
+                }
+              } else {
+                // Binary response
+                const buf = await dlRes.arrayBuffer();
+                if (buf.byteLength > 100) {
                   const bytes = new Uint8Array(buf);
                   let binary = "";
                   for (let i = 0; i < bytes.length; i++) {
@@ -250,13 +227,55 @@ Deno.serve(async (req) => {
                   mediaBase64 = btoa(binary);
                   mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
                   gotMedia = true;
+                  console.log(`Media via POST /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
                 }
-                if (gotMedia) console.log(`Media via downloadMedia: ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-              } else {
-                console.log("downloadMedia failed:", dlRes.status);
+              }
+            }
+          } catch (e) {
+            console.log("POST /message/download failed:", e);
+          }
+
+          // Fallback: GET /message/download/{id}
+          if (!gotMedia) {
+            try {
+              const dlRes2 = await fetch(`${uazapiUrlMedia}/message/download/${messageId}`, {
+                headers: { "token": uazapiTokenMedia },
+              });
+              console.log(`GET /message/download/${messageId} status: ${dlRes2.status}`);
+              if (dlRes2.ok) {
+                const ct = dlRes2.headers.get("content-type") || "";
+                if (ct.includes("json")) {
+                  const dlData = await dlRes2.json();
+                  const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
+                  if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
+                    if (base64Content.startsWith("data:")) {
+                      const [header, data] = base64Content.split(",", 2);
+                      mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                      mediaBase64 = data;
+                    } else {
+                      mediaBase64 = base64Content;
+                      mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                    }
+                    gotMedia = true;
+                    console.log(`Media via GET /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
+                  }
+                } else {
+                  const buf = await dlRes2.arrayBuffer();
+                  if (buf.byteLength > 100) {
+                    const bytes = new Uint8Array(buf);
+                    let binary = "";
+                    for (let i = 0; i < bytes.length; i++) {
+                      binary += String.fromCharCode(bytes[i]);
+                    }
+                    mediaBase64 = btoa(binary);
+                    mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
+                    gotMedia = true;
+                    console.log(`Media via GET /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
+                  }
+                }
               }
             } catch (e) {
-              console.log("downloadMedia error:", e);
+              console.log("GET /message/download fallback failed:", e);
             }
           }
 
@@ -1364,34 +1383,19 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
       case "send_document": {
         const mediaUrl = config.url || "";
         if (!mediaUrl) return { error: "URL da mídia não configurada." };
-        const mediaType = toolType === "send_image" ? "image" : toolType === "send_audio" ? "audio" : "document";
+        const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : "document";
 
-        const mediaResponse = await fetch(mediaUrl);
-        if (!mediaResponse.ok) {
-          return { error: `Não foi possível baixar a mídia configurada (${mediaResponse.status}).` };
-        }
-
-        const mediaContentType = mediaResponse.headers.get("content-type") || (toolType === "send_image"
-          ? "image/jpeg"
-          : toolType === "send_audio"
-            ? "audio/ogg"
-            : "application/pdf");
-        const mediaBytes = await mediaResponse.arrayBuffer();
-        const formData = new FormData();
-        formData.append("number", phoneNumber);
-        formData.append("type", mediaType);
-        formData.append(
-          "file",
-          new Blob([mediaBytes], { type: mediaContentType }),
-          buildCustomToolFilename(toolDef.name, toolType, mediaUrl, mediaContentType),
-        );
-        if (config.caption) formData.append("caption", config.caption);
-        if (toolType === "send_audio") formData.append("ptt", "true");
+        const sendPayload: any = {
+          number: phoneNumber,
+          type: mediaType,
+          file: mediaUrl,
+        };
+        if (config.caption) sendPayload.caption = config.caption;
 
         const res = await fetch(`${uazapiUrl}/send/media`, {
           method: "POST",
-          headers: { "Accept": "application/json", "token": uazapiToken },
-          body: formData,
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify(sendPayload),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_media result:`, JSON.stringify(data).slice(0, 200));
@@ -1406,11 +1410,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
         const lat = Number(config.latitude);
         const lng = Number(config.longitude);
         const locName = config.name || "";
+        const locAddress = config.address || locName || "";
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "Coordenadas não configuradas." };
         const res = await fetch(`${uazapiUrl}/send/location`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, lat, lng, name: locName }),
+          body: JSON.stringify({ number: phoneNumber, latitude: lat, longitude: lng, name: locName, address: locAddress }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_location result:`, JSON.stringify(data).slice(0, 200));
