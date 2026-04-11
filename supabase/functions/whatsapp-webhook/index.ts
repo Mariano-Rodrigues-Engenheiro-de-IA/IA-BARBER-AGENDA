@@ -1213,15 +1213,21 @@ NUNCA cite, sugira ou confirme qualquer horário sem antes executar buscar_horar
 
 ------------------------------------------
 
-## 🔶 REGRA CRÍTICA: IDs (ONE BELEZA)
+## 🚨🚨🚨 REGRA CRÍTICA: IDs (ONE BELEZA) 🚨🚨🚨
 
-Cada ID tem uma fonte obrigatória:
-- servicoId → buscar_servicos
-- profissionalId → buscar_barbeiros_por_servico
-- datas disponíveis → buscar_datas_disponiveis
-- horarioInicio + horarioFim → buscar_horarios
+⚠️ A API retorna "servicosId" (com S no final) nos resultados de buscar_servicos.
+Exemplo de retorno: {"servicosId": 2461, "descricao": "Cabelo", "valorServico": 55}
+→ O campo "servicosId" do resultado É O ID que você deve usar em TODAS as chamadas subsequentes.
 
-NUNCA invente ou reutilize IDs de chamadas anteriores.
+Mapeamento OBRIGATÓRIO (copie o valor EXATO do resultado da ferramenta):
+- servicoId / servicosId para agendar, buscar_barbeiros, buscar_datas, buscar_horarios → use o campo "servicosId" retornado por buscar_servicos (ex: 2461, 2462)
+- profissionalId → use o campo "profissionalId" retornado por buscar_barbeiros_por_servico (ex: 40658)
+- datas disponíveis → use as datas retornadas por buscar_datas_disponiveis
+- horarioInicio + horarioFim → use os valores retornados por buscar_horarios
+
+🚫 NUNCA invente IDs como 1, 2, 1008, 100, etc.
+🚫 NUNCA "adivinhe" um ID — SEMPRE copie do resultado da ferramenta anterior.
+🚫 Se não executou a ferramenta, NÃO tem o ID. Execute primeiro.
 
 ------------------------------------------
 
