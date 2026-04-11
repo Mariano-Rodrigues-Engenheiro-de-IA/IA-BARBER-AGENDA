@@ -968,6 +968,15 @@ function getEnabledCustomTools(tenant: any): any[] {
 }
 
 async function executeToolForProvider(provider: string, tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+
+  // Check if it's a custom tool first
+  const customTools = getEnabledCustomTools(tenant);
+  const customTool = customTools.find((ct: any) => ct.name === funcName);
+  if (customTool) {
+    return executeCustomTool(tenant, customTool, phoneNumber || "");
+  }
+
   switch (provider) {
     case "trinks":
       return executeTrinksTool(tenant, toolCall, phoneNumber);
@@ -977,6 +986,74 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
       return executeNoneTool(tenant, toolCall);
     default:
       return executeTrinksTool(tenant, toolCall, phoneNumber);
+  }
+}
+
+async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string): Promise<any> {
+  const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+  const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+  const config = toolDef.config || {};
+  const toolType = toolDef.type;
+
+  console.log(`[CustomTool] Executing ${toolDef.name} (${toolType}) for ${phoneNumber}`);
+
+  try {
+    switch (toolType) {
+      case "send_text":
+      case "send_link":
+      case "escalate_human": {
+        const text = toolType === "send_link" ? (config.url || "") : (config.text || "");
+        if (!text) return { error: "Texto/URL não configurado nesta ferramenta." };
+        const res = await fetch(`${uazapiUrl}/send/text`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify({ number: phoneNumber, text }),
+        });
+        const data = await res.json();
+        console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
+        return { success: true, message: `Enviado com sucesso`, type: toolType };
+      }
+
+      case "send_image":
+      case "send_audio":
+      case "send_document": {
+        const mediaUrl = config.url || "";
+        if (!mediaUrl) return { error: "URL da mídia não configurada." };
+        const mediaType = toolType === "send_image" ? "image" : toolType === "send_audio" ? "audio" : "document";
+        const body: any = { number: phoneNumber, type: mediaType, media: mediaUrl };
+        if (config.caption) body.caption = config.caption;
+        if (toolType === "send_audio") body.ptt = true;
+        const res = await fetch(`${uazapiUrl}/send/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        console.log(`[CustomTool] send_media result:`, JSON.stringify(data).slice(0, 200));
+        return { success: true, message: `Mídia enviada com sucesso`, type: toolType };
+      }
+
+      case "send_location": {
+        const lat = config.latitude;
+        const lng = config.longitude;
+        const locName = config.name || "";
+        if (!lat || !lng) return { error: "Coordenadas não configuradas." };
+        const res = await fetch(`${uazapiUrl}/send/location`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify({ number: phoneNumber, lat, lng, name: locName }),
+        });
+        const data = await res.json();
+        console.log(`[CustomTool] send_location result:`, JSON.stringify(data).slice(0, 200));
+        return { success: true, message: `Localização enviada com sucesso`, type: toolType };
+      }
+
+      default:
+        return { error: `Tipo de ferramenta desconhecido: ${toolType}` };
+    }
+  } catch (error) {
+    console.error(`[CustomTool] Error executing ${toolDef.name}:`, error);
+    return { error: `Erro ao executar ferramenta: ${error instanceof Error ? error.message : String(error)}` };
   }
 }
 
