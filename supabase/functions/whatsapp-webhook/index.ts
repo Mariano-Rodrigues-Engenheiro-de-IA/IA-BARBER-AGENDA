@@ -921,16 +921,50 @@ async function callAIAgent(
 // ===================== PROVIDER DISPATCHER =====================
 
 function buildToolsForProvider(provider: string, tenant: any): any[] | undefined {
+  let providerTools: any[] | undefined;
   switch (provider) {
     case "trinks":
-      return buildTrinksTools(tenant);
+      providerTools = buildTrinksTools(tenant);
+      break;
     case "onebeleza":
-      return buildOneBelezaTools(tenant);
+      providerTools = buildOneBelezaTools(tenant);
+      break;
     case "none":
-      return buildNoneTools(tenant);
+      providerTools = buildNoneTools(tenant);
+      break;
     default:
-      return buildTrinksTools(tenant);
+      providerTools = buildTrinksTools(tenant);
   }
+
+  // Inject custom tools from tenant.agent_settings
+  const customTools = getEnabledCustomTools(tenant);
+  if (customTools.length > 0) {
+    const customToolDefs = customTools.map((ct: any) => ({
+      type: "function",
+      function: {
+        name: ct.name,
+        description: ct.description || ct.display_name,
+        parameters: {
+          type: "object",
+          properties: ct.type === "escalate_human" ? {
+            motivo: { type: "string", description: "Motivo para escalar para atendente humano" },
+          } : {},
+          required: [],
+        },
+      },
+    }));
+    providerTools = [...(providerTools || []), ...customToolDefs];
+  }
+
+  return providerTools;
+}
+
+function getEnabledCustomTools(tenant: any): any[] {
+  const settings = tenant?.agent_settings;
+  if (!settings || typeof settings !== "object") return [];
+  const tools = settings.custom_tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.filter((t: any) => t.enabled === true);
 }
 
 async function executeToolForProvider(provider: string, tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
