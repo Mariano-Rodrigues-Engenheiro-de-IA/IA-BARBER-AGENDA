@@ -1132,6 +1132,7 @@ async function callAIAgent(
         // Track valid agendasIds from buscar_agendamentos_dia
         if (toolCall.function.name === "buscar_agendamentos_dia" && Array.isArray(toolResult)) {
           sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+          (sessionState as any).oneBelezaAgendaOptions = toolResult;
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
 
