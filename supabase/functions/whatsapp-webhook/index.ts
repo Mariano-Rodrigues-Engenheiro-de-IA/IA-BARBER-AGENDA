@@ -491,6 +491,23 @@ function dedupeByKey<T>(items: T[], getKey: (item: T) => string): T[] {
   return deduped;
 }
 
+function normalizeOneBelezaDate(value: unknown): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+
+  const brMatch = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (brMatch) {
+    const [, day, month, year] = brMatch;
+    return `${year}-${month}-${day}`;
+  }
+
+  return normalized;
+}
+
 function extractOneBelezaServiceOptions(toolResult: any): OneBelezaServiceOption[] {
   if (!Array.isArray(toolResult)) return [];
 
@@ -536,7 +553,7 @@ function extractOneBelezaProfessionalOptions(toolResult: any, args: any): OneBel
 function extractOneBelezaSlotOptions(toolResult: any, args: any): OneBelezaSlotOption[] {
   if (!Array.isArray(toolResult)) return [];
 
-  const date = String(args?.date ?? args?.dataNumero ?? args?.dataAg ?? args?.data ?? "").trim();
+  const date = normalizeOneBelezaDate(args?.date ?? args?.dataNumero ?? args?.dataAg ?? args?.data);
   const fallbackServiceId = toPositiveInteger(args?.servicoId ?? args?.servicoid ?? args?.servicosId);
   const fallbackProfessionalId = toPositiveInteger(args?.ProfissionalId ?? args?.profissionalId ?? args?.profissionalid);
   const slots: OneBelezaSlotOption[] = [];
@@ -623,7 +640,7 @@ function buildOneBelezaSchedulingValidationResult(
 
   const servicoId = toPositiveInteger(parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId);
   const profissionalId = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalid);
-  const dataNumero = String(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data ?? "").trim();
+  const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
   const horarioInicio = String(parsedArgs?.horarioInicio ?? "").trim();
   const horarioFim = String(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal ?? "").trim();
 
@@ -687,6 +704,92 @@ function buildOneBelezaSchedulingValidationResult(
   }
 
   return null;
+}
+
+async function hydrateOneBelezaSessionStateFromProvider(
+  tenant: any,
+  parsedArgs: any,
+  sessionState: AgentSessionState,
+): Promise<void> {
+  const servicoId = toPositiveInteger(parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId);
+  const profissionalId = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalid);
+  const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
+
+  if (!servicoId) return;
+
+  const hasService = sessionState.oneBelezaServiceOptions.some((option) => option.servicosId === servicoId);
+  if (!hasService) {
+    const serviceResult = await executeOneBelezaTool(
+      tenant,
+      { function: { name: "buscar_servicos", arguments: "{}" } },
+    );
+    const serviceOptions = extractOneBelezaServiceOptions(serviceResult);
+    if (serviceOptions.length > 0) {
+      sessionState.oneBelezaServiceOptions = dedupeByKey(
+        [...sessionState.oneBelezaServiceOptions, ...serviceOptions],
+        (option) => String(option.servicosId),
+      );
+      console.log(`Hydrated OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
+    }
+  }
+
+  if (profissionalId) {
+    const hasProfessional = sessionState.oneBelezaProfessionalOptions.some(
+      (option) => option.profissionalId === profissionalId && (option.servicosId === servicoId || option.servicosId === null),
+    );
+
+    if (!hasProfessional) {
+      const professionalArgs = { servicosId: String(servicoId) };
+      const professionalResult = await executeOneBelezaTool(
+        tenant,
+        {
+          function: {
+            name: "buscar_barbeiros_por_servico",
+            arguments: JSON.stringify(professionalArgs),
+          },
+        },
+      );
+      const professionalOptions = extractOneBelezaProfessionalOptions(professionalResult, professionalArgs);
+      if (professionalOptions.length > 0) {
+        sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+          [...sessionState.oneBelezaProfessionalOptions, ...professionalOptions],
+          (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+        );
+        console.log(`Hydrated OneBeleza professional IDs: [${sessionState.oneBelezaProfessionalOptions.map((option) => option.profissionalId).join(", ")}]`);
+      }
+    }
+  }
+
+  if (profissionalId && dataNumero) {
+    const hasSlot = sessionState.oneBelezaSlotOptions.some(
+      (slot) => slot.servicoId === servicoId && slot.profissionalId === profissionalId && slot.date === dataNumero,
+    );
+
+    if (!hasSlot) {
+      const slotArgs = {
+        date: dataNumero,
+        servicoId: String(servicoId),
+        ProfissionalId: String(profissionalId),
+      };
+      const slotResult = await executeOneBelezaTool(
+        tenant,
+        {
+          function: {
+            name: "buscar_horarios",
+            arguments: JSON.stringify(slotArgs),
+          },
+        },
+      );
+      const slotOptions = extractOneBelezaSlotOptions(slotResult, slotArgs);
+      if (slotOptions.length > 0) {
+        sessionState.oneBelezaSlotOptions = dedupeByKey(
+          [...sessionState.oneBelezaSlotOptions, ...slotOptions],
+          (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
+        );
+        console.log(`Hydrated OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+      }
+    }
+  }
 }
 
 async function callAIAgent(
@@ -825,6 +928,7 @@ async function callAIAgent(
         }
 
         if (!toolResult && provider === "onebeleza" && toolCall.function.name === "agendar") {
+          await hydrateOneBelezaSessionStateFromProvider(tenant, parsedArgs, sessionState);
           toolResult = buildOneBelezaSchedulingValidationResult(parsedArgs, sessionState);
 
           if (toolResult) {
@@ -989,6 +1093,54 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
   }
 }
 
+async function readResponsePayload(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function getCustomToolRequestError(response: Response, payload: any): string | null {
+  if (payload && typeof payload === "object") {
+    if (payload.error) return String(payload.error);
+    if (payload.success === false && payload.message) return String(payload.message);
+  }
+
+  if (response.ok) return null;
+  if (typeof payload === "string" && payload.trim()) return payload.trim();
+  return `HTTP ${response.status}`;
+}
+
+function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: string, contentType: string | null): string {
+  try {
+    const pathname = new URL(mediaUrl).pathname;
+    const rawName = pathname.split("/").filter(Boolean).pop();
+    if (rawName && rawName.includes(".")) {
+      return rawName;
+    }
+  } catch {
+    // fallback below
+  }
+
+  const normalizedContentType = String(contentType || "").split(";")[0].toLowerCase();
+  const extensionByMime: Record<string, string> = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "application/pdf": "pdf",
+  };
+  const fallbackExtension = toolType === "send_image" ? "jpg" : toolType === "send_audio" ? "ogg" : "pdf";
+
+  return `${toolName || "arquivo"}.${extensionByMime[normalizedContentType] || fallbackExtension}`;
+}
+
 async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string): Promise<any> {
   const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
   const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
@@ -996,6 +1148,14 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
   const toolType = toolDef.type;
 
   console.log(`[CustomTool] Executing ${toolDef.name} (${toolType}) for ${phoneNumber}`);
+
+  if (!uazapiUrl || !uazapiToken) {
+    return { error: "Instância WhatsApp não configurada para este tenant." };
+  }
+
+  if (!phoneNumber) {
+    return { error: "Número do cliente ausente para executar a ferramenta." };
+  }
 
   try {
     switch (toolType) {
@@ -1009,8 +1169,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify({ number: phoneNumber, text }),
         });
-        const data = await res.json();
+        const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
+        const requestError = getCustomToolRequestError(res, data);
+        if (requestError) {
+          return { error: `Falha ao enviar mensagem: ${requestError}`, status: res.status, details: data };
+        }
         return { success: true, message: `Enviado com sucesso`, type: toolType };
       }
 
@@ -1020,31 +1184,59 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
         const mediaUrl = config.url || "";
         if (!mediaUrl) return { error: "URL da mídia não configurada." };
         const mediaType = toolType === "send_image" ? "image" : toolType === "send_audio" ? "audio" : "document";
-        const body: any = { number: phoneNumber, type: mediaType, media: mediaUrl };
-        if (config.caption) body.caption = config.caption;
-        if (toolType === "send_audio") body.ptt = true;
+
+        const mediaResponse = await fetch(mediaUrl);
+        if (!mediaResponse.ok) {
+          return { error: `Não foi possível baixar a mídia configurada (${mediaResponse.status}).` };
+        }
+
+        const mediaContentType = mediaResponse.headers.get("content-type") || (toolType === "send_image"
+          ? "image/jpeg"
+          : toolType === "send_audio"
+            ? "audio/ogg"
+            : "application/pdf");
+        const mediaBytes = await mediaResponse.arrayBuffer();
+        const formData = new FormData();
+        formData.append("number", phoneNumber);
+        formData.append("type", mediaType);
+        formData.append(
+          "file",
+          new Blob([mediaBytes], { type: mediaContentType }),
+          buildCustomToolFilename(toolDef.name, toolType, mediaUrl, mediaContentType),
+        );
+        if (config.caption) formData.append("caption", config.caption);
+        if (toolType === "send_audio") formData.append("ptt", "true");
+
         const res = await fetch(`${uazapiUrl}/send/media`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify(body),
+          headers: { "Accept": "application/json", "token": uazapiToken },
+          body: formData,
         });
-        const data = await res.json();
+        const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_media result:`, JSON.stringify(data).slice(0, 200));
+        const requestError = getCustomToolRequestError(res, data);
+        if (requestError) {
+          return { error: `Falha ao enviar mídia: ${requestError}`, status: res.status, details: data };
+        }
         return { success: true, message: `Mídia enviada com sucesso`, type: toolType };
       }
 
       case "send_location": {
-        const lat = config.latitude;
-        const lng = config.longitude;
+        const lat = Number(config.latitude);
+        const lng = Number(config.longitude);
         const locName = config.name || "";
-        if (!lat || !lng) return { error: "Coordenadas não configuradas." };
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "Coordenadas não configuradas." };
         const res = await fetch(`${uazapiUrl}/send/location`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify({ number: phoneNumber, lat, lng, name: locName }),
         });
-        const data = await res.json();
+        const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_location result:`, JSON.stringify(data).slice(0, 200));
+        const requestError = getCustomToolRequestError(res, data);
+        if (requestError) {
+          return { error: `Falha ao enviar localização: ${requestError}`, status: res.status, details: data };
+        }
         return { success: true, message: `Localização enviada com sucesso`, type: toolType };
       }
 
