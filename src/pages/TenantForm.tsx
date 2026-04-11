@@ -626,6 +626,9 @@ export default function TenantFormPage() {
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
+  const [followUpEnabled, setFollowUpEnabled] = useState(true);
+  const [followUpDelay, setFollowUpDelay] = useState(30);
+  const [followUpMessage, setFollowUpMessage] = useState("Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
