@@ -2649,7 +2649,7 @@ function buildNoneTools(tenant: any) {
       type: "function",
       function: {
         name: "enviar_link_agendamento",
-        description: "Envia o link de agendamento para o cliente quando ele quiser marcar um horário.",
+        description: "OBRIGATÓRIO: Use esta ferramenta SEMPRE que o cliente quiser agendar. Ela envia o link de agendamento. NUNCA escreva o link no texto manualmente — use ESTA ferramenta.",
         parameters: { type: "object", properties: {}, required: [] },
       },
     },
