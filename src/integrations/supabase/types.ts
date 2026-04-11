@@ -108,6 +108,33 @@ export type Database = {
           },
         ]
       }
+      conversation_state: {
+        Row: {
+          created_at: string
+          id: string
+          phone_number: string
+          state: Json
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          phone_number: string
+          state?: Json
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          phone_number?: string
+          state?: Json
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       follow_ups: {
         Row: {
           confirmed_at: string | null

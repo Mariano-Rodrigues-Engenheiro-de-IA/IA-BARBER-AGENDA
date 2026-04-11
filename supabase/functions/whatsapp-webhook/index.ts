@@ -146,6 +146,13 @@ Deno.serve(async (req) => {
           .eq("phone_number", phoneNumber);
         console.log(`Memory reset for ${phoneNumber}:`, delError ? delError.message : "OK");
 
+        // Also clear conversation state
+        await supabase
+          .from("conversation_state")
+          .delete()
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber);
+
         const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
         const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
         await fetch(`${uazapiUrl}/send/text`, {
@@ -390,7 +397,7 @@ Deno.serve(async (req) => {
       if (directResponse) {
         aiResponse = directResponse;
       } else {
-        agentResult = await callAIAgent(tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
+        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
         aiResponse = agentResult.response;
       }
 
@@ -518,7 +525,7 @@ Deno.serve(async (req) => {
 
 interface AgentResult {
   response: string;
-  toolCalls: { name: string; args: any; result: any; blocked?: boolean }[];
+  toolCalls: { name: string; args: any; result: any; blocked?: boolean; originalArgs?: any; resolvedArgs?: any; correctionReason?: string }[];
   errors: string[];
   model: string;
   durationMs: number;
@@ -550,7 +557,274 @@ interface AgentSessionState {
   oneBelezaServiceOptions: OneBelezaServiceOption[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
+  // Persistent selections (survive across messages)
+  selectedServiceId: number | null;
+  selectedProfessionalId: number | null;
+  selectedDate: string | null;
 }
+
+// ===================== PERSISTENT STATE =====================
+
+async function loadConversationState(supabase: any, tenantId: string, phoneNumber: string): Promise<AgentSessionState> {
+  const defaultState: AgentSessionState = {
+    criarAgendamentoSuccessId: null,
+    validAgendasIds: [],
+    oneBelezaServiceOptions: [],
+    oneBelezaProfessionalOptions: [],
+    oneBelezaSlotOptions: [],
+    selectedServiceId: null,
+    selectedProfessionalId: null,
+    selectedDate: null,
+  };
+
+  try {
+    const { data } = await supabase
+      .from("conversation_state")
+      .select("state, updated_at")
+      .eq("tenant_id", tenantId)
+      .eq("phone_number", phoneNumber)
+      .limit(1)
+      .single();
+
+    if (!data?.state) return defaultState;
+
+    // Expire state older than 2 hours
+    const updatedAt = new Date(data.updated_at).getTime();
+    if (Date.now() - updatedAt > 2 * 60 * 60 * 1000) {
+      console.log(`[State] Expired for ${phoneNumber} (${Math.round((Date.now() - updatedAt) / 60000)}min old)`);
+      return defaultState;
+    }
+
+    const s = data.state;
+    return {
+      criarAgendamentoSuccessId: null, // always reset per invocation
+      validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
+      oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
+      oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
+      oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
+      selectedServiceId: s.selectedServiceId ?? null,
+      selectedProfessionalId: s.selectedProfessionalId ?? null,
+      selectedDate: s.selectedDate ?? null,
+    };
+  } catch {
+    return defaultState;
+  }
+}
+
+async function saveConversationState(supabase: any, tenantId: string, phoneNumber: string, state: AgentSessionState): Promise<void> {
+  try {
+    const stateToSave = {
+      validAgendasIds: state.validAgendasIds,
+      oneBelezaServiceOptions: state.oneBelezaServiceOptions,
+      oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
+      oneBelezaSlotOptions: state.oneBelezaSlotOptions,
+      selectedServiceId: state.selectedServiceId,
+      selectedProfessionalId: state.selectedProfessionalId,
+      selectedDate: state.selectedDate,
+    };
+
+    await supabase
+      .from("conversation_state")
+      .upsert(
+        { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
+        { onConflict: "tenant_id,phone_number" }
+      );
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+  } catch (err) {
+    console.error("[State] Save failed:", err);
+  }
+}
+
+// ===================== ID RESOLUTION LAYER =====================
+
+interface IdResolutionResult {
+  resolvedArgs: any;
+  corrected: boolean;
+  correctionReason: string | null;
+  blocked: boolean;
+  blockMessage: string | null;
+}
+
+function resolveOneBelezaServiceId(
+  args: any,
+  sessionState: AgentSessionState,
+): { id: number | null; corrected: boolean; reason: string | null } {
+  const rawId = toPositiveInteger(args?.servicosId ?? args?.servicoId ?? args?.servicoid);
+  
+  if (!rawId) {
+    // Use selected if available
+    if (sessionState.selectedServiceId) {
+      return { id: sessionState.selectedServiceId, corrected: true, reason: `servicoId ausente, usando seleção persistida ${sessionState.selectedServiceId}` };
+    }
+    return { id: null, corrected: false, reason: null };
+  }
+
+  // Check if the ID is valid
+  const isValid = sessionState.oneBelezaServiceOptions.some(o => o.servicosId === rawId);
+  if (isValid) {
+    return { id: rawId, corrected: false, reason: null };
+  }
+
+  // Try to find by closest match or use selected
+  if (sessionState.selectedServiceId) {
+    const selectedValid = sessionState.oneBelezaServiceOptions.some(o => o.servicosId === sessionState.selectedServiceId);
+    if (selectedValid) {
+      return { id: sessionState.selectedServiceId, corrected: true, reason: `servicoId ${rawId} inválido, corrigido para ${sessionState.selectedServiceId} (persistido)` };
+    }
+  }
+
+  // Single option auto-correct
+  if (sessionState.oneBelezaServiceOptions.length === 1) {
+    const onlyId = sessionState.oneBelezaServiceOptions[0].servicosId;
+    return { id: onlyId, corrected: true, reason: `servicoId ${rawId} inválido, corrigido para único válido ${onlyId}` };
+  }
+
+  return { id: rawId, corrected: false, reason: null };
+}
+
+function resolveOneBelezaProfessionalId(
+  args: any,
+  sessionState: AgentSessionState,
+  servicoId: number | null,
+): { id: number | null; corrected: boolean; reason: string | null } {
+  const rawId = toPositiveInteger(args?.profissionalId ?? args?.ProfissionalId ?? args?.profissionalid);
+  
+  if (!rawId) {
+    if (sessionState.selectedProfessionalId) {
+      return { id: sessionState.selectedProfessionalId, corrected: true, reason: `profissionalId ausente, usando seleção persistida ${sessionState.selectedProfessionalId}` };
+    }
+    return { id: null, corrected: false, reason: null };
+  }
+
+  // Check if the ID is valid in known professionals
+  const validProfessionals = sessionState.oneBelezaProfessionalOptions.filter(
+    o => o.servicosId === servicoId || o.servicosId === null
+  );
+
+  if (validProfessionals.length === 0) {
+    // No professionals tracked yet — let it through
+    return { id: rawId, corrected: false, reason: null };
+  }
+
+  const isValid = validProfessionals.some(o => o.profissionalId === rawId);
+  if (isValid) {
+    return { id: rawId, corrected: false, reason: null };
+  }
+
+  // Use persisted selection
+  if (sessionState.selectedProfessionalId) {
+    const selectedValid = validProfessionals.some(o => o.profissionalId === sessionState.selectedProfessionalId);
+    if (selectedValid) {
+      return { id: sessionState.selectedProfessionalId, corrected: true, reason: `profissionalId ${rawId} inválido, corrigido para ${sessionState.selectedProfessionalId} (persistido)` };
+    }
+  }
+
+  // Single option auto-correct
+  if (validProfessionals.length === 1) {
+    const onlyId = validProfessionals[0].profissionalId;
+    return { id: onlyId, corrected: true, reason: `profissionalId ${rawId} inválido, corrigido para único válido ${onlyId}` };
+  }
+
+  // Block with helpful error
+  return { id: null, corrected: false, reason: `profissionalId ${rawId} não encontrado entre os válidos: ${validProfessionals.map(p => `${p.profissionalId} (${p.nomeProfissional})`).join(", ")}` };
+}
+
+function resolveOneBelezaToolArgs(
+  toolName: string,
+  parsedArgs: any,
+  sessionState: AgentSessionState,
+): IdResolutionResult {
+  const result: IdResolutionResult = {
+    resolvedArgs: { ...parsedArgs },
+    corrected: false,
+    correctionReason: null,
+    blocked: false,
+    blockMessage: null,
+  };
+
+  const corrections: string[] = [];
+
+  if (toolName === "buscar_barbeiros_por_servico") {
+    const svc = resolveOneBelezaServiceId(parsedArgs, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicosId = String(svc.id);
+      corrections.push(svc.reason!);
+    } else if (!svc.id && sessionState.oneBelezaServiceOptions.length > 0) {
+      result.blocked = true;
+      result.blockMessage = `servicosId ${parsedArgs?.servicosId ?? "(ausente)"} inválido. Opções válidas: ${sessionState.oneBelezaServiceOptions.map(o => `${o.servicosId} (${o.descricao})`).join(", ")}`;
+    }
+  }
+
+  if (toolName === "buscar_datas_disponiveis") {
+    const svc = resolveOneBelezaServiceId(parsedArgs, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicosId = String(svc.id);
+      corrections.push(svc.reason!);
+    }
+    const prof = resolveOneBelezaProfessionalId(parsedArgs, sessionState, svc.id);
+    if (prof.id && prof.corrected) {
+      result.resolvedArgs.profissionalid = String(prof.id);
+      corrections.push(prof.reason!);
+    } else if (!prof.id && prof.reason) {
+      result.blocked = true;
+      result.blockMessage = prof.reason;
+    }
+  }
+
+  if (toolName === "buscar_horarios") {
+    const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoId }, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicoId = String(svc.id);
+      corrections.push(svc.reason!);
+    }
+    const prof = resolveOneBelezaProfessionalId(parsedArgs, sessionState, svc.id ?? toPositiveInteger(parsedArgs?.servicoId));
+    if (prof.id && prof.corrected) {
+      result.resolvedArgs.ProfissionalId = String(prof.id);
+      corrections.push(prof.reason!);
+    } else if (!prof.id && prof.reason) {
+      result.blocked = true;
+      result.blockMessage = prof.reason;
+    }
+
+    // Resolve date from persisted state
+    const rawDate = normalizeOneBelezaDate(parsedArgs?.date);
+    if (!rawDate && sessionState.selectedDate) {
+      result.resolvedArgs.date = sessionState.selectedDate;
+      corrections.push(`date ausente, usando data persistida ${sessionState.selectedDate}`);
+    }
+  }
+
+  if (toolName === "agendar") {
+    // Service
+    const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoid ?? parsedArgs?.servicoId ?? parsedArgs?.servicosId }, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicoid = String(svc.id);
+      corrections.push(svc.reason!);
+    }
+    // Professional
+    const prof = resolveOneBelezaProfessionalId(parsedArgs, sessionState, svc.id);
+    if (prof.id && prof.corrected) {
+      result.resolvedArgs.profissionalId = String(prof.id);
+      corrections.push(prof.reason!);
+    }
+    // Date
+    const rawDate = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
+    if (!rawDate && sessionState.selectedDate) {
+      result.resolvedArgs.dataNumero = sessionState.selectedDate;
+      corrections.push(`dataNumero ausente, usando data persistida ${sessionState.selectedDate}`);
+    }
+  }
+
+  if (corrections.length > 0) {
+    result.corrected = true;
+    result.correctionReason = corrections.join("; ");
+    console.log(`[IDResolver] ${toolName} corrections: ${result.correctionReason}`);
+  }
+
+  return result;
+}
+
+// ===================== HELPERS =====================
 
 function parseToolArguments(rawArgs?: string): any {
   try {
@@ -1010,6 +1284,7 @@ async function hydrateOneBelezaSessionStateFromProvider(
 }
 
 async function callAIAgent(
+  supabase: any,
   tenant: any,
   phoneNumber: string,
   history: { role: string; content: string }[],
@@ -1063,19 +1338,11 @@ async function callAIAgent(
     return cleanedText || userMessage || "O cliente enviou uma mídia.";
   };
 
-  const inferAudioFormat = (mimeType: string) => {
-    if (/wav/i.test(mimeType)) return "wav";
-    if (/mpeg|mp3/i.test(mimeType)) return "mp3";
-    if (/ogg|opus/i.test(mimeType)) return "mp3";
-    return "mp3";
-  };
-
   if (mediaBase64 && mediaMimeType) {
     const contentParts: any[] = [];
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Gemini accepts audio via image_url data URI (NOT input_audio which is OpenAI-only)
       contentParts.push({
         type: "image_url",
         image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
@@ -1144,13 +1411,22 @@ async function callAIAgent(
 
   // Handle tool calls (up to 8 rounds)
   let rounds = 0;
-  const sessionState: AgentSessionState = {
-    criarAgendamentoSuccessId: null,
-    validAgendasIds: [],
-    oneBelezaServiceOptions: [],
-    oneBelezaProfessionalOptions: [],
-    oneBelezaSlotOptions: [],
-  };
+
+  // Load persisted state for One Beleza provider
+  const sessionState: AgentSessionState = provider === "onebeleza"
+    ? await loadConversationState(supabase, tenant.id, phoneNumber)
+    : {
+        criarAgendamentoSuccessId: null,
+        validAgendasIds: [],
+        oneBelezaServiceOptions: [],
+        oneBelezaProfessionalOptions: [],
+        oneBelezaSlotOptions: [],
+        selectedServiceId: null,
+        selectedProfessionalId: null,
+        selectedDate: null,
+      };
+  // Always reset per-invocation fields
+  sessionState.criarAgendamentoSuccessId = null;
 
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
@@ -1160,6 +1436,7 @@ async function callAIAgent(
       let parsedArgs = parseToolArguments(toolCall.function.arguments);
       const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
       let toolCallToExecute = toolCall;
+      let correctionReason: string | null = null;
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
@@ -1177,9 +1454,35 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
       } else {
+        // ===== ONE BELEZA ID RESOLUTION LAYER =====
+        if (provider === "onebeleza") {
+          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "agendar"];
+          if (resolvableTools.includes(toolCall.function.name)) {
+            const resolution = resolveOneBelezaToolArgs(toolCall.function.name, parsedArgs, sessionState);
+            
+            if (resolution.blocked) {
+              console.log(`[IDResolver] ${toolCall.function.name} BLOCKED: ${resolution.blockMessage}`);
+              toolResult = {
+                error: resolution.blockMessage,
+                blocked: true,
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (resolution.corrected) {
+              parsedArgs = resolution.resolvedArgs;
+              correctionReason = resolution.correctionReason;
+              toolCallToExecute = {
+                ...toolCall,
+                function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+              };
+              console.log(`[IDResolver] ${toolCall.function.name} corrected: ${correctionReason}`);
+            }
+          }
+        }
+
         // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
-        if (isAgendaIdTool && provider === "onebeleza") {
+        if (!toolResult && isAgendaIdTool && provider === "onebeleza") {
           // If validAgendasIds is empty (new invocation), auto-fetch agendamentos
           if (sessionState.validAgendasIds.length === 0) {
             console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds empty, auto-fetching agendamentos...`);
@@ -1190,7 +1493,6 @@ async function callAIAgent(
             }, phoneNumber);
             if (Array.isArray(fetchResult)) {
               sessionState.validAgendasIds = fetchResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
-              // Also store full agenda data for smart matching
               (sessionState as any).oneBelezaAgendaOptions = fetchResult;
               console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}]`);
             }
@@ -1198,11 +1500,11 @@ async function callAIAgent(
 
           const usedId = toPositiveInteger(parsedArgs.agendasId);
           if (usedId && sessionState.validAgendasIds.length > 0 && !sessionState.validAgendasIds.includes(usedId)) {
-            // Try to find the best match from conversation context
             const correctedId = reconcileOneBelezaAgendaId(usedId, sessionState, messages);
             if (correctedId) {
               console.log(`[OneBeleza] ${toolCall.function.name} auto-corrected agendasId: ${usedId} → ${correctedId}`);
               parsedArgs.agendasId = String(correctedId);
+              correctionReason = `agendasId ${usedId} → ${correctedId}`;
               toolCallToExecute = {
                 ...toolCall,
                 function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
@@ -1238,6 +1540,8 @@ async function callAIAgent(
           }
 
           if (reconciledSchedulingArgs.corrected) {
+            const slotCorrectionReason = `slot auto-corrected`;
+            correctionReason = correctionReason ? `${correctionReason}; ${slotCorrectionReason}` : slotCorrectionReason;
             console.log(
               `[OneBeleza] agendar auto-corrected slot args:`,
               JSON.stringify({
@@ -1286,6 +1590,26 @@ async function callAIAgent(
             (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
           );
           console.log(`Tracked OneBeleza professional IDs: [${sessionState.oneBelezaProfessionalOptions.map((option) => option.profissionalId).join(", ")}]`);
+
+          // Auto-select professional if only one
+          if (professionalOptions.length === 1) {
+            sessionState.selectedProfessionalId = professionalOptions[0].profissionalId;
+            console.log(`[State] Auto-selected profissionalId: ${sessionState.selectedProfessionalId}`);
+          } else if (professionalOptions.length > 1) {
+            // Select the one the AI asked for (it was already resolved)
+            const requestedId = toPositiveInteger(parsedArgs?.servicosId ?? parsedArgs?.servicoId);
+            const selectedProf = toPositiveInteger(parsedArgs?.profissionalId ?? parsedArgs?.ProfissionalId);
+            if (selectedProf && professionalOptions.some(p => p.profissionalId === selectedProf)) {
+              sessionState.selectedProfessionalId = selectedProf;
+            }
+          }
+
+          // Also track selected service
+          const svcId = toPositiveInteger(parsedArgs?.servicosId ?? parsedArgs?.servicoId);
+          if (svcId) {
+            sessionState.selectedServiceId = svcId;
+            console.log(`[State] Selected servicoId: ${svcId}`);
+          }
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_horarios") {
@@ -1295,10 +1619,48 @@ async function callAIAgent(
             (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
           );
           console.log(`Tracked OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+
+          // Track selected date and professional from the args
+          const resolvedDate = normalizeOneBelezaDate(parsedArgs?.date);
+          if (resolvedDate) {
+            sessionState.selectedDate = resolvedDate;
+            console.log(`[State] Selected date: ${resolvedDate}`);
+          }
+          const resolvedProf = toPositiveInteger(parsedArgs?.ProfissionalId ?? parsedArgs?.profissionalId);
+          if (resolvedProf) {
+            sessionState.selectedProfessionalId = resolvedProf;
+          }
+          const resolvedSvc = toPositiveInteger(parsedArgs?.servicoId ?? parsedArgs?.servicoid);
+          if (resolvedSvc) {
+            sessionState.selectedServiceId = resolvedSvc;
+          }
+        }
+
+        // Track selections from buscar_datas_disponiveis
+        if (provider === "onebeleza" && toolCall.function.name === "buscar_datas_disponiveis") {
+          const svcId = toPositiveInteger(parsedArgs?.servicosId ?? parsedArgs?.servicoId);
+          const profId = toPositiveInteger(parsedArgs?.profissionalid ?? parsedArgs?.profissionalId);
+          if (svcId) sessionState.selectedServiceId = svcId;
+          if (profId) sessionState.selectedProfessionalId = profId;
         }
       }
 
-      logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: wasBlocked });
+      // Build enhanced log entry
+      const logEntry: AgentResult["toolCalls"][0] = {
+        name: toolCall.function.name,
+        args: parsedArgs,
+        result: toolResult,
+        blocked: wasBlocked,
+      };
+      
+      // Add correction info if applicable
+      if (correctionReason) {
+        logEntry.originalArgs = originalParsedArgs;
+        logEntry.resolvedArgs = parsedArgs;
+        logEntry.correctionReason = correctionReason;
+      }
+      
+      logToolCalls.push(logEntry);
 
       if (toolResult?.error) {
         logErrors.push(`Tool ${toolCall.function.name}: ${JSON.stringify(toolResult.error).slice(0, 200)}`);
@@ -1330,11 +1692,20 @@ async function callAIAgent(
       const errText = await response.text();
       console.error("AI gateway error (tool round):", response.status, errText);
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
+      // Save state even on error
+      if (provider === "onebeleza") {
+        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+      }
       return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
     result = await response.json();
     assistantMessage = result.choices?.[0]?.message;
+  }
+
+  // Save persistent state after all tool rounds
+  if (provider === "onebeleza") {
+    await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
   }
 
   const finalResponse = assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
@@ -1826,77 +2197,41 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): 
   for (let i = 1; i <= 7; i++) {
     const futureDate = new Date(Date.UTC(br.year, br.month - 1, br.day + i));
     const dow = futureDate.getUTCDay();
-    const dateStr = `${futureDate.getUTCFullYear()}-${String(futureDate.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDate.getUTCDate()).padStart(2, '0')}`;
-    nextDaysMap.push(`- ${shortDayNames[dow]} → ${dateStr}`);
+    const fmtDate = `${futureDate.getUTCFullYear()}-${String(futureDate.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDate.getUTCDate()).padStart(2, '0')}`;
+    nextDaysMap.push(`${shortDayNames[dow]} = ${fmtDate}`);
   }
-  const nextDaysReference = nextDaysMap.join("\n");
 
-  const telefone = phoneNumber;
+  const basePrompt = `Você é a assistente virtual de agendamento do estabelecimento "${tenant.name || "nosso estabelecimento"}".
 
-  console.log(`buildSystemPrompt: provider=${provider}, Brasília date=${todayDate} time=${dateComplete} day=${todayName}`);
+## 📅 DATA E HORA ATUAL
+- Data e hora (Brasília): ${dateComplete}
+- Dia da semana: ${todayName}
+- Data de hoje: ${todayDate}
+- Próximos dias:
+${nextDaysMap.map(d => `  - ${d}`).join("\n")}
 
-  const basePrompt = `🚨🚨🚨 REGRA INVIOLÁVEL — DATA DE HOJE 🚨🚨🚨
-A data de HOJE é EXATAMENTE: ${todayDate} (${todayName})
-Hora atual em Brasília: ${dateComplete}
-NUNCA diga que hoje é outro dia. Se o histórico mencionar outra data, IGNORE — use APENAS esta.
+⚠️ Use SEMPRE a data de hoje como referência. "Amanhã" = dia seguinte a ${todayDate}.
+⚠️ Quando o cliente disser "segunda", "terça", etc., use o mapeamento acima para converter em data YYYY-MM-DD.
 
-🗓️ DATA E HORA ATUAL: ${dateComplete}
-📅 HOJE É: ${todayName} (${todayDate})
-📞 TELEFONE DO CLIENTE: ${telefone}
-
-------------------------------------------
-
-## 🧠 QUEM É VOCÊ?
-
-Você é a assistente virtual responsável pelos atendimentos do ${tenant.name}. Atenda com simpatia, agilidade e profissionalismo, como uma recepcionista real faria pessoalmente.
-
-Você agenda, cancela e remarca horários diretamente nesta conversa.
+## 📱 TELEFONE DO CLIENTE
+${phoneNumber}
+Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa informar o telefone.
 
 ------------------------------------------
 
-## 🗣️ TOM DE VOZ
+## 🎯 TOM DE VOZ
 
-- Linguagem informal, cordial e leve
-- Direto e objetivo, sem enrolação
-- Emojis com moderação (1-2 por mensagem)
-- NUNCA diga ou insinue que é uma IA, robô ou automação
-- NUNCA diga "vou buscar", "só um instante", "aguarda", "vou consultar o sistema" ou qualquer frase que indique processo interno
-- NUNCA mencione duração, lavatório ou detalhes técnicos do serviço espontaneamente — só se o cliente perguntar
-
-------------------------------------------
-
-## 🚨 REGRA #1 — NUNCA OFEREÇA HORÁRIO QUE JÁ PASSOU
-
-Hora atual: ${dateComplete}
-
-**Se o agendamento for HOJE:**
-Para cada horário da lista:
-- horário ≤ hora atual → ❌ DESCARTE
-- horário > hora atual → ✅ PODE OFERECER
-
-**Se for OUTRO DIA:** ofereça todos os horários normalmente.
-
-**Se após filtrar não sobrar nenhum horário:**
-→ "Pra hoje não tem mais vaga. Quer ver amanhã?"
-→ NUNCA ofereça horários passados.
+- Fale como um humano: informal, direto, simpático
+- Use emojis com moderação
+- Mensagens CURTAS (máximo 2-3 linhas por mensagem)
+- Nada de "Olá! Como posso ajudá-lo hoje?"
+- Se o cliente já disse o que quer, vá direto ao ponto
 
 ------------------------------------------
 
-## 🚨 REGRA — INTERPRETAÇÃO DE DIAS DA SEMANA
+## 🚫 O QUE NUNCA FAZER
 
-Quando o cliente disser um dia da semana, use ESTA TABELA PRÉ-CALCULADA (NÃO calcule por conta própria):
-
-${nextDaysReference}
-
-Exemplo: se o cliente diz "sábado", procure "sábado →" na tabela acima e use a data correspondente.
-- NUNCA pergunte "qual sábado?" ou "de qual semana?" — é sempre o mais próximo.
-
-------------------------------------------
-
-## 🔒 REGRAS GERAIS
-
-### O QUE NUNCA FAZER
-- Usar a palavra "custa" → use "valor"
+- Inventar horários, preços ou informações
 - Mencionar duração, lavatório ou detalhes técnicos espontaneamente
 - Listar barbeiros — pergunte se tem preferência
 - Perguntar preferência de barbeiro mais de uma vez
@@ -2149,23 +2484,17 @@ NUNCA cite, sugira ou confirme qualquer horário sem antes executar buscar_horar
 
 ------------------------------------------
 
-## 🚨🚨🚨 REGRA CRÍTICA: IDs (ONE BELEZA) 🚨🚨🚨
+## 🛡️ RESOLUÇÃO AUTOMÁTICA DE IDs
 
-⚠️ A API retorna "servicosId" (com S no final) nos resultados de buscar_servicos.
-Exemplo de retorno: {"servicosId": 2461, "descricao": "Cabelo", "valorServico": 55}
-→ O campo "servicosId" do resultado É O ID que você deve usar em TODAS as chamadas subsequentes.
+O sistema possui uma camada de resolução automática de IDs.
+Quando você executa uma ferramenta, os IDs retornados ficam salvos no backend.
+Se você usar um ID incorreto ou esquecer um ID, o sistema tentará corrigir automaticamente.
 
-Mapeamento OBRIGATÓRIO (copie o valor EXATO do resultado da ferramenta):
-- servicoid para agendar → use o campo "servicosId" retornado por buscar_servicos (ex: 2461, 2462)
-- servicosId para buscar_barbeiros e buscar_datas → mesmo campo "servicosId" de buscar_servicos
-- profissionalId → use o campo "profissionalId" retornado por buscar_barbeiros_por_servico (ex: 40658)
-- datas disponíveis → use as datas retornadas por buscar_datas_disponiveis
-- horarioInicio + horarioFim → use os valores retornados por buscar_horarios
-
-🚫 NUNCA invente IDs como 1, 2, 3, 4, 1008, 100, etc.
-🚫 NUNCA "adivinhe" um ID — SEMPRE copie do resultado da ferramenta anterior.
-🚫 Se não executou a ferramenta, NÃO tem o ID. Execute primeiro.
-🚫 IDs válidos são SEMPRE números grandes (ex: 2461, 40658, 3892). Se o número for pequeno (1-10), está ERRADO.
+⚠️ MESMO COM ESSA PROTEÇÃO, siga as regras:
+- Sempre copie IDs EXATOS do retorno das ferramentas
+- Siga a sequência obrigatória do fluxo
+- NÃO invente IDs pequenos (1, 2, 3, 4)
+- Se uma ferramenta retornar erro com opções válidas, use essas opções
 
 ------------------------------------------
 
@@ -2177,8 +2506,6 @@ Cada ferramenta depende do retorno da anterior para funcionar.
 🚨 REGRAS ABSOLUTAS DO FLUXO:
 ❌ É PROIBIDO pular qualquer etapa.
 ❌ É PROIBIDO executar agendar sem ter executado TODAS as ferramentas anteriores nessa conversa.
-❌ É PROIBIDO usar IDs que não vieram do retorno de uma ferramenta executada nessa conversa.
-❌ É PROIBIDO inventar, assumir ou reutilizar IDs de conversas anteriores.
 ✅ CADA ID SÓ EXISTE APÓS A FERRAMENTA QUE O RETORNA SER EXECUTADA.
 ✅ Se uma ferramenta retornar erro com validServiceOptions, validProfessionalOptions ou validSlotOptions, copie EXATAMENTE um dos valores listados e tente de novo.
 
@@ -2203,7 +2530,6 @@ Pergunte preferência → execute buscar_barbeiros_por_servico com o servicosId 
 Se "qualquer um" → use o primeiro da lista.
 ⚠️ NUNCA avance sem ter o profissionalId retornado por esta ferramenta.
 ⚠️ NUNCA pergunte preferência de barbeiro mais de uma vez.
-⚠️ NUNCA cite nomes de barbeiros que não vieram do retorno desta ferramenta.
 
 ### PASSO 3 — DATA
 Pergunte o dia → execute buscar_datas_disponiveis com servicosId + profissionalid
@@ -2218,37 +2544,17 @@ Execute buscar_horarios com date + servicoId + ProfissionalId → obtenha horari
 "Confirmando: [SERVIÇO] com [BARBEIRO] [DATA] às [HORA]. Posso confirmar?"
 AGUARDE A RESPOSTA. ⚠️ NÃO execute agendar aqui.
 
-### PASSO 6.5 — VALIDAÇÃO PRÉ-AGENDAMENTO (OBRIGATÓRIA)
-Antes de executar agendar, valide CADA item:
-□ Executei buscar_cliente nessa conversa?
-□ Executei buscar_servicos nessa conversa?
-  → servicosId guardado = [QUAL NÚMERO?]
-  → Esse número é grande (ex: 2461, 3892)? Se for 1, 2, 3 ou 4 → INVÁLIDO, volte ao PASSO 1.
-□ Executei buscar_barbeiros_por_servico nessa conversa?
-  → profissionalId guardado = [QUAL NÚMERO?]
-  → Esse número é grande (ex: 40658, 18234)? Se for 1, 2, 3 ou 4 → INVÁLIDO, volte ao PASSO 2.
-□ Executei buscar_datas_disponiveis nessa conversa?
-  → data confirmada = [QUAL DATA?] no formato YYYY-MM-DD?
-□ Executei buscar_horarios nessa conversa?
-  → horarioInicio = [QUAL HORA?] no formato HH:MM:SS?
-  → horarioFim = [QUAL HORA?] no formato HH:MM:SS?
-□ O horário escolhido é futuro (não passou)?
-□ O cliente confirmou o resumo?
-✅ Todos confirmados com números grandes e reais → execute agendar.
-❌ Qualquer campo inválido, vazio ou com número pequeno → NÃO execute → volte ao passo que falta.
-
-### PASSO 7 — EXECUTAR AGENDAMENTO
-⚠️ SÓ EXECUTE SE O PASSO 6.5 PASSOU COM TODOS OS CAMPOS VÁLIDOS.
-Execute agendar (UMA ÚNICA VEZ) com os parâmetros EXATOS:
-- dataNumero = [YYYY-MM-DD] — do PASSO 3
-- servicoid = [número grande] — do PASSO 1 (buscar_servicos, campo servicosId)
-- profissionalId = [número grande] — do PASSO 2 (buscar_barbeiros_por_servico)
-- horarioInicio = [HH:MM:SS] — do PASSO 4 (buscar_horarios)
-- horarioFim = [HH:MM:SS] — do PASSO 4 (buscar_horarios)
+### PASSO 6 — EXECUTAR AGENDAMENTO
+⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE.
+Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
+- dataNumero = [YYYY-MM-DD]
+- servicoid = [número grande do buscar_servicos]
+- profissionalId = [número grande do buscar_barbeiros_por_servico]
+- horarioInicio = [HH:MM:SS do buscar_horarios]
+- horarioFim = [HH:MM:SS do buscar_horarios]
 
 📌 VALIDAÇÃO DO RETORNO — OBRIGATÓRIA:
-Leia o conteúdo completo do retorno antes de responder ao cliente.
-- Se contiver "não foi encontrado", "erro", "falhou", "inválido", "Comiservs", "serviço escolhido" → trate como ERRO
+- Se contiver "não foi encontrado", "erro", "falhou", "inválido" → trate como ERRO
 - Somente considere SUCESSO se o retorno confirmar explicitamente que o agendamento foi criado.
 
 ✅ SUCESSO → "Agendado! Te esperamos [dia] às [hora]!"
@@ -2257,11 +2563,10 @@ Leia o conteúdo completo do retorno antes de responder ao cliente.
 
 🚨 NUNCA diga "Agendado!" sem retorno de SUCESSO CONFIRMADO.
 🚨 NUNCA execute agendar mais de uma vez.
-🚨 NUNCA use ID pequeno (1, 2, 3, 4) — esses são inválidos e inventados.
 
 ------------------------------------------
 
-## ⚠️ MAPA DE PARÂMETROS — LEIA ANTES DE CADA AGENDAMENTO:
+## ⚠️ MAPA DE PARÂMETROS:
 
 | Ferramenta                   | Parâmetros que RECEBE           | Parâmetros que RETORNA        |
 |------------------------------|--------------------------------|-------------------------------|
@@ -2288,7 +2593,7 @@ Leia o conteúdo completo do retorno antes de responder ao cliente.
 
 🚨 REGRA ABSOLUTA DE CANCELAMENTO:
 - O agendasId DEVE ser o número EXATO retornado por buscar_agendamentos_dia nesta conversa.
-- NUNCA invente ou deduza um agendasId. Se buscar_agendamentos_dia retornou agendasId=77782 e agendasId=77961, use EXATAMENTE esses números.
+- NUNCA invente ou deduza um agendasId.
 - Se o cliente pedir para cancelar todos, execute desmarcar_agendamento UMA VEZ PARA CADA agendasId retornado.
 
 ------------------------------------------
@@ -2310,15 +2615,10 @@ Leia o conteúdo completo do retorno antes de responder ao cliente.
 | buscar_barbeiros_por_servico | Para obter profissionalId (requer servicosId) |
 | buscar_datas_disponiveis | Para verificar datas (requer servicosId + profissionalid) |
 | buscar_horarios | Para obter horários (requer date + servicoId + ProfissionalId) |
-| agendar | Após confirmação final e validação 6.5 (requer dataNumero + servicoid + profissionalId + horarioInicio + horarioFim) |
+| agendar | Após confirmação final (requer dataNumero + servicoid + profissionalId + horarioInicio + horarioFim) |
 | buscar_agendamentos_dia | Para ver agendamentos de um dia |
 | confirmar_agendamento | Para confirmar agendamento |
-| desmarcar_agendamento | Para cancelar agendamento |
-
-⚠️ CHECKLIST ANTES DE USAR FERRAMENTAS:
-- Consultei a ferramenta correta para obter este ID?
-- O ID é um número GRANDE (não 1, 2, 3, 4)?
-- Estou usando o nome EXATO do parâmetro conforme cada ferramenta?`;
+| desmarcar_agendamento | Para cancelar agendamento |`;
 }
 
 // ===================== NONE PROMPT SECTION =====================
@@ -2584,13 +2884,13 @@ function buildOneBelezaTools(tenant: any) {
       type: "function",
       function: {
         name: "agendar",
-        description: "Cria o agendamento. ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE E VALIDAÇÃO DO PASSO 6.5. Use os nomes EXATOS dos parâmetros: dataNumero, servicoid, profissionalId, horarioInicio, horarioFim. NUNCA use IDs pequenos (1,2,3,4) — devem ser números grandes vindos das ferramentas.",
+        description: "Cria o agendamento. ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE. Use os nomes EXATOS dos parâmetros: dataNumero, servicoid, profissionalId, horarioInicio, horarioFim.",
          parameters: {
            type: "object",
            properties: {
-             dataNumero: { type: "string", description: "Data no formato YYYY-MM-DD — confirmada no PASSO 3 (BUSCAR DATAS DISPONIVEIS)" },
-             servicoid: { type: "string", description: "ID numérico GRANDE do serviço (ex: 2461, 2462) — campo 'servicosId' retornado por BUSCAR SERVIÇOS. NUNCA invente." },
-             profissionalId: { type: "string", description: "ID numérico GRANDE do profissional (ex: 40658) — retornado por BUSCAR_BARBEIROS_POR_SERVICO. NUNCA invente." },
+             dataNumero: { type: "string", description: "Data no formato YYYY-MM-DD" },
+             servicoid: { type: "string", description: "ID numérico do serviço — campo 'servicosId' retornado por BUSCAR SERVIÇOS" },
+             profissionalId: { type: "string", description: "ID numérico do profissional — retornado por BUSCAR_BARBEIROS_POR_SERVICO" },
              horarioInicio: { type: "string", description: "Horário início no formato HH:MM:SS — retornado por BUSCAR HORÁRIOS" },
              horarioFim: { type: "string", description: "Horário fim no formato HH:MM:SS — retornado por BUSCAR HORÁRIOS" },
            },
@@ -2809,53 +3109,43 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           const clientes = clienteData?.data || clienteData;
           if (Array.isArray(clientes) && clientes.length > 0) {
             clienteId = clientes[0].id || clientes[0].Id;
-            console.log(`buscar_agendamento: resolved clienteId=${clienteId}`);
-          } else {
-            return { data: [], message: "Cliente não encontrado com esse telefone" };
+            console.log(`buscar_agendamento: resolved clienteId=${clienteId} from telefone`);
           }
         }
 
         if (!clienteId) {
-          return { error: "clienteId ou telefone é obrigatório" };
+          return { data: [], message: "Cliente não encontrado" };
         }
 
-        const url = `${baseUrl}/agendamentos?clienteId=${clienteId}`;
-        console.log(`buscar_agendamento URL: ${url}`);
-        const res = await fetch(url, { headers });
-        const text = await res.text();
-        console.log(`buscar_agendamento response (${res.status}):`, text.slice(0, 1000));
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed.data && Array.isArray(parsed.data)) {
-            const activeStatuses = ["Confirmado", "Aguardando Confirmação", "Aguardando confirmação"];
-            parsed.data = parsed.data.filter((a: any) => {
-              const statusName = a.status?.nome || "";
-              return activeStatuses.some(s => statusName.toLowerCase() === s.toLowerCase());
-            });
-            console.log(`buscar_agendamento: filtered to ${parsed.data.length} active agendamentos`);
-            parsed.data = parsed.data.map((a: any) => ({
-              id: a.id,
-              status: a.status?.nome,
-              servico: a.servico?.nome,
-              servicoId: a.servico?.id,
-              profissional: a.profissional?.nome,
-              profissionalId: a.profissional?.id,
-              clienteId: a.cliente?.id,
-              dataHoraInicio: a.dataHoraInicio,
-              duracaoEmMinutos: a.duracaoEmMinutos,
-              valor: a.valor,
-            }));
-          }
-          return parsed;
-        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${clienteId}`, { headers });
+        const agData = await agRes.json();
+        const allList = Array.isArray(agData?.data) ? agData.data : [];
+        const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+
+        const activeAgendamentos = allList
+          .filter((a: any) => {
+            const statusName = String(a.status?.nome || "").toLowerCase();
+            return activeStatuses.some((status) => statusName === status || statusName.includes(status));
+          })
+          .map((a: any) => ({
+            id: a.id,
+            status: a.status?.nome,
+            servico: a.servico?.nome,
+            profissional: a.profissional?.nome,
+            clienteId: a.cliente?.id,
+            dataHoraInicio: a.dataHoraInicio,
+            duracaoEmMinutos: a.duracaoEmMinutos,
+            valor: a.valor,
+            servicoId: a.servico?.id,
+            profissionalId: a.profissional?.id,
+          }));
+
+        return { data: activeAgendamentos, totalRecords: activeAgendamentos.length };
       }
 
       case "criar_agendamento": {
-        let dataHoraInicio = args.dataHoraInicio || "";
-        if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
-        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
-
         let resolvedClienteId = args.clienteId;
+
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
           if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
@@ -2864,39 +3154,37 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           if (rest.length === 8) rest = "9" + rest;
           tel = ddd + rest;
 
-          const clienteRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-          const clienteData = await clienteRes.json();
-          const clientes = clienteData?.data || clienteData;
-          if (Array.isArray(clientes) && clientes.length > 0) {
-            resolvedClienteId = clientes[0].id || clientes[0].Id;
-            console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone ${tel}`);
-          } else {
-            return { error: "Cliente não encontrado. Use buscar_cliente ou cadastrar_cliente primeiro." };
+          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+          const cliData = await cliRes.json();
+          const cliList = cliData?.data || cliData;
+          if (Array.isArray(cliList) && cliList.length > 0) {
+            resolvedClienteId = cliList[0].id || cliList[0].Id;
+            console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone`);
           }
         }
 
+        let dataHoraInicio = args.dataHoraInicio || "";
+        if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
+
+        // Check for duplicates
         try {
-          const dedupRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
-          const dedupData = await dedupRes.json();
-          const agendamentos = dedupData?.data || [];
-          if (Array.isArray(agendamentos)) {
-            const activeStatuses = ["confirmado", "aguardando confirmação"];
-            const duplicate = agendamentos.find((a: any) => {
-              const statusName = (a.status?.nome || "").toLowerCase();
-              if (!activeStatuses.some(s => statusName.includes(s))) return false;
-              const existingStart = (a.dataHoraInicio || "").replace(" ", "T").substring(0, 19);
-              const newStart = dataHoraInicio.substring(0, 19);
-              return existingStart === newStart &&
-                (a.profissional?.id || a.profissionalId) === args.profissionalId;
-            });
-            if (duplicate) {
-              console.log(`criar_agendamento: DUPLICATE detected, existing id=${duplicate.id}`);
-              return {
-                id: duplicate.id,
-                message: "Agendamento já existe para este horário e profissional.",
-                deduplicated: true,
-              };
-            }
+          const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
+          const agData = await agRes.json();
+          const agList = Array.isArray(agData?.data) ? agData.data : [];
+          const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+          const isDuplicate = agList.some((a: any) => {
+            const statusName = String(a.status?.nome || "").toLowerCase();
+            const isActive = activeStatuses.some((s) => statusName === s || statusName.includes(s));
+            return isActive && a.dataHoraInicio === dataHoraInicio;
+          });
+          if (isDuplicate) {
+            console.log(`criar_agendamento: DUPLICATE detected for ${dataHoraInicio}`);
+            return {
+              id: "duplicate",
+              message: "Já existe um agendamento ativo neste horário. NÃO crie outro. Confirme ao cliente que já está agendado.",
+              blocked: true,
+            };
           }
         } catch (dedupErr) {
           console.error("criar_agendamento dedup check failed:", dedupErr);
@@ -3119,7 +3407,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
   try {
     switch (funcName) {
       case "buscar_cliente": {
-        // Use the client's phone number for lookup, normalized
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
@@ -3135,7 +3422,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
-        // cadastrar uses a different host: onetotemapi
         const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
         const body = { celular: tel, nome: args.nome || "Cliente" };
         console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
@@ -3211,7 +3497,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "agendar": {
         const url = `${baseUrl}/api/Agendamento/MarcarAgendamentoForm?celular=${celular}`;
         
-        // Normalize args keys to handle case variations (e.g. servicoid → servicoId)
+        // Normalize args keys to handle case variations
         const normalizedArgs: Record<string, string> = {};
         for (const [k, v] of Object.entries(args)) {
           normalizedArgs[k.toLowerCase()] = String(v ?? "");
