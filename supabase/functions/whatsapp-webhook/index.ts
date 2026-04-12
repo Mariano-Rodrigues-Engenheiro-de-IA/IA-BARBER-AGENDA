@@ -1428,6 +1428,9 @@ async function callAIAgent(
   // Always reset per-invocation fields
   sessionState.criarAgendamentoSuccessId = null;
 
+  // Track tools already executed in this session to prevent duplicates
+  const executedToolsThisSession = new Set<string>();
+
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
     messages.push(assistantMessage);
@@ -1441,6 +1444,20 @@ async function callAIAgent(
 
       let toolResult: any;
       let wasBlocked = false;
+
+      // Block duplicate tool calls (same tool name) within this session
+      const toolKey = toolCall.function.name;
+      if (executedToolsThisSession.has(toolKey)) {
+        console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this session`);
+        toolResult = {
+          message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente.`,
+          blocked: true,
+        };
+        wasBlocked = true;
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+        toolCalls.push({ tool: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+        continue;
+      }
 
       // Block duplicate scheduling across all providers
       const isSchedulingTool = ["criar_agendamento", "agendar"].includes(toolCall.function.name);
@@ -1725,6 +1742,12 @@ async function callAIAgent(
       }
 
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
+      
+      // Mark tool as executed to prevent duplicates
+      if (!wasBlocked) {
+        executedToolsThisSession.add(toolCall.function.name);
+      }
+      
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
