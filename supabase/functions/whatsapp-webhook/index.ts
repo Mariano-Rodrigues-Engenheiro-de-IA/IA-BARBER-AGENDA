@@ -391,12 +391,17 @@ Deno.serve(async (req) => {
         directResponse = await maybeHandleDirectCancellationConfirmation(tenant, phoneNumber, history || [], combinedContent);
       }
 
+      const uazapiUrlPresence = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+      const uazapiTokenPresence = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+
       let aiResponse: string;
       let agentResult: AgentResult | null = null;
 
       if (directResponse) {
         aiResponse = directResponse;
       } else {
+        // Send "composing" presence before AI processing
+        await sendPresence(uazapiUrlPresence, uazapiTokenPresence, phoneNumber, "composing");
         agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
         aiResponse = agentResult.response;
       }
