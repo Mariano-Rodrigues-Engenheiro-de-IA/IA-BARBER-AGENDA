@@ -1838,7 +1838,8 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
   const customTools = getEnabledCustomTools(tenant);
   const customTool = customTools.find((ct: any) => ct.name === funcName);
   if (customTool) {
-    return executeCustomTool(tenant, customTool, phoneNumber || "");
+    const toolArgs = safeJsonParse(toolCall.function.arguments);
+    return executeCustomTool(tenant, customTool, phoneNumber || "", toolArgs);
   }
 
   switch (provider) {
@@ -1901,7 +1902,7 @@ function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: s
   return `${toolName || "arquivo"}.${extensionByMime[normalizedContentType] || fallbackExtension}`;
 }
 
-async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string): Promise<any> {
+async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string, toolArgs?: any): Promise<any> {
   const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
   const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
   const config = toolDef.config || {};
@@ -1920,8 +1921,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
   try {
     switch (toolType) {
       case "send_text":
-      case "send_link":
-      case "escalate_human": {
+      case "send_link": {
         const text = toolType === "send_link" ? (config.url || "") : (config.text || "");
         if (!text) return { error: "Texto/URL não configurado nesta ferramenta." };
         const res = await fetch(`${uazapiUrl}/send/text`, {
@@ -1936,6 +1936,69 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
           return { error: `Falha ao enviar mensagem: ${requestError}`, status: res.status, details: data };
         }
         return { success: true, message: `Enviado com sucesso`, type: toolType };
+      }
+
+      case "escalate_human": {
+        const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
+        // 1. Send message to client
+        const clientRes = await fetch(`${uazapiUrl}/send/text`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 2000 }),
+        });
+        await readResponsePayload(clientRes);
+
+        // 2. Send summary to human attendant
+        const humanNumber = config.human_number;
+        if (humanNumber) {
+          const motivo = toolArgs?.motivo || "Cliente solicitou atendimento humano";
+          // Fetch last client message from chat_messages
+          const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+          const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+          let lastClientMsg = "";
+          try {
+            const msgRes = await fetch(
+              `${supabaseUrl}/rest/v1/chat_messages?tenant_id=eq.${tenant.id}&phone_number=eq.${phoneNumber}&role=eq.user&order=created_at.desc&limit=3`,
+              { headers: { "apikey": serviceKey, "Authorization": `Bearer ${serviceKey}` } }
+            );
+            const msgs = await msgRes.json();
+            if (Array.isArray(msgs) && msgs.length > 0) {
+              lastClientMsg = msgs.map((m: any) => m.content).reverse().join("\n");
+            }
+          } catch (e) {
+            console.error("[EscalateHuman] Error fetching last messages:", e);
+          }
+
+          const summaryText = `🚨 *Atendimento Escalado*\n\n` +
+            `👤 *Cliente:* ${phoneNumber}\n` +
+            `📋 *Motivo:* ${motivo}\n` +
+            `💬 *Últimas mensagens:*\n${lastClientMsg || "(sem mensagens)"}`;
+
+          await fetch(`${uazapiUrl}/send/text`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+            body: JSON.stringify({ number: humanNumber, text: summaryText, delay: 1000 }),
+          });
+          console.log(`[EscalateHuman] Summary sent to human ${humanNumber}`);
+        }
+
+        // 3. Add WhatsApp label to client contact
+        const labelId = config.label_id;
+        if (labelId) {
+          try {
+            const labelRes = await fetch(`${uazapiUrl}/chat/addLabel`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+              body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: labelId }),
+            });
+            const labelData = await readResponsePayload(labelRes);
+            console.log(`[EscalateHuman] Label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
+          } catch (e) {
+            console.error("[EscalateHuman] Error adding label:", e);
+          }
+        }
+
+        return { success: true, message: `Atendimento escalado para humano`, type: toolType };
       }
 
       case "send_image":
