@@ -1838,7 +1838,7 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
   const customTools = getEnabledCustomTools(tenant);
   const customTool = customTools.find((ct: any) => ct.name === funcName);
   if (customTool) {
-    const toolArgs = safeJsonParse(toolCall.function.arguments);
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
     return executeCustomTool(tenant, customTool, phoneNumber || "", toolArgs);
   }
 
