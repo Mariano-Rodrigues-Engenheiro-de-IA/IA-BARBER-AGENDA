@@ -57,7 +57,7 @@ type: feature
 ## Custom Tools (Dynamic per Tenant)
 - Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
 - Each tool: { id, name, display_name, description, type, config, prompt_instruction, enabled }
-- Types: send_text, send_image, send_audio, send_location, send_document, send_link, escalate_human, send_combo
+- Types: send_text, send_image, send_audio, send_video, send_location, send_document, send_link, escalate_human, send_combo
 - send_combo: sends multiple items (text, image, audio, document, location) sequentially with 800ms delay
   - config.combo_items[]: { id, type, config } — each item has its own type and config
   - UI: ComboConfigFields with add/remove/reorder items
