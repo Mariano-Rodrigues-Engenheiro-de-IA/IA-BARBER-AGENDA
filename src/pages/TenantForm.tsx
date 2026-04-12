@@ -328,6 +328,8 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com" />
         </div>
       );
+    case "send_combo":
+      return <ComboConfigFields items={config.combo_items || []} onChange={(items) => onChange({ ...config, combo_items: items })} tenantId={tenantId} />;
     default:
       return null;
   }
