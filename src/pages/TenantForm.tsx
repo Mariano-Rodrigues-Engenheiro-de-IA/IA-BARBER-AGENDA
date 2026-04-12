@@ -26,7 +26,7 @@ function slugify(text: string) {
 
 interface ComboItem {
   id: string;
-  type: "text" | "image" | "audio" | "document" | "location";
+  type: "text" | "image" | "audio" | "video" | "document" | "location";
   config: {
     text?: string;
     url?: string;
@@ -54,7 +54,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo";
+  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -64,6 +64,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_text: "Texto",
   send_image: "Imagem",
   send_audio: "Áudio",
+  send_video: "Vídeo",
   send_location: "Localização",
   send_document: "Documento",
   send_link: "Link",
@@ -91,21 +92,12 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     enabled: true,
   },
   {
-    name: "enviar_catalogo",
-    display_name: "Catálogo de Serviços",
-    description: "Envia imagem do catálogo/tabela de preços",
+    name: "enviar_midia",
+    display_name: "Enviar Mídia",
+    description: "Envia uma mídia para o cliente (imagem, áudio, vídeo ou documento)",
     type: "send_image",
-    config: { url: "https://exemplo.com/catalogo.jpg", caption: "Nosso catálogo de serviços 💈" },
-    prompt_instruction: "Use quando o cliente pedir catálogo, tabela de preços ou lista de serviços com preços.",
-    enabled: true,
-  },
-  {
-    name: "enviar_link_agendamento",
-    display_name: "Link de Agendamento",
-    description: "Envia o link para agendamento online",
-    type: "send_link",
-    config: { url: "https://exemplo.com/agendar" },
-    prompt_instruction: "Use quando o cliente quiser agendar pelo site ou pedir o link de agendamento.",
+    config: { url: "", caption: "" },
+    prompt_instruction: "Use quando precisar enviar uma mídia ao cliente.",
     enabled: true,
   },
   {
@@ -115,22 +107,6 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "escalate_human",
     config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
-    enabled: true,
-  },
-  {
-    name: "audiovisagismo",
-    display_name: "Audiovisagismo",
-    description: "Envia áudio explicativo e imagens de referência sobre visagismo",
-    type: "send_combo",
-    config: {
-      combo_items: [
-        { id: "1", type: "audio", config: { url: "" } },
-        { id: "2", type: "image", config: { url: "", caption: "Exemplo 1" } },
-        { id: "3", type: "image", config: { url: "", caption: "Exemplo 2" } },
-        { id: "4", type: "image", config: { url: "", caption: "Exemplo 3" } },
-      ],
-    },
-    prompt_instruction: "Use quando o cliente perguntar sobre visagismo, consultoria de imagem ou análise de estilo.",
     enabled: true,
   },
 ];
@@ -240,6 +216,7 @@ const COMBO_ITEM_LABELS: Record<ComboItem["type"], string> = {
   text: "Texto",
   image: "Imagem",
   audio: "Áudio",
+  video: "Vídeo",
   document: "Documento",
   location: "Localização",
 };
@@ -321,6 +298,13 @@ function ComboItemConfigFields({ item, onChange, tenantId }: { item: ComboItem; 
       );
     case "audio":
       return <MediaUploadField label="Áudio" url={config.url || ""} accept="audio/*" tenantId={tenantId} folder="audio" onUrlChange={(url) => onChange({ ...config, url })} />;
+    case "video":
+      return (
+        <div className="space-y-2">
+          <MediaUploadField label="Vídeo" url={config.url || ""} accept="video/*" tenantId={tenantId} folder="videos" onUrlChange={(url) => onChange({ ...config, url })} />
+          <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Legenda (opcional)" />
+        </div>
+      );
     case "document":
       return (
         <div className="space-y-2">
@@ -390,6 +374,23 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           folder="audio"
           onUrlChange={(url) => onChange({ ...config, url })}
         />
+      );
+    case "send_video":
+      return (
+        <div className="space-y-3">
+          <MediaUploadField
+            label="Vídeo"
+            url={config.url || ""}
+            accept="video/*"
+            tenantId={tenantId}
+            folder="videos"
+            onUrlChange={(url) => onChange({ ...config, url })}
+          />
+          <div className="space-y-2">
+            <Label>Legenda (opcional)</Label>
+            <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Descrição do vídeo" />
+          </div>
+        </div>
       );
     case "send_location":
       return (

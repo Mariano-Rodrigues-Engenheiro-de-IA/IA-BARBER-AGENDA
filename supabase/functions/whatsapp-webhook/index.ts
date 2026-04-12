@@ -1940,10 +1940,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
 
       case "send_image":
       case "send_audio":
+      case "send_video":
       case "send_document": {
         const mediaUrl = config.url || "";
         if (!mediaUrl) return { error: "URL da mídia não configurada." };
-        const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : "document";
+        const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : toolType === "send_video" ? "video" : "document";
 
         const sendPayload: any = {
           number: phoneNumber,
@@ -2011,9 +2012,10 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
             }
             case "image":
             case "audio":
+            case "video":
             case "document": {
               if (!itemConfig.url) { results.push({ type: itemType, skipped: true }); continue; }
-              const mediaType = itemType === "audio" ? "ptt" : itemType === "image" ? "image" : "document";
+              const mediaType = itemType === "audio" ? "ptt" : itemType === "video" ? "video" : itemType === "image" ? "image" : "document";
               sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: itemType === "audio" ? 2000 : 1000 };
               if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
               res = await fetch(`${uazapiUrl}/send/media`, {
