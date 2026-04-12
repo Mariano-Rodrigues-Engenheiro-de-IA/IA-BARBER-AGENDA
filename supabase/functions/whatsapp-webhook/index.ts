@@ -2579,6 +2579,7 @@ Antes de perguntar, analise o que o cliente JÁ disse:
 - Mencionou BARBEIRO? → pule a pergunta de barbeiro
 - Mencionou DIA? → pule a pergunta de dia
 ⚠️ SÓ PERGUNTE O QUE O CLIENTE NÃO DISSE.
+⚠️ NÃO reconfirme informações que o cliente já forneceu (ex: "Então é segunda, né?"). Apenas prossiga direto para a próxima etapa pendente executando a ferramenta necessária.
 
 ### PASSO 1 — SERVIÇO
 Pergunte o serviço desejado → execute buscar_servicos → obtenha o servicosId (número grande)
