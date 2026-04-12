@@ -1949,6 +1949,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
           number: phoneNumber,
           type: mediaType,
           file: mediaUrl,
+          delay: toolType === "send_audio" ? 2000 : 1000,
         };
         if (config.caption) sendPayload.caption = config.caption;
 
