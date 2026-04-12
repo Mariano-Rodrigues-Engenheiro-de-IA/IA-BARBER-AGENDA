@@ -47,6 +47,8 @@ interface CustomToolConfig {
   name?: string;
   address?: string;
   combo_items?: ComboItem[];
+  human_number?: string;
+  label_id?: string;
 }
 
 interface CustomTool {
@@ -335,7 +337,6 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
 
   switch (tool.type) {
     case "send_text":
-    case "escalate_human":
       return (
         <div className="space-y-2">
           <Label>Texto a enviar</Label>
@@ -345,6 +346,38 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
             onChange={(e) => onChange({ ...config, text: e.target.value })}
             placeholder="Ex: Chave PIX: 11999998888 (Nome)"
           />
+        </div>
+      );
+    case "escalate_human":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Mensagem para o cliente</Label>
+            <Textarea
+              rows={2}
+              value={config.text || ""}
+              onChange={(e) => onChange({ ...config, text: e.target.value })}
+              placeholder="Vou transferir você para um atendente. Aguarde um momento! 🙋"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Número do atendente humano</Label>
+            <Input
+              value={config.human_number || ""}
+              onChange={(e) => onChange({ ...config, human_number: e.target.value })}
+              placeholder="5511999998888"
+            />
+            <p className="text-xs text-muted-foreground">A IA enviará um resumo da conversa + nome e número do cliente para este número</p>
+          </div>
+          <div className="space-y-2">
+            <Label>ID da etiqueta WhatsApp (opcional)</Label>
+            <Input
+              value={config.label_id || ""}
+              onChange={(e) => onChange({ ...config, label_id: e.target.value })}
+              placeholder="Ex: 5, 12..."
+            />
+            <p className="text-xs text-muted-foreground">ID da etiqueta/tag que será adicionada ao contato quando escalado</p>
+          </div>
         </div>
       );
     case "send_image":
