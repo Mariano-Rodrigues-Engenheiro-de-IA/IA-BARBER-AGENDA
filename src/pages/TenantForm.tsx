@@ -368,6 +368,23 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           onUrlChange={(url) => onChange({ ...config, url })}
         />
       );
+    case "send_video":
+      return (
+        <div className="space-y-3">
+          <MediaUploadField
+            label="Vídeo"
+            url={config.url || ""}
+            accept="video/*"
+            tenantId={tenantId}
+            folder="videos"
+            onUrlChange={(url) => onChange({ ...config, url })}
+          />
+          <div className="space-y-2">
+            <Label>Legenda (opcional)</Label>
+            <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Descrição do vídeo" />
+          </div>
+        </div>
+      );
     case "send_location":
       return (
         <div className="space-y-3">
