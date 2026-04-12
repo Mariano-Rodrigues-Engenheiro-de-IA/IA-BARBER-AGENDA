@@ -57,11 +57,14 @@ type: feature
 ## Custom Tools (Dynamic per Tenant)
 - Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
 - Each tool: { id, name, display_name, description, type, config, prompt_instruction, enabled }
-- Types: send_text, send_image, send_audio, send_location, send_document, send_link, escalate_human
+- Types: send_text, send_image, send_audio, send_location, send_document, send_link, escalate_human, send_combo
+- send_combo: sends multiple items (text, image, audio, document, location) sequentially with 800ms delay
+  - config.combo_items[]: { id, type, config } — each item has its own type and config
+  - UI: ComboConfigFields with add/remove/reorder items
 - Injected dynamically into buildToolsForProvider() as OpenAI tool definitions
 - Executed via executeCustomTool() → UAZAPI endpoints (/send/text, /send/media, /send/location)
 - Prompt instructions injected into buildSystemPrompt() as "FERRAMENTAS CUSTOMIZADAS" section
-- UI: CRUD in TenantForm.tsx "Ferramentas" tab with templates (PIX, Localização, Catálogo, Link, Escalar Humano)
+- UI: CRUD in TenantForm.tsx "Ferramentas" tab with templates (PIX, Localização, Catálogo, Link, Escalar Humano, Audiovisagismo)
 
 ## UAZAPI v2 Endpoints
 - Media download: POST /message/download with body {id: messageId} (fallback: GET /message/download/{id})
