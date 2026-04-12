@@ -24,6 +24,20 @@ function slugify(text: string) {
 
 // ===================== CUSTOM TOOLS TYPES =====================
 
+interface ComboItem {
+  id: string;
+  type: "text" | "image" | "audio" | "document" | "location";
+  config: {
+    text?: string;
+    url?: string;
+    caption?: string;
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+}
+
 interface CustomToolConfig {
   text?: string;
   url?: string;
@@ -32,6 +46,7 @@ interface CustomToolConfig {
   longitude?: number;
   name?: string;
   address?: string;
+  combo_items?: ComboItem[];
 }
 
 interface CustomTool {
@@ -39,7 +54,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human";
+  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -53,6 +68,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_document: "Documento",
   send_link: "Link",
   escalate_human: "Escalar Humano",
+  send_combo: "Combo (Múltiplas Mídias)",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
@@ -99,6 +115,22 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "escalate_human",
     config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
+    enabled: true,
+  },
+  {
+    name: "audiovisagismo",
+    display_name: "Audiovisagismo",
+    description: "Envia áudio explicativo e imagens de referência sobre visagismo",
+    type: "send_combo",
+    config: {
+      combo_items: [
+        { id: "1", type: "audio", config: { url: "" } },
+        { id: "2", type: "image", config: { url: "", caption: "Exemplo 1" } },
+        { id: "3", type: "image", config: { url: "", caption: "Exemplo 2" } },
+        { id: "4", type: "image", config: { url: "", caption: "Exemplo 3" } },
+      ],
+    },
+    prompt_instruction: "Use quando o cliente perguntar sobre visagismo, consultoria de imagem ou análise de estilo.",
     enabled: true,
   },
 ];
