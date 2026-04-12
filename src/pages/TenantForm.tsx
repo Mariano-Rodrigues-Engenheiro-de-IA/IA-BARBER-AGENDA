@@ -26,7 +26,7 @@ function slugify(text: string) {
 
 interface ComboItem {
   id: string;
-  type: "text" | "image" | "audio" | "document" | "location";
+  type: "text" | "image" | "audio" | "video" | "document" | "location";
   config: {
     text?: string;
     url?: string;
