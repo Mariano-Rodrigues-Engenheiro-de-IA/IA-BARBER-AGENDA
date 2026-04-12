@@ -298,6 +298,13 @@ function ComboItemConfigFields({ item, onChange, tenantId }: { item: ComboItem; 
       );
     case "audio":
       return <MediaUploadField label="Áudio" url={config.url || ""} accept="audio/*" tenantId={tenantId} folder="audio" onUrlChange={(url) => onChange({ ...config, url })} />;
+    case "video":
+      return (
+        <div className="space-y-2">
+          <MediaUploadField label="Vídeo" url={config.url || ""} accept="video/*" tenantId={tenantId} folder="videos" onUrlChange={(url) => onChange({ ...config, url })} />
+          <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Legenda (opcional)" />
+        </div>
+      );
     case "document":
       return (
         <div className="space-y-2">

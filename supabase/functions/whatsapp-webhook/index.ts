@@ -1940,10 +1940,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
 
       case "send_image":
       case "send_audio":
+      case "send_video":
       case "send_document": {
         const mediaUrl = config.url || "";
         if (!mediaUrl) return { error: "URL da mídia não configurada." };
-        const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : "document";
+        const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : toolType === "send_video" ? "video" : "document";
 
         const sendPayload: any = {
           number: phoneNumber,
