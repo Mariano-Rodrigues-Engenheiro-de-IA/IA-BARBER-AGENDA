@@ -1325,8 +1325,8 @@ async function callAIAgent(
 
     if (mediaMimeType?.startsWith("audio/")) {
       return cleanedText
-        ? `O cliente enviou um áudio com esta mensagem complementar: "${cleanedText}". Transcreva o áudio em pt-BR e responda ao conteúdo. NÃO peça para repetir em texto.`
-        : "O cliente enviou um áudio. Transcreva o que foi dito em pt-BR e responda ao conteúdo. NÃO peça para o cliente repetir em texto.";
+         ? `O cliente enviou um áudio com esta mensagem complementar: "${cleanedText}". Entenda o conteúdo do áudio e responda diretamente. NÃO transcreva, repita ou cite entre aspas o que o cliente disse. NÃO peça para repetir em texto.`
+        : "O cliente enviou um áudio. Entenda o conteúdo e responda diretamente. NÃO transcreva, repita ou cite entre aspas o que o cliente disse. NÃO peça para o cliente repetir em texto.";
     }
 
     if (mediaMimeType?.startsWith("image/")) {
@@ -1486,15 +1486,73 @@ async function callAIAgent(
           // If validAgendasIds is empty (new invocation), auto-fetch agendamentos
           if (sessionState.validAgendasIds.length === 0) {
             console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds empty, auto-fetching agendamentos...`);
-            const today = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().split("T")[0];
+            
+            // Resolve target date: state > tool args > conversation context > today
+            const brNow = getBrasiliaDate();
+            const todayFallback = brNow.todayDate;
+            let targetDate = sessionState.selectedDate || null;
+            
+            if (!targetDate && parsedArgs.date) {
+              targetDate = String(parsedArgs.date);
+            }
+            
+            // Try to extract date from recent messages (e.g., "segunda-feira", "dia 13", "2026-04-13")
+            if (!targetDate) {
+              const recentMsgs = messages.slice(-10).filter((m: any) => m.role === "user" || m.role === "assistant");
+              const datePatterns = [
+                /(\d{4}-\d{2}-\d{2})/,
+                /dia\s+(\d{1,2})\/(\d{1,2})/i,
+                /dia\s+(\d{1,2})/i,
+              ];
+              const dayNameMap: Record<string, number> = {
+                "domingo": 0, "segunda": 1, "terça": 2, "quarta": 3,
+                "quinta": 4, "sexta": 5, "sábado": 6,
+              };
+              for (const msg of recentMsgs.reverse()) {
+                const text = typeof msg.content === "string" ? msg.content : "";
+                // Check YYYY-MM-DD
+                const isoMatch = text.match(datePatterns[0]);
+                if (isoMatch) { targetDate = isoMatch[1]; break; }
+                // Check "dia DD/MM"
+                const dmMatch = text.match(datePatterns[1]);
+                if (dmMatch) {
+                  const d = parseInt(dmMatch[1]);
+                  const m = parseInt(dmMatch[2]);
+                  targetDate = `${brNow.year}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                  break;
+                }
+                // Check day name (segunda, terça, etc.)
+                for (const [dayName, dayIndex] of Object.entries(dayNameMap)) {
+                  if (text.toLowerCase().includes(dayName)) {
+                    const currentDow = new Date(Date.UTC(brNow.year, brNow.month - 1, brNow.day)).getUTCDay();
+                    let diff = dayIndex - currentDow;
+                    if (diff <= 0) diff += 7;
+                    const futureDate = new Date(Date.UTC(brNow.year, brNow.month - 1, brNow.day + diff));
+                    targetDate = `${futureDate.getUTCFullYear()}-${String(futureDate.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDate.getUTCDate()).padStart(2, '0')}`;
+                    break;
+                  }
+                }
+                if (targetDate) break;
+              }
+            }
+            
+            const dateToFetch = targetDate || todayFallback;
+            console.log(`[OneBeleza] Auto-fetch date resolved: ${dateToFetch} (source: ${targetDate ? (sessionState.selectedDate ? 'state' : 'context') : 'today-fallback'})`);
+            
             const fetchResult = await executeToolForProvider(provider, tenant, {
               ...toolCall,
-              function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: today }) },
+              function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: dateToFetch }) },
             }, phoneNumber);
             if (Array.isArray(fetchResult)) {
-              sessionState.validAgendasIds = fetchResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
-              (sessionState as any).oneBelezaAgendaOptions = fetchResult;
-              console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}]`);
+              // Filter only agendamentos for this phone number
+              const phoneClean = phoneNumber.replace(/^55/, "");
+              const myAgendamentos = fetchResult.filter((a: any) => {
+                const cel = String(a.celular || "").replace(/^55/, "");
+                return cel === phoneClean || cel === phoneNumber;
+              });
+              sessionState.validAgendasIds = (myAgendamentos.length > 0 ? myAgendamentos : fetchResult).map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+              (sessionState as any).oneBelezaAgendaOptions = myAgendamentos.length > 0 ? myAgendamentos : fetchResult;
+              console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}] (date: ${dateToFetch}, filtered: ${myAgendamentos.length > 0})`);
             }
           }
 
@@ -2241,6 +2299,7 @@ Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa inf
 - Agendar em horário fora da lista de horários
 - Confirmar agendamento sem executar a ferramenta de agendar com sucesso
 - Enviar duas mensagens seguidas com o mesmo conteúdo
+- Repetir, transcrever ou citar entre aspas o que o cliente disse em áudio — responda diretamente ao conteúdo
 
 ### O QUE SEMPRE FAZER
 - Usar "valor" ao invés de "custa"
