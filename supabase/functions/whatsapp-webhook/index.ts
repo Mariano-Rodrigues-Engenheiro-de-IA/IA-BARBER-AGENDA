@@ -2782,20 +2782,31 @@ function buildNonePromptSection(tenant: any): string {
 ## 📋 MODO SEM AGENDAMENTO AUTOMÁTICO
 
 Este estabelecimento NÃO possui sistema de agendamento integrado.
+Você NÃO tem acesso a nenhuma ferramenta de agendamento, consulta de horários, profissionais ou serviços.
 
-${bookingLink ? `🚨 REGRA OBRIGATÓRIA: Quando o cliente quiser agendar, você DEVE usar a ferramenta "enviar_link_agendamento". NUNCA cole o link diretamente no texto da mensagem. SEMPRE use a ferramenta.
+${bookingLink ? `🚨 REGRA CRÍTICA — AGENDAMENTO:
+Quando o cliente demonstrar QUALQUER intenção de agendar (ex: "quero agendar", "quero marcar", "corte", "barba", etc.):
+1. Use IMEDIATAMENTE a ferramenta "enviar_link_agendamento"
+2. NÃO pergunte serviço, barbeiro, dia ou horário — você NÃO tem como consultar disponibilidade
+3. NÃO cole o link no texto — SEMPRE use a ferramenta
+4. Após enviar, diga algo curto como: "Mandei o link aí pra você agendar!"
 
-Link de agendamento (referência): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
+❌ PROIBIDO perguntar: "Qual serviço?", "Tem preferência de barbeiro?", "Qual dia?", "Qual horário?"
+❌ PROIBIDO coletar informações de agendamento — você não faz nada com elas
+✅ CORRETO: enviar o link direto e deixar o cliente escolher tudo pelo app
+
+Link de agendamento (referência interna): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
 
 Você pode:
-- Responder dúvidas sobre serviços, preços e horários de funcionamento
+- Responder dúvidas sobre serviços, preços e horários de funcionamento (baseado na base de conhecimento)
 - Fornecer informações gerais do estabelecimento
-- Enviar o link de agendamento quando solicitado (SEMPRE via ferramenta enviar_link_agendamento)
+- Enviar o link de agendamento (SEMPRE via ferramenta enviar_link_agendamento, NUNCA no texto)
 
 Você NÃO pode:
 - Criar, cancelar ou editar agendamentos
-- Consultar disponibilidade de horários em tempo real
-- Escrever o link de agendamento diretamente no texto (USE A FERRAMENTA)`;
+- Consultar disponibilidade de horários, profissionais ou serviços em tempo real
+- Perguntar detalhes de agendamento (serviço, barbeiro, dia, horário) — não tem utilidade
+- Escrever o link de agendamento diretamente no texto`;
 }
 
 // ===================== TRINKS TOOLS =====================
