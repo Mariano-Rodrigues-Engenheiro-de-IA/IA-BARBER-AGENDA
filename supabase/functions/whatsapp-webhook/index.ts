@@ -391,17 +391,12 @@ Deno.serve(async (req) => {
         directResponse = await maybeHandleDirectCancellationConfirmation(tenant, phoneNumber, history || [], combinedContent);
       }
 
-      const uazapiUrlPresence = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
-      const uazapiTokenPresence = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-
       let aiResponse: string;
       let agentResult: AgentResult | null = null;
 
       if (directResponse) {
         aiResponse = directResponse;
       } else {
-        // Send "composing" presence before AI processing
-        await sendPresence(uazapiUrlPresence, uazapiTokenPresence, phoneNumber, "composing");
         agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
         aiResponse = agentResult.response;
       }
@@ -490,9 +485,6 @@ Deno.serve(async (req) => {
       for (let i = 0; i < messageParts.length; i++) {
         const part = messageParts[i].trim();
         if (!part) continue;
-
-        // Send "composing" presence before each message part
-        await sendPresence(uazapiUrl, uazapiToken, phoneNumber, "composing");
 
         if (i > 0) {
           await new Promise((r) => setTimeout(r, 1500));
@@ -2067,25 +2059,6 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
   } catch (error) {
     console.error(`[CustomTool] Error executing ${toolDef.name}:`, error);
     return { error: `Erro ao executar ferramenta: ${error instanceof Error ? error.message : String(error)}` };
-  }
-}
-
-// ===================== PRESENCE STATUS =====================
-
-async function sendPresence(uazapiUrl: string, uazapiToken: string, phoneNumber: string, status: "composing" | "recording"): Promise<void> {
-  try {
-    const res = await fetch(`${uazapiUrl}/chat/presence`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "token": uazapiToken,
-      },
-      body: JSON.stringify({ number: phoneNumber, presence: status }),
-    });
-    console.log(`[Presence] ${status} for ${phoneNumber}: ${res.status}`);
-  } catch (e) {
-    console.error(`[Presence] Failed to send ${status}:`, e);
   }
 }
 
