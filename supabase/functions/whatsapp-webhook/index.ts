@@ -158,7 +158,7 @@ Deno.serve(async (req) => {
         await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa." }),
+          body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa.", delay: 1000 }),
         });
 
         return new Response(JSON.stringify({ status: "memory_reset" }), {
@@ -486,10 +486,6 @@ Deno.serve(async (req) => {
         const part = messageParts[i].trim();
         if (!part) continue;
 
-        if (i > 0) {
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-
         const sendResult = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: {
@@ -497,7 +493,7 @@ Deno.serve(async (req) => {
             "Accept": "application/json",
             "token": uazapiToken,
           },
-          body: JSON.stringify({ number: phoneNumber, text: part }),
+          body: JSON.stringify({ number: phoneNumber, text: part, delay: 3000 }),
         });
         const sendData = await sendResult.json();
         console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
@@ -1931,7 +1927,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
         const res = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text }),
+          body: JSON.stringify({ number: phoneNumber, text, delay: 2000 }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
@@ -1953,6 +1949,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
           number: phoneNumber,
           type: mediaType,
           file: mediaUrl,
+          delay: toolType === "send_audio" ? 2000 : 1000,
         };
         if (config.caption) sendPayload.caption = config.caption;
 
@@ -2008,7 +2005,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
               res = await fetch(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text }),
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay: 2000 }),
               });
               break;
             }
@@ -2017,7 +2014,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
             case "document": {
               if (!itemConfig.url) { results.push({ type: itemType, skipped: true }); continue; }
               const mediaType = itemType === "audio" ? "ptt" : itemType === "image" ? "image" : "document";
-              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url };
+              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: itemType === "audio" ? 2000 : 1000 };
               if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
               res = await fetch(`${uazapiUrl}/send/media`, {
                 method: "POST",
