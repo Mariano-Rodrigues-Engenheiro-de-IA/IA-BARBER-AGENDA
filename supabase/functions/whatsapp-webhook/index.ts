@@ -1927,7 +1927,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
         const res = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text }),
+          body: JSON.stringify({ number: phoneNumber, text, delay: 2000 }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
