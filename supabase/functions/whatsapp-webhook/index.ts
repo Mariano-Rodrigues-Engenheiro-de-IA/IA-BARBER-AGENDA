@@ -525,7 +525,7 @@ Deno.serve(async (req) => {
 
 interface AgentResult {
   response: string;
-  toolCalls: { name: string; args: any; result: any; blocked?: boolean; originalArgs?: any; resolvedArgs?: any; correctionReason?: string }[];
+  toolCalls: { name: string; args: any; result: any; blocked?: boolean; deduplicated?: boolean; originalArgs?: any; resolvedArgs?: any; correctionReason?: string }[];
   errors: string[];
   model: string;
   durationMs: number;
@@ -561,6 +561,7 @@ interface AgentSessionState {
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
   selectedDate: string | null;
+  executedToolNames: string[];
 }
 
 // ===================== PERSISTENT STATE =====================
@@ -575,6 +576,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
+    executedToolNames: [],
   };
 
   try {
@@ -605,6 +607,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
+      executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
     };
   } catch {
     return defaultState;
@@ -618,6 +621,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
+      executedToolNames: state.executedToolNames,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
@@ -629,7 +633,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -1412,24 +1416,14 @@ async function callAIAgent(
   // Handle tool calls (up to 8 rounds)
   let rounds = 0;
 
-  // Load persisted state for One Beleza provider
-  const sessionState: AgentSessionState = provider === "onebeleza"
-    ? await loadConversationState(supabase, tenant.id, phoneNumber)
-    : {
-        criarAgendamentoSuccessId: null,
-        validAgendasIds: [],
-        oneBelezaServiceOptions: [],
-        oneBelezaProfessionalOptions: [],
-        oneBelezaSlotOptions: [],
-        selectedServiceId: null,
-        selectedProfessionalId: null,
-        selectedDate: null,
-      };
+  // Load persisted state for the whole conversation
+  const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
+
   // Always reset per-invocation fields
   sessionState.criarAgendamentoSuccessId = null;
 
-  // Track tools already executed in this session to prevent duplicates
-  const executedToolsThisSession = new Set<string>();
+  // Track tools already executed in this conversation to prevent duplicates across messages
+  const executedToolsThisSession = new Set<string>(sessionState.executedToolNames || []);
 
   while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
@@ -1448,14 +1442,16 @@ async function callAIAgent(
       // Block duplicate tool calls (same tool name) within this session
       const toolKey = toolCall.function.name;
       if (executedToolsThisSession.has(toolKey)) {
-        console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this session`);
+        console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this conversation`);
         toolResult = {
-          message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente.`,
+          message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente sem chamar a ferramenta outra vez.`,
           blocked: true,
+          deduplicated: true,
         };
         wasBlocked = true;
+        sessionBlocked = true;
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-        toolCalls.push({ tool: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
         continue;
       }
 
@@ -1743,9 +1739,10 @@ async function callAIAgent(
 
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
       
-      // Mark tool as executed to prevent duplicates
+      // Mark tool as executed and persist it for the conversation
       if (!wasBlocked) {
         executedToolsThisSession.add(toolCall.function.name);
+        sessionState.executedToolNames = Array.from(executedToolsThisSession);
       }
       
       messages.push({
@@ -1774,9 +1771,7 @@ async function callAIAgent(
       console.error("AI gateway error (tool round):", response.status, errText);
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
       // Save state even on error
-      if (provider === "onebeleza") {
-        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-      }
+      await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
@@ -1785,9 +1780,7 @@ async function callAIAgent(
   }
 
   // Save persistent state after all tool rounds
-  if (provider === "onebeleza") {
-    await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-  }
+  await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
   const finalResponse = assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
