@@ -1742,6 +1742,12 @@ async function callAIAgent(
       }
 
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
+      
+      // Mark tool as executed to prevent duplicates
+      if (!wasBlocked) {
+        executedToolsThisSession.add(toolCall.function.name);
+      }
+      
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
