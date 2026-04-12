@@ -2005,7 +2005,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
               res = await fetch(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text }),
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay: 2000 }),
               });
               break;
             }
