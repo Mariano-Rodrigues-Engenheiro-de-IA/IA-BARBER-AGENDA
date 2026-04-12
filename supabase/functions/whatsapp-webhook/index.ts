@@ -2062,25 +2062,6 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
   }
 }
 
-// ===================== PRESENCE STATUS =====================
-
-async function sendPresence(uazapiUrl: string, uazapiToken: string, phoneNumber: string, status: "composing" | "recording"): Promise<void> {
-  try {
-    const res = await fetch(`${uazapiUrl}/chat/presence`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "token": uazapiToken,
-      },
-      body: JSON.stringify({ number: phoneNumber, presence: status }),
-    });
-    console.log(`[Presence] ${status} for ${phoneNumber}: ${res.status}`);
-  } catch (e) {
-    console.error(`[Presence] Failed to send ${status}:`, e);
-  }
-}
-
 // ===================== MESSAGE SPLITTING =====================
 
 function splitIntoMessages(text: string): string[] {
