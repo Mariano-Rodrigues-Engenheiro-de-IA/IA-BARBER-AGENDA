@@ -1974,6 +1974,69 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string)
         return { success: true, message: `Localização enviada com sucesso`, type: toolType };
       }
 
+      case "send_combo": {
+        const comboItems = config.combo_items;
+        if (!Array.isArray(comboItems) || comboItems.length === 0) {
+          return { error: "Nenhum item configurado no combo." };
+        }
+        const results: any[] = [];
+        for (const item of comboItems) {
+          const itemConfig = item.config || {};
+          const itemType = item.type;
+          let res: Response;
+          let sendPayload: any;
+
+          switch (itemType) {
+            case "text": {
+              if (!itemConfig.text) { results.push({ type: "text", skipped: true }); continue; }
+              res = await fetch(`${uazapiUrl}/send/text`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text }),
+              });
+              break;
+            }
+            case "image":
+            case "audio":
+            case "document": {
+              if (!itemConfig.url) { results.push({ type: itemType, skipped: true }); continue; }
+              const mediaType = itemType === "audio" ? "ptt" : itemType === "image" ? "image" : "document";
+              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url };
+              if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
+              res = await fetch(`${uazapiUrl}/send/media`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+                body: JSON.stringify(sendPayload),
+              });
+              break;
+            }
+            case "location": {
+              const lat = Number(itemConfig.latitude);
+              const lng = Number(itemConfig.longitude);
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) { results.push({ type: "location", skipped: true }); continue; }
+              res = await fetch(`${uazapiUrl}/send/location`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+                body: JSON.stringify({ number: phoneNumber, latitude: lat, longitude: lng, name: itemConfig.name || "", address: itemConfig.address || "" }),
+              });
+              break;
+            }
+            default:
+              results.push({ type: itemType, skipped: true, reason: "unknown type" });
+              continue;
+          }
+          const data = await readResponsePayload(res!);
+          const err = getCustomToolRequestError(res!, data);
+          results.push({ type: itemType, success: !err, error: err || undefined });
+          console.log(`[CustomTool] combo item ${itemType} result:`, err || "ok");
+          // Small delay between sends to avoid rate limits
+          await new Promise(r => setTimeout(r, 800));
+        }
+        const sent = results.filter(r => r.success).length;
+        const failed = results.filter(r => r.error).length;
+        return { success: failed === 0, message: `Combo: ${sent} enviado(s)${failed ? `, ${failed} falha(s)` : ""}`, details: results };
+      }
+
       default:
         return { error: `Tipo de ferramenta desconhecido: ${toolType}` };
     }

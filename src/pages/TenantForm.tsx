@@ -24,6 +24,20 @@ function slugify(text: string) {
 
 // ===================== CUSTOM TOOLS TYPES =====================
 
+interface ComboItem {
+  id: string;
+  type: "text" | "image" | "audio" | "document" | "location";
+  config: {
+    text?: string;
+    url?: string;
+    caption?: string;
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+}
+
 interface CustomToolConfig {
   text?: string;
   url?: string;
@@ -32,6 +46,7 @@ interface CustomToolConfig {
   longitude?: number;
   name?: string;
   address?: string;
+  combo_items?: ComboItem[];
 }
 
 interface CustomTool {
@@ -39,7 +54,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human";
+  type: "send_text" | "send_image" | "send_audio" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -53,6 +68,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_document: "Documento",
   send_link: "Link",
   escalate_human: "Escalar Humano",
+  send_combo: "Combo (Múltiplas Mídias)",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
@@ -99,6 +115,22 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "escalate_human",
     config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
+    enabled: true,
+  },
+  {
+    name: "audiovisagismo",
+    display_name: "Audiovisagismo",
+    description: "Envia áudio explicativo e imagens de referência sobre visagismo",
+    type: "send_combo",
+    config: {
+      combo_items: [
+        { id: "1", type: "audio", config: { url: "" } },
+        { id: "2", type: "image", config: { url: "", caption: "Exemplo 1" } },
+        { id: "3", type: "image", config: { url: "", caption: "Exemplo 2" } },
+        { id: "4", type: "image", config: { url: "", caption: "Exemplo 3" } },
+      ],
+    },
+    prompt_instruction: "Use quando o cliente perguntar sobre visagismo, consultoria de imagem ou análise de estilo.",
     enabled: true,
   },
 ];
@@ -202,6 +234,116 @@ function MediaUploadField({
   );
 }
 
+// ===================== COMBO CONFIG FIELDS =====================
+
+const COMBO_ITEM_LABELS: Record<ComboItem["type"], string> = {
+  text: "Texto",
+  image: "Imagem",
+  audio: "Áudio",
+  document: "Documento",
+  location: "Localização",
+};
+
+function ComboConfigFields({ items, onChange, tenantId }: { items: ComboItem[]; onChange: (items: ComboItem[]) => void; tenantId?: string }) {
+  const addItem = (type: ComboItem["type"]) => {
+    onChange([...items, { id: generateToolId(), type, config: {} }]);
+  };
+
+  const removeItem = (id: string) => {
+    onChange(items.filter((i) => i.id !== id));
+  };
+
+  const updateItem = (id: string, config: ComboItem["config"]) => {
+    onChange(items.map((i) => (i.id === id ? { ...i, config } : i)));
+  };
+
+  const moveItem = (index: number, direction: -1 | 1) => {
+    const newItems = [...items];
+    const target = index + direction;
+    if (target < 0 || target >= newItems.length) return;
+    [newItems[index], newItems[target]] = [newItems[target], newItems[index]];
+    onChange(newItems);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Label>Itens do Combo ({items.length})</Label>
+      </div>
+
+      {items.map((item, idx) => (
+        <div key={item.id} className="border border-border rounded-lg p-3 space-y-3 bg-background/50">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-foreground">
+              {idx + 1}. {COMBO_ITEM_LABELS[item.type]}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveItem(idx, -1)} disabled={idx === 0}>
+                ↑
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveItem(idx, 1)} disabled={idx === items.length - 1}>
+                ↓
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeItem(item.id)}>
+                <Trash2 className="w-3 h-3 text-destructive" />
+              </Button>
+            </div>
+          </div>
+          <ComboItemConfigFields item={item} onChange={(config) => updateItem(item.id, config)} tenantId={tenantId} />
+        </div>
+      ))}
+
+      <div className="flex flex-wrap gap-2">
+        {(Object.keys(COMBO_ITEM_LABELS) as ComboItem["type"][]).map((type) => (
+          <Button key={type} type="button" variant="outline" size="sm" onClick={() => addItem(type)}>
+            <Plus className="w-3 h-3 mr-1" />
+            {COMBO_ITEM_LABELS[type]}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ComboItemConfigFields({ item, onChange, tenantId }: { item: ComboItem; onChange: (config: ComboItem["config"]) => void; tenantId?: string }) {
+  const config = item.config;
+  switch (item.type) {
+    case "text":
+      return (
+        <Textarea rows={2} value={config.text || ""} onChange={(e) => onChange({ ...config, text: e.target.value })} placeholder="Texto a enviar" />
+      );
+    case "image":
+      return (
+        <div className="space-y-2">
+          <MediaUploadField label="Imagem" url={config.url || ""} accept="image/*" tenantId={tenantId} folder="images" onUrlChange={(url) => onChange({ ...config, url })} />
+          <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Legenda (opcional)" />
+        </div>
+      );
+    case "audio":
+      return <MediaUploadField label="Áudio" url={config.url || ""} accept="audio/*" tenantId={tenantId} folder="audio" onUrlChange={(url) => onChange({ ...config, url })} />;
+    case "document":
+      return (
+        <div className="space-y-2">
+          <MediaUploadField label="Documento" url={config.url || ""} accept=".pdf,.doc,.docx" tenantId={tenantId} folder="documents" onUrlChange={(url) => onChange({ ...config, url })} />
+          <Input value={config.caption || ""} onChange={(e) => onChange({ ...config, caption: e.target.value })} placeholder="Legenda (opcional)" />
+        </div>
+      );
+    case "location":
+      return (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Input type="number" step="any" value={config.latitude ?? ""} onChange={(e) => onChange({ ...config, latitude: parseFloat(e.target.value) || 0 })} placeholder="Latitude" />
+            <Input type="number" step="any" value={config.longitude ?? ""} onChange={(e) => onChange({ ...config, longitude: parseFloat(e.target.value) || 0 })} placeholder="Longitude" />
+          </div>
+          <Input value={config.name || ""} onChange={(e) => onChange({ ...config, name: e.target.value })} placeholder="Nome do Local" />
+          <Input value={config.address || ""} onChange={(e) => onChange({ ...config, address: e.target.value })} placeholder="Endereço" />
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
 // ===================== TOOL CONFIG FIELDS =====================
 
 function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onChange: (config: CustomToolConfig) => void; tenantId?: string }) {
@@ -296,6 +438,8 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           <Input value={config.url || ""} onChange={(e) => onChange({ ...config, url: e.target.value })} placeholder="https://exemplo.com" />
         </div>
       );
+    case "send_combo":
+      return <ComboConfigFields items={config.combo_items || []} onChange={(items) => onChange({ ...config, combo_items: items })} tenantId={tenantId} />;
     default:
       return null;
   }
