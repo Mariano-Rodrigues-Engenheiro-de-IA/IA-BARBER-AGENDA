@@ -486,10 +486,6 @@ Deno.serve(async (req) => {
         const part = messageParts[i].trim();
         if (!part) continue;
 
-        if (i > 0) {
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-
         const sendResult = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: {
@@ -497,7 +493,7 @@ Deno.serve(async (req) => {
             "Accept": "application/json",
             "token": uazapiToken,
           },
-          body: JSON.stringify({ number: phoneNumber, text: part }),
+          body: JSON.stringify({ number: phoneNumber, text: part, delay: 3000 }),
         });
         const sendData = await sendResult.json();
         console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
