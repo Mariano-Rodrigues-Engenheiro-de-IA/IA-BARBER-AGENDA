@@ -486,9 +486,6 @@ Deno.serve(async (req) => {
         const part = messageParts[i].trim();
         if (!part) continue;
 
-        // Send "composing" presence before each message part
-        await sendPresence(uazapiUrl, uazapiToken, phoneNumber, "composing");
-
         if (i > 0) {
           await new Promise((r) => setTimeout(r, 1500));
         }
