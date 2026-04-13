@@ -737,8 +737,6 @@ function FollowUpsSection({
   followUps: FollowUpConfig[];
   onChange: (followUps: FollowUpConfig[]) => void;
 }) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<FollowUpConfig | null>(null);
 
   // Initialize with defaults for both fixed types
   useEffect(() => {
