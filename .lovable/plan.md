@@ -1,70 +1,87 @@
 
 
-## Plano: Corrigir Echo de Áudio + Cancelamento para Datas Futuras + Exportar Prompt
+# Follow-ups Múltiplos e Configuráveis por Tenant (Todos os Providers)
 
-### Problemas Identificados
+## Resumo
 
-**1. Echo de áudio** — Quando o cliente envia um áudio, a IA transcreve e REPETE a transcrição como primeira parte da resposta. Exemplo nos logs:
-- Parte 1/2: `"Houve um imprevisto, cara, vou ter que cancelar meu corte da segunda-feira, valeu."` (repetição da transcrição)
-- Parte 2/2: `"Entendi! Sem problemas. Não quer agendar para outro dia?"` (resposta real)
+Transformar o sistema de follow-up atual (single, só para provider "none") em um sistema de **múltiplos follow-ups configuráveis** por tenant, funcionando para **todos os providers** (Trinks, One Beleza, None).
 
-**Causa**: O prompt de áudio diz "Transcreva o que foi dito e responda". A IA interpreta literalmente e escreve a transcrição + resposta. Precisa mudar a instrução para "Entenda o áudio e responda ao conteúdo, SEM repetir/transcrever o que foi dito".
+## O que muda
 
-**2. Auto-fetch de cancelamento usa data errada** — Linha 1489: quando `desmarcar_agendamento` é chamado sem `validAgendasIds`, o sistema busca agendamentos de `today`. Se o agendamento é para outro dia (ex: 13/04), não encontra e falha.
+Hoje existe 1 follow-up fixo por tenant (ativado/desativado, delay, mensagem). O novo sistema permite criar **N follow-ups** por tenant, cada um com:
 
-**Causa**: `const today = ...` hardcoded. Precisa extrair a data do `sessionState.selectedDate`, dos args da tool, ou do contexto da conversa.
+- **Nome** (ex: "Pós-agendamento", "Lembrete de retorno")
+- **Gatilho** — quando dispara:
+  - `after_booking` — após agendamento criado (criar_agendamento, agendar)
+  - `after_link_sent` — após envio de link (comportamento atual)
+  - `after_conversation` — X minutos após última interação sem agendamento
+- **Delay** em minutos
+- **Mensagem** personalizada
+- **Ativo/Desativado** individual
 
-**3. Exportar prompt** — Vou gerar o prompt completo do código e salvar como arquivo para você revisar.
+## Mudanças Técnicas
 
----
+### 1. Estrutura de dados (agent_settings.follow_ups)
 
-### Mudanças
+Migrar de `agent_settings.follow_up` (objeto único) para `agent_settings.follow_ups` (array):
 
-**Arquivo**: `supabase/functions/whatsapp-webhook/index.ts`
-
-**Correção 1 — Parar echo de áudio (linhas ~1326-1329)**
-- Mudar instrução de áudio de "Transcreva o que foi dito em pt-BR e responda" para "Entenda o conteúdo do áudio e responda diretamente. NÃO transcreva nem repita o que o cliente disse."
-- Adicionar regra no prompt base: "Quando receber áudio, NUNCA repita o que o cliente disse entre aspas."
-
-**Correção 2 — Auto-fetch de cancelamento para data correta (linhas ~1487-1498)**
-- Ao invés de usar `today`, extrair a data:
-  1. Do `sessionState.selectedDate` (se já foi definida na conversa)
-  2. Dos `parsedArgs` da tool (se a IA passou uma data)
-  3. Das mensagens recentes (regex para "segunda", "dia 13", datas YYYY-MM-DD)
-  4. Fallback: buscar nos últimos 7 dias (today + próximos 7 dias) em paralelo
-
-**Correção 3 — Gerar arquivo com prompt completo**
-- Script que monta o prompt como aparece para o modelo e salva em `/mnt/documents/prompt_completo.md`
-
----
-
-### Detalhes Técnicos
-
-Instrução de áudio atual:
-```
-"O cliente enviou um áudio. Transcreva o que foi dito em pt-BR e responda ao conteúdo."
-```
-
-Nova instrução:
-```
-"O cliente enviou um áudio. Entenda o conteúdo e responda diretamente. NÃO repita, transcreva ou cite entre aspas o que o cliente disse."
+```json
+{
+  "follow_ups": [
+    {
+      "id": "uuid",
+      "name": "Pós-agendamento",
+      "trigger": "after_booking",
+      "delay_minutes": 60,
+      "message": "Oi! Seu agendamento foi confirmado...",
+      "enabled": true
+    },
+    {
+      "id": "uuid",
+      "name": "Lembrete link",
+      "trigger": "after_link_sent",
+      "delay_minutes": 30,
+      "message": "Conseguiu agendar pelo link?",
+      "enabled": true
+    }
+  ]
+}
 ```
 
-Auto-fetch de cancelamento atual:
-```typescript
-const today = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().split("T")[0];
-```
+Nenhuma migração de banco necessária — os dados ficam no JSONB existente.
 
-Novo: tentar extrair data do contexto:
-```typescript
-const targetDate = sessionState.selectedDate 
-  || extractDateFromArgs(parsedArgs) 
-  || extractDateFromMessages(messages) 
-  || todayBrasilia;
-```
+### 2. UI no TenantForm.tsx (aba "Integração API")
 
-Também adicionar ao prompt base na seção "O QUE NUNCA FAZER":
-```
-- Repetir, transcrever ou citar entre aspas o que o cliente disse em áudio
-```
+- Remover seção atual de follow-up único (só aparece em "none")
+- Criar nova seção **"Follow-ups"** visível para **todos os providers**
+- CRUD de follow-ups: adicionar, editar, remover
+- Cada item mostra: nome, gatilho (select), delay (input number), mensagem (textarea), switch ativo
+- Compatibilidade: ao carregar, se existir `follow_up` antigo (formato single), migrar automaticamente para o array `follow_ups`
+
+### 3. Edge Function whatsapp-webhook
+
+- Remover lógica antiga `if (provider === "none")` para follow-ups
+- Após processamento do agente, verificar **todos os follow-ups ativos** do tenant
+- Para cada follow-up, checar se o gatilho foi atingido:
+  - `after_booking`: detectar se alguma tool de agendamento foi chamada (criar_agendamento, agendar)
+  - `after_link_sent`: detectar enviar_link_agendamento ou URL na resposta
+  - `after_conversation`: agendar se nenhum agendamento foi feito na conversa
+- Inserir na tabela `follow_ups` com o `follow_up_message` correspondente
+
+### 4. Edge Function process-followups
+
+- Sem mudanças necessárias — já processa qualquer registro pendente na tabela `follow_ups`
+
+### 5. Migração de dados legados
+
+- No carregamento do TenantForm: se `agent_settings.follow_up` (singular) existir, converter para `follow_ups[]` (array)
+- No webhook: ler `follow_ups` (array), fallback para `follow_up` (singular) para compatibilidade
+
+## Arquivos Afetados
+
+| Arquivo | Mudança |
+|---------|---------|
+| `src/pages/TenantForm.tsx` | Nova UI CRUD de follow-ups, remover seção antiga |
+| `supabase/functions/whatsapp-webhook/index.ts` | Lógica multi-trigger para todos os providers |
+| `.lovable/memory/features/ai-agent.md` | Atualizar documentação |
 
