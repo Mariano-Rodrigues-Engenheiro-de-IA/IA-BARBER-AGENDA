@@ -2085,6 +2085,28 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         return { success: true, message: `Atendimento escalado para humano`, type: toolType };
       }
 
+      case "add_label": {
+        const labelId = config.label_id;
+        if (!labelId) return { error: "ID da etiqueta não configurado nesta ferramenta." };
+        try {
+          const labelRes = await fetch(`${uazapiUrl}/chat/addLabel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+            body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: labelId }),
+          });
+          const labelData = await readResponsePayload(labelRes);
+          console.log(`[CustomTool] add_label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
+          const requestError = getCustomToolRequestError(labelRes, labelData);
+          if (requestError) {
+            return { error: `Falha ao adicionar etiqueta: ${requestError}`, status: labelRes.status, details: labelData };
+          }
+          return { success: true, message: `Etiqueta ${labelId} adicionada ao contato`, type: toolType };
+        } catch (e) {
+          console.error("[CustomTool] add_label error:", e);
+          return { error: `Erro ao adicionar etiqueta: ${e.message}` };
+        }
+      }
+
       case "send_image":
       case "send_audio":
       case "send_video":
