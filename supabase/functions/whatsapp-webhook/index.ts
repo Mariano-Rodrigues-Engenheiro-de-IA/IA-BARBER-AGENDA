@@ -2220,6 +2220,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao adicionar etiqueta.", status: labelResult.status, details: labelResult.details };
           }
+          // CRM upsert
+          const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          await upsertCrmLead(sb, tenant.id, phoneNumber, String(labelId), toolDef.display_name || toolDef.name, "ai");
           return {
             success: true,
             message: labelResult.already ? `Etiqueta ${labelId} já estava no contato` : `Etiqueta ${labelId} adicionada ao contato`,
