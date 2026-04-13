@@ -1082,7 +1082,7 @@ export default function TenantFormPage() {
       // Remove legacy follow_up key if present
       delete (agentSettings as any).follow_up;
 
-      const payload = { ...form, agent_settings: agentSettings };
+      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns };
 
       if (isEditing && id) {
         await updateTenant.mutateAsync({ id, ...payload } as any);
@@ -1130,6 +1130,10 @@ export default function TenantFormPage() {
             <TabsTrigger value="tools" className="flex items-center gap-1">
               <Wrench className="w-3.5 h-3.5" />
               Ferramentas
+            </TabsTrigger>
+            <TabsTrigger value="kanban" className="flex items-center gap-1">
+              <Kanban className="w-3.5 h-3.5" />
+              Kanban
             </TabsTrigger>
           </TabsList>
 
@@ -1428,6 +1432,72 @@ export default function TenantFormPage() {
 
           <TabsContent value="tools" className="space-y-4">
             <CustomToolsTab tools={customTools} onChange={setCustomTools} tenantId={id} />
+          <TabsContent value="kanban" className="space-y-4">
+            <div className="glass-card p-6 space-y-6">
+              <div>
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <Kanban className="w-5 h-5 text-primary" />
+                  Colunas do Kanban CRM
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Configure as colunas (etiquetas) do quadro Kanban. Cada coluna corresponde a um ID de etiqueta do WhatsApp.
+                </p>
+              </div>
+
+              {kanbanColumns.map((col, idx) => (
+                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-background/50">
+                  <div className="w-4 h-4 rounded-full shrink-0 border border-border" style={{ backgroundColor: col.color }} />
+                  <Input
+                    value={col.name}
+                    onChange={(e) => {
+                      const updated = [...kanbanColumns];
+                      updated[idx] = { ...updated[idx], name: e.target.value };
+                      setKanbanColumns(updated);
+                    }}
+                    placeholder="Nome da coluna"
+                    className="flex-1"
+                  />
+                  <Input
+                    value={col.label_id}
+                    onChange={(e) => {
+                      const updated = [...kanbanColumns];
+                      updated[idx] = { ...updated[idx], label_id: e.target.value };
+                      setKanbanColumns(updated);
+                    }}
+                    placeholder="Label ID"
+                    className="w-24"
+                  />
+                  <Input
+                    type="color"
+                    value={col.color}
+                    onChange={(e) => {
+                      const updated = [...kanbanColumns];
+                      updated[idx] = { ...updated[idx], color: e.target.value };
+                      setKanbanColumns(updated);
+                    }}
+                    className="w-12 h-9 p-1 cursor-pointer"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setKanbanColumns(kanbanColumns.filter((_, i) => i !== idx))}
+                  >
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setKanbanColumns([...kanbanColumns, { label_id: "", name: "", color: "#3B82F6", order: kanbanColumns.length }])}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Adicionar Coluna
+              </Button>
+            </div>
+          </TabsContent>
           </TabsContent>
         </Tabs>
 
