@@ -434,7 +434,6 @@ Deno.serve(async (req) => {
         if (Array.isArray(settings.follow_ups) && settings.follow_ups.length > 0) {
           followUpConfigs = settings.follow_ups.filter((fu: any) => fu.enabled);
         } else if (settings.follow_up && settings.follow_up.enabled !== false) {
-          // Legacy single follow-up
           followUpConfigs = [{
             condition: "Cliente recebeu link de agendamento mas não confirmou",
             delay_minutes: settings.follow_up.delay_minutes || 30,
@@ -442,17 +441,21 @@ Deno.serve(async (req) => {
           }];
         }
 
+        console.log(`[FollowUp] Configs found: ${followUpConfigs.length}, aiResponse exists: ${!!aiResponse}`);
+
         if (followUpConfigs.length > 0 && aiResponse) {
           try {
-            // Build a summary of the conversation for condition evaluation
             const recentHistory = (history || []).slice(-10).map((m: any) => `${m.role}: ${m.content}`).join("\n");
             const conversationSummary = `${recentHistory}\nuser: ${combinedContent}\nassistant: ${aiResponse}`;
             const toolsSummary = agentResult?.toolCalls?.map((tc: any) => `${tc.name}(${JSON.stringify(tc.args || {}).slice(0, 100)}): ${tc.blocked ? "BLOQUEADO" : "OK"}`).join(", ") || "nenhuma";
 
             const conditionsPrompt = followUpConfigs.map((fu: any, i: number) => `${i}: "${fu.condition || "sem condição definida"}"`).join("\n");
+            console.log(`[FollowUp] Evaluating conditions:\n${conditionsPrompt}`);
 
             const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-            if (LOVABLE_API_KEY) {
+            if (!LOVABLE_API_KEY) {
+              console.error("[FollowUp] LOVABLE_API_KEY not set, skipping evaluation");
+            } else {
               const evalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -477,13 +480,14 @@ Seja conservador: só marque como atingida se a condição claramente se aplica 
                 }),
               });
 
+              console.log(`[FollowUp] AI eval response status: ${evalResponse.status}`);
+
               if (evalResponse.ok) {
                 const evalData = await evalResponse.json();
                 const evalText = evalData.choices?.[0]?.message?.content?.trim() || "[]";
-                // Extract JSON array from response
                 const jsonMatch = evalText.match(/\[[\d,\s]*\]/);
                 const triggeredIndices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-                console.log(`Follow-up condition eval: ${evalText} -> triggered: ${JSON.stringify(triggeredIndices)}`);
+                console.log(`[FollowUp] Eval result: ${evalText} -> triggered: ${JSON.stringify(triggeredIndices)}`);
 
                 for (const idx of triggeredIndices) {
                   if (idx >= 0 && idx < followUpConfigs.length) {
@@ -496,16 +500,23 @@ Seja conservador: só marque como atingida se a condição claramente se aplica 
                       follow_up_at: followUpAt,
                       follow_up_message: fuConfig.message,
                     });
-                    console.log(`Follow-up [${fuConfig.condition?.slice(0, 50)}]: scheduled for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
+                    console.log(`[FollowUp] Scheduled: "${fuConfig.name || fuConfig.condition?.slice(0, 50)}" for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
                   }
                 }
+
+                if (triggeredIndices.length === 0) {
+                  console.log(`[FollowUp] No conditions triggered for this conversation`);
+                }
               } else {
-                console.error("Follow-up condition eval failed:", evalResponse.status);
+                const errBody = await evalResponse.text();
+                console.error(`[FollowUp] AI eval failed: ${evalResponse.status} - ${errBody.slice(0, 200)}`);
               }
             }
           } catch (evalErr) {
-            console.error("Follow-up condition evaluation error:", evalErr);
+            console.error("[FollowUp] Condition evaluation error:", evalErr);
           }
+        } else if (followUpConfigs.length === 0) {
+          console.log(`[FollowUp] No follow-up configs for tenant ${tenant.name}`);
         }
       }
 
