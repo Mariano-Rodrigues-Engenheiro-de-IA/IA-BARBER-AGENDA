@@ -100,6 +100,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_link: "Link",
   escalate_human: "Escalar Humano",
   send_combo: "Combo (Múltiplas Mídias)",
+  add_label: "Adicionar Etiqueta",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
