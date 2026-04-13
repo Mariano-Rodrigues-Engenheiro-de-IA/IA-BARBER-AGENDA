@@ -84,7 +84,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label";
+  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label" | "remove_label";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -101,6 +101,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   escalate_human: "Escalar Humano",
   send_combo: "Combo (Múltiplas Mídias)",
   add_label: "Adicionar Etiqueta",
+  remove_label: "Remover Etiqueta",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
@@ -147,6 +148,15 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "add_label",
     config: { label_id: "" },
     prompt_instruction: "Use quando precisar marcar/etiquetar o contato do cliente. Ex: após agendamento confirmado, após lead qualificado, etc.",
+    enabled: true,
+  },
+  {
+    name: "remover_etiqueta",
+    display_name: "Remover Etiqueta",
+    description: "Remove uma etiqueta/tag do contato do cliente no WhatsApp",
+    type: "remove_label",
+    config: { label_id: "" },
+    prompt_instruction: "Use quando precisar remover uma etiqueta do contato do cliente.",
     enabled: true,
   },
 ];
