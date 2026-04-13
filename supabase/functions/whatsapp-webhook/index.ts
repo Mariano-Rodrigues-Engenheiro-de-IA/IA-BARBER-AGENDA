@@ -2127,8 +2127,34 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
 // ===================== MESSAGE SPLITTING =====================
 
 function splitIntoMessages(text: string): string[] {
+  // Step 1: split by double newlines (paragraphs)
   const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
-  return paragraphs.length > 1 ? paragraphs : [text];
+  
+  // Step 2: for each paragraph, split by sentence-ending punctuation (.!?) 
+  // but keep sentences grouped if they're short (under 80 chars together)
+  const parts: string[] = [];
+  for (const para of paragraphs) {
+    // Split by sentence boundaries: after . ! ? followed by space or end
+    const sentences = para.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
+    if (sentences.length <= 1) {
+      parts.push(para);
+      continue;
+    }
+    let current = "";
+    for (const sentence of sentences) {
+      if (current.length === 0) {
+        current = sentence;
+      } else if ((current + " " + sentence).length < 120) {
+        current += " " + sentence;
+      } else {
+        parts.push(current.trim());
+        current = sentence;
+      }
+    }
+    if (current.trim().length > 0) parts.push(current.trim());
+  }
+  
+  return parts.length > 0 ? parts : [text];
 }
 
 // ===================== PHONE HELPERS =====================
