@@ -4,7 +4,7 @@ description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider to
 type: feature
 ---
 - WhatsApp integration via UAZAPI (subdomain: zyloia)
-- Edge function: whatsapp-webhook receives messages, processes with Lovable AI (gemini-2.5-flash), responds via UAZAPI
+- Edge function: whatsapp-webhook receives messages, processes with Lovable AI (openai/gpt-5-mini), responds via UAZAPI
 - **Multi-provider architecture**: tenant.api_provider enum (trinks | onebeleza | none)
 - Tenant lookup: matches by whatsapp_number, fallback to first active tenant
 - Provider dispatcher: buildToolsForProvider() + executeToolForProvider()
@@ -44,15 +44,19 @@ type: feature
 - No scheduling tools, just enviar_link_agendamento
 - Uses tenant.booking_link to send scheduling URL
 
-## Follow-up System (None Provider)
+## Follow-up System (Multi-trigger, All Providers)
 - Table: follow_ups (tenant_id, phone_number, status, follow_up_at, follow_up_message)
 - Status flow: pending → sent | confirmed | expired
-- When enviar_link_agendamento executes, creates follow-up record with configurable delay
-- Client confirmation detected via regex patterns (agendei, marquei, confirmei, etc.)
+- **Multiple follow-ups per tenant** stored in `agent_settings.follow_ups[]` (array of objects)
+- Each follow-up config: { id, name, trigger, delay_minutes, message, enabled }
+- **Triggers**:
+  - `after_booking` — fires when criar_agendamento or agendar tool succeeds
+  - `after_link_sent` — fires when enviar_link_agendamento called or URL in response
+  - `after_conversation` — fires when no booking was made in the conversation
+- Client confirmation detected via regex patterns (agendei, marquei, confirmei, etc.) — marks pending as confirmed
 - Edge function: process-followups runs via pg_cron every 5 min
-- Configurable per tenant in agent_settings.follow_up: { enabled, delay_minutes, message }
-- Default: enabled, 30 min delay, 1 follow-up max
-- UI in TenantForm "Integração API" tab under "none" provider
+- Legacy compatibility: reads old `agent_settings.follow_up` (singular) and converts to array format
+- UI: CRUD in TenantForm "Integração API" tab, visible for ALL providers
 
 ## Custom Tools (Dynamic per Tenant)
 - Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
