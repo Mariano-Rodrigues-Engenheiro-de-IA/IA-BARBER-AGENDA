@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
       const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
       console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "msg.key:", JSON.stringify(msg.key || {}));
 
-      // ===== TENANT LOOKUP: match by whatsapp_number =====
+      // ===== TENANT LOOKUP =====
       const { data: tenants, error: tenantError } = await supabase
         .from("tenants")
         .select("*")
@@ -88,16 +88,40 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 1) Match by UAZAPI BaseUrl from payload (most reliable for multi-tenant)
-      const incomingBaseUrl = (payload.BaseUrl || "").replace(/\/+$/, "").toLowerCase();
-      let tenant = incomingBaseUrl
-        ? tenants.find((t: any) => {
+      // 1) PRIORITY: Match by chat.owner (the WhatsApp number connected to the UAZAPI session)
+      const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
+      const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      let tenant: any = null;
+      if (ownerDigits) {
+        tenant = tenants.find((t: any) => {
+          if (!t.whatsapp_number) return false;
+          const normalized = t.whatsapp_number.replace(/\D/g, "");
+          return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
+        });
+        if (tenant) {
+          console.log(`Tenant matched by owner (${ownerDigits}): ${tenant.name}`);
+        }
+      }
+
+      // 2) Match by UAZAPI BaseUrl (only if unique per tenant)
+      if (!tenant) {
+        const incomingBaseUrl = (payload.BaseUrl || "").replace(/\/+$/, "").toLowerCase();
+        if (incomingBaseUrl) {
+          // Only use BaseUrl matching if exactly ONE active tenant has this URL
+          const urlMatches = tenants.filter((t: any) => {
             if (!t.uazapi_url) return false;
             return t.uazapi_url.replace(/\/+$/, "").toLowerCase() === incomingBaseUrl;
-          })
-        : null;
+          });
+          if (urlMatches.length === 1) {
+            tenant = urlMatches[0];
+            console.log(`Tenant matched by unique BaseUrl: ${tenant.name}`);
+          } else if (urlMatches.length > 1) {
+            console.log(`Multiple tenants (${urlMatches.length}) share BaseUrl ${incomingBaseUrl}, skipping URL match`);
+          }
+        }
+      }
 
-      // 2) Match by whatsapp_number
+      // 3) Match by client phone number against whatsapp_number
       if (!tenant) {
         tenant = tenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
@@ -106,23 +130,13 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 3) Match from owner/receiving number in payload
       if (!tenant) {
-        const ownerNumber = payload.owner || payload.to || payload.chat?.owner || "";
-        const ownerDigits = String(ownerNumber).replace(/\D/g, "");
-        if (ownerDigits) {
-          tenant = tenants.find((t: any) => {
-            if (!t.whatsapp_number) return false;
-            const normalized = t.whatsapp_number.replace(/\D/g, "");
-            return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
-          });
-        }
+        tenant = tenants[0]; // fallback
+        console.log(`Tenant fallback to first active: ${tenant.name}`);
       }
 
-      if (!tenant) tenant = tenants[0]; // fallback
-
       const provider: string = tenant.api_provider || "trinks";
-      console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}`);
+      console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
       if (messageId) {
         const { data: existing } = await supabase
