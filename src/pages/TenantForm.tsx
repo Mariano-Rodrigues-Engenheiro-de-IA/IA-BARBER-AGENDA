@@ -1008,9 +1008,7 @@ export default function TenantFormPage() {
 
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
-  const [followUpEnabled, setFollowUpEnabled] = useState(true);
-  const [followUpDelay, setFollowUpDelay] = useState(2);
-  const [followUpMessage, setFollowUpMessage] = useState("Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
+  const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
@@ -1059,12 +1057,24 @@ export default function TenantFormPage() {
       } else {
         setCustomTools([]);
       }
-      // Load follow-up settings
-      if (settings && typeof settings === "object" && settings.follow_up) {
-        const fu = settings.follow_up;
-        setFollowUpEnabled(fu.enabled !== false);
-        setFollowUpDelay(fu.delay_minutes || 30);
-        setFollowUpMessage(fu.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊");
+      // Load follow-ups (new array format)
+      if (settings && typeof settings === "object") {
+        if (Array.isArray(settings.follow_ups)) {
+          setFollowUps(settings.follow_ups);
+        } else if (settings.follow_up && typeof settings.follow_up === "object") {
+          // Migrate legacy single follow_up to array
+          const legacy = settings.follow_up;
+          if (legacy.enabled !== false || legacy.message) {
+            setFollowUps([{
+              id: generateToolId(),
+              name: "Follow-up padrão",
+              trigger: "after_link_sent" as const,
+              delay_minutes: legacy.delay_minutes || 30,
+              message: legacy.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
+              enabled: legacy.enabled !== false,
+            }]);
+          }
+        }
       }
     }
   }, [existing]);
@@ -1091,12 +1101,10 @@ export default function TenantFormPage() {
       const agentSettings = {
         ...(typeof currentSettings === "object" ? currentSettings : {}),
         custom_tools: customTools,
-        follow_up: {
-          enabled: followUpEnabled,
-          delay_minutes: followUpDelay,
-          message: followUpMessage,
-        },
+        follow_ups: followUps,
       };
+      // Remove legacy follow_up key if present
+      delete (agentSettings as any).follow_up;
 
       const payload = { ...form, agent_settings: agentSettings };
 
