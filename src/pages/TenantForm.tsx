@@ -27,17 +27,11 @@ function slugify(text: string) {
 interface FollowUpConfig {
   id: string;
   name: string;
-  trigger: "after_booking" | "after_link_sent" | "after_conversation";
+  condition: string;
   delay_minutes: number;
   message: string;
   enabled: boolean;
 }
-
-const FOLLOW_UP_TRIGGER_LABELS: Record<FollowUpConfig["trigger"], string> = {
-  after_booking: "Após agendamento criado",
-  after_link_sent: "Após envio de link/info",
-  after_conversation: "Após conversa sem agendamento",
-};
 
 // ===================== CUSTOM TOOLS TYPES =====================
 
@@ -733,7 +727,7 @@ function FollowUpsSection({
     setEditing({
       id: generateToolId(),
       name: "",
-      trigger: "after_booking",
+      condition: "",
       delay_minutes: 30,
       message: "",
       enabled: true,
@@ -783,7 +777,7 @@ function FollowUpsSection({
           Follow-ups Automáticos
         </h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure mensagens de acompanhamento automáticas. Cada follow-up pode ter um gatilho diferente.
+          Configure mensagens de acompanhamento automáticas com condições personalizadas. A IA avalia cada condição ao final da conversa.
         </p>
       </div>
 
@@ -801,8 +795,8 @@ function FollowUpsSection({
                 />
                 <div className="min-w-0">
                   <div className="font-medium text-sm text-foreground truncate">{fu.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {FOLLOW_UP_TRIGGER_LABELS[fu.trigger]} · {fu.delay_minutes}min · {fu.enabled ? "Ativo" : "Inativo"}
+                  <div className="text-xs text-muted-foreground truncate">
+                    {fu.condition ? fu.condition.slice(0, 50) + (fu.condition.length > 50 ? "..." : "") : "Sem condição"} · {fu.delay_minutes}min · {fu.enabled ? "Ativo" : "Inativo"}
                   </div>
                 </div>
               </div>
@@ -846,24 +840,15 @@ function FollowUpsSection({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Gatilho</Label>
-                <Select
-                  value={editing.trigger}
-                  onValueChange={(v) => setEditing({ ...editing, trigger: v as FollowUpConfig["trigger"] })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(FOLLOW_UP_TRIGGER_LABELS).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>{label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Condição (quando disparar)</Label>
+                <Textarea
+                  rows={3}
+                  value={editing.condition}
+                  onChange={(e) => setEditing({ ...editing, condition: e.target.value })}
+                  placeholder="Ex: O cliente demonstrou interesse mas não finalizou o agendamento. / O cliente perguntou sobre preço e não respondeu mais."
+                />
                 <p className="text-xs text-muted-foreground">
-                  {editing.trigger === "after_booking" && "Dispara após um agendamento ser criado com sucesso"}
-                  {editing.trigger === "after_link_sent" && "Dispara após envio de link de agendamento ou URL na resposta"}
-                  {editing.trigger === "after_conversation" && "Dispara após a conversa se nenhum agendamento foi feito"}
+                  Descreva em linguagem natural quando este follow-up deve ser enviado. A IA vai avaliar essa condição ao final de cada conversa.
                 </p>
               </div>
               <div className="space-y-2 max-w-xs">
@@ -1068,7 +1053,7 @@ export default function TenantFormPage() {
             setFollowUps([{
               id: generateToolId(),
               name: "Follow-up padrão",
-              trigger: "after_link_sent" as const,
+              condition: "Cliente recebeu link de agendamento mas não confirmou",
               delay_minutes: legacy.delay_minutes || 30,
               message: legacy.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
               enabled: legacy.enabled !== false,

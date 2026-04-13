@@ -1,0 +1,191 @@
+import { useState, useMemo } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useTenant } from "@/hooks/useTenants";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2 } from "lucide-react";
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+
+export default function TenantDashboardPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [period, setPeriod] = useState<"7d" | "30d">("30d");
+  const { data: tenant, isLoading: loadingTenant } = useTenant(id);
+
+  const days = period === "7d" ? 7 : 30;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+
+  // Chat messages for this tenant
+  const { data: messages, isLoading: loadingMsgs } = useQuery({
+    queryKey: ["tenant-dashboard-messages", id, period],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("id, phone_number, role, created_at")
+        .eq("tenant_id", id!)
+        .gte("created_at", since)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  // Agent logs for tool_calls analysis
+  const { data: agentLogs, isLoading: loadingLogs } = useQuery({
+    queryKey: ["tenant-dashboard-logs", id, period],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("agent_logs")
+        .select("id, tool_calls, created_at")
+        .eq("tenant_id", id!)
+        .gte("created_at", since);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  // Follow-ups
+  const { data: followUps, isLoading: loadingFU } = useQuery({
+    queryKey: ["tenant-dashboard-followups", id, period],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("follow_ups")
+        .select("id, status")
+        .eq("tenant_id", id!)
+        .gte("created_at", since);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
+
+  const isLoading = loadingTenant || loadingMsgs || loadingLogs || loadingFU;
+
+  const stats = useMemo(() => {
+    const uniqueClients = new Set(messages?.filter((m) => m.role === "user").map((m) => m.phone_number)).size;
+    const totalMessages = messages?.length ?? 0;
+
+    let bookings = 0;
+    let linksSent = 0;
+    agentLogs?.forEach((log) => {
+      const tools = log.tool_calls as any[];
+      if (!Array.isArray(tools)) return;
+      tools.forEach((tc: any) => {
+        if (["criar_agendamento", "agendar"].includes(tc.name) && !tc.blocked) bookings++;
+        if (tc.name === "enviar_link_agendamento") linksSent++;
+      });
+    });
+
+    const fuSent = followUps?.filter((f) => f.status === "sent").length ?? 0;
+    const fuConfirmed = followUps?.filter((f) => f.status === "confirmed").length ?? 0;
+
+    return { uniqueClients, totalMessages, bookings, linksSent, fuSent, fuConfirmed };
+  }, [messages, agentLogs, followUps]);
+
+  // Chart: messages per day
+  const chartData = useMemo(() => {
+    if (!messages?.length) return [];
+    const map: Record<string, number> = {};
+    // Initialize all days
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const key = d.toISOString().slice(0, 10);
+      map[key] = 0;
+    }
+    messages.forEach((m) => {
+      const key = m.created_at.slice(0, 10);
+      if (map[key] !== undefined) map[key]++;
+    });
+    return Object.entries(map).map(([date, count]) => ({
+      date: date.slice(5), // MM-DD
+      mensagens: count,
+    }));
+  }, [messages, days]);
+
+  const chartConfig: ChartConfig = {
+    mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
+  };
+
+  const statCards = [
+    { label: "Clientes Atendidos", value: stats.uniqueClients, icon: Users, color: "text-primary" },
+    { label: "Mensagens Trocadas", value: stats.totalMessages, icon: MessageSquare, color: "text-accent" },
+    { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
+    { label: "Links Enviados", value: stats.linksSent, icon: Link2, color: "text-yellow-500" },
+    { label: "Follow-ups Enviados", value: stats.fuSent, icon: Send, color: "text-primary" },
+    { label: "Follow-ups Confirmados", value: stats.fuConfirmed, icon: CheckCircle2, color: "text-accent" },
+  ];
+
+  if (loadingTenant) {
+    return <div className="text-muted-foreground">Carregando...</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => navigate(`/tenants/${id}`)}>
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div>
+            <h2 className="text-2xl font-bold text-foreground">{tenant?.name}</h2>
+            <p className="text-muted-foreground mt-1">Dashboard de métricas</p>
+          </div>
+        </div>
+        <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
+          <SelectTrigger className="w-[140px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7d">Últimos 7 dias</SelectItem>
+            <SelectItem value="30d">Últimos 30 dias</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+        {statCards.map((stat) => (
+          <div key={stat.label} className="glass-card p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">{stat.label}</span>
+              <stat.icon className={`w-5 h-5 ${stat.color}`} />
+            </div>
+            {isLoading ? (
+              <Skeleton className="h-9 w-16" />
+            ) : (
+              <p className="text-3xl font-bold text-foreground">{stat.value}</p>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Activity chart */}
+      <div className="glass-card p-6 space-y-4">
+        <h3 className="font-semibold text-foreground">Atividade de Mensagens</h3>
+        {isLoading ? (
+          <Skeleton className="h-[300px] w-full" />
+        ) : chartData.length > 0 ? (
+          <ChartContainer config={chartConfig} className="h-[300px] w-full">
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
+              <XAxis dataKey="date" className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} />
+              <YAxis className="text-xs" tick={{ fill: "hsl(var(--muted-foreground))" }} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar dataKey="mensagens" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        ) : (
+          <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+            Sem dados no período
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

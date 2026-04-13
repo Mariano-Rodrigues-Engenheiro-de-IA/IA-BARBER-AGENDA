@@ -44,19 +44,19 @@ type: feature
 - No scheduling tools, just enviar_link_agendamento
 - Uses tenant.booking_link to send scheduling URL
 
-## Follow-up System (Multi-trigger, All Providers)
+## Follow-up System (AI Condition-based, All Providers)
 - Table: follow_ups (tenant_id, phone_number, status, follow_up_at, follow_up_message)
 - Status flow: pending → sent | confirmed | expired
 - **Multiple follow-ups per tenant** stored in `agent_settings.follow_ups[]` (array of objects)
-- Each follow-up config: { id, name, trigger, delay_minutes, message, enabled }
-- **Triggers**:
-  - `after_booking` — fires when criar_agendamento or agendar tool succeeds
-  - `after_link_sent` — fires when enviar_link_agendamento called or URL in response
-  - `after_conversation` — fires when no booking was made in the conversation
+- Each follow-up config: { id, name, condition, delay_minutes, message, enabled }
+- **Condition-based**: each follow-up has a free-text `condition` field describing when to trigger
+- At end of each conversation, Lovable AI (gemini-2.5-flash-lite) evaluates all conditions against conversation context
+- Returns JSON array of triggered indices
 - Client confirmation detected via regex patterns (agendei, marquei, confirmei, etc.) — marks pending as confirmed
 - Edge function: process-followups runs via pg_cron every 5 min
-- Legacy compatibility: reads old `agent_settings.follow_up` (singular) and converts to array format
+- Legacy compatibility: reads old `agent_settings.follow_up` (singular) and converts
 - UI: CRUD in TenantForm "Integração API" tab, visible for ALL providers
+- **Dashboards**: /follow-ups (global metrics), /tenants/:id/dashboard (per-tenant metrics + activity chart)
 
 ## Custom Tools (Dynamic per Tenant)
 - Stored in `tenants.agent_settings.custom_tools[]` (JSONB)
