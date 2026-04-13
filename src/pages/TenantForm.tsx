@@ -1469,6 +1469,22 @@ export default function TenantFormPage() {
                     placeholder="Label ID"
                     className="w-24"
                   />
+                  <Select
+                    value={col.type || "funnel"}
+                    onValueChange={(val) => {
+                      const updated = [...kanbanColumns];
+                      updated[idx] = { ...updated[idx], type: val as "funnel" | "flag" };
+                      setKanbanColumns(updated);
+                    }}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="funnel">Funil</SelectItem>
+                      <SelectItem value="flag">Flag</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="color"
                     value={col.color}
@@ -1493,11 +1509,14 @@ export default function TenantFormPage() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setKanbanColumns([...kanbanColumns, { label_id: "", name: "", color: "#3B82F6", order: kanbanColumns.length }])}
+                onClick={() => setKanbanColumns([...kanbanColumns, { label_id: "", name: "", color: "#3B82F6", order: kanbanColumns.length, type: "funnel" }])}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 Adicionar Coluna
               </Button>
+              <p className="text-xs text-muted-foreground">
+                <strong>Funil:</strong> etapas do CRM (colunas no Kanban). <strong>Flag:</strong> marcações independentes que aparecem como badges nos cards (ex: IA OFF).
+              </p>
             </div>
           </TabsContent>
         </Tabs>
