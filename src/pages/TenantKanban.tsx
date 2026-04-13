@@ -78,7 +78,6 @@ function KanbanColumnComponent({
 // ===================== LEAD CARD (DRAGGABLE) =====================
 
 function LeadCard({ lead, lastMessage, overlay }: { lead: CrmLead; lastMessage?: string; overlay?: boolean }) {
-  const { useDraggable } = require("@dnd-kit/core");
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead.id,
     data: lead,
