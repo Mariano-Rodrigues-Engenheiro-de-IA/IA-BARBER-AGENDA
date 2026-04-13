@@ -22,6 +22,23 @@ function slugify(text: string) {
     .replace(/(^-|-$)+/g, "");
 }
 
+// ===================== FOLLOW-UP TYPES =====================
+
+interface FollowUpConfig {
+  id: string;
+  name: string;
+  trigger: "after_booking" | "after_link_sent" | "after_conversation";
+  delay_minutes: number;
+  message: string;
+  enabled: boolean;
+}
+
+const FOLLOW_UP_TRIGGER_LABELS: Record<FollowUpConfig["trigger"], string> = {
+  after_booking: "Após agendamento criado",
+  after_link_sent: "Após envio de link/info",
+  after_conversation: "Após conversa sem agendamento",
+};
+
 // ===================== CUSTOM TOOLS TYPES =====================
 
 interface ComboItem {
@@ -687,6 +704,193 @@ function CustomToolsTab({
                   onCheckedChange={(checked) => setEditingTool({ ...editingTool, enabled: checked })}
                 />
                 <Label>Ativa</Label>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
+            <Button type="button" onClick={handleSave}>Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ===================== FOLLOW-UPS TAB =====================
+
+function FollowUpsSection({
+  followUps,
+  onChange,
+}: {
+  followUps: FollowUpConfig[];
+  onChange: (followUps: FollowUpConfig[]) => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<FollowUpConfig | null>(null);
+
+  const openNew = () => {
+    setEditing({
+      id: generateToolId(),
+      name: "",
+      trigger: "after_booking",
+      delay_minutes: 30,
+      message: "",
+      enabled: true,
+    });
+    setDialogOpen(true);
+  };
+
+  const openEdit = (fu: FollowUpConfig) => {
+    setEditing({ ...fu });
+    setDialogOpen(true);
+  };
+
+  const handleSave = () => {
+    if (!editing?.name.trim()) {
+      toast.error("Nome é obrigatório");
+      return;
+    }
+    if (!editing?.message.trim()) {
+      toast.error("Mensagem é obrigatória");
+      return;
+    }
+    const existingIndex = followUps.findIndex((f) => f.id === editing.id);
+    if (existingIndex >= 0) {
+      const updated = [...followUps];
+      updated[existingIndex] = editing;
+      onChange(updated);
+    } else {
+      onChange([...followUps, editing]);
+    }
+    setDialogOpen(false);
+    setEditing(null);
+  };
+
+  const handleDelete = (id: string) => {
+    onChange(followUps.filter((f) => f.id !== id));
+  };
+
+  const handleToggle = (id: string) => {
+    onChange(followUps.map((f) => (f.id === id ? { ...f, enabled: !f.enabled } : f)));
+  };
+
+  return (
+    <div className="glass-card p-6 space-y-6">
+      <div>
+        <h3 className="font-semibold text-foreground flex items-center gap-2">
+          <Clock className="w-5 h-5 text-primary" />
+          Follow-ups Automáticos
+        </h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Configure mensagens de acompanhamento automáticas. Cada follow-up pode ter um gatilho diferente.
+        </p>
+      </div>
+
+      {followUps.length > 0 && (
+        <div className="space-y-2">
+          {followUps.map((fu) => (
+            <div
+              key={fu.id}
+              className="flex items-center justify-between p-3 rounded-lg border border-border bg-background/50"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <Switch
+                  checked={fu.enabled}
+                  onCheckedChange={() => handleToggle(fu.id)}
+                />
+                <div className="min-w-0">
+                  <div className="font-medium text-sm text-foreground truncate">{fu.name}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {FOLLOW_UP_TRIGGER_LABELS[fu.trigger]} · {fu.delay_minutes}min · {fu.enabled ? "Ativo" : "Inativo"}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(fu)}>
+                  <Pencil className="w-4 h-4" />
+                </Button>
+                <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(fu.id)}>
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {followUps.length === 0 && (
+        <div className="text-center py-8 text-muted-foreground text-sm">
+          Nenhum follow-up configurado. Adicione um para começar.
+        </div>
+      )}
+
+      <Button type="button" variant="outline" onClick={openNew}>
+        <Plus className="w-4 h-4 mr-2" />
+        Adicionar Follow-up
+      </Button>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editing && followUps.some((f) => f.id === editing.id) ? "Editar" : "Novo"} Follow-up</DialogTitle>
+          </DialogHeader>
+          {editing && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Nome</Label>
+                <Input
+                  value={editing.name}
+                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  placeholder="Ex: Pós-agendamento, Lembrete link"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Gatilho</Label>
+                <Select
+                  value={editing.trigger}
+                  onValueChange={(v) => setEditing({ ...editing, trigger: v as FollowUpConfig["trigger"] })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(FOLLOW_UP_TRIGGER_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {editing.trigger === "after_booking" && "Dispara após um agendamento ser criado com sucesso"}
+                  {editing.trigger === "after_link_sent" && "Dispara após envio de link de agendamento ou URL na resposta"}
+                  {editing.trigger === "after_conversation" && "Dispara após a conversa se nenhum agendamento foi feito"}
+                </p>
+              </div>
+              <div className="space-y-2 max-w-xs">
+                <Label>Tempo para envio (minutos)</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={editing.delay_minutes}
+                  onChange={(e) => setEditing({ ...editing, delay_minutes: parseInt(e.target.value) || 30 })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Mensagem</Label>
+                <Textarea
+                  rows={3}
+                  value={editing.message}
+                  onChange={(e) => setEditing({ ...editing, message: e.target.value })}
+                  placeholder="Oi! Vi que te mandei o link pra agendar..."
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={editing.enabled}
+                  onCheckedChange={(checked) => setEditing({ ...editing, enabled: checked })}
+                />
+                <Label>{editing.enabled ? "Ativo" : "Inativo"}</Label>
               </div>
             </div>
           )}
