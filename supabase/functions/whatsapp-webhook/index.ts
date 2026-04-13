@@ -427,57 +427,84 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ===== FOLLOW-UP: Multi-trigger system for all providers =====
+      // ===== FOLLOW-UP: AI-based condition evaluation for all providers =====
       {
         const settings = tenant.agent_settings || {};
-        // Support new follow_ups array, fallback to legacy follow_up object
         let followUpConfigs: any[] = [];
         if (Array.isArray(settings.follow_ups) && settings.follow_ups.length > 0) {
           followUpConfigs = settings.follow_ups.filter((fu: any) => fu.enabled);
         } else if (settings.follow_up && settings.follow_up.enabled !== false) {
-          // Legacy single follow-up (treat as after_link_sent)
+          // Legacy single follow-up
           followUpConfigs = [{
-            trigger: "after_link_sent",
+            condition: "Cliente recebeu link de agendamento mas não confirmou",
             delay_minutes: settings.follow_up.delay_minutes || 30,
             message: settings.follow_up.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
           }];
         }
 
-        if (followUpConfigs.length > 0) {
-          // Detect triggers
-          const bookingToolCalled = agentResult?.toolCalls?.some((tc: any) =>
-            ["criar_agendamento", "agendar"].includes(tc.name) && !tc.blocked
-          );
-          const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
-          const urlPattern = /https?:\/\/[^\s)"]+/i;
-          const linkInResponse = aiResponse && urlPattern.test(aiResponse);
-          const noBookingMade = !bookingToolCalled;
+        if (followUpConfigs.length > 0 && aiResponse) {
+          try {
+            // Build a summary of the conversation for condition evaluation
+            const recentHistory = (history || []).slice(-10).map((m: any) => `${m.role}: ${m.content}`).join("\n");
+            const conversationSummary = `${recentHistory}\nuser: ${combinedContent}\nassistant: ${aiResponse}`;
+            const toolsSummary = agentResult?.toolCalls?.map((tc: any) => `${tc.name}(${JSON.stringify(tc.args || {}).slice(0, 100)}): ${tc.blocked ? "BLOQUEADO" : "OK"}`).join(", ") || "nenhuma";
 
-          for (const fuConfig of followUpConfigs) {
-            let shouldTrigger = false;
-            switch (fuConfig.trigger) {
-              case "after_booking":
-                shouldTrigger = !!bookingToolCalled;
-                break;
-              case "after_link_sent":
-                shouldTrigger = !!(linkToolCalled || linkInResponse);
-                break;
-              case "after_conversation":
-                shouldTrigger = noBookingMade;
-                break;
-            }
+            const conditionsPrompt = followUpConfigs.map((fu: any, i: number) => `${i}: "${fu.condition || "sem condição definida"}"`).join("\n");
 
-            if (shouldTrigger) {
-              const delayMin = fuConfig.delay_minutes || 30;
-              const followUpAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
-              await supabase.from("follow_ups").insert({
-                tenant_id: tenant.id,
-                phone_number: phoneNumber,
-                follow_up_at: followUpAt,
-                follow_up_message: fuConfig.message,
+            const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+            if (LOVABLE_API_KEY) {
+              const evalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  model: "google/gemini-2.5-flash-lite",
+                  messages: [
+                    {
+                      role: "system",
+                      content: `Você avalia se condições de follow-up foram atingidas em uma conversa de WhatsApp.
+Responda APENAS com um JSON array de índices das condições que foram atingidas. Ex: [0, 2]
+Se nenhuma condição foi atingida, responda: []
+Seja conservador: só marque como atingida se a condição claramente se aplica à conversa.`,
+                    },
+                    {
+                      role: "user",
+                      content: `Conversa recente:\n${conversationSummary}\n\nFerramentas chamadas: ${toolsSummary}\n\nCondições de follow-up:\n${conditionsPrompt}\n\nQuais condições foram atingidas? Responda APENAS o JSON array.`,
+                    },
+                  ],
+                }),
               });
-              console.log(`Follow-up [${fuConfig.trigger}]: scheduled for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
+
+              if (evalResponse.ok) {
+                const evalData = await evalResponse.json();
+                const evalText = evalData.choices?.[0]?.message?.content?.trim() || "[]";
+                // Extract JSON array from response
+                const jsonMatch = evalText.match(/\[[\d,\s]*\]/);
+                const triggeredIndices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+                console.log(`Follow-up condition eval: ${evalText} -> triggered: ${JSON.stringify(triggeredIndices)}`);
+
+                for (const idx of triggeredIndices) {
+                  if (idx >= 0 && idx < followUpConfigs.length) {
+                    const fuConfig = followUpConfigs[idx];
+                    const delayMin = fuConfig.delay_minutes || 30;
+                    const followUpAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+                    await supabase.from("follow_ups").insert({
+                      tenant_id: tenant.id,
+                      phone_number: phoneNumber,
+                      follow_up_at: followUpAt,
+                      follow_up_message: fuConfig.message,
+                    });
+                    console.log(`Follow-up [${fuConfig.condition?.slice(0, 50)}]: scheduled for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
+                  }
+                }
+              } else {
+                console.error("Follow-up condition eval failed:", evalResponse.status);
+              }
             }
+          } catch (evalErr) {
+            console.error("Follow-up condition evaluation error:", evalErr);
           }
         }
       }
