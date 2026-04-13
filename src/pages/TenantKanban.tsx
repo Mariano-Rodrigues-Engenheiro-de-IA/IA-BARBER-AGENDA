@@ -37,10 +37,12 @@ function KanbanColumnComponent({
   column,
   leads,
   lastMessages,
+  flagColumns,
 }: {
   column: KanbanColumn;
   leads: CrmLead[];
   lastMessages: Record<string, string>;
+  flagColumns: KanbanColumn[];
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.label_id });
 
