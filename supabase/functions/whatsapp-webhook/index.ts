@@ -2091,6 +2091,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
                 break;
               }
               if (labelRes.status !== 400) break; // only retry on 400 (invalid payload)
+            }
           } catch (e) {
             console.error("[EscalateHuman] Error adding label:", e);
           }
