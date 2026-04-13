@@ -798,7 +798,6 @@ function FollowUpsSection({
                   <div className="text-xs text-muted-foreground truncate">
                     {fu.condition ? fu.condition.slice(0, 50) + (fu.condition.length > 50 ? "..." : "") : "Sem condição"} · {fu.delay_minutes}min · {fu.enabled ? "Ativo" : "Inativo"}
                   </div>
-                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
