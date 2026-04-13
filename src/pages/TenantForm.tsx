@@ -1053,7 +1053,7 @@ export default function TenantFormPage() {
             setFollowUps([{
               id: generateToolId(),
               name: "Follow-up padrão",
-              trigger: "after_link_sent" as const,
+              condition: "Cliente recebeu link de agendamento mas não confirmou",
               delay_minutes: legacy.delay_minutes || 30,
               message: legacy.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
               enabled: legacy.enabled !== false,
