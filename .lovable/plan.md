@@ -1,87 +1,69 @@
 
 
-# Follow-ups Múltiplos e Configuráveis por Tenant (Todos os Providers)
+# Plano: Dashboard de Métricas por Tenant + Follow-ups Personalizados
 
-## Resumo
+## 1. Sobre Follow-ups Personalizados
 
-Transformar o sistema de follow-up atual (single, só para provider "none") em um sistema de **múltiplos follow-ups configuráveis** por tenant, funcionando para **todos os providers** (Trinks, One Beleza, None).
+A estrutura atual (múltiplos follow-ups com triggers genéricos) já permite bastante customização, mas entendo que você precisa de **lógica específica por projeto** — tipo "se o cliente parou na etapa X, faz Y". Isso exige condições mais complexas que os 3 triggers atuais não cobrem.
 
-## O que muda
+**Proposta: Follow-ups com condições customizadas via prompt**
 
-Hoje existe 1 follow-up fixo por tenant (ativado/desativado, delay, mensagem). O novo sistema permite criar **N follow-ups** por tenant, cada um com:
+Em vez de remover tudo, manter a infraestrutura (tabela `follow_ups`, `process-followups`) mas mudar a abordagem:
 
-- **Nome** (ex: "Pós-agendamento", "Lembrete de retorno")
-- **Gatilho** — quando dispara:
-  - `after_booking` — após agendamento criado (criar_agendamento, agendar)
-  - `after_link_sent` — após envio de link (comportamento atual)
-  - `after_conversation` — X minutos após última interação sem agendamento
-- **Delay** em minutos
-- **Mensagem** personalizada
-- **Ativo/Desativado** individual
+- **Cada follow-up ganha um campo "condição" em texto livre** — você descreve quando ele deve disparar (ex: "cliente perguntou sobre prótese mas não agendou", "cliente pediu preço e não respondeu mais")
+- **A IA avalia a condição** ao final de cada conversa — ela analisa o histórico e decide quais follow-ups aplicam
+- Mantém: nome, delay, mensagem, ativo/desativado
+- Remove: triggers fixos (after_booking, after_link_sent, after_conversation)
+- Resultado: você me pede no chat "cria um follow-up que dispara quando X" e eu adiciono com a condição certa
 
-## Mudanças Técnicas
+Isso dá flexibilidade total sem precisar de código novo para cada regra.
 
-### 1. Estrutura de dados (agent_settings.follow_ups)
+---
 
-Migrar de `agent_settings.follow_up` (objeto único) para `agent_settings.follow_ups` (array):
+## 2. Dashboard de Follow-ups (nova página)
 
-```json
-{
-  "follow_ups": [
-    {
-      "id": "uuid",
-      "name": "Pós-agendamento",
-      "trigger": "after_booking",
-      "delay_minutes": 60,
-      "message": "Oi! Seu agendamento foi confirmado...",
-      "enabled": true
-    },
-    {
-      "id": "uuid",
-      "name": "Lembrete link",
-      "trigger": "after_link_sent",
-      "delay_minutes": 30,
-      "message": "Conseguiu agendar pelo link?",
-      "enabled": true
-    }
-  ]
-}
-```
+Rota: `/follow-ups` — link na sidebar
 
-Nenhuma migração de banco necessária — os dados ficam no JSONB existente.
+**Métricas globais (cards no topo):**
+- Total enviados | Confirmados | Pendentes | Expirados
 
-### 2. UI no TenantForm.tsx (aba "Integração API")
+**Tabela por tenant:**
+- Nome do tenant | Enviados | Confirmados | Pendentes | Taxa de confirmação
+- Filtro por período (7d, 30d, todos)
 
-- Remover seção atual de follow-up único (só aparece em "none")
-- Criar nova seção **"Follow-ups"** visível para **todos os providers**
-- CRUD de follow-ups: adicionar, editar, remover
-- Cada item mostra: nome, gatilho (select), delay (input number), mensagem (textarea), switch ativo
-- Compatibilidade: ao carregar, se existir `follow_up` antigo (formato single), migrar automaticamente para o array `follow_ups`
+**Dados:** query na tabela `follow_ups` agrupando por tenant_id + status
 
-### 3. Edge Function whatsapp-webhook
+---
 
-- Remover lógica antiga `if (provider === "none")` para follow-ups
-- Após processamento do agente, verificar **todos os follow-ups ativos** do tenant
-- Para cada follow-up, checar se o gatilho foi atingido:
-  - `after_booking`: detectar se alguma tool de agendamento foi chamada (criar_agendamento, agendar)
-  - `after_link_sent`: detectar enviar_link_agendamento ou URL na resposta
-  - `after_conversation`: agendar se nenhum agendamento foi feito na conversa
-- Inserir na tabela `follow_ups` com o `follow_up_message` correspondente
+## 3. Dashboard por Tenant (nova página)
 
-### 4. Edge Function process-followups
+Rota: `/tenants/:id/dashboard` — botão "Dashboard" no card do tenant
 
-- Sem mudanças necessárias — já processa qualquer registro pendente na tabela `follow_ups`
+**Métricas (cards):**
+- Clientes atendidos (unique phone_numbers)
+- Total de mensagens trocadas
+- Agendamentos realizados (tool_calls com criar_agendamento/agendar)
+- Links enviados (tool_calls com enviar_link_agendamento)
+- Follow-ups enviados / confirmados
 
-### 5. Migração de dados legados
+**Gráfico de atividade:**
+- Mensagens por dia (últimos 30 dias) — gráfico de barras com recharts
 
-- No carregamento do TenantForm: se `agent_settings.follow_up` (singular) existir, converter para `follow_ups[]` (array)
-- No webhook: ler `follow_ups` (array), fallback para `follow_up` (singular) para compatibilidade
+**Filtro de período:** 7 dias, 30 dias, personalizado
+
+**Dados:** queries em `chat_messages`, `agent_logs` (tool_calls JSONB), `follow_ups`
+
+---
 
 ## Arquivos Afetados
 
 | Arquivo | Mudança |
 |---------|---------|
-| `src/pages/TenantForm.tsx` | Nova UI CRUD de follow-ups, remover seção antiga |
-| `supabase/functions/whatsapp-webhook/index.ts` | Lógica multi-trigger para todos os providers |
-| `.lovable/memory/features/ai-agent.md` | Atualizar documentação |
+| `src/pages/FollowUpsDashboard.tsx` | **Novo** — dashboard de follow-ups |
+| `src/pages/TenantDashboard.tsx` | **Novo** — dashboard por tenant |
+| `src/pages/TenantForm.tsx` | Alterar UI de follow-ups: remover triggers fixos, adicionar campo "condição" |
+| `src/App.tsx` | Novas rotas |
+| `src/components/AdminLayout.tsx` | Link "Follow-ups" na sidebar |
+| `supabase/functions/whatsapp-webhook/index.ts` | Lógica de avaliação de condições via IA |
+| `.lovable/memory/features/ai-agent.md` | Atualizar docs |
 
