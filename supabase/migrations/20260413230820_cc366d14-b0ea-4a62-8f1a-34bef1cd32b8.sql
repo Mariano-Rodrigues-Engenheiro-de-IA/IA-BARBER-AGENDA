@@ -1,0 +1,1 @@
+ALTER TABLE public.crm_leads ADD COLUMN flag_labels text[] NOT NULL DEFAULT '{}';
