@@ -27,11 +27,28 @@ function slugify(text: string) {
 interface FollowUpConfig {
   id: string;
   name: string;
-  condition: string;
+  type: "after_link_sent" | "after_no_reply";
   delay_minutes: number;
   message: string;
   enabled: boolean;
 }
+
+const FIXED_FOLLOWUPS: { type: FollowUpConfig["type"]; name: string; description: string; defaultMessage: string; defaultDelay: number }[] = [
+  {
+    type: "after_link_sent",
+    name: "Após envio de link",
+    description: "Envia mensagem de acompanhamento quando a IA envia o link de agendamento e o cliente não confirma.",
+    defaultMessage: "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
+    defaultDelay: 30,
+  },
+  {
+    type: "after_no_reply",
+    name: "Sem resposta do cliente",
+    description: "Quando o cliente manda a primeira mensagem, a IA responde e ele não continua a conversa.",
+    defaultMessage: "Oi! Podemos prosseguir? 😊",
+    defaultDelay: 15,
+  },
+];
 
 // ===================== CUSTOM TOOLS TYPES =====================
 
@@ -720,53 +737,37 @@ function FollowUpsSection({
   followUps: FollowUpConfig[];
   onChange: (followUps: FollowUpConfig[]) => void;
 }) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editing, setEditing] = useState<FollowUpConfig | null>(null);
 
-  const openNew = () => {
-    setEditing({
-      id: generateToolId(),
-      name: "",
-      condition: "",
-      delay_minutes: 30,
-      message: "",
-      enabled: true,
-    });
-    setDialogOpen(true);
-  };
+  // Initialize with defaults for both fixed types
+  useEffect(() => {
+    if (followUps.length === 0) return;
+    // No init needed, handled by parent
+  }, []);
 
-  const openEdit = (fu: FollowUpConfig) => {
-    setEditing({ ...fu });
-    setDialogOpen(true);
-  };
+  const getConfig = (type: FollowUpConfig["type"]) => followUps.find((f) => f.type === type);
 
-  const handleSave = () => {
-    if (!editing?.name.trim()) {
-      toast.error("Nome é obrigatório");
-      return;
-    }
-    if (!editing?.message.trim()) {
-      toast.error("Mensagem é obrigatória");
-      return;
-    }
-    const existingIndex = followUps.findIndex((f) => f.id === editing.id);
-    if (existingIndex >= 0) {
-      const updated = [...followUps];
-      updated[existingIndex] = editing;
-      onChange(updated);
+  const handleToggle = (type: FollowUpConfig["type"]) => {
+    const existing = getConfig(type);
+    if (existing) {
+      onChange(followUps.map((f) => (f.type === type ? { ...f, enabled: !f.enabled } : f)));
     } else {
-      onChange([...followUps, editing]);
+      const def = FIXED_FOLLOWUPS.find((d) => d.type === type)!;
+      onChange([...followUps, {
+        id: generateToolId(),
+        name: def.name,
+        type: def.type,
+        delay_minutes: def.defaultDelay,
+        message: def.defaultMessage,
+        enabled: true,
+      }]);
     }
-    setDialogOpen(false);
-    setEditing(null);
   };
 
-  const handleDelete = (id: string) => {
-    onChange(followUps.filter((f) => f.id !== id));
-  };
-
-  const handleToggle = (id: string) => {
-    onChange(followUps.map((f) => (f.id === id ? { ...f, enabled: !f.enabled } : f)));
+  const updateField = (type: FollowUpConfig["type"], field: string, value: any) => {
+    const existing = getConfig(type);
+    if (existing) {
+      onChange(followUps.map((f) => (f.type === type ? { ...f, [field]: value } : f)));
+    }
   };
 
   return (
@@ -777,114 +778,52 @@ function FollowUpsSection({
           Follow-ups Automáticos
         </h3>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure mensagens de acompanhamento automáticas com condições personalizadas. A IA avalia cada condição ao final da conversa.
+          Ative e configure mensagens automáticas de acompanhamento.
         </p>
       </div>
 
-      {followUps.length > 0 && (
-        <div className="space-y-2">
-          {followUps.map((fu) => (
-            <div
-              key={fu.id}
-              className="flex items-center justify-between p-3 rounded-lg border border-border bg-background/50"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Switch
-                  checked={fu.enabled}
-                  onCheckedChange={() => handleToggle(fu.id)}
-                />
-                <div className="min-w-0">
-                  <div className="font-medium text-sm text-foreground truncate">{fu.name}</div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {fu.condition ? fu.condition.slice(0, 50) + (fu.condition.length > 50 ? "..." : "") : "Sem condição"} · {fu.delay_minutes}min · {fu.enabled ? "Ativo" : "Inativo"}
+      <div className="space-y-4">
+        {FIXED_FOLLOWUPS.map((def) => {
+          const config = getConfig(def.type);
+          const isEnabled = config?.enabled ?? false;
+
+          return (
+            <div key={def.type} className="rounded-lg border border-border bg-background/50 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-sm text-foreground">{def.name}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{def.description}</div>
+                </div>
+                <Switch checked={isEnabled} onCheckedChange={() => handleToggle(def.type)} />
+              </div>
+
+              {isEnabled && config && (
+                <div className="space-y-3 pt-2 border-t border-border">
+                  <div className="space-y-2 max-w-xs">
+                    <Label>Tempo para envio (minutos)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={1440}
+                      value={config.delay_minutes}
+                      onChange={(e) => updateField(def.type, "delay_minutes", parseInt(e.target.value) || def.defaultDelay)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Mensagem</Label>
+                    <Textarea
+                      rows={3}
+                      value={config.message}
+                      onChange={(e) => updateField(def.type, "message", e.target.value)}
+                      placeholder={def.defaultMessage}
+                    />
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(fu)}>
-                  <Pencil className="w-4 h-4" />
-                </Button>
-                <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(fu.id)}>
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
-              </div>
+              )}
             </div>
-          ))}
-        </div>
-      )}
-
-      {followUps.length === 0 && (
-        <div className="text-center py-8 text-muted-foreground text-sm">
-          Nenhum follow-up configurado. Adicione um para começar.
-        </div>
-      )}
-
-      <Button type="button" variant="outline" onClick={openNew}>
-        <Plus className="w-4 h-4 mr-2" />
-        Adicionar Follow-up
-      </Button>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editing && followUps.some((f) => f.id === editing.id) ? "Editar" : "Novo"} Follow-up</DialogTitle>
-          </DialogHeader>
-          {editing && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Nome</Label>
-                <Input
-                  value={editing.name}
-                  onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-                  placeholder="Ex: Pós-agendamento, Lembrete link"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Condição (quando disparar)</Label>
-                <Textarea
-                  rows={3}
-                  value={editing.condition}
-                  onChange={(e) => setEditing({ ...editing, condition: e.target.value })}
-                  placeholder="Ex: O cliente demonstrou interesse mas não finalizou o agendamento. / O cliente perguntou sobre preço e não respondeu mais."
-                />
-                <p className="text-xs text-muted-foreground">
-                  Descreva em linguagem natural quando este follow-up deve ser enviado. A IA vai avaliar essa condição ao final de cada conversa.
-                </p>
-              </div>
-              <div className="space-y-2 max-w-xs">
-                <Label>Tempo para envio (minutos)</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={1440}
-                  value={editing.delay_minutes}
-                  onChange={(e) => setEditing({ ...editing, delay_minutes: parseInt(e.target.value) || 30 })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Mensagem</Label>
-                <Textarea
-                  rows={3}
-                  value={editing.message}
-                  onChange={(e) => setEditing({ ...editing, message: e.target.value })}
-                  placeholder="Oi! Vi que te mandei o link pra agendar..."
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={editing.enabled}
-                  onCheckedChange={(checked) => setEditing({ ...editing, enabled: checked })}
-                />
-                <Label>{editing.enabled ? "Ativo" : "Inativo"}</Label>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button type="button" onClick={handleSave}>Salvar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1052,8 +991,8 @@ export default function TenantFormPage() {
           if (legacy.enabled !== false || legacy.message) {
             setFollowUps([{
               id: generateToolId(),
-              name: "Follow-up padrão",
-              condition: "Cliente recebeu link de agendamento mas não confirmou",
+              name: "Após envio de link",
+              type: "after_link_sent" as const,
               delay_minutes: legacy.delay_minutes || 30,
               message: legacy.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
               enabled: legacy.enabled !== false,
