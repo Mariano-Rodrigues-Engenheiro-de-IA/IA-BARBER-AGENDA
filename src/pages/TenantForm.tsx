@@ -27,11 +27,28 @@ function slugify(text: string) {
 interface FollowUpConfig {
   id: string;
   name: string;
-  condition: string;
+  type: "after_link_sent" | "after_no_reply";
   delay_minutes: number;
   message: string;
   enabled: boolean;
 }
+
+const FIXED_FOLLOWUPS: { type: FollowUpConfig["type"]; name: string; description: string; defaultMessage: string; defaultDelay: number }[] = [
+  {
+    type: "after_link_sent",
+    name: "Após envio de link",
+    description: "Envia mensagem de acompanhamento quando a IA envia o link de agendamento e o cliente não confirma.",
+    defaultMessage: "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
+    defaultDelay: 30,
+  },
+  {
+    type: "after_no_reply",
+    name: "Sem resposta do cliente",
+    description: "Quando o cliente manda a primeira mensagem, a IA responde e ele não continua a conversa.",
+    defaultMessage: "Oi! Podemos prosseguir? 😊",
+    defaultDelay: 15,
+  },
+];
 
 // ===================== CUSTOM TOOLS TYPES =====================
 
