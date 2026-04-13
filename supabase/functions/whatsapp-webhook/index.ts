@@ -2070,12 +2070,28 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (labelId) {
           try {
-            const labelBody = { chatId: `${phoneNumber}@s.whatsapp.net`, labelId: parseInt(String(labelId)) || String(labelId) };
-            console.log(`[EscalateHuman] Label request body:`, JSON.stringify(labelBody));
-            const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify(labelBody),
+            // Try multiple body formats since UAZAPI docs are unclear
+            const bodyFormats = [
+              { number: phoneNumber, labelId: String(labelId) },
+              { chatId: phoneNumber, labelId: String(labelId) },
+              { number: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId) },
+            ];
+            let labelSuccess = false;
+            for (const labelBody of bodyFormats) {
+              console.log(`[EscalateHuman] Label attempt:`, JSON.stringify(labelBody));
+              const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+                body: JSON.stringify(labelBody),
+              });
+              const labelData = await readResponsePayload(labelRes);
+              console.log(`[EscalateHuman] Label status: ${labelRes.status} result:`, JSON.stringify(labelData).slice(0, 200));
+              if (labelRes.ok || (labelRes.status >= 200 && labelRes.status < 300)) {
+                labelSuccess = true;
+                break;
+              }
+              if (labelRes.status !== 400) break; // only retry on 400 (invalid payload)
+            }
             });
             const labelData = await readResponsePayload(labelRes);
             console.log(`[EscalateHuman] Label ${labelId} status: ${labelRes.status} result:`, JSON.stringify(labelData).slice(0, 300));
