@@ -1829,18 +1829,21 @@ async function callAIAgent(
       });
     }
 
+    const roundBody: any = { model: "openai/gpt-5-mini", messages };
+    if (tools && tools.length > 0) {
+      roundBody.tools = tools;
+      roundBody.tool_choice = "auto";
+    }
+    const roundBodyStr = JSON.stringify(roundBody);
+    console.log(`AI request (round ${rounds}): ${messages.length} msgs, body size: ${roundBodyStr.length} chars`);
+
     response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: "openai/gpt-5-mini",
-        messages,
-        tools,
-        tool_choice: "auto",
-      }),
+      body: roundBodyStr,
     });
 
     if (!response.ok) {
