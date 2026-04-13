@@ -1498,7 +1498,6 @@ export default function TenantFormPage() {
               </Button>
             </div>
           </TabsContent>
-          </TabsContent>
         </Tabs>
 
         <div className="flex justify-end gap-3 mt-6">
