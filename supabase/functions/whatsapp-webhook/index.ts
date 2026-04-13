@@ -1981,6 +1981,68 @@ function chatHasLabel(chatDetailsPayload: any, labelId: string): boolean {
   });
 }
 
+// ===================== CRM LEAD UPSERT =====================
+
+async function upsertCrmLead(
+  supabaseClient: any,
+  tenantId: string,
+  phoneNumber: string,
+  labelId: string,
+  labelName?: string,
+  changedBy: string = "ai",
+): Promise<void> {
+  try {
+    // Get existing lead to track history
+    const { data: existing } = await supabaseClient
+      .from("crm_leads")
+      .select("id, label_id")
+      .eq("tenant_id", tenantId)
+      .eq("phone_number", phoneNumber)
+      .maybeSingle();
+
+    const fromLabel = existing?.label_id || null;
+    const leadId = existing?.id;
+
+    // Upsert the lead
+    const { data: upserted, error: upsertError } = await supabaseClient
+      .from("crm_leads")
+      .upsert(
+        {
+          tenant_id: tenantId,
+          phone_number: phoneNumber,
+          label_id: String(labelId),
+          label_name: labelName || null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "tenant_id,phone_number" }
+      )
+      .select("id")
+      .single();
+
+    if (upsertError) {
+      console.error("[CRM] Upsert error:", upsertError.message);
+      return;
+    }
+
+    const finalLeadId = upserted?.id || leadId;
+
+    // Insert history if label changed
+    if (finalLeadId && fromLabel !== String(labelId)) {
+      await supabaseClient.from("crm_lead_history").insert({
+        lead_id: finalLeadId,
+        from_label: fromLabel,
+        to_label: String(labelId),
+        changed_by: changedBy,
+      });
+      console.log(`[CRM] Lead ${phoneNumber} moved: ${fromLabel} → ${labelId} (by ${changedBy})`);
+    } else {
+      console.log(`[CRM] Lead ${phoneNumber} label unchanged: ${labelId}`);
+    }
+  } catch (err) {
+    console.error("[CRM] upsertCrmLead error:", err);
+  }
+}
+
 type EnsureLabelStateResult = {
   success: boolean;
   changed: boolean;
@@ -2141,6 +2203,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               console.error(`[EscalateHuman] Error ensuring label ${labelId}: ${labelResult.error}`, JSON.stringify(labelResult.details ?? null).slice(0, 200));
             } else {
               console.log(`[EscalateHuman] Label ${labelId} ensured present (${labelResult.already ? "already present" : "changed"})`);
+              // CRM upsert
+              const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+              await upsertCrmLead(sb, tenant.id, phoneNumber, String(labelId), "Escalado Humano", "ai");
             }
           } catch (e) {
             console.error("[EscalateHuman] Error adding label:", e);
@@ -2158,6 +2223,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao adicionar etiqueta.", status: labelResult.status, details: labelResult.details };
           }
+          // CRM upsert
+          const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+          await upsertCrmLead(sb, tenant.id, phoneNumber, String(labelId), toolDef.display_name || toolDef.name, "ai");
           return {
             success: true,
             message: labelResult.already ? `Etiqueta ${labelId} já estava no contato` : `Etiqueta ${labelId} adicionada ao contato`,

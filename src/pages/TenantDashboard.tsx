@@ -6,7 +6,7 @@ import { useTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 
@@ -137,15 +137,21 @@ export default function TenantDashboardPage() {
             <p className="text-muted-foreground mt-1">Dashboard de métricas</p>
           </div>
         </div>
-        <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
-          <SelectTrigger className="w-[140px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="7d">Últimos 7 dias</SelectItem>
-            <SelectItem value="30d">Últimos 30 dias</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => navigate(`/tenants/${id}/kanban`)}>
+            <Kanban className="w-4 h-4 mr-2" />
+            CRM Kanban
+          </Button>
+          <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7d">Últimos 7 dias</SelectItem>
+              <SelectItem value="30d">Últimos 30 dias</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Stats */}

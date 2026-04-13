@@ -14,6 +14,7 @@ import SettingsPage from "@/pages/Settings";
 import AgentLogsPage from "@/pages/AgentLogs";
 import FollowUpsDashboardPage from "@/pages/FollowUpsDashboard";
 import TenantDashboardPage from "@/pages/TenantDashboard";
+import TenantKanbanPage from "@/pages/TenantKanban";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -63,6 +64,7 @@ function AppRoutes() {
       <Route path="/tenants/new" element={<ProtectedRoute><TenantFormPage /></ProtectedRoute>} />
       <Route path="/tenants/:id" element={<ProtectedRoute><TenantFormPage /></ProtectedRoute>} />
       <Route path="/tenants/:id/dashboard" element={<ProtectedRoute><TenantDashboardPage /></ProtectedRoute>} />
+      <Route path="/tenants/:id/kanban" element={<ProtectedRoute><TenantKanbanPage /></ProtectedRoute>} />
       <Route path="/follow-ups" element={<ProtectedRoute><FollowUpsDashboardPage /></ProtectedRoute>} />
       <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
       <Route path="/agent-logs" element={<ProtectedRoute><AgentLogsPage /></ProtectedRoute>} />
