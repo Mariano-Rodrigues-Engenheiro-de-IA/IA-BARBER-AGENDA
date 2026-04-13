@@ -1045,6 +1045,13 @@ export default function TenantFormPage() {
           }
         }
       }
+      // Load kanban columns
+      const kc = (existing as any).kanban_columns;
+      if (Array.isArray(kc)) {
+        setKanbanColumns(kc);
+      } else {
+        setKanbanColumns([]);
+      }
     }
   }, [existing]);
 
