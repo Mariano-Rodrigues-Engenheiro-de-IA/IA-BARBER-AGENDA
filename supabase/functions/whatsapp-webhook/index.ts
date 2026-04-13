@@ -1517,8 +1517,17 @@ async function callAIAgent(
       let wasBlocked = false;
 
       // Block duplicate tool calls (same tool name) within this session
+      // EXCEPT lookup tools that may need to run multiple times across the scheduling flow
       const toolKey = toolCall.function.name;
-      if (executedToolsThisSession.has(toolKey)) {
+      const allowRepeatedTools = new Set([
+        "buscar_cliente", "cadastrar_cliente",
+        "listar_horarios", "buscar_horarios",
+        "listar_servicos", "buscar_servicos",
+        "listar_profissionais", "buscar_barbeiros_por_servico",
+        "buscar_datas_disponiveis",
+        "buscar_agendamentos_dia", "buscar_agendamento",
+      ]);
+      if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey)) {
         console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this conversation`);
         toolResult = {
           message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente sem chamar a ferramenta outra vez.`,
