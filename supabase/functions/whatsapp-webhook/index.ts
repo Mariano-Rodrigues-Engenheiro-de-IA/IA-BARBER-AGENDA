@@ -2203,6 +2203,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               console.error(`[EscalateHuman] Error ensuring label ${labelId}: ${labelResult.error}`, JSON.stringify(labelResult.details ?? null).slice(0, 200));
             } else {
               console.log(`[EscalateHuman] Label ${labelId} ensured present (${labelResult.already ? "already present" : "changed"})`);
+              // CRM upsert
+              const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+              await upsertCrmLead(sb, tenant.id, phoneNumber, String(labelId), "Escalado Humano", "ai");
             }
           } catch (e) {
             console.error("[EscalateHuman] Error adding label:", e);
