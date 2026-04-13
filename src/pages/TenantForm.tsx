@@ -1432,6 +1432,8 @@ export default function TenantFormPage() {
 
           <TabsContent value="tools" className="space-y-4">
             <CustomToolsTab tools={customTools} onChange={setCustomTools} tenantId={id} />
+          </TabsContent>
+
           <TabsContent value="kanban" className="space-y-4">
             <div className="glass-card p-6 space-y-6">
               <div>
