@@ -440,6 +440,18 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           <p className="text-xs text-muted-foreground">ID numérico da etiqueta/tag do WhatsApp Business que será adicionada ao contato</p>
         </div>
       );
+    case "remove_label":
+      return (
+        <div className="space-y-2">
+          <Label>ID da etiqueta WhatsApp</Label>
+          <Input
+            value={config.label_id || ""}
+            onChange={(e) => onChange({ ...config, label_id: e.target.value })}
+            placeholder="Ex: 5, 12..."
+          />
+          <p className="text-xs text-muted-foreground">ID numérico da etiqueta/tag do WhatsApp Business que será removida do contato</p>
+        </div>
+      );
     case "send_image":
       return (
         <div className="space-y-3">
