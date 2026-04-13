@@ -401,8 +401,8 @@ Deno.serve(async (req) => {
         aiResponse = agentResult.response;
       }
 
-      // ===== FOLLOW-UP: Check if client confirmed booking =====
-      if (provider === "none") {
+      // ===== FOLLOW-UP: Check if client confirmed booking (all providers) =====
+      {
         const confirmPatterns = [
           /agend(ei|ado|ou)/i, /marqu?e(i|ado|ou)/i, /confirm(ei|ado|ou)/i,
           /fiz\s*(o\s*)?(meu\s*)?(agendamento|horário|reserva)/i,
@@ -427,29 +427,57 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ===== FOLLOW-UP: Create follow-up if enviar_link_agendamento was called or link appears in response =====
-      if (provider === "none") {
-        const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
-        // Fallback: detect if the AI included a URL in the response (booking link from knowledge base, etc.)
-        const urlPattern = /https?:\/\/[^\s)"]+/i;
-        const linkInResponse = aiResponse && urlPattern.test(aiResponse);
-        
-        if (linkToolCalled || linkInResponse) {
-          const settings = tenant.agent_settings || {};
-          const fuConfig = settings.follow_up || {};
-          const fuEnabled = fuConfig.enabled !== false; // default true
-          const fuDelayMin = fuConfig.delay_minutes || 30;
-          const fuMessage = fuConfig.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊";
+      // ===== FOLLOW-UP: Multi-trigger system for all providers =====
+      {
+        const settings = tenant.agent_settings || {};
+        // Support new follow_ups array, fallback to legacy follow_up object
+        let followUpConfigs: any[] = [];
+        if (Array.isArray(settings.follow_ups) && settings.follow_ups.length > 0) {
+          followUpConfigs = settings.follow_ups.filter((fu: any) => fu.enabled);
+        } else if (settings.follow_up && settings.follow_up.enabled !== false) {
+          // Legacy single follow-up (treat as after_link_sent)
+          followUpConfigs = [{
+            trigger: "after_link_sent",
+            delay_minutes: settings.follow_up.delay_minutes || 30,
+            message: settings.follow_up.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
+          }];
+        }
 
-          if (fuEnabled) {
-            const followUpAt = new Date(Date.now() + fuDelayMin * 60 * 1000).toISOString();
-            await supabase.from("follow_ups").insert({
-              tenant_id: tenant.id,
-              phone_number: phoneNumber,
-              follow_up_at: followUpAt,
-              follow_up_message: fuMessage,
-            });
-            console.log(`Follow-up: scheduled for ${phoneNumber} at ${followUpAt} (${fuDelayMin}min delay), toolCalled=${linkToolCalled}, linkInResponse=${linkInResponse}`);
+        if (followUpConfigs.length > 0) {
+          // Detect triggers
+          const bookingToolCalled = agentResult?.toolCalls?.some((tc: any) =>
+            ["criar_agendamento", "agendar"].includes(tc.name) && !tc.blocked
+          );
+          const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => tc.name === "enviar_link_agendamento");
+          const urlPattern = /https?:\/\/[^\s)"]+/i;
+          const linkInResponse = aiResponse && urlPattern.test(aiResponse);
+          const noBookingMade = !bookingToolCalled;
+
+          for (const fuConfig of followUpConfigs) {
+            let shouldTrigger = false;
+            switch (fuConfig.trigger) {
+              case "after_booking":
+                shouldTrigger = !!bookingToolCalled;
+                break;
+              case "after_link_sent":
+                shouldTrigger = !!(linkToolCalled || linkInResponse);
+                break;
+              case "after_conversation":
+                shouldTrigger = noBookingMade;
+                break;
+            }
+
+            if (shouldTrigger) {
+              const delayMin = fuConfig.delay_minutes || 30;
+              const followUpAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+              await supabase.from("follow_ups").insert({
+                tenant_id: tenant.id,
+                phone_number: phoneNumber,
+                follow_up_at: followUpAt,
+                follow_up_message: fuConfig.message,
+              });
+              console.log(`Follow-up [${fuConfig.trigger}]: scheduled for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
+            }
           }
         }
       }
