@@ -65,7 +65,7 @@ function KanbanColumnComponent({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-280px)]">
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} />
+          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} />
         ))}
         {leads.length === 0 && (
           <div className="text-center text-xs text-muted-foreground py-8">
@@ -315,6 +315,7 @@ export default function TenantKanbanPage() {
                 column={column}
                 leads={leadsByLabel[column.label_id] || []}
                 lastMessages={lastMessages}
+                flagColumns={flagColumns}
               />
             ))}
           </div>
@@ -322,7 +323,7 @@ export default function TenantKanbanPage() {
           <DragOverlay>
             {activeLead ? (
               <div className="w-[280px]">
-                <LeadCard lead={activeLead} lastMessage={lastMessages[activeLead.phone_number]} overlay />
+                <LeadCard lead={activeLead} lastMessage={lastMessages[activeLead.phone_number]} overlay flagColumns={flagColumns} />
               </div>
             ) : null}
           </DragOverlay>
