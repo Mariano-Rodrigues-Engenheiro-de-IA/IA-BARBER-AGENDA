@@ -1,69 +1,79 @@
 
 
-# Plano: Dashboard de Métricas por Tenant + Follow-ups Personalizados
+# CRM Kanban por Etiquetas
 
-## 1. Sobre Follow-ups Personalizados
+## Visão Geral
+Criar um sistema de CRM com Kanban board dentro do painel, onde cada coluna representa uma etiqueta (label) do WhatsApp. Quando a IA aplica uma etiqueta via UAZAPI, o lead é automaticamente registrado/movido no Kanban.
 
-A estrutura atual (múltiplos follow-ups com triggers genéricos) já permite bastante customização, mas entendo que você precisa de **lógica específica por projeto** — tipo "se o cliente parou na etapa X, faz Y". Isso exige condições mais complexas que os 3 triggers atuais não cobrem.
+## Sugestões Extras
+- **Histórico de movimentação**: registrar quando o lead mudou de coluna (auditoria)
+- **Detalhes do lead no card**: mostrar nome, telefone, última mensagem, e tempo na etapa atual
+- **Filtro por tenant**: cada tenant tem suas próprias colunas/etiquetas
+- **Drag & drop manual**: permitir mover leads entre colunas manualmente (sincronizando a etiqueta no UAZAPI)
+- **Contadores por coluna**: mostrar quantos leads há em cada etapa
+- **Card com link direto para conversa**: clicar no lead abre os logs da conversa
 
-**Proposta: Follow-ups com condições customizadas via prompt**
+## Arquitetura
 
-Em vez de remover tudo, manter a infraestrutura (tabela `follow_ups`, `process-followups`) mas mudar a abordagem:
+### 1. Nova tabela: `crm_leads`
+```sql
+CREATE TABLE public.crm_leads (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  phone_number text NOT NULL,
+  name text,
+  label_id text NOT NULL,
+  label_name text,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, phone_number)
+);
+ALTER TABLE public.crm_leads ENABLE ROW LEVEL SECURITY;
+-- RLS policies for admin select + public insert/update
+```
 
-- **Cada follow-up ganha um campo "condição" em texto livre** — você descreve quando ele deve disparar (ex: "cliente perguntou sobre prótese mas não agendou", "cliente pediu preço e não respondeu mais")
-- **A IA avalia a condição** ao final de cada conversa — ela analisa o histórico e decide quais follow-ups aplicam
-- Mantém: nome, delay, mensagem, ativo/desativado
-- Remove: triggers fixos (after_booking, after_link_sent, after_conversation)
-- Resultado: você me pede no chat "cria um follow-up que dispara quando X" e eu adiciono com a condição certa
+### 2. Nova tabela: `crm_lead_history`
+```sql
+CREATE TABLE public.crm_lead_history (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  lead_id uuid REFERENCES public.crm_leads(id) ON DELETE CASCADE,
+  from_label text,
+  to_label text NOT NULL,
+  changed_at timestamptz NOT NULL DEFAULT now()
+);
+```
 
-Isso dá flexibilidade total sem precisar de código novo para cada regra.
+### 3. Configuração de colunas por tenant
+Adicionar campo `kanban_columns` (jsonb) na tabela `tenants` para definir as colunas/etiquetas do Kanban de cada tenant. Formato:
+```json
+[
+  { "label_id": "7", "name": "Interessado", "color": "#3B82F6", "order": 0 },
+  { "label_id": "29", "name": "IA OFF", "color": "#EF4444", "order": 1 }
+]
+```
 
----
+### 4. Webhook: registrar lead ao aplicar etiqueta
+No `whatsapp-webhook/index.ts`, após a chamada bem-sucedida ao `/chat/labels`, fazer upsert na tabela `crm_leads` com o tenant_id, phone_number e label_id. Também inserir registro em `crm_lead_history`.
 
-## 2. Dashboard de Follow-ups (nova página)
+### 5. Nova página: `/tenants/:id/kanban`
+- Kanban board com drag & drop (usando `@dnd-kit/core` ou HTML5 nativo)
+- Cada coluna = uma etiqueta configurada no tenant
+- Cards mostram: telefone, nome (se disponível), tempo na etapa, preview da última mensagem
+- Arrastar card entre colunas → chama UAZAPI para trocar etiqueta + atualiza DB
 
-Rota: `/follow-ups` — link na sidebar
-
-**Métricas globais (cards no topo):**
-- Total enviados | Confirmados | Pendentes | Expirados
-
-**Tabela por tenant:**
-- Nome do tenant | Enviados | Confirmados | Pendentes | Taxa de confirmação
-- Filtro por período (7d, 30d, todos)
-
-**Dados:** query na tabela `follow_ups` agrupando por tenant_id + status
-
----
-
-## 3. Dashboard por Tenant (nova página)
-
-Rota: `/tenants/:id/dashboard` — botão "Dashboard" no card do tenant
-
-**Métricas (cards):**
-- Clientes atendidos (unique phone_numbers)
-- Total de mensagens trocadas
-- Agendamentos realizados (tool_calls com criar_agendamento/agendar)
-- Links enviados (tool_calls com enviar_link_agendamento)
-- Follow-ups enviados / confirmados
-
-**Gráfico de atividade:**
-- Mensagens por dia (últimos 30 dias) — gráfico de barras com recharts
-
-**Filtro de período:** 7 dias, 30 dias, personalizado
-
-**Dados:** queries em `chat_messages`, `agent_logs` (tool_calls JSONB), `follow_ups`
-
----
+### 6. UI do Kanban
+- Rota nova em `App.tsx`
+- Link no dashboard do tenant para acessar o Kanban
+- Configuração das colunas no `TenantForm.tsx` (aba de configurações)
 
 ## Arquivos Afetados
-
-| Arquivo | Mudança |
-|---------|---------|
-| `src/pages/FollowUpsDashboard.tsx` | **Novo** — dashboard de follow-ups |
-| `src/pages/TenantDashboard.tsx` | **Novo** — dashboard por tenant |
-| `src/pages/TenantForm.tsx` | Alterar UI de follow-ups: remover triggers fixos, adicionar campo "condição" |
-| `src/App.tsx` | Novas rotas |
-| `src/components/AdminLayout.tsx` | Link "Follow-ups" na sidebar |
-| `supabase/functions/whatsapp-webhook/index.ts` | Lógica de avaliação de condições via IA |
-| `.lovable/memory/features/ai-agent.md` | Atualizar docs |
+- **Nova migração SQL**: criar `crm_leads` e `crm_lead_history`, adicionar `kanban_columns` ao `tenants`
+- **`supabase/functions/whatsapp-webhook/index.ts`**: upsert lead após aplicar etiqueta
+- **`src/pages/TenantKanban.tsx`**: nova página do Kanban
+- **`src/App.tsx`**: nova rota
+- **`src/pages/TenantForm.tsx`**: configuração das colunas do Kanban
+- **`src/pages/TenantDashboard.tsx`**: link para o Kanban
+- **`src/hooks/useCrmLeads.ts`**: hook para CRUD de leads
+- **`src/integrations/supabase/types.ts`**: atualizado automaticamente
 
