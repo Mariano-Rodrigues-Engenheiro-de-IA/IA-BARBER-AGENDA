@@ -2073,7 +2073,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ number: phoneNumber, labelId: labelId, action: "add" }),
+              body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId) }),
             });
             const labelData = await readResponsePayload(labelRes);
             console.log(`[EscalateHuman] Label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
@@ -2092,7 +2092,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-            body: JSON.stringify({ number: phoneNumber, labelId: labelId, action: "add" }),
+            body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId) }),
           });
           const labelData = await readResponsePayload(labelRes);
           console.log(`[CustomTool] add_label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
@@ -2114,7 +2114,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-            body: JSON.stringify({ number: phoneNumber, labelId: labelId, action: "remove" }),
+            body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId), action: "remove" }),
           });
           const labelData = await readResponsePayload(labelRes);
           console.log(`[CustomTool] remove_label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
