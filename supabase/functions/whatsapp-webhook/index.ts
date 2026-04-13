@@ -1999,76 +1999,35 @@ async function ensureChatLabelState(
   logContext: string,
 ): Promise<EnsureLabelStateResult> {
   const shouldBePresent = desiredState === "present";
-  const beforeDetails = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
-  console.log(`[${logContext}] Chat details before label status: ${beforeDetails.response.status}`);
 
-  if (!beforeDetails.response.ok) {
-    const requestError = getCustomToolRequestError(beforeDetails.response, beforeDetails.payload);
-    return {
-      success: false,
-      changed: false,
-      status: beforeDetails.response.status,
-      error: `Falha ao consultar etiquetas atuais: ${requestError}`,
-      details: beforeDetails.payload,
-    };
-  }
+  // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
+  const labelBody = shouldBePresent
+    ? { number: phoneNumber, add_labelid: String(labelId) }
+    : { number: phoneNumber, remove_labelid: String(labelId) };
 
-  const labelAlreadyPresent = chatHasLabel(beforeDetails.payload, labelId);
-  if (labelAlreadyPresent === shouldBePresent) {
-    console.log(`[${logContext}] Label ${labelId} already ${shouldBePresent ? "present" : "absent"}`);
-    return { success: true, changed: false, already: true, details: beforeDetails.payload };
-  }
+  console.log(`[${logContext}] Label ${shouldBePresent ? "ADD" : "REMOVE"} attempt: POST /chat/labels`, JSON.stringify(labelBody));
 
-  const labelBody = { jid: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId) };
-  console.log(`[${logContext}] Label toggle attempt:`, JSON.stringify(labelBody));
-  const toggleRes = await fetch(`${uazapiUrl}/chat/label`, {
+  const res = await fetch(`${uazapiUrl}/chat/labels`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
     body: JSON.stringify(labelBody),
   });
-  const togglePayload = await readResponsePayload(toggleRes);
-  console.log(`[${logContext}] Label toggle status: ${toggleRes.status} result:`, JSON.stringify(togglePayload).slice(0, 200));
+  const resPayload = await readResponsePayload(res);
+  console.log(`[${logContext}] Label result status: ${res.status} body:`, JSON.stringify(resPayload).slice(0, 300));
 
-  const toggleError = getCustomToolRequestError(toggleRes, togglePayload);
-  if (toggleError) {
+  if (!res.ok) {
+    const errorMsg = getCustomToolRequestError(res, resPayload);
     return {
       success: false,
       changed: false,
-      status: toggleRes.status,
-      error: `Falha ao alternar etiqueta: ${toggleError}`,
-      details: togglePayload,
+      status: res.status,
+      error: `Falha ao ${shouldBePresent ? "adicionar" : "remover"} etiqueta: ${errorMsg}`,
+      details: resPayload,
     };
   }
 
-  const afterDetails = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
-  console.log(`[${logContext}] Chat details after label status: ${afterDetails.response.status}`);
-
-  if (!afterDetails.response.ok) {
-    const requestError = getCustomToolRequestError(afterDetails.response, afterDetails.payload);
-    return {
-      success: false,
-      changed: true,
-      status: afterDetails.response.status,
-      error: `Etiqueta alternada, mas falhou ao confirmar estado final: ${requestError}`,
-      details: afterDetails.payload,
-    };
-  }
-
-  const labelIsPresentAfter = chatHasLabel(afterDetails.payload, labelId);
-  if (labelIsPresentAfter !== shouldBePresent) {
-    return {
-      success: false,
-      changed: true,
-      status: 409,
-      error: shouldBePresent
-        ? "A UAZAPI respondeu com sucesso, mas a etiqueta não ficou aplicada ao contato."
-        : "A UAZAPI respondeu com sucesso, mas a etiqueta continuou aplicada ao contato.",
-      details: afterDetails.payload,
-    };
-  }
-
-  console.log(`[${logContext}] Label ${labelId} confirmed ${shouldBePresent ? "present" : "absent"} after toggle`);
-  return { success: true, changed: true, already: false, details: afterDetails.payload };
+  console.log(`[${logContext}] Label ${labelId} ${shouldBePresent ? "added" : "removed"} successfully`);
+  return { success: true, changed: true, already: false, details: resPayload };
 }
 
 function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: string, contentType: string | null): string {
