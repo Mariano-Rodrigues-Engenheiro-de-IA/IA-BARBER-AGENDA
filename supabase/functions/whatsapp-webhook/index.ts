@@ -1460,18 +1460,24 @@ async function callAIAgent(
   // ===== PROVIDER DISPATCHER: build tools based on provider =====
   const tools = buildToolsForProvider(provider, tenant);
 
+  const requestBody: any = {
+    model: "openai/gpt-5-mini",
+    messages,
+  };
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = "auto";
+  }
+  const bodyStr = JSON.stringify(requestBody);
+  console.log(`AI request: ${messages.length} messages, ${tools?.length || 0} tools, body size: ${bodyStr.length} chars`);
+
   let response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${LOVABLE_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: "openai/gpt-5-mini",
-      messages,
-      tools,
-      tool_choice: "auto",
-    }),
+    body: bodyStr,
   });
 
   if (!response.ok) {
