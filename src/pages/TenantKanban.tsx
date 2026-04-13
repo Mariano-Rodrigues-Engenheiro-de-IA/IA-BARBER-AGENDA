@@ -77,11 +77,15 @@ function KanbanColumnComponent({
 
 // ===================== LEAD CARD (DRAGGABLE) =====================
 
-function LeadCard({ lead, lastMessage, overlay }: { lead: CrmLead; lastMessage?: string; overlay?: boolean }) {
+function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[] }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead.id,
     data: lead,
   });
+
+  const activeFlags = (flagColumns || []).filter((fc) =>
+    lead.flag_labels?.includes(fc.label_id)
+  );
 
   return (
     <div
@@ -110,6 +114,20 @@ function LeadCard({ lead, lastMessage, overlay }: { lead: CrmLead; lastMessage?:
           {timeAgo(lead.updated_at)}
         </span>
       </div>
+      {activeFlags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {activeFlags.map((flag) => (
+            <Badge
+              key={flag.label_id}
+              variant="outline"
+              className="text-[9px] px-1.5 h-4 border-opacity-60"
+              style={{ borderColor: flag.color, color: flag.color }}
+            >
+              {flag.name}
+            </Badge>
+          ))}
+        </div>
+      )}
       {lastMessage && (
         <p className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
           <MessageSquare className="w-3 h-3 shrink-0" />
