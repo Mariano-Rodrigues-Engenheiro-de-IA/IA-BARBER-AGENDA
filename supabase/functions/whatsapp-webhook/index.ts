@@ -2070,13 +2070,15 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (labelId) {
           try {
+            const labelBody = { chatId: `${phoneNumber}@s.whatsapp.net`, labelId: parseInt(String(labelId)) || String(labelId) };
+            console.log(`[EscalateHuman] Label request body:`, JSON.stringify(labelBody));
             const labelRes = await fetch(`${uazapiUrl}/chat/label`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ chatId: `${phoneNumber}@s.whatsapp.net`, labelId: String(labelId) }),
+              body: JSON.stringify(labelBody),
             });
             const labelData = await readResponsePayload(labelRes);
-            console.log(`[EscalateHuman] Label ${labelId} result:`, JSON.stringify(labelData).slice(0, 200));
+            console.log(`[EscalateHuman] Label ${labelId} status: ${labelRes.status} result:`, JSON.stringify(labelData).slice(0, 300));
           } catch (e) {
             console.error("[EscalateHuman] Error adding label:", e);
           }
