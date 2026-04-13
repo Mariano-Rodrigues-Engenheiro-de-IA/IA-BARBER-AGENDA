@@ -427,96 +427,72 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ===== FOLLOW-UP: AI-based condition evaluation for all providers =====
+      // ===== FOLLOW-UP: Deterministic triggers (after_link_sent + after_no_reply) =====
       {
         const settings = tenant.agent_settings || {};
-        let followUpConfigs: any[] = [];
-        if (Array.isArray(settings.follow_ups) && settings.follow_ups.length > 0) {
-          followUpConfigs = settings.follow_ups.filter((fu: any) => fu.enabled);
-        } else if (settings.follow_up && settings.follow_up.enabled !== false) {
-          followUpConfigs = [{
-            condition: "Cliente recebeu link de agendamento mas não confirmou",
+        const followUpConfigs: any[] = Array.isArray(settings.follow_ups) ? settings.follow_ups : [];
+        // Legacy migration
+        if (followUpConfigs.length === 0 && settings.follow_up && settings.follow_up.enabled !== false) {
+          followUpConfigs.push({
+            id: "legacy",
+            name: "Follow-up padrão",
+            type: "after_link_sent",
             delay_minutes: settings.follow_up.delay_minutes || 30,
             message: settings.follow_up.message || "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊",
-          }];
+            enabled: true,
+          });
         }
 
-        console.log(`[FollowUp] Configs found: ${followUpConfigs.length}, aiResponse exists: ${!!aiResponse}`);
+        const enabledConfigs = followUpConfigs.filter((fu: any) => fu.enabled);
+        console.log(`[FollowUp] Configs: ${enabledConfigs.length} enabled of ${followUpConfigs.length} total`);
 
-        if (followUpConfigs.length > 0 && aiResponse) {
-          try {
-            const recentHistory = (history || []).slice(-10).map((m: any) => `${m.role}: ${m.content}`).join("\n");
-            const conversationSummary = `${recentHistory}\nuser: ${combinedContent}\nassistant: ${aiResponse}`;
-            const toolsSummary = agentResult?.toolCalls?.map((tc: any) => `${tc.name}(${JSON.stringify(tc.args || {}).slice(0, 100)}): ${tc.blocked ? "BLOQUEADO" : "OK"}`).join(", ") || "nenhuma";
+        // Detect triggers from this interaction
+        const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => 
+          tc.name === "enviar_link_agendamento" && !tc.blocked
+        ) || false;
 
-            const conditionsPrompt = followUpConfigs.map((fu: any, i: number) => `${i}: "${fu.condition || "sem condição definida"}"`).join("\n");
-            console.log(`[FollowUp] Evaluating conditions:\n${conditionsPrompt}`);
+        for (const fuConfig of enabledConfigs) {
+          let shouldTrigger = false;
 
-            const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-            if (!LOVABLE_API_KEY) {
-              console.error("[FollowUp] LOVABLE_API_KEY not set, skipping evaluation");
-            } else {
-              const evalResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  model: "google/gemini-2.5-flash-lite",
-                  messages: [
-                    {
-                      role: "system",
-                      content: `Você avalia se condições de follow-up foram atingidas em uma conversa de WhatsApp.
-Responda APENAS com um JSON array de índices das condições que foram atingidas. Ex: [0, 2]
-Se nenhuma condição foi atingida, responda: []
-Seja conservador: só marque como atingida se a condição claramente se aplica à conversa.`,
-                    },
-                    {
-                      role: "user",
-                      content: `Conversa recente:\n${conversationSummary}\n\nFerramentas chamadas: ${toolsSummary}\n\nCondições de follow-up:\n${conditionsPrompt}\n\nQuais condições foram atingidas? Responda APENAS o JSON array.`,
-                    },
-                  ],
-                }),
-              });
-
-              console.log(`[FollowUp] AI eval response status: ${evalResponse.status}`);
-
-              if (evalResponse.ok) {
-                const evalData = await evalResponse.json();
-                const evalText = evalData.choices?.[0]?.message?.content?.trim() || "[]";
-                const jsonMatch = evalText.match(/\[[\d,\s]*\]/);
-                const triggeredIndices: number[] = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
-                console.log(`[FollowUp] Eval result: ${evalText} -> triggered: ${JSON.stringify(triggeredIndices)}`);
-
-                for (const idx of triggeredIndices) {
-                  if (idx >= 0 && idx < followUpConfigs.length) {
-                    const fuConfig = followUpConfigs[idx];
-                    const delayMin = fuConfig.delay_minutes || 30;
-                    const followUpAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
-                    await supabase.from("follow_ups").insert({
-                      tenant_id: tenant.id,
-                      phone_number: phoneNumber,
-                      follow_up_at: followUpAt,
-                      follow_up_message: fuConfig.message,
-                    });
-                    console.log(`[FollowUp] Scheduled: "${fuConfig.name || fuConfig.condition?.slice(0, 50)}" for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
-                  }
-                }
-
-                if (triggeredIndices.length === 0) {
-                  console.log(`[FollowUp] No conditions triggered for this conversation`);
-                }
-              } else {
-                const errBody = await evalResponse.text();
-                console.error(`[FollowUp] AI eval failed: ${evalResponse.status} - ${errBody.slice(0, 200)}`);
-              }
-            }
-          } catch (evalErr) {
-            console.error("[FollowUp] Condition evaluation error:", evalErr);
+          if (fuConfig.type === "after_link_sent" && linkToolCalled) {
+            shouldTrigger = true;
+            console.log(`[FollowUp] Trigger "after_link_sent": link was sent this interaction`);
           }
-        } else if (followUpConfigs.length === 0) {
-          console.log(`[FollowUp] No follow-up configs for tenant ${tenant.name}`);
+
+          if (fuConfig.type === "after_no_reply") {
+            // Schedule it on every AI response; the process-followups cron will check
+            // if the client replied before actually sending. We cancel existing pending ones first.
+            const { data: existingPending } = await supabase
+              .from("follow_ups")
+              .select("id")
+              .eq("tenant_id", tenant.id)
+              .eq("phone_number", phoneNumber)
+              .eq("status", "pending")
+              .like("follow_up_message", fuConfig.message?.slice(0, 20) + "%")
+              .limit(5);
+            
+            if (existingPending?.length) {
+              await supabase
+                .from("follow_ups")
+                .update({ status: "expired" })
+                .in("id", existingPending.map((f: any) => f.id));
+              console.log(`[FollowUp] Expired ${existingPending.length} old "after_no_reply" for ${phoneNumber}`);
+            }
+            shouldTrigger = true;
+            console.log(`[FollowUp] Trigger "after_no_reply": scheduling check for ${phoneNumber}`);
+          }
+
+          if (shouldTrigger) {
+            const delayMin = fuConfig.delay_minutes || 30;
+            const followUpAt = new Date(Date.now() + delayMin * 60 * 1000).toISOString();
+            await supabase.from("follow_ups").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              follow_up_at: followUpAt,
+              follow_up_message: fuConfig.message,
+            });
+            console.log(`[FollowUp] Scheduled: "${fuConfig.name}" for ${phoneNumber} at ${followUpAt} (${delayMin}min delay)`);
+          }
         }
       }
 
