@@ -4,7 +4,7 @@ import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Trash2, Pencil, Building2 } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Building2, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -121,7 +121,12 @@ export default function TenantsPage() {
                       )}
                     </td>
                     <td className="p-4 text-right space-x-1">
-                      <Button variant="ghost" size="icon" asChild>
+                      <Button variant="ghost" size="icon" asChild title="Dashboard">
+                        <Link to={`/tenants/${tenant.id}/dashboard`}>
+                          <BarChart3 className="w-4 h-4" />
+                        </Link>
+                      </Button>
+                      <Button variant="ghost" size="icon" asChild title="Editar">
                         <Link to={`/tenants/${tenant.id}`}>
                           <Pencil className="w-4 h-4" />
                         </Link>
@@ -131,6 +136,7 @@ export default function TenantsPage() {
                         size="icon"
                         className="hover:text-destructive"
                         onClick={() => setDeleteId(tenant.id)}
+                        title="Excluir"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
