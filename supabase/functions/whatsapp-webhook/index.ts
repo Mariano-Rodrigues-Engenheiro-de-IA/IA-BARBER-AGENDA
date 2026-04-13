@@ -455,31 +455,50 @@ Deno.serve(async (req) => {
           let shouldTrigger = false;
 
           if (fuConfig.type === "after_link_sent" && linkToolCalled) {
-            shouldTrigger = true;
-            console.log(`[FollowUp] Trigger "after_link_sent": link was sent this interaction`);
-          }
-
-          if (fuConfig.type === "after_no_reply") {
-            // Schedule it on every AI response; the process-followups cron will check
-            // if the client replied before actually sending. We cancel existing pending ones first.
-            const { data: existingPending } = await supabase
+            // Check: no existing pending/sent follow-up of this type for this client
+            const { data: existingLinkFU } = await supabase
               .from("follow_ups")
               .select("id")
               .eq("tenant_id", tenant.id)
               .eq("phone_number", phoneNumber)
-              .eq("status", "pending")
+              .in("status", ["pending", "sent"])
               .like("follow_up_message", fuConfig.message?.slice(0, 20) + "%")
-              .limit(5);
-            
-            if (existingPending?.length) {
-              await supabase
-                .from("follow_ups")
-                .update({ status: "expired" })
-                .in("id", existingPending.map((f: any) => f.id));
-              console.log(`[FollowUp] Expired ${existingPending.length} old "after_no_reply" for ${phoneNumber}`);
+              .limit(1);
+
+            if (existingLinkFU?.length) {
+              console.log(`[FollowUp] Skipping "after_link_sent": already has pending/sent for ${phoneNumber}`);
+            } else {
+              shouldTrigger = true;
+              console.log(`[FollowUp] Trigger "after_link_sent": link sent this interaction`);
             }
-            shouldTrigger = true;
-            console.log(`[FollowUp] Trigger "after_no_reply": scheduling check for ${phoneNumber}`);
+          }
+
+          if (fuConfig.type === "after_no_reply") {
+            // RULE: Only trigger on the FIRST interaction of this client (1-2 user messages in history)
+            // RULE: Only trigger ONCE per client — never again if already sent/pending for this tenant+phone
+            const userMsgCount = (history || []).filter((m: any) => m.role === "user").length;
+            // Current message is already in history as processed, so count=1 means this is the first interaction
+            const isFirstInteraction = userMsgCount <= 1;
+
+            if (!isFirstInteraction) {
+              console.log(`[FollowUp] Skipping "after_no_reply": not first interaction (${userMsgCount} user msgs in history)`);
+            } else {
+              // Check if we already sent/scheduled one for this client ever
+              const { data: existingNoReplyFU } = await supabase
+                .from("follow_ups")
+                .select("id, status")
+                .eq("tenant_id", tenant.id)
+                .eq("phone_number", phoneNumber)
+                .like("follow_up_message", fuConfig.message?.slice(0, 20) + "%")
+                .limit(1);
+
+              if (existingNoReplyFU?.length) {
+                console.log(`[FollowUp] Skipping "after_no_reply": already exists (${existingNoReplyFU[0].status}) for ${phoneNumber}`);
+              } else {
+                shouldTrigger = true;
+                console.log(`[FollowUp] Trigger "after_no_reply": first interaction, no previous follow-up for ${phoneNumber}`);
+              }
+            }
           }
 
           if (shouldTrigger) {
