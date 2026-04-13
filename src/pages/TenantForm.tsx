@@ -140,6 +140,15 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
     enabled: true,
   },
+  {
+    name: "adicionar_etiqueta",
+    display_name: "Adicionar Etiqueta",
+    description: "Adiciona uma etiqueta/tag ao contato do cliente no WhatsApp",
+    type: "add_label",
+    config: { label_id: "" },
+    prompt_instruction: "Use quando precisar marcar/etiquetar o contato do cliente. Ex: após agendamento confirmado, após lead qualificado, etc.",
+    enabled: true,
+  },
 ];
 
 function generateToolId(): string {
