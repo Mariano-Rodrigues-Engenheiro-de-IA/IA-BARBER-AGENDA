@@ -9,6 +9,7 @@ export interface CrmLead {
   label_id: string;
   label_name: string | null;
   notes: string | null;
+  flag_labels: string[];
   created_at: string;
   updated_at: string;
   last_message?: string;
@@ -28,6 +29,7 @@ export interface KanbanColumn {
   name: string;
   color: string;
   order: number;
+  type?: "funnel" | "flag";
 }
 
 export function useCrmLeads(tenantId: string | undefined) {

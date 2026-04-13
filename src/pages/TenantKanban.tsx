@@ -37,10 +37,12 @@ function KanbanColumnComponent({
   column,
   leads,
   lastMessages,
+  flagColumns,
 }: {
   column: KanbanColumn;
   leads: CrmLead[];
   lastMessages: Record<string, string>;
+  flagColumns: KanbanColumn[];
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.label_id });
 
@@ -63,7 +65,7 @@ function KanbanColumnComponent({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-280px)]">
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} />
+          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} />
         ))}
         {leads.length === 0 && (
           <div className="text-center text-xs text-muted-foreground py-8">
@@ -77,11 +79,15 @@ function KanbanColumnComponent({
 
 // ===================== LEAD CARD (DRAGGABLE) =====================
 
-function LeadCard({ lead, lastMessage, overlay }: { lead: CrmLead; lastMessage?: string; overlay?: boolean }) {
+function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[] }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead.id,
     data: lead,
   });
+
+  const activeFlags = (flagColumns || []).filter((fc) =>
+    lead.flag_labels?.includes(fc.label_id)
+  );
 
   return (
     <div
@@ -110,6 +116,20 @@ function LeadCard({ lead, lastMessage, overlay }: { lead: CrmLead; lastMessage?:
           {timeAgo(lead.updated_at)}
         </span>
       </div>
+      {activeFlags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {activeFlags.map((flag) => (
+            <Badge
+              key={flag.label_id}
+              variant="outline"
+              className="text-[9px] px-1.5 h-4 border-opacity-60"
+              style={{ borderColor: flag.color, color: flag.color }}
+            >
+              {flag.name}
+            </Badge>
+          ))}
+        </div>
+      )}
       {lastMessage && (
         <p className="text-[11px] text-muted-foreground truncate flex items-center gap-1">
           <MessageSquare className="w-3 h-3 shrink-0" />
@@ -138,11 +158,15 @@ export default function TenantKanbanPage() {
   );
 
   // Get kanban columns from tenant config
-  const columns: KanbanColumn[] = useMemo(() => {
+  const allColumns: KanbanColumn[] = useMemo(() => {
     const raw = (tenant as any)?.kanban_columns;
     if (!Array.isArray(raw) || raw.length === 0) return [];
     return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [tenant]);
+
+  // Separate funnel columns from flag columns
+  const columns = useMemo(() => allColumns.filter((c) => c.type !== "flag"), [allColumns]);
+  const flagColumns = useMemo(() => allColumns.filter((c) => c.type === "flag"), [allColumns]);
 
   // Fetch last messages for all leads
   const phoneNumbers = useMemo(() => leads?.map((l) => l.phone_number) || [], [leads]);
@@ -291,6 +315,7 @@ export default function TenantKanbanPage() {
                 column={column}
                 leads={leadsByLabel[column.label_id] || []}
                 lastMessages={lastMessages}
+                flagColumns={flagColumns}
               />
             ))}
           </div>
@@ -298,7 +323,7 @@ export default function TenantKanbanPage() {
           <DragOverlay>
             {activeLead ? (
               <div className="w-[280px]">
-                <LeadCard lead={activeLead} lastMessage={lastMessages[activeLead.phone_number]} overlay />
+                <LeadCard lead={activeLead} lastMessage={lastMessages[activeLead.phone_number]} overlay flagColumns={flagColumns} />
               </div>
             ) : null}
           </DragOverlay>

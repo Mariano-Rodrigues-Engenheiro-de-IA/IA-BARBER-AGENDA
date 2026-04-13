@@ -1992,18 +1992,59 @@ async function upsertCrmLead(
   changedBy: string = "ai",
 ): Promise<void> {
   try {
-    // Get existing lead to track history
+    // Check if this label is a flag (not a funnel stage) by reading tenant kanban_columns
+    const { data: tenant } = await supabaseClient
+      .from("tenants")
+      .select("kanban_columns")
+      .eq("id", tenantId)
+      .single();
+
+    const kanbanColumns: any[] = Array.isArray(tenant?.kanban_columns) ? tenant.kanban_columns : [];
+    const columnConfig = kanbanColumns.find((c: any) => String(c.label_id) === String(labelId));
+    const isFlag = columnConfig?.type === "flag";
+
+    // Get existing lead
     const { data: existing } = await supabaseClient
       .from("crm_leads")
-      .select("id, label_id")
+      .select("id, label_id, flag_labels")
       .eq("tenant_id", tenantId)
       .eq("phone_number", phoneNumber)
       .maybeSingle();
 
+    if (isFlag) {
+      // FLAG label: add to flag_labels array, don't change funnel label_id
+      const currentFlags: string[] = existing?.flag_labels || [];
+      if (!currentFlags.includes(String(labelId))) {
+        const newFlags = [...currentFlags, String(labelId)];
+        if (existing) {
+          await supabaseClient
+            .from("crm_leads")
+            .update({ flag_labels: newFlags, updated_at: new Date().toISOString() })
+            .eq("id", existing.id);
+        } else {
+          // Create lead with flag but no funnel stage yet
+          await supabaseClient
+            .from("crm_leads")
+            .insert({
+              tenant_id: tenantId,
+              phone_number: phoneNumber,
+              label_id: "__none__",
+              label_name: null,
+              flag_labels: newFlags,
+              updated_at: new Date().toISOString(),
+            });
+        }
+        console.log(`[CRM] Flag ${labelId} added to ${phoneNumber}`);
+      } else {
+        console.log(`[CRM] Flag ${labelId} already on ${phoneNumber}`);
+      }
+      return;
+    }
+
+    // FUNNEL label: change label_id (original behavior)
     const fromLabel = existing?.label_id || null;
     const leadId = existing?.id;
 
-    // Upsert the lead
     const { data: upserted, error: upsertError } = await supabaseClient
       .from("crm_leads")
       .upsert(
@@ -2026,7 +2067,6 @@ async function upsertCrmLead(
 
     const finalLeadId = upserted?.id || leadId;
 
-    // Insert history if label changed
     if (finalLeadId && fromLabel !== String(labelId)) {
       await supabaseClient.from("crm_lead_history").insert({
         lead_id: finalLeadId,
