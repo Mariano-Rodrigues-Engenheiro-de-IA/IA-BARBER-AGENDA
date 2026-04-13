@@ -156,11 +156,15 @@ export default function TenantKanbanPage() {
   );
 
   // Get kanban columns from tenant config
-  const columns: KanbanColumn[] = useMemo(() => {
+  const allColumns: KanbanColumn[] = useMemo(() => {
     const raw = (tenant as any)?.kanban_columns;
     if (!Array.isArray(raw) || raw.length === 0) return [];
     return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [tenant]);
+
+  // Separate funnel columns from flag columns
+  const columns = useMemo(() => allColumns.filter((c) => c.type !== "flag"), [allColumns]);
+  const flagColumns = useMemo(() => allColumns.filter((c) => c.type === "flag"), [allColumns]);
 
   // Fetch last messages for all leads
   const phoneNumbers = useMemo(() => leads?.map((l) => l.phone_number) || [], [leads]);
