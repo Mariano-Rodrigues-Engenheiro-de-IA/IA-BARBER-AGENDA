@@ -135,6 +135,77 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_lead_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          from_label: string | null
+          id: string
+          lead_id: string
+          to_label: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          from_label?: string | null
+          id?: string
+          lead_id: string
+          to_label: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          from_label?: string | null
+          id?: string
+          lead_id?: string
+          to_label?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "crm_lead_history_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      crm_leads: {
+        Row: {
+          created_at: string
+          id: string
+          label_id: string
+          label_name: string | null
+          name: string | null
+          notes: string | null
+          phone_number: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label_id: string
+          label_name?: string | null
+          name?: string | null
+          notes?: string | null
+          phone_number: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label_id?: string
+          label_name?: string | null
+          name?: string | null
+          notes?: string | null
+          phone_number?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       follow_ups: {
         Row: {
           confirmed_at: string | null
@@ -193,6 +264,7 @@ export type Database = {
           created_at: string
           email: string | null
           id: string
+          kanban_columns: Json | null
           name: string
           onebeleza_celular: string | null
           onebeleza_token: string | null
@@ -216,6 +288,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          kanban_columns?: Json | null
           name: string
           onebeleza_celular?: string | null
           onebeleza_token?: string | null
@@ -239,6 +312,7 @@ export type Database = {
           created_at?: string
           email?: string | null
           id?: string
+          kanban_columns?: Json | null
           name?: string
           onebeleza_celular?: string | null
           onebeleza_token?: string | null
