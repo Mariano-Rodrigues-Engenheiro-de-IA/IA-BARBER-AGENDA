@@ -84,7 +84,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo";
+  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -100,6 +100,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_link: "Link",
   escalate_human: "Escalar Humano",
   send_combo: "Combo (Múltiplas Mídias)",
+  add_label: "Adicionar Etiqueta",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
@@ -137,6 +138,15 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "escalate_human",
     config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
+    enabled: true,
+  },
+  {
+    name: "adicionar_etiqueta",
+    display_name: "Adicionar Etiqueta",
+    description: "Adiciona uma etiqueta/tag ao contato do cliente no WhatsApp",
+    type: "add_label",
+    config: { label_id: "" },
+    prompt_instruction: "Use quando precisar marcar/etiquetar o contato do cliente. Ex: após agendamento confirmado, após lead qualificado, etc.",
     enabled: true,
   },
 ];
@@ -406,6 +416,18 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
             />
             <p className="text-xs text-muted-foreground">ID da etiqueta/tag que será adicionada ao contato quando escalado</p>
           </div>
+        </div>
+      );
+    case "add_label":
+      return (
+        <div className="space-y-2">
+          <Label>ID da etiqueta WhatsApp</Label>
+          <Input
+            value={config.label_id || ""}
+            onChange={(e) => onChange({ ...config, label_id: e.target.value })}
+            placeholder="Ex: 5, 12..."
+          />
+          <p className="text-xs text-muted-foreground">ID numérico da etiqueta/tag do WhatsApp Business que será adicionada ao contato</p>
         </div>
       );
     case "send_image":
