@@ -627,14 +627,29 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Find tenant
+      // Find tenant — PRIORITY: check which tenant has a crm_lead for this phone number
       const { data: allTenants } = await supabase
         .from("tenants")
         .select("id, name, whatsapp_number, kanban_columns")
         .eq("status", "active");
 
       let syncTenant: any = null;
-      if (ownerDigits && allTenants) {
+
+      // 1) Best match: find tenant that already has a CRM lead for this phone
+      const { data: existingLeadTenants } = await supabase
+        .from("crm_leads")
+        .select("tenant_id")
+        .eq("phone_number", chatPhone);
+      
+      if (existingLeadTenants?.length && allTenants) {
+        const leadTenantIds = new Set(existingLeadTenants.map((l: any) => l.tenant_id));
+        // Prefer tenant that has kanban configured
+        syncTenant = allTenants.find((t: any) => leadTenantIds.has(t.id) && Array.isArray(t.kanban_columns) && t.kanban_columns.length > 0);
+        if (!syncTenant) syncTenant = allTenants.find((t: any) => leadTenantIds.has(t.id));
+      }
+
+      // 2) Match by owner number
+      if (!syncTenant && ownerDigits && allTenants) {
         syncTenant = allTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
           const n = t.whatsapp_number.replace(/\D/g, "");
@@ -648,6 +663,8 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      
+      console.log(`[LabelSync] Tenant matched: ${syncTenant.name} (${syncTenant.id})`);
 
       // Parse wa_label from UAZAPI - format can be ["labelId"] or ["name:labelId"]
       const waLabels: string[] = (Array.isArray(chat?.wa_label) ? chat.wa_label : []).map((l: any) => {
