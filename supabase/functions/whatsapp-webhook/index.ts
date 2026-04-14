@@ -856,7 +856,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
 
       // Client not found → register with phone number as name (AI will update later if needed)
       const body = {
-        nome: phoneNumber,
+        nome: senderName || phoneNumber,
         telefones: [{ ddi: "55", ddd, numero: rest, tipoId: 1 }],
       };
       const regRes = await fetch(`${baseUrl}/clientes`, {
@@ -897,7 +897,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
 
       // Client not found → register
       const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
-      const body = { celular: tel, nome: "Cliente" };
+      const body = { celular: tel, nome: senderName || "Cliente" };
       const regRes = await fetch(regUrl, {
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
