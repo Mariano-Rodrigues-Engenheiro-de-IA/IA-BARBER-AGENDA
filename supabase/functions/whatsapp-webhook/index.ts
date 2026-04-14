@@ -152,8 +152,18 @@ Deno.serve(async (req) => {
       }
 
       // ===== IA OFF CHECK =====
-      // If contact has "IA OFF" flag label in CRM, skip AI processing entirely
+      // Check from DB (crm_leads) AND from WhatsApp payload (chat.wa_label)
       {
+        const kanbanCols: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        
+        // Find which label IDs correspond to "IA OFF" flags
+        const iaOffLabelIds = kanbanCols
+          .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
+          .map((c: any) => String(c.label_id));
+
+        let hasIaOff = false;
+
+        // 1) Check from DB (crm_leads flag_labels)
         const { data: leadData } = await supabase
           .from("crm_leads")
           .select("flag_labels")
@@ -162,24 +172,43 @@ Deno.serve(async (req) => {
           .limit(1);
         
         const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
-        
-        if (flagLabels.length > 0) {
-          // Resolve label IDs to names using kanban_columns
-          const kanbanCols: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
-          const hasIaOff = flagLabels.some((flagId: string) => {
-            // Check if flag_id itself matches "ia off"
-            if (/ia\s*off/i.test(flagId)) return true;
-            // Check if the kanban column name for this flag_id matches "ia off"
-            const col = kanbanCols.find((c: any) => String(c.label_id) === String(flagId));
-            return col && /ia\s*off/i.test(col.name || "");
+        if (flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f))) {
+          hasIaOff = true;
+        }
+
+        // 2) Check from WhatsApp payload (chat.wa_label) — works even without DB record
+        if (!hasIaOff && iaOffLabelIds.length > 0) {
+          const waLabelsRaw: any[] = Array.isArray(payload.chat?.wa_label) ? payload.chat.wa_label : [];
+          const waLabelIds = waLabelsRaw.map((l: any) => {
+            const raw = String(l ?? "");
+            return raw.includes(":") ? raw.split(":").pop()! : raw;
           });
-          
-          if (hasIaOff) {
-            console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
-            return new Response(JSON.stringify({ status: "ia_off" }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+          console.log(`[IA OFF Check] wa_label from payload: ${JSON.stringify(waLabelIds)}, iaOffLabelIds: ${JSON.stringify(iaOffLabelIds)}`);
+          if (waLabelIds.some((id: string) => iaOffLabelIds.includes(id))) {
+            hasIaOff = true;
+            // Also sync to DB so future checks are faster
+            try {
+              const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+              const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+              const matchedFlagId = waLabelIds.find((id: string) => iaOffLabelIds.includes(id))!;
+              const newFlags = [...new Set([...flagLabels, matchedFlagId])];
+              if (leadData?.[0]) {
+                await sb.from("crm_leads").update({ flag_labels: newFlags, updated_at: new Date().toISOString() }).eq("tenant_id", tenant.id).eq("phone_number", phoneNumber);
+              } else {
+                await sb.from("crm_leads").insert({ tenant_id: tenant.id, phone_number: phoneNumber, label_id: "__none__", flag_labels: newFlags });
+              }
+              console.log(`[IA OFF Check] Synced flag ${matchedFlagId} to DB for ${phoneNumber}`);
+            } catch (e) {
+              console.error("[IA OFF Check] DB sync error:", e);
+            }
           }
+        }
+          
+        if (hasIaOff) {
+          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
+          return new Response(JSON.stringify({ status: "ia_off" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
       }
 
