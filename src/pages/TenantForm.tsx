@@ -987,6 +987,7 @@ export default function TenantFormPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
+  const [responseDelay, setResponseDelay] = useState(10);
   const [kanbanColumns, setKanbanColumns] = useState<{ label_id: string; name: string; color: string; order: number; type?: "funnel" | "flag" }[]>([]);
   const [form, setForm] = useState<TenantInsert>({
     name: "",
