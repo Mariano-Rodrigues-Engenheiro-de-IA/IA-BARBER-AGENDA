@@ -1463,7 +1463,7 @@ async function callAIAgent(
   const tools = buildToolsForProvider(provider, tenant);
 
   const requestBody: any = {
-    model: "openai/gpt-5-mini",
+    model: modelUsed,
     messages,
   };
   if (tools && tools.length > 0) {
