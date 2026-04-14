@@ -1372,7 +1372,8 @@ async function callAIAgent(
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: string[] = [];
   let sessionBlocked = false;
-  const modelUsed = "openai/gpt-5-mini";
+  const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
+  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "openai/gpt-5-mini";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -1418,14 +1419,10 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Use input_audio content part (OpenAI-compatible format) so the model can actually listen
-      const audioFormat = mediaMimeType.includes("ogg") ? "wav"
-        : mediaMimeType.includes("mpeg") || mediaMimeType.includes("mp3") ? "mp3"
-        : mediaMimeType.includes("mp4") || mediaMimeType.includes("m4a") ? "mp3"
-        : "wav";
+      // Use Gemini model for audio — send as image_url data URL which Gemini handles natively
       contentParts.push({
-        type: "input_audio",
-        input_audio: { data: mediaBase64, format: audioFormat },
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
       contentParts.push({
         type: "text",
@@ -1466,7 +1463,7 @@ async function callAIAgent(
   const tools = buildToolsForProvider(provider, tenant);
 
   const requestBody: any = {
-    model: "openai/gpt-5-mini",
+    model: modelUsed,
     messages,
   };
   if (tools && tools.length > 0) {
@@ -1843,7 +1840,7 @@ async function callAIAgent(
       });
     }
 
-    const roundBody: any = { model: "openai/gpt-5-mini", messages };
+    const roundBody: any = { model: modelUsed, messages };
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
