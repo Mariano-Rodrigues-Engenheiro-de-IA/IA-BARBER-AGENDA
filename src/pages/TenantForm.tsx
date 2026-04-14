@@ -77,6 +77,7 @@ interface CustomToolConfig {
   combo_items?: ComboItem[];
   human_number?: string;
   label_id?: string;
+  silent_mode?: boolean;
 }
 
 interface CustomTool {
