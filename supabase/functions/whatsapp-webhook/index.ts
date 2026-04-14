@@ -612,7 +612,7 @@ Deno.serve(async (req) => {
     }
 
     // ===== LABEL SYNC: chats.update =====
-    if (event === "chats.update" || event === "chats.upsert" || event === "chat.update") {
+    if (event === "chats.update" || event === "chats.upsert" || event === "chat.update" || event === "chat_labels") {
       const chat = payload.chat || payload.data?.chat || payload;
       const ownerNumber = chat?.owner || payload.owner || "";
       const ownerDigits = String(ownerNumber).replace(/\D/g, "");
