@@ -350,6 +350,7 @@ export default function TenantKanbanPage() {
                 leads={leadsByLabel[column.label_id] || []}
                 lastMessages={lastMessages}
                 flagColumns={flagColumns}
+                onToggleFlag={handleToggleFlag}
               />
             ))}
           </div>
