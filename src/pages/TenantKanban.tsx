@@ -174,6 +174,7 @@ export default function TenantKanbanPage() {
   const { data: tenant, isLoading: loadingTenant } = useTenant(id);
   const { data: leads, isLoading: loadingLeads } = useCrmLeads(id);
   const moveLead = useMoveLead();
+  const toggleFlag = useToggleFlag();
   const [activeLead, setActiveLead] = useState<CrmLead | null>(null);
 
   const sensors = useSensors(
