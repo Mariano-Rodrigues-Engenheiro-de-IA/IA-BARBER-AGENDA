@@ -1419,14 +1419,10 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Use input_audio content part (OpenAI-compatible format) so the model can actually listen
-      const audioFormat = mediaMimeType.includes("ogg") ? "wav"
-        : mediaMimeType.includes("mpeg") || mediaMimeType.includes("mp3") ? "mp3"
-        : mediaMimeType.includes("mp4") || mediaMimeType.includes("m4a") ? "mp3"
-        : "wav";
+      // Use Gemini model for audio — send as image_url data URL which Gemini handles natively
       contentParts.push({
-        type: "input_audio",
-        input_audio: { data: mediaBase64, format: audioFormat },
+        type: "image_url",
+        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
       });
       contentParts.push({
         type: "text",
