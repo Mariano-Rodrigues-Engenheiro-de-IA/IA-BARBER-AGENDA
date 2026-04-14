@@ -1372,7 +1372,8 @@ async function callAIAgent(
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: string[] = [];
   let sessionBlocked = false;
-  const modelUsed = "openai/gpt-5-mini";
+  const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
+  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "openai/gpt-5-mini";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
