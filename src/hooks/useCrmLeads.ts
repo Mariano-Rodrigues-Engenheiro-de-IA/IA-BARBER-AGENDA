@@ -96,6 +96,31 @@ export function useMoveLead() {
   });
 }
 
+export function useToggleFlag() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      tenantId,
+      phoneNumber,
+      flagLabelId,
+    }: {
+      tenantId: string;
+      phoneNumber: string;
+      flagLabelId: string;
+    }) => {
+      const { data, error } = await supabase.functions.invoke("move-crm-lead", {
+        body: { tenantId, phoneNumber, toggleFlag: flagLabelId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["crm-leads", variables.tenantId] });
+    },
+  });
+}
+
 export function useUpdateLeadNotes() {
   const queryClient = useQueryClient();
   return useMutation({

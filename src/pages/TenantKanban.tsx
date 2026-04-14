@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTenant } from "@/hooks/useTenants";
-import { useCrmLeads, useMoveLead, type KanbanColumn, type CrmLead } from "@/hooks/useCrmLeads";
+import { useCrmLeads, useMoveLead, useToggleFlag, type KanbanColumn, type CrmLead } from "@/hooks/useCrmLeads";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -38,11 +38,13 @@ function KanbanColumnComponent({
   leads,
   lastMessages,
   flagColumns,
+  onToggleFlag,
 }: {
   column: KanbanColumn;
   leads: CrmLead[];
   lastMessages: Record<string, string>;
   flagColumns: KanbanColumn[];
+  onToggleFlag: (phoneNumber: string, flagLabelId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.label_id });
 
@@ -65,7 +67,7 @@ function KanbanColumnComponent({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-280px)]">
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} />
+          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} onToggleFlag={onToggleFlag} />
         ))}
         {leads.length === 0 && (
           <div className="text-center text-xs text-muted-foreground py-8">
@@ -79,7 +81,7 @@ function KanbanColumnComponent({
 
 // ===================== LEAD CARD (DRAGGABLE) =====================
 
-function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[] }) {
+function LeadCard({ lead, lastMessage, overlay, flagColumns, onToggleFlag }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[]; onToggleFlag?: (phoneNumber: string, flagLabelId: string) => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead.id,
     data: lead,
@@ -88,18 +90,25 @@ function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; 
   const activeFlags = (flagColumns || []).filter((fc) =>
     lead.flag_labels?.includes(fc.label_id)
   );
+  const inactiveFlags = (flagColumns || []).filter((fc) =>
+    !lead.flag_labels?.includes(fc.label_id)
+  );
 
   return (
     <div
       ref={overlay ? undefined : setNodeRef}
-      {...(overlay ? {} : listeners)}
-      {...(overlay ? {} : attributes)}
-      className={`glass-card p-3 space-y-2 cursor-grab active:cursor-grabbing transition-shadow ${
+      className={`glass-card p-3 space-y-2 transition-shadow ${
         isDragging && !overlay ? "opacity-30" : ""
       } ${overlay ? "shadow-xl ring-2 ring-primary/30 rotate-2" : "hover:shadow-md"}`}
     >
       <div className="flex items-center gap-2">
-        <GripVertical className="w-3 h-3 text-muted-foreground shrink-0" />
+        <div
+          {...(overlay ? {} : listeners)}
+          {...(overlay ? {} : attributes)}
+          className="cursor-grab active:cursor-grabbing shrink-0"
+        >
+          <GripVertical className="w-3 h-3 text-muted-foreground" />
+        </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate">
             {lead.name || lead.phone_number}
@@ -116,16 +125,30 @@ function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; 
           {timeAgo(lead.updated_at)}
         </span>
       </div>
-      {activeFlags.length > 0 && (
+      {(flagColumns || []).length > 0 && (
         <div className="flex flex-wrap gap-1">
           {activeFlags.map((flag) => (
             <Badge
               key={flag.label_id}
               variant="outline"
-              className="text-[9px] px-1.5 h-4 border-opacity-60"
-              style={{ borderColor: flag.color, color: flag.color }}
+              className="text-[9px] px-1.5 h-4 cursor-pointer hover:opacity-70 transition-opacity"
+              style={{ borderColor: flag.color, color: flag.color, backgroundColor: `${flag.color}15` }}
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.(lead.phone_number, flag.label_id); }}
+              title={`Remover ${flag.name}`}
             >
-              {flag.name}
+              {flag.name} ✕
+            </Badge>
+          ))}
+          {inactiveFlags.map((flag) => (
+            <Badge
+              key={flag.label_id}
+              variant="outline"
+              className="text-[9px] px-1.5 h-4 cursor-pointer opacity-30 hover:opacity-60 transition-opacity"
+              style={{ borderColor: flag.color, color: flag.color }}
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.(lead.phone_number, flag.label_id); }}
+              title={`Adicionar ${flag.name}`}
+            >
+              + {flag.name}
             </Badge>
           ))}
         </div>
@@ -151,6 +174,7 @@ export default function TenantKanbanPage() {
   const { data: tenant, isLoading: loadingTenant } = useTenant(id);
   const { data: leads, isLoading: loadingLeads } = useCrmLeads(id);
   const moveLead = useMoveLead();
+  const toggleFlag = useToggleFlag();
   const [activeLead, setActiveLead] = useState<CrmLead | null>(null);
 
   const sensors = useSensors(
@@ -249,6 +273,16 @@ export default function TenantKanbanPage() {
     }
   }
 
+  async function handleToggleFlag(phoneNumber: string, flagLabelId: string) {
+    try {
+      await toggleFlag.mutateAsync({ tenantId: id!, phoneNumber, flagLabelId });
+      const flagCol = flagColumns.find((c) => c.label_id === flagLabelId);
+      toast.success(`Flag "${flagCol?.name || flagLabelId}" atualizada`);
+    } catch (err: any) {
+      toast.error(`Erro ao alterar flag: ${err.message}`);
+    }
+  }
+
   if (loadingTenant) {
     return <div className="text-muted-foreground">Carregando...</div>;
   }
@@ -316,6 +350,7 @@ export default function TenantKanbanPage() {
                 leads={leadsByLabel[column.label_id] || []}
                 lastMessages={lastMessages}
                 flagColumns={flagColumns}
+                onToggleFlag={handleToggleFlag}
               />
             ))}
           </div>
