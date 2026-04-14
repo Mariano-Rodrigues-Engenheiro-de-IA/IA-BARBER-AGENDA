@@ -273,6 +273,16 @@ export default function TenantKanbanPage() {
     }
   }
 
+  async function handleToggleFlag(phoneNumber: string, flagLabelId: string) {
+    try {
+      await toggleFlag.mutateAsync({ tenantId: id!, phoneNumber, flagLabelId });
+      const flagCol = flagColumns.find((c) => c.label_id === flagLabelId);
+      toast.success(`Flag "${flagCol?.name || flagLabelId}" atualizada`);
+    } catch (err: any) {
+      toast.error(`Erro ao alterar flag: ${err.message}`);
+    }
+  }
+
   if (loadingTenant) {
     return <div className="text-muted-foreground">Carregando...</div>;
   }
