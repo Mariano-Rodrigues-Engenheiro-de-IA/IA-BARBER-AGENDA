@@ -38,11 +38,13 @@ function KanbanColumnComponent({
   leads,
   lastMessages,
   flagColumns,
+  onToggleFlag,
 }: {
   column: KanbanColumn;
   leads: CrmLead[];
   lastMessages: Record<string, string>;
   flagColumns: KanbanColumn[];
+  onToggleFlag: (phoneNumber: string, flagLabelId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.label_id });
 
