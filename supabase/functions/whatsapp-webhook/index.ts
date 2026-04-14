@@ -1418,10 +1418,8 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      contentParts.push({
-        type: "image_url",
-        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
-      });
+      // Audio cannot be sent as image_url — AI models reject non-image MIME types.
+      // Send as text-only; the instruction already tells the AI an audio was received.
       contentParts.push({
         type: "text",
         text: mediaInstruction,
