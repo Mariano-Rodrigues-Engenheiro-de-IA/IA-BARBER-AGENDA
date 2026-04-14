@@ -1036,6 +1036,10 @@ export default function TenantFormPage() {
       } else {
         setCustomTools([]);
       }
+      // Load response delay
+      if (settings && typeof settings === "object" && typeof settings.response_delay === "number") {
+        setResponseDelay(settings.response_delay);
+      }
       // Load follow-ups (new array format)
       if (settings && typeof settings === "object") {
         if (Array.isArray(settings.follow_ups)) {
@@ -1088,6 +1092,7 @@ export default function TenantFormPage() {
         ...(typeof currentSettings === "object" ? currentSettings : {}),
         custom_tools: customTools,
         follow_ups: followUps,
+        response_delay: responseDelay,
       };
       // Remove legacy follow_up key if present
       delete (agentSettings as any).follow_up;
