@@ -2724,12 +2724,14 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): 
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+  const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
   const nextDaysMap: string[] = [];
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 0; i <= 14; i++) {
     const futureDate = new Date(Date.UTC(br.year, br.month - 1, br.day + i));
     const dow = futureDate.getUTCDay();
     const fmtDate = `${futureDate.getUTCFullYear()}-${String(futureDate.getUTCMonth() + 1).padStart(2, '0')}-${String(futureDate.getUTCDate()).padStart(2, '0')}`;
-    nextDaysMap.push(`${shortDayNames[dow]} = ${fmtDate}`);
+    const label = i === 0 ? "HOJE" : i === 1 ? "AMANHÃ" : "";
+    nextDaysMap.push(`  - ${fullDayNames[dow]} = ${fmtDate}${label ? ` (${label})` : ""}`);
   }
 
   const basePrompt = `Você é a assistente virtual de agendamento do estabelecimento "${tenant.name || "nosso estabelecimento"}".
@@ -2738,12 +2740,16 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): 
 - Data e hora (Brasília): ${dateComplete}
 - Dia da semana: ${todayName}
 - Data de hoje: ${todayDate}
-- Próximos dias:
-${nextDaysMap.map(d => `  - ${d}`).join("\n")}
+- Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
+${nextDaysMap.join("\n")}
 
-⚠️ Use SEMPRE a data de hoje como referência. "Amanhã" = dia seguinte a ${todayDate}.
-⚠️ Quando o cliente disser "segunda", "terça", etc., use o mapeamento acima para converter em data YYYY-MM-DD.
-
+🚨 REGRA CRÍTICA DE DATAS — NUNCA QUEBRE ESTA REGRA:
+1. NUNCA diga uma data sem antes consultar o calendário acima.
+2. Quando o cliente disser um dia da semana (ex: "sexta"), encontre a PRÓXIMA ocorrência no calendário acima e use a data EXATA correspondente.
+3. Quando mencionar uma data para o cliente, SEMPRE confirme que o dia da semana corresponde à data no calendário. Ex: se sexta = 2026-04-17, diga "sexta, dia 17" e NUNCA "sexta, dia 20".
+4. Se não tiver certeza, NÃO invente. Consulte o calendário.
+5. "Amanhã" = ${nextDaysMap.length > 1 ? nextDaysMap[1].split("=")[1].trim().split(" ")[0] : "dia seguinte"}.
+6. Ao usar ferramentas de agendamento, use SEMPRE o formato YYYY-MM-DD extraído do calendário.
 ## 📱 TELEFONE DO CLIENTE
 ${phoneNumber}
 Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa informar o telefone.
