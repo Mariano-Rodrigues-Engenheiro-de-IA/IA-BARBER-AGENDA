@@ -406,7 +406,8 @@ Deno.serve(async (req) => {
       });
 
       // ===== DEBOUNCE: Wait for more messages, then claim atomically =====
-      const DEBOUNCE_MS = 10_000;
+      const tenantSettings = tenant.agent_settings && typeof tenant.agent_settings === "object" ? tenant.agent_settings as Record<string, any> : {};
+      const DEBOUNCE_MS = ((tenantSettings.response_delay as number) || 10) * 1000;
       console.log(`Debounce: waiting ${DEBOUNCE_MS / 1000}s for ${phoneNumber}...`);
       await new Promise((r) => setTimeout(r, DEBOUNCE_MS));
 

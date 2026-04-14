@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban } from "lucide-react";
@@ -1442,6 +1443,29 @@ export default function TenantFormPage() {
                   onChange={(e) => handleChange("agent_knowledge_base", e.target.value)}
                   placeholder="Informações sobre serviços, preços, horários de funcionamento, políticas do estabelecimento..."
                 />
+              </div>
+              <div className="space-y-3 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="flex items-center gap-2"><Clock className="h-4 w-4" /> Tempo de Resposta</Label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Tempo que a IA aguarda antes de responder (acumula mensagens enviadas em sequência)
+                    </p>
+                  </div>
+                  <span className="text-sm font-medium text-primary">{responseDelay}s</span>
+                </div>
+                <Slider
+                  value={[responseDelay]}
+                  onValueChange={([v]) => setResponseDelay(v)}
+                  min={3}
+                  max={30}
+                  step={1}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>3s (rápido)</span>
+                  <span>30s (aguarda mais)</span>
+                </div>
               </div>
             </div>
           </TabsContent>
