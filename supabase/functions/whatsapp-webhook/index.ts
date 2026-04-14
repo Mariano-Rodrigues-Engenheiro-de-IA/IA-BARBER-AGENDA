@@ -72,7 +72,8 @@ Deno.serve(async (req) => {
       }
 
       const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
-      console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "msg.key:", JSON.stringify(msg.key || {}));
+      const senderName = payload.pushName || payload.senderName || msg.pushName || msg.senderName || payload.chat?.name || payload.chat?.pushName || payload.notify || msg.notify || "";
+      console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "senderName:", senderName, "msg.key:", JSON.stringify(msg.key || {}));
 
       // ===== TENANT LOOKUP =====
       const { data: tenants, error: tenantError } = await supabase
