@@ -15,3 +15,4 @@ type: feature
 - Edge function `move-crm-lead`: remove label antiga + adiciona nova via `/chat/labels`, atualiza DB
 - Página `/tenants/:id/kanban`: Kanban drag & drop com @dnd-kit (só colunas funnel), flags como badges
 - Configuração das colunas no TenantForm (aba Kanban) com seletor Funil/Flag
+- **IA OFF**: contato com flag "IA OFF" no CRM → webhook ignora mensagem, IA não responde. Funciona com etiqueta nativa do WhatsApp ou adicionada via ferramenta.
