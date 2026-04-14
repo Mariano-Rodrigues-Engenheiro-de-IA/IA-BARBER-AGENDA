@@ -2427,13 +2427,18 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
       }
 
       case "escalate_human": {
-        const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
-        const clientRes = await fetch(`${uazapiUrl}/send/text`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 2000 }),
-        });
-        await readResponsePayload(clientRes);
+        const silentMode = config.silent_mode === true;
+        if (!silentMode) {
+          const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
+          const clientRes = await fetch(`${uazapiUrl}/send/text`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+            body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 2000 }),
+          });
+          await readResponsePayload(clientRes);
+        } else {
+          console.log(`[EscalateHuman] Silent mode — skipping client message`);
+        }
 
         const humanNumber = config.human_number;
         if (humanNumber) {
