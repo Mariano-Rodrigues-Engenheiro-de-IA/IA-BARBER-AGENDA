@@ -461,6 +461,11 @@ Deno.serve(async (req) => {
         .limit(60);
       const history = (historyRaw || []).reverse();
 
+      // ===== AUTO-REGISTER CLIENT (Trinks & One Beleza) =====
+      if (provider === "trinks" || provider === "onebeleza") {
+        await autoRegisterClient(tenant, phoneNumber, provider);
+      }
+
       // Provider-specific direct handlers
       let directResponse: string | null = null;
       if (provider === "trinks") {
