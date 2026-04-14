@@ -1418,8 +1418,15 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Audio cannot be sent as image_url — AI models reject non-image MIME types.
-      // Send as text-only; the instruction already tells the AI an audio was received.
+      // Use input_audio content part (OpenAI-compatible format) so the model can actually listen
+      const audioFormat = mediaMimeType.includes("ogg") ? "wav"
+        : mediaMimeType.includes("mpeg") || mediaMimeType.includes("mp3") ? "mp3"
+        : mediaMimeType.includes("mp4") || mediaMimeType.includes("m4a") ? "mp3"
+        : "wav";
+      contentParts.push({
+        type: "input_audio",
+        input_audio: { data: mediaBase64, format: audioFormat },
+      });
       contentParts.push({
         type: "text",
         text: mediaInstruction,
