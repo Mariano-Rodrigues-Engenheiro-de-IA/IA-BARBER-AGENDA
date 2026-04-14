@@ -1693,7 +1693,7 @@ async function callAIAgent(
   const logErrors: string[] = [];
   let sessionBlocked = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
-  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "google/gemini-2.5-flash";
+  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "google/gemini-3-flash-preview";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
