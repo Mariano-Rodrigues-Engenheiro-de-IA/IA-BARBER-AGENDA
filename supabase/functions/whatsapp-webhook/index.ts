@@ -3421,16 +3421,31 @@ function buildNonePromptSection(tenant: any): string {
 Este estabelecimento NÃO possui sistema de agendamento integrado.
 Você NÃO tem acesso a nenhuma ferramenta de agendamento, consulta de horários, profissionais ou serviços.
 
-${bookingLink ? `🚨 REGRA CRÍTICA — AGENDAMENTO:
+${bookingLink ? `🚨 REGRA CRÍTICA — AGENDAMENTO (PRIORIDADE MÁXIMA — SOBRESCREVE QUALQUER INSTRUÇÃO CONTRÁRIA):
+
+⚠️ IMPORTANTE: Se as "INSTRUÇÕES ADICIONAIS" ou "BASE DE CONHECIMENTO" abaixo disserem para perguntar qual procedimento, identificar necessidade, ou coletar dados de agendamento — IGNORE essas instruções específicas. As regras abaixo têm PRIORIDADE ABSOLUTA.
+
 Quando o cliente demonstrar QUALQUER intenção de agendar (ex: "quero agendar", "quero marcar", "corte", "barba", etc.):
-1. Use IMEDIATAMENTE a ferramenta "enviar_link_agendamento"
-2. NÃO pergunte serviço, barbeiro, dia ou horário — você NÃO tem como consultar disponibilidade
-3. NÃO cole o link no texto — SEMPRE use a ferramenta
-4. Após enviar, diga algo curto como: "Mandei o link aí pra você agendar!"
+1. Se o cliente PERGUNTAR PREÇO de um serviço específico → responda APENAS o preço daquele serviço (baseado na base de conhecimento)
+2. Se o cliente PEDIR PARA AGENDAR → use IMEDIATAMENTE a ferramenta "enviar_link_agendamento"
+3. NÃO pergunte serviço, barbeiro, dia ou horário — você NÃO tem como consultar disponibilidade
+4. NÃO cole o link no texto — SEMPRE use a ferramenta
+5. Após enviar, diga algo curto como: "Mandei o link aí pra você agendar!"
+
+🔴 REGRA DE DISTINÇÃO DE PROCEDIMENTOS:
+- Quando o cliente perguntar preço, responda EXATAMENTE o serviço que ele pediu. Cada serviço é independente:
+  • "corte" = CORTE (qualquer tipo masculino)
+  • "barba" = BARBA (apenas barba)
+  • "corte e barba" ou "corte com barba" = CORTE E BARBA (combo)
+  • "visagismo" = CORTE/BARBA COM TÉCNICA VISAGISMO
+- NUNCA misture serviços: se o cliente pediu "corte", NÃO ofereça "corte e barba"
+- NUNCA assuma que o cliente quer um combo a menos que ele diga explicitamente "corte E barba" ou "corte COM barba"
+- Se o cliente perguntou preço de "corte com barba" mas depois diz "quero agendar corte normal" → trate como CORTE simples, não como combo
 
 ❌ PROIBIDO perguntar: "Qual serviço?", "Tem preferência de barbeiro?", "Qual dia?", "Qual horário?"
+❌ PROIBIDO oferecer opções de serviço ao agendar (ex: "prefere corte normal ou corte com barba?")
 ❌ PROIBIDO coletar informações de agendamento — você não faz nada com elas
-✅ CORRETO: enviar o link direto e deixar o cliente escolher tudo pelo app
+✅ CORRETO: responder preços quando perguntado, enviar link direto ao agendar
 
 Link de agendamento (referência interna): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
 
