@@ -79,7 +79,7 @@ function KanbanColumnComponent({
 
 // ===================== LEAD CARD (DRAGGABLE) =====================
 
-function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[] }) {
+function LeadCard({ lead, lastMessage, overlay, flagColumns, onToggleFlag }: { lead: CrmLead; lastMessage?: string; overlay?: boolean; flagColumns?: KanbanColumn[]; onToggleFlag?: (phoneNumber: string, flagLabelId: string) => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead.id,
     data: lead,
@@ -88,18 +88,25 @@ function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; 
   const activeFlags = (flagColumns || []).filter((fc) =>
     lead.flag_labels?.includes(fc.label_id)
   );
+  const inactiveFlags = (flagColumns || []).filter((fc) =>
+    !lead.flag_labels?.includes(fc.label_id)
+  );
 
   return (
     <div
       ref={overlay ? undefined : setNodeRef}
-      {...(overlay ? {} : listeners)}
-      {...(overlay ? {} : attributes)}
-      className={`glass-card p-3 space-y-2 cursor-grab active:cursor-grabbing transition-shadow ${
+      className={`glass-card p-3 space-y-2 transition-shadow ${
         isDragging && !overlay ? "opacity-30" : ""
       } ${overlay ? "shadow-xl ring-2 ring-primary/30 rotate-2" : "hover:shadow-md"}`}
     >
       <div className="flex items-center gap-2">
-        <GripVertical className="w-3 h-3 text-muted-foreground shrink-0" />
+        <div
+          {...(overlay ? {} : listeners)}
+          {...(overlay ? {} : attributes)}
+          className="cursor-grab active:cursor-grabbing shrink-0"
+        >
+          <GripVertical className="w-3 h-3 text-muted-foreground" />
+        </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate">
             {lead.name || lead.phone_number}
@@ -116,16 +123,30 @@ function LeadCard({ lead, lastMessage, overlay, flagColumns }: { lead: CrmLead; 
           {timeAgo(lead.updated_at)}
         </span>
       </div>
-      {activeFlags.length > 0 && (
+      {(flagColumns || []).length > 0 && (
         <div className="flex flex-wrap gap-1">
           {activeFlags.map((flag) => (
             <Badge
               key={flag.label_id}
               variant="outline"
-              className="text-[9px] px-1.5 h-4 border-opacity-60"
-              style={{ borderColor: flag.color, color: flag.color }}
+              className="text-[9px] px-1.5 h-4 cursor-pointer hover:opacity-70 transition-opacity"
+              style={{ borderColor: flag.color, color: flag.color, backgroundColor: `${flag.color}15` }}
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.(lead.phone_number, flag.label_id); }}
+              title={`Remover ${flag.name}`}
             >
-              {flag.name}
+              {flag.name} ✕
+            </Badge>
+          ))}
+          {inactiveFlags.map((flag) => (
+            <Badge
+              key={flag.label_id}
+              variant="outline"
+              className="text-[9px] px-1.5 h-4 cursor-pointer opacity-30 hover:opacity-60 transition-opacity"
+              style={{ borderColor: flag.color, color: flag.color }}
+              onClick={(e) => { e.stopPropagation(); onToggleFlag?.(lead.phone_number, flag.label_id); }}
+              title={`Adicionar ${flag.name}`}
+            >
+              + {flag.name}
             </Badge>
           ))}
         </div>
