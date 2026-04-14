@@ -664,10 +664,23 @@ Deno.serve(async (req) => {
       // Get current CRM lead
       const { data: existingLead } = await supabase
         .from("crm_leads")
-        .select("id, label_id, flag_labels")
+        .select("id, label_id, flag_labels, updated_at")
         .eq("tenant_id", syncTenant.id)
         .eq("phone_number", chatPhone)
         .maybeSingle();
+
+      // Anti-feedback-loop: if lead was updated in the last 10 seconds, skip
+      // This prevents our own label changes (from panel/move-crm-lead) from being overwritten
+      if (existingLead?.updated_at) {
+        const lastUpdate = new Date(existingLead.updated_at).getTime();
+        const now = Date.now();
+        if (now - lastUpdate < 10000) {
+          console.log(`[LabelSync] Skipping ${chatPhone} — lead updated ${now - lastUpdate}ms ago (anti-loop)`);
+          return new Response(JSON.stringify({ status: "anti_loop_skip" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
 
       const currentFunnelLabel = existingLead?.label_id || null;
       const currentFlags: string[] = existingLead?.flag_labels || [];
