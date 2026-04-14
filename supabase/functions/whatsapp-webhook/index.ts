@@ -1840,7 +1840,7 @@ async function callAIAgent(
       });
     }
 
-    const roundBody: any = { model: "openai/gpt-5-mini", messages };
+    const roundBody: any = { model: modelUsed, messages };
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
