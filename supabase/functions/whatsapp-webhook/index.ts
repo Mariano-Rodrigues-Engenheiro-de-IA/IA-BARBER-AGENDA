@@ -464,7 +464,7 @@ Deno.serve(async (req) => {
 
       // ===== AUTO-REGISTER CLIENT (Trinks & One Beleza) =====
       if (provider === "trinks" || provider === "onebeleza") {
-        await autoRegisterClient(tenant, phoneNumber, provider);
+        await autoRegisterClient(tenant, phoneNumber, provider, senderName);
       }
 
       // Provider-specific direct handlers
@@ -822,7 +822,7 @@ Deno.serve(async (req) => {
 
 // ===================== AUTO-REGISTER CLIENT =====================
 
-async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string): Promise<void> {
+async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string, senderName?: string): Promise<void> {
   try {
     if (provider === "trinks") {
       if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return;
