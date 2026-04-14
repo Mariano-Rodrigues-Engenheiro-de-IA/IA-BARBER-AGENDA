@@ -67,7 +67,7 @@ function KanbanColumnComponent({
       {/* Cards */}
       <div className="flex-1 p-2 space-y-2 min-h-[100px] overflow-y-auto max-h-[calc(100vh-280px)]">
         {leads.map((lead) => (
-          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} />
+          <LeadCard key={lead.id} lead={lead} lastMessage={lastMessages[lead.phone_number]} flagColumns={flagColumns} onToggleFlag={onToggleFlag} />
         ))}
         {leads.length === 0 && (
           <div className="text-center text-xs text-muted-foreground py-8">
