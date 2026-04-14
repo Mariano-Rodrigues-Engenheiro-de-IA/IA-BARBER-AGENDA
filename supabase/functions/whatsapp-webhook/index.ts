@@ -151,6 +151,28 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ===== IA OFF CHECK =====
+      // If contact has "IA OFF" flag label in CRM, skip AI processing entirely
+      {
+        const { data: leadData } = await supabase
+          .from("crm_leads")
+          .select("flag_labels")
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber)
+          .limit(1);
+        
+        const flagLabels = leadData?.[0]?.flag_labels || [];
+        // Check flag_labels for any label containing "ia off" (case-insensitive)
+        const hasIaOff = flagLabels.some((f: string) => /ia\s*off/i.test(f));
+        
+        if (hasIaOff) {
+          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
+          return new Response(JSON.stringify({ status: "ia_off" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
       // ❌ = reset memory for this user
       if (messageContent.trim() === "❌") {
         const { error: delError } = await supabase
