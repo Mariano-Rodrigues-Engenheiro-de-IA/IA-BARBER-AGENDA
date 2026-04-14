@@ -459,7 +459,7 @@ Deno.serve(async (req) => {
         .eq("phone_number", phoneNumber)
         .or("role.eq.assistant,processed.eq.true")
         .order("created_at", { ascending: false })
-        .limit(60);
+        .limit(25);
       const history = (historyRaw || []).reverse();
 
       // ===== AUTO-REGISTER CLIENT (Trinks & One Beleza) =====
@@ -1693,7 +1693,7 @@ async function callAIAgent(
   const logErrors: string[] = [];
   let sessionBlocked = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
-  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "openai/gpt-5-mini";
+  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "google/gemini-2.5-flash";
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
 
@@ -1824,7 +1824,7 @@ async function callAIAgent(
   // Track tools already executed in this conversation to prevent duplicates across messages
   const executedToolsThisSession = new Set<string>(sessionState.executedToolNames || []);
 
-  while (assistantMessage?.tool_calls && rounds < 8) {
+  while (assistantMessage?.tool_calls && rounds < 5) {
     rounds++;
     messages.push(assistantMessage);
 
