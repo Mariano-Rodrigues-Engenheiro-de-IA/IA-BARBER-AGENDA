@@ -16,9 +16,9 @@ Deno.serve(async (req) => {
   );
 
   try {
-    const { leadId, tenantId, phoneNumber, toLabelId, toLabelName } = await req.json();
+    const { leadId, tenantId, phoneNumber, toLabelId, toLabelName, toggleFlag } = await req.json();
 
-    if (!leadId || !tenantId || !phoneNumber || !toLabelId) {
+    if (!tenantId || !phoneNumber) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -44,6 +44,63 @@ Deno.serve(async (req) => {
 
     if (!uazapiUrl || !uazapiToken) {
       return new Response(JSON.stringify({ error: "UAZAPI not configured" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ===== FLAG TOGGLE MODE =====
+    if (toggleFlag) {
+      const flagLabelId = String(toggleFlag);
+      
+      // Get existing lead
+      const { data: lead } = await supabase
+        .from("crm_leads")
+        .select("id, flag_labels")
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", phoneNumber)
+        .maybeSingle();
+
+      const currentFlags: string[] = lead?.flag_labels || [];
+      const hasFlag = currentFlags.includes(flagLabelId);
+      const newFlags = hasFlag
+        ? currentFlags.filter((f: string) => f !== flagLabelId)
+        : [...currentFlags, flagLabelId];
+
+      // Update or create lead in DB
+      if (lead) {
+        await supabase.from("crm_leads")
+          .update({ flag_labels: newFlags, updated_at: new Date().toISOString() })
+          .eq("id", lead.id);
+      } else {
+        await supabase.from("crm_leads").insert({
+          tenant_id: tenantId,
+          phone_number: phoneNumber,
+          label_id: "__none__",
+          flag_labels: newFlags,
+        });
+      }
+
+      // Sync to WhatsApp: add or remove label
+      const labelBody = hasFlag
+        ? { number: phoneNumber, remove_labelid: flagLabelId }
+        : { number: phoneNumber, add_labelid: flagLabelId };
+
+      const uazRes = await fetch(`${uazapiUrl}/chat/labels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+        body: JSON.stringify(labelBody),
+      });
+      console.log(`Flag toggle ${hasFlag ? "REMOVE" : "ADD"} ${flagLabelId} for ${phoneNumber}: ${uazRes.status}`);
+
+      return new Response(JSON.stringify({ success: true, action: hasFlag ? "removed" : "added", flagLabelId }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ===== FUNNEL MOVE MODE =====
+    if (!leadId || !toLabelId) {
+      return new Response(JSON.stringify({ error: "Missing leadId or toLabelId for funnel move" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
