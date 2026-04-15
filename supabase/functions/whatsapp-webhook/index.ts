@@ -1785,6 +1785,7 @@ async function callAIAgent(
   const requestBody: any = {
     model: modelUsed,
     messages,
+    max_tokens: 4096,
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
@@ -1824,7 +1825,7 @@ async function callAIAgent(
   // Track tools already executed in this conversation to prevent duplicates across messages
   const executedToolsThisSession = new Set<string>(sessionState.executedToolNames || []);
 
-  while (assistantMessage?.tool_calls && rounds < 5) {
+  while (assistantMessage?.tool_calls && rounds < 8) {
     rounds++;
     messages.push(assistantMessage);
 
@@ -2160,7 +2161,7 @@ async function callAIAgent(
       });
     }
 
-    const roundBody: any = { model: modelUsed, messages };
+    const roundBody: any = { model: modelUsed, messages, max_tokens: 4096 };
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
@@ -3277,6 +3278,11 @@ AGUARDE A RESPOSTA.
 
 ✅ Confirmações: "sim", "ok", "pode", "isso", 👍, etc → PASSO 4
 → SE MUDOU ALGO → atualize e volte ao PASSO 3
+
+🚨 REGRA CRÍTICA DE CONFIRMAÇÃO:
+Quando o cliente confirmar ("sim", "ok", "pode", etc.) após você ter apresentado a confirmação (PASSO 3), VÁ DIRETO para criar_agendamento.
+NÃO busque serviços, profissionais ou horários novamente — você JÁ TEM todos os IDs na conversa.
+Use os IDs que já obteve nas mensagens anteriores. Cada ferramenta de busca executada desnecessariamente GASTA uma rodada e pode impedir o agendamento.
 
 ### PASSO 4 — EXECUTAR AGENDAR
 
