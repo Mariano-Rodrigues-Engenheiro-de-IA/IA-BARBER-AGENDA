@@ -44,7 +44,6 @@ Deno.serve(async (req) => {
       const fromMe = payload.fromMe === true ||
         msg.fromMe === true ||
         msg.key?.fromMe === true ||
-        payload.chat?.lastMessage_fromMe === true ||
         (payload.sender && payload.owner && payload.sender === payload.owner);
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
 
