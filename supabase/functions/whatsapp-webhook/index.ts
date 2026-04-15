@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
       if (fromMe) {
         if (messageContent) {
           // Find tenant to store the message
-          const { data: tenants: tenantsForStore } = await supabase
+          const { data: tenantsForStore } = await supabase
             .from("tenants")
             .select("id, whatsapp_number")
             .eq("status", "active");
