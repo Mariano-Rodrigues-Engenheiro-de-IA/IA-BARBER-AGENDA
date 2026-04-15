@@ -1785,7 +1785,7 @@ async function callAIAgent(
   const requestBody: any = {
     model: modelUsed,
     messages,
-    max_tokens: 4096,
+    max_completion_tokens: 4096,
   };
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
@@ -2161,7 +2161,7 @@ async function callAIAgent(
       });
     }
 
-    const roundBody: any = { model: modelUsed, messages, max_tokens: 4096 };
+    const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
