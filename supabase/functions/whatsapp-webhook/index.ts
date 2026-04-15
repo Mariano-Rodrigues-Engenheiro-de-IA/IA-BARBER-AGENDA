@@ -58,8 +58,49 @@ Deno.serve(async (req) => {
         "content:", messageContent?.slice(0, 100)
       );
 
-      if (fromMe || !phoneNumber || isGroupMessage) {
+      if (isGroupMessage || !phoneNumber) {
         return new Response(JSON.stringify({ status: "skipped" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Store owner messages in chat history for context, then skip AI processing
+      if (fromMe) {
+        if (messageContent) {
+          // Find tenant to store the message
+          const { data: tenantsForStore } = await supabase
+            .from("tenants")
+            .select("id, whatsapp_number")
+            .eq("status", "active");
+
+          const ownerNumStore = String(payload.chat?.owner || payload.owner || payload.to || "").replace(/\D/g, "");
+          const tenantForStore = (tenantsForStore || []).find((t: any) => {
+            if (!t.whatsapp_number) return false;
+            const n = t.whatsapp_number.replace(/\D/g, "");
+            return ownerNumStore.includes(n) || n.includes(ownerNumStore);
+          });
+
+          if (tenantForStore) {
+            const storeMessageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
+            // Check for duplicate
+            const { data: existingMsg } = storeMessageId
+              ? await supabase.from("chat_messages").select("id").eq("message_id", storeMessageId).maybeSingle()
+              : { data: null };
+
+            if (!existingMsg) {
+              await supabase.from("chat_messages").insert({
+                tenant_id: tenantForStore.id,
+                phone_number: phoneNumber,
+                role: "assistant",
+                content: messageContent,
+                message_id: storeMessageId || null,
+                processed: true,
+              });
+              console.log(`Stored owner message for context: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+            }
+          }
+        }
+        return new Response(JSON.stringify({ status: "skipped_fromMe_stored" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
