@@ -1733,9 +1733,20 @@ async function callAIAgent(
   const logErrors: string[] = [];
   let sessionBlocked = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
-  const modelUsed = hasAudio ? "google/gemini-2.5-flash" : "openai/gpt-5-mini";
+  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+  // Use direct OpenAI when key is configured (cheaper). Fallback to Lovable AI Gateway.
+  // Audio still uses Lovable AI Gateway because it requires Gemini (OpenAI direct doesn't accept audio inline the same way).
+  const useDirectOpenAI = !!OPENAI_API_KEY && !hasAudio;
+  const modelUsed = hasAudio
+    ? "google/gemini-2.5-flash"
+    : (useDirectOpenAI ? "gpt-5-mini" : "openai/gpt-5-mini");
+  const aiEndpoint = useDirectOpenAI
+    ? "https://api.openai.com/v1/chat/completions"
+    : "https://ai.gateway.lovable.dev/v1/chat/completions";
+  const aiAuthKey = useDirectOpenAI ? OPENAI_API_KEY! : LOVABLE_API_KEY;
+  if (!aiAuthKey) throw new Error("Neither OPENAI_API_KEY nor LOVABLE_API_KEY is configured");
+  console.log(`AI provider: ${useDirectOpenAI ? "OpenAI direct" : "Lovable AI Gateway"}, model: ${modelUsed}`);
 
   const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
   const messages: any[] = [
@@ -1834,10 +1845,10 @@ async function callAIAgent(
   const bodyStr = JSON.stringify(requestBody);
   console.log(`AI request: ${messages.length} messages, ${tools?.length || 0} tools, body size: ${bodyStr.length} chars`);
 
-  let response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  let response = await fetch(aiEndpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${aiAuthKey}`,
       "Content-Type": "application/json",
     },
     body: bodyStr,
@@ -2209,10 +2220,10 @@ async function callAIAgent(
     const roundBodyStr = JSON.stringify(roundBody);
     console.log(`AI request (round ${rounds}): ${messages.length} msgs, body size: ${roundBodyStr.length} chars`);
 
-    response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    response = await fetch(aiEndpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${aiAuthKey}`,
         "Content-Type": "application/json",
       },
       body: roundBodyStr,
