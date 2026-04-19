@@ -568,10 +568,16 @@ Deno.serve(async (req) => {
         const enabledConfigs = followUpConfigs.filter((fu: any) => fu.enabled);
         console.log(`[FollowUp] Configs: ${enabledConfigs.length} enabled of ${followUpConfigs.length} total`);
 
-        // Detect triggers from this interaction
-        const linkToolCalled = agentResult?.toolCalls?.some((tc: any) => 
+        // Detect triggers from this interaction.
+        // The "enviar_link_agendamento" tool was removed — for provider "none"
+        // we now infer "link sent" by checking if the booking_link appears in
+        // the AI's text response.
+        const aiResponseText = String(agentResult?.aiResponse || "");
+        const bookingLinkInResponse = !!(tenant.booking_link && aiResponseText.includes(tenant.booking_link));
+        const legacyLinkToolCalled = agentResult?.toolCalls?.some((tc: any) =>
           tc.name === "enviar_link_agendamento" && !tc.blocked
         ) || false;
+        const linkToolCalled = bookingLinkInResponse || legacyLinkToolCalled;
 
         for (const fuConfig of enabledConfigs) {
           let shouldTrigger = false;
@@ -3183,6 +3189,21 @@ Outras proibições:
 - Enviar duas mensagens seguidas com o mesmo conteúdo
 - Repetir, transcrever ou citar entre aspas o que o cliente disse em áudio
 
+------------------------------------------
+
+## 🖼️ REGRA — IMAGENS ENVIADAS PELO CLIENTE
+
+Quando o cliente envia uma imagem, você a enxerga internamente. Use essa informação como CONTEXTO, mas siga estas regras com RIGOR:
+
+🔴 NUNCA descreva o que tem na imagem para o cliente (ex: "vi uma árvore rosa com flores e um lago"). O cliente já sabe o que mandou.
+🔴 NUNCA pergunte "quer que eu responda agradecendo?" ou "quer que eu envie nossos horários?". Apenas responda direto.
+🔴 NUNCA reaja emocionalmente à imagem ("que linda!", "muito bonita!") a menos que seja claramente relevante ao atendimento.
+
+✅ COMO AGIR:
+- Se a imagem for RELEVANTE ao agendamento (ex: foto de referência de corte/barba, comprovante de pagamento PIX, print de horário, foto do próprio cliente para visagismo) → comente brevemente APENAS o que importa pro atendimento e prossiga (ex: "Boa! Esse estilo a gente faz sim. Bora marcar?" ou "Recebi o comprovante, valeu! 👍").
+- Se a imagem for ALEATÓRIA (paisagem, meme, foto de animal, figurinha, imagem decorativa, etc.) → IGNORE completamente o conteúdo visual e siga o atendimento normal conforme o prompt e a última intenção do cliente. Se não houver intenção pendente, responda algo curto e neutro como "Recebi! Posso te ajudar com algo? 😊" e pare por aí.
+- NUNCA descreva a imagem em detalhes, NUNCA enumere o que viu, NUNCA pergunte qual reação o cliente quer.
+
 ### O QUE SEMPRE FAZER
 - Usar "valor" ao invés de "custa"
 - Buscar o cliente silenciosamente na primeira interação
@@ -3588,10 +3609,10 @@ ${bookingLink ? `🚨 REGRA CRÍTICA — AGENDAMENTO (PRIORIDADE MÁXIMA — SOB
 
 Quando o cliente demonstrar QUALQUER intenção de agendar (ex: "quero agendar", "quero marcar", "corte", "barba", etc.):
 1. Se o cliente PERGUNTAR PREÇO de um serviço específico → responda APENAS o preço daquele serviço (baseado na base de conhecimento)
-2. Se o cliente PEDIR PARA AGENDAR → use IMEDIATAMENTE a ferramenta "enviar_link_agendamento"
+2. Se o cliente PEDIR PARA AGENDAR → cole o link de agendamento DIRETAMENTE no texto da resposta (link exato abaixo) e diga algo curto como "É só clicar no link aí pra escolher o horário 👇"
 3. NÃO pergunte serviço, barbeiro, dia ou horário — você NÃO tem como consultar disponibilidade
-4. NÃO cole o link no texto — SEMPRE use a ferramenta
-5. Após enviar, diga algo curto como: "Mandei o link aí pra você agendar!"
+4. NÃO use NENHUMA ferramenta para enviar o link — você NÃO tem ferramenta de agendamento. Cole o link no texto, sempre.
+5. NUNCA diga "mandei o link" sem que o link esteja literalmente escrito na sua mensagem.
 
 🔴 REGRA DE DISTINÇÃO DE PROCEDIMENTOS:
 - Quando o cliente perguntar preço, responda EXATAMENTE o serviço que ele pediu. Cada serviço é independente:
@@ -3606,20 +3627,21 @@ Quando o cliente demonstrar QUALQUER intenção de agendar (ex: "quero agendar",
 ❌ PROIBIDO perguntar: "Qual serviço?", "Tem preferência de barbeiro?", "Qual dia?", "Qual horário?"
 ❌ PROIBIDO oferecer opções de serviço ao agendar (ex: "prefere corte normal ou corte com barba?")
 ❌ PROIBIDO coletar informações de agendamento — você não faz nada com elas
-✅ CORRETO: responder preços quando perguntado, enviar link direto ao agendar
+❌ PROIBIDO afirmar que enviou o link sem que o link esteja escrito na própria mensagem
+✅ CORRETO: responder preços quando perguntado, colar o link no texto ao agendar
 
-Link de agendamento (referência interna): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
+LINK DE AGENDAMENTO (cole EXATAMENTE assim no texto quando o cliente pedir para agendar): ${bookingLink}` : "Quando o cliente quiser agendar, oriente-o a entrar em contato diretamente com o estabelecimento."}
 
 Você pode:
 - Responder dúvidas sobre serviços, preços e horários de funcionamento (baseado na base de conhecimento)
 - Fornecer informações gerais do estabelecimento
-- Enviar o link de agendamento (SEMPRE via ferramenta enviar_link_agendamento, NUNCA no texto)
+- Enviar o link de agendamento colando-o DIRETAMENTE no texto da resposta
 
 Você NÃO pode:
 - Criar, cancelar ou editar agendamentos
 - Consultar disponibilidade de horários, profissionais ou serviços em tempo real
 - Perguntar detalhes de agendamento (serviço, barbeiro, dia, horário) — não tem utilidade
-- Escrever o link de agendamento diretamente no texto`;
+- Usar qualquer ferramenta — você não tem ferramentas disponíveis neste estabelecimento`;
 }
 
 // ===================== TRINKS TOOLS =====================
@@ -3920,19 +3942,10 @@ function buildOneBelezaTools(tenant: any) {
 
 // ===================== NONE TOOLS =====================
 
-function buildNoneTools(tenant: any) {
-  if (!tenant.booking_link) return undefined;
-
-  return [
-    {
-      type: "function",
-      function: {
-        name: "enviar_link_agendamento",
-        description: "OBRIGATÓRIO: Use esta ferramenta SEMPRE que o cliente quiser agendar. Ela envia o link de agendamento. NUNCA escreva o link no texto manualmente — use ESTA ferramenta.",
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    },
-  ];
+function buildNoneTools(_tenant: any) {
+  // Provider "none" não usa ferramentas. O link de agendamento é enviado
+  // diretamente no texto da resposta, conforme regra do system prompt.
+  return undefined;
 }
 
 // ===================== TRINKS TOOL EXECUTION =====================
@@ -4581,15 +4594,11 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
 
 // ===================== NONE TOOL EXECUTION =====================
 
-async function executeNoneTool(tenant: any, toolCall: any): Promise<any> {
+async function executeNoneTool(_tenant: any, toolCall: any): Promise<any> {
   const funcName = toolCall.function.name;
-
-  if (funcName === "enviar_link_agendamento") {
-    return {
-      link: tenant.booking_link || "Link não configurado",
-      message: `Link de agendamento: ${tenant.booking_link || "não configurado"}`,
-    };
-  }
-
-  return { error: `Unknown tool: ${funcName}` };
+  // Provider "none" não expõe ferramentas. Se a IA tentar chamar algo,
+  // devolvemos um erro instruindo-a a responder direto no texto.
+  return {
+    error: `A ferramenta "${funcName}" não existe neste estabelecimento. Responda diretamente no texto, sem chamar ferramentas.`,
+  };
 }
