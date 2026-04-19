@@ -572,7 +572,7 @@ Deno.serve(async (req) => {
         // The "enviar_link_agendamento" tool was removed — for provider "none"
         // we now infer "link sent" by checking if the booking_link appears in
         // the AI's text response.
-        const aiResponseText = String(agentResult?.aiResponse || "");
+        const aiResponseText = String(agentResult?.response || aiResponse || "");
         const bookingLinkInResponse = !!(tenant.booking_link && aiResponseText.includes(tenant.booking_link));
         const legacyLinkToolCalled = agentResult?.toolCalls?.some((tc: any) =>
           tc.name === "enviar_link_agendamento" && !tc.blocked
