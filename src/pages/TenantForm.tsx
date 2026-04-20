@@ -79,6 +79,10 @@ interface CustomToolConfig {
   human_number?: string;
   label_id?: string;
   silent_mode?: boolean;
+  pix_type?: "CPF" | "CNPJ" | "PHONE" | "EMAIL" | "EVP";
+  pix_key?: string;
+  pix_name?: string;
+  merchant_name?: string;
 }
 
 interface CustomTool {
@@ -86,7 +90,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label" | "remove_label";
+  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label" | "remove_label" | "send_pix";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -104,6 +108,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   send_combo: "Combo (Múltiplas Mídias)",
   add_label: "Adicionar Etiqueta",
   remove_label: "Remover Etiqueta",
+  send_pix: "Botão PIX (WhatsApp)",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
