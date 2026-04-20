@@ -114,11 +114,11 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
   {
     name: "enviar_pix",
-    display_name: "Enviar PIX",
-    description: "Envia a chave PIX do estabelecimento",
-    type: "send_text",
-    config: { text: "Chave PIX: (preencha aqui)" },
-    prompt_instruction: "Use quando o cliente perguntar sobre pagamento via PIX ou pedir a chave PIX.",
+    display_name: "Enviar Botão PIX",
+    description: "Envia o botão nativo de pagamento PIX do WhatsApp",
+    type: "send_pix",
+    config: { pix_type: "EVP", pix_key: "", pix_name: "", merchant_name: "" },
+    prompt_instruction: "Use quando o cliente perguntar sobre pagamento via PIX ou pedir a chave PIX. Envia um botão nativo do WhatsApp para copiar a chave.",
     enabled: true,
   },
   {
