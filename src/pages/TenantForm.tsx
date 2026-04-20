@@ -562,6 +562,52 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
       );
     case "send_combo":
       return <ComboConfigFields items={config.combo_items || []} onChange={(items) => onChange({ ...config, combo_items: items })} tenantId={tenantId} />;
+    case "send_pix":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Tipo da chave PIX</Label>
+            <Select
+              value={config.pix_type || "EVP"}
+              onValueChange={(v) => onChange({ ...config, pix_type: v as CustomToolConfig["pix_type"] })}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CPF">CPF</SelectItem>
+                <SelectItem value="CNPJ">CNPJ</SelectItem>
+                <SelectItem value="PHONE">Telefone</SelectItem>
+                <SelectItem value="EMAIL">E-mail</SelectItem>
+                <SelectItem value="EVP">Chave Aleatória (EVP)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Chave PIX</Label>
+            <Input
+              value={config.pix_key || ""}
+              onChange={(e) => onChange({ ...config, pix_key: e.target.value })}
+              placeholder="Ex: 12345678900, email@exemplo.com, +5511999999999"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Nome do recebedor (opcional)</Label>
+            <Input
+              value={config.pix_name || ""}
+              onChange={(e) => onChange({ ...config, pix_name: e.target.value })}
+              placeholder="João da Silva"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Nome do estabelecimento no botão (opcional)</Label>
+            <Input
+              value={config.merchant_name || ""}
+              onChange={(e) => onChange({ ...config, merchant_name: e.target.value })}
+              placeholder="Barbearia Exemplo"
+            />
+            <p className="text-xs text-muted-foreground">Texto exibido no botão. Padrão: "Pix"</p>
+          </div>
+        </div>
+      );
     default:
       return null;
   }
