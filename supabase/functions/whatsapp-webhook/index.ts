@@ -499,7 +499,7 @@ Deno.serve(async (req) => {
         .eq("phone_number", phoneNumber)
         .or("role.eq.assistant,processed.eq.true")
         .order("created_at", { ascending: false })
-        .limit(25);
+        .limit(50);
       const history = (historyRaw || []).reverse();
 
       // ===== AUTO-REGISTER CLIENT (Trinks & One Beleza) =====
@@ -1882,7 +1882,11 @@ async function callAIAgent(
   // Track tools already executed in this conversation to prevent duplicates across messages
   const executedToolsThisSession = new Set<string>(sessionState.executedToolNames || []);
 
-  while (assistantMessage?.tool_calls && rounds < 8) {
+  // Provider "none" only uses custom tools (no scheduling flow) — no follow-up rounds needed.
+  // For trinks/onebeleza we keep up to 8 rounds for the multi-step scheduling flow.
+  const maxRounds = provider === "none" ? 1 : 8;
+
+  while (assistantMessage?.tool_calls && rounds < maxRounds) {
     rounds++;
     messages.push(assistantMessage);
 
