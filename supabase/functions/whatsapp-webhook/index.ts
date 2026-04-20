@@ -2744,6 +2744,29 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         return { success: true, message: `Localização enviada com sucesso`, type: toolType };
       }
 
+      case "send_pix": {
+        const pixType = String(config.pix_type || "").toUpperCase();
+        const pixKey = String(config.pix_key || "").trim();
+        const validTypes = ["CPF", "CNPJ", "PHONE", "EMAIL", "EVP"];
+        if (!pixKey) return { error: "Chave PIX não configurada." };
+        if (!validTypes.includes(pixType)) return { error: `Tipo de chave PIX inválido. Use: ${validTypes.join(", ")}` };
+        const pixPayload: any = { number: phoneNumber, pixType, pixKey };
+        if (config.pix_name) pixPayload.pixName = config.pix_name;
+        if (config.merchant_name) pixPayload.merchantName = config.merchant_name;
+        const res = await fetch(`${uazapiUrl}/send/pix-button`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify(pixPayload),
+        });
+        const data = await readResponsePayload(res);
+        console.log(`[CustomTool] send_pix result:`, JSON.stringify(data).slice(0, 200));
+        const requestError = getCustomToolRequestError(res, data);
+        if (requestError) {
+          return { error: `Falha ao enviar botão PIX: ${requestError}`, status: res.status, details: data };
+        }
+        return { success: true, message: `Botão PIX enviado com sucesso`, type: toolType };
+      }
+
       case "send_combo": {
         const comboItems = config.combo_items;
         if (!Array.isArray(comboItems) || comboItems.length === 0) {
