@@ -1138,6 +1138,24 @@ export default function TenantFormPage() {
       toast.error("Nome e slug são obrigatórios");
       return;
     }
+    // Validate: no duplicate internal names in custom tools
+    const enabledTools = customTools.filter((t) => t.enabled !== false);
+    const nameCounts = new Map<string, string[]>();
+    for (const t of enabledTools) {
+      const key = (t.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const arr = nameCounts.get(key) || [];
+      arr.push(t.display_name || t.name);
+      nameCounts.set(key, arr);
+    }
+    const duplicates = Array.from(nameCounts.entries()).filter(([, arr]) => arr.length > 1);
+    if (duplicates.length > 0) {
+      const msg = duplicates
+        .map(([name, arr]) => `"${name}" usado por: ${arr.join(", ")}`)
+        .join(" | ");
+      toast.error(`Nomes internos de ferramentas duplicados — cada ferramenta precisa de um nome único. ${msg}`);
+      return;
+    }
     try {
       // Merge custom_tools into agent_settings
       const currentSettings = (existing as any)?.agent_settings ?? {};
