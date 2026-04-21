@@ -2280,20 +2280,31 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
   // Inject custom tools from tenant.agent_settings
   const customTools = getEnabledCustomTools(tenant);
   if (customTools.length > 0) {
-    const customToolDefs = customTools.map((ct: any) => ({
-      type: "function",
-      function: {
-        name: ct.name,
-        description: ct.description || ct.display_name,
-        parameters: {
-          type: "object",
-          properties: ct.type === "escalate_human" ? {
-            motivo: { type: "string", description: "Motivo para escalar para atendente humano" },
-          } : {},
-          required: [],
+    const customToolDefs = customTools.map((ct: any) => {
+      // Build a rich description so the model can pick the RIGHT tool when many similar
+      // tools exist (e.g. multiple etiquetas). The prompt_instruction holds the real
+      // "use when..." rule and is critical for tool selection by the LLM.
+      const baseDesc = ct.description || ct.display_name || ct.name;
+      const usageRule = (ct.prompt_instruction || "").trim();
+      const richDescription = usageRule
+        ? `${baseDesc}. QUANDO USAR: ${usageRule}`
+        : baseDesc;
+
+      return {
+        type: "function",
+        function: {
+          name: ct.name,
+          description: richDescription,
+          parameters: {
+            type: "object",
+            properties: ct.type === "escalate_human" ? {
+              motivo: { type: "string", description: "Motivo para escalar para atendente humano" },
+            } : {},
+            required: [],
+          },
         },
-      },
-    }));
+      };
+    });
     providerTools = [...(providerTools || []), ...customToolDefs];
   }
 
