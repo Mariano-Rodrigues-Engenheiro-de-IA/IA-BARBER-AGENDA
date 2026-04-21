@@ -661,6 +661,17 @@ function CustomToolsTab({
       name: editingTool.name || slugifyToolName(editingTool.display_name),
     };
 
+    // Block duplicate internal names — different tools must not share the same `name`
+    const conflict = tools.find(
+      (t) => t.id !== toolToSave.id && (t.name || "").trim().toLowerCase() === toolToSave.name.trim().toLowerCase()
+    );
+    if (conflict) {
+      toast.error(
+        `Já existe uma ferramenta com o nome interno "${toolToSave.name}" (${conflict.display_name}). Use um nome único.`
+      );
+      return;
+    }
+
     const existingIndex = tools.findIndex((t) => t.id === toolToSave.id);
     if (existingIndex >= 0) {
       const updated = [...tools];
@@ -1136,6 +1147,24 @@ export default function TenantFormPage() {
     e.preventDefault();
     if (!form.name.trim() || !form.slug.trim()) {
       toast.error("Nome e slug são obrigatórios");
+      return;
+    }
+    // Validate: no duplicate internal names in custom tools
+    const enabledTools = customTools.filter((t) => t.enabled !== false);
+    const nameCounts = new Map<string, string[]>();
+    for (const t of enabledTools) {
+      const key = (t.name || "").trim().toLowerCase();
+      if (!key) continue;
+      const arr = nameCounts.get(key) || [];
+      arr.push(t.display_name || t.name);
+      nameCounts.set(key, arr);
+    }
+    const duplicates = Array.from(nameCounts.entries()).filter(([, arr]) => arr.length > 1);
+    if (duplicates.length > 0) {
+      const msg = duplicates
+        .map(([name, arr]) => `"${name}" usado por: ${arr.join(", ")}`)
+        .join(" | ");
+      toast.error(`Nomes internos de ferramentas duplicados — cada ferramenta precisa de um nome único. ${msg}`);
       return;
     }
     try {
