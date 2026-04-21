@@ -661,6 +661,17 @@ function CustomToolsTab({
       name: editingTool.name || slugifyToolName(editingTool.display_name),
     };
 
+    // Block duplicate internal names — different tools must not share the same `name`
+    const conflict = tools.find(
+      (t) => t.id !== toolToSave.id && (t.name || "").trim().toLowerCase() === toolToSave.name.trim().toLowerCase()
+    );
+    if (conflict) {
+      toast.error(
+        `Já existe uma ferramenta com o nome interno "${toolToSave.name}" (${conflict.display_name}). Use um nome único.`
+      );
+      return;
+    }
+
     const existingIndex = tools.findIndex((t) => t.id === toolToSave.id);
     if (existingIndex >= 0) {
       const updated = [...tools];
