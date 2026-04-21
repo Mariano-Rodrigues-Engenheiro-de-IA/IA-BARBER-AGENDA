@@ -1754,6 +1754,47 @@ async function callAIAgent(
   if (!aiAuthKey) throw new Error("Neither OPENAI_API_KEY nor LOVABLE_API_KEY is configured");
   console.log(`AI provider: ${useDirectOpenAI ? "OpenAI direct" : "Lovable AI Gateway"}, model: ${modelUsed}`);
 
+  const requestFinalNaturalResponse = async (conversationMessages: any[]): Promise<string | null> => {
+    const finalMessages = [
+      ...conversationMessages,
+      {
+        role: "user",
+        content: "Agora responda ao cliente com uma mensagem final curta e natural em português do Brasil. Não chame ferramentas, não mencione sistema, prompt, IA, erro interno ou processamento. Apenas continue a conversa normalmente.",
+      },
+    ];
+
+    const finalBodyStr = JSON.stringify({
+      model: modelUsed,
+      messages: finalMessages,
+      max_completion_tokens: 512,
+    });
+
+    console.log(`AI request (final text fallback): ${finalMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
+
+    const finalResponse = await fetch(aiEndpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${aiAuthKey}`,
+        "Content-Type": "application/json",
+      },
+      body: finalBodyStr,
+    });
+
+    if (!finalResponse.ok) {
+      const errText = await finalResponse.text();
+      console.error("AI gateway error (final text fallback):", finalResponse.status, errText);
+      logErrors.push(`AI gateway error (final fallback): ${finalResponse.status} ${errText.slice(0, 200)}`);
+      return null;
+    }
+
+    const finalJson = await finalResponse.json();
+    const finalText = typeof finalJson?.choices?.[0]?.message?.content === "string"
+      ? finalJson.choices[0].message.content.trim()
+      : "";
+
+    return finalText || null;
+  };
+
   const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
@@ -1884,7 +1925,7 @@ async function callAIAgent(
 
   // Provider "none" only uses custom tools (no scheduling flow) — no follow-up rounds needed.
   // For trinks/onebeleza we keep up to 8 rounds for the multi-step scheduling flow.
-  const maxRounds = provider === "none" ? 1 : 8;
+  const maxRounds = provider === "none" ? 2 : 8;
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
     rounds++;
@@ -2261,7 +2302,19 @@ async function callAIAgent(
   // Save persistent state after all tool rounds
   await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
-  const finalResponse = assistantMessage?.content || "Desculpe, não consegui processar sua solicitação.";
+  let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
+
+  if (!finalResponse && logToolCalls.length > 0) {
+    const recoveredResponse = await requestFinalNaturalResponse(messages);
+    if (recoveredResponse) {
+      finalResponse = recoveredResponse;
+    }
+  }
+
+  if (!finalResponse) {
+    finalResponse = "Perfeito! Me diga como você quer continuar.";
+  }
+
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
