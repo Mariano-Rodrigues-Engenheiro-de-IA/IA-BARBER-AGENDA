@@ -2555,9 +2555,15 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
   const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
   const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
   const config = toolDef.config || {};
-  const toolType = toolDef.type;
+  const toolType = String(toolDef.type || "");
+  const normalizedToolType = toolType
+    .normalize("NFKC")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
-  console.log(`[CustomTool] Executing ${toolDef.name} (${toolType}) for ${phoneNumber}`);
+  console.log(`[CustomTool] Executing ${toolDef.name} (${toolType} -> ${normalizedToolType}) for ${phoneNumber}`);
 
   if (!uazapiUrl || !uazapiToken) {
     return { error: "Instância WhatsApp não configurada para este tenant." };
@@ -2568,7 +2574,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
   }
 
   try {
-    switch (toolType) {
+    switch (normalizedToolType) {
       case "send_text":
       case "send_link": {
         const text = toolType === "send_link" ? (config.url || "") : (config.text || "");
@@ -2832,7 +2838,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
       }
 
       default:
-        return { error: `Tipo de ferramenta desconhecido: ${toolType}` };
+        return { error: `Tipo de ferramenta desconhecido: ${toolType || "(vazio)"} (${normalizedToolType || "inválido"})` };
     }
   } catch (error) {
     console.error(`[CustomTool] Error executing ${toolDef.name}:`, error);
