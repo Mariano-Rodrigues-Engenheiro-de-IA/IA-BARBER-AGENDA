@@ -1902,6 +1902,8 @@ async function callAIAgent(
 
       // Block duplicate tool calls (same tool name) within this session
       // EXCEPT lookup tools that may need to run multiple times across the scheduling flow
+      // and EXCEPT custom tools of type "add_label" — the AI may need to update the lead's
+      // funnel label across multiple messages as the conversation progresses.
       const toolKey = toolCall.function.name;
       const allowRepeatedTools = new Set([
         "buscar_cliente", "cadastrar_cliente",
@@ -1911,7 +1913,11 @@ async function callAIAgent(
         "buscar_datas_disponiveis",
         "buscar_agendamentos_dia", "buscar_agendamento",
       ]);
-      if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey)) {
+      // Check if this is a custom tool of type "add_label" (always allow repeats)
+      const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
+      const isAddLabelTool = matchedCustomTool?.type === "add_label";
+
+      if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey) && !isAddLabelTool) {
         console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this conversation`);
         toolResult = {
           message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente sem chamar a ferramenta outra vez.`,
