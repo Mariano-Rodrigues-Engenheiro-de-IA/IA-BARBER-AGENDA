@@ -790,6 +790,25 @@ function CustomToolsTab({
                 />
               </div>
               <div className="space-y-2">
+                <Label>Nome interno (usado pela IA)</Label>
+                <Input
+                  value={editingTool.name}
+                  onChange={(e) =>
+                    setEditingTool({
+                      ...editingTool,
+                      name: e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9_]+/g, "_")
+                        .replace(/^_+|_+$/g, ""),
+                    })
+                  }
+                  placeholder="ex: enviar_pix, etiqueta_contato"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Identificador único usado pela IA. Use apenas letras minúsculas, números e _. Não pode repetir entre ferramentas.
+                </p>
+              </div>
+              <div className="space-y-2">
                 <Label>Descrição curta</Label>
                 <Input
                   value={editingTool.description}
