@@ -682,7 +682,7 @@ Deno.serve(async (req) => {
             "Accept": "application/json",
             "token": uazapiToken,
           },
-          body: JSON.stringify({ number: phoneNumber, text: part, delay: 3000 }),
+          body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
         });
         const sendData = await sendResult.json();
         console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
@@ -1759,11 +1759,16 @@ async function callAIAgent(
     // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
     // We do NOT inject any synthetic user message — that would lose context and make the AI
     // produce generic filler like "Me diga como você quer continuar".
-    const finalBodyStr = JSON.stringify({
+    const finalBodyPayload: any = {
       model: modelUsed,
       messages: conversationMessages,
       max_completion_tokens: 800,
-    });
+    };
+    // Minimize reasoning latency on gpt-5* models — natural reply doesn't need deep reasoning
+    if (modelUsed.includes("gpt-5")) {
+      finalBodyPayload.reasoning_effort = "minimal";
+    }
+    const finalBodyStr = JSON.stringify(finalBodyPayload);
 
     console.log(`AI request (final text fallback): ${finalMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
 
@@ -1881,6 +1886,10 @@ async function callAIAgent(
     messages,
     max_completion_tokens: 4096,
   };
+  // Minimize reasoning latency on gpt-5* models — saves 10-20s per round
+  if (modelUsed.includes("gpt-5")) {
+    requestBody.reasoning_effort = "minimal";
+  }
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
     requestBody.tool_choice = "auto";
@@ -2269,6 +2278,10 @@ async function callAIAgent(
     }
 
     const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };
+    // Minimize reasoning latency on gpt-5* models — saves 10-20s per round
+    if (modelUsed.includes("gpt-5")) {
+      roundBody.reasoning_effort = "minimal";
+    }
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
