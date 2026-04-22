@@ -2278,6 +2278,10 @@ async function callAIAgent(
     }
 
     const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };
+    // Minimize reasoning latency on gpt-5* models — saves 10-20s per round
+    if (modelUsed.includes("gpt-5")) {
+      roundBody.reasoning_effort = "minimal";
+    }
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
       roundBody.tool_choice = "auto";
