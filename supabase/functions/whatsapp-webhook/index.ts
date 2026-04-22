@@ -1759,11 +1759,16 @@ async function callAIAgent(
     // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
     // We do NOT inject any synthetic user message — that would lose context and make the AI
     // produce generic filler like "Me diga como você quer continuar".
-    const finalBodyStr = JSON.stringify({
+    const finalBodyPayload: any = {
       model: modelUsed,
       messages: conversationMessages,
       max_completion_tokens: 800,
-    });
+    };
+    // Minimize reasoning latency on gpt-5* models — natural reply doesn't need deep reasoning
+    if (modelUsed.includes("gpt-5")) {
+      finalBodyPayload.reasoning_effort = "minimal";
+    }
+    const finalBodyStr = JSON.stringify(finalBodyPayload);
 
     console.log(`AI request (final text fallback): ${finalMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
 
