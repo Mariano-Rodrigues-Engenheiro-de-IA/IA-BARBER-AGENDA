@@ -1766,7 +1766,7 @@ async function callAIAgent(
     };
     // Minimize reasoning latency on gpt-5* models — natural reply doesn't need deep reasoning
     if (modelUsed.includes("gpt-5")) {
-      finalBodyPayload.reasoning_effort = "minimal";
+      finalBodyPayload.reasoning_effort = "low";
     }
     const finalBodyStr = JSON.stringify(finalBodyPayload);
 
@@ -1888,7 +1888,7 @@ async function callAIAgent(
   };
   // Minimize reasoning latency on gpt-5* models — saves 10-20s per round
   if (modelUsed.includes("gpt-5")) {
-    requestBody.reasoning_effort = "minimal";
+    requestBody.reasoning_effort = "low";
   }
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
@@ -2280,7 +2280,7 @@ async function callAIAgent(
     const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };
     // Minimize reasoning latency on gpt-5* models — saves 10-20s per round
     if (modelUsed.includes("gpt-5")) {
-      roundBody.reasoning_effort = "minimal";
+      roundBody.reasoning_effort = "low";
     }
     if (tools && tools.length > 0) {
       roundBody.tools = tools;
