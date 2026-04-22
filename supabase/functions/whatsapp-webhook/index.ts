@@ -682,7 +682,7 @@ Deno.serve(async (req) => {
             "Accept": "application/json",
             "token": uazapiToken,
           },
-          body: JSON.stringify({ number: phoneNumber, text: part, delay: 3000 }),
+          body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
         });
         const sendData = await sendResult.json();
         console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
