@@ -1755,18 +1755,14 @@ async function callAIAgent(
   console.log(`AI provider: ${useDirectOpenAI ? "OpenAI direct" : "Lovable AI Gateway"}, model: ${modelUsed}`);
 
   const requestFinalNaturalResponse = async (conversationMessages: any[]): Promise<string | null> => {
-    const finalMessages = [
-      ...conversationMessages,
-      {
-        role: "user",
-        content: "Agora responda ao cliente com uma mensagem final curta e natural em português do Brasil. Não chame ferramentas, não mencione sistema, prompt, IA, erro interno ou processamento. Apenas continue a conversa normalmente.",
-      },
-    ];
-
+    // Re-issue the request WITHOUT tools so the model is forced to produce a natural text reply
+    // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
+    // We do NOT inject any synthetic user message — that would lose context and make the AI
+    // produce generic filler like "Me diga como você quer continuar".
     const finalBodyStr = JSON.stringify({
       model: modelUsed,
-      messages: finalMessages,
-      max_completion_tokens: 512,
+      messages: conversationMessages,
+      max_completion_tokens: 800,
     });
 
     console.log(`AI request (final text fallback): ${finalMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
@@ -1923,9 +1919,12 @@ async function callAIAgent(
   // Track tools already executed in this conversation to prevent duplicates across messages
   const executedToolsThisSession = new Set<string>(sessionState.executedToolNames || []);
 
-  // Provider "none" only uses custom tools (no scheduling flow) — no follow-up rounds needed.
+  // Provider "none" uses custom tools (labels, send_combo, send_text, etc.) which the AI may
+  // chain multiple times (e.g. update funnel label → send images → update label again → reply).
+  // We need enough rounds for the AI to: call N tools AND still have room to produce the final
+  // natural-language reply that continues the conversation. 6 rounds is a safe ceiling.
   // For trinks/onebeleza we keep up to 8 rounds for the multi-step scheduling flow.
-  const maxRounds = provider === "none" ? 2 : 8;
+  const maxRounds = provider === "none" ? 6 : 8;
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
     rounds++;
@@ -2312,7 +2311,9 @@ async function callAIAgent(
   }
 
   if (!finalResponse) {
-    finalResponse = "Perfeito! Me diga como você quer continuar.";
+    // Last-resort fallback: stay completely silent rather than send a generic line that
+    // breaks character. Returning empty string prevents the webhook from sending a message.
+    finalResponse = "";
   }
 
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
