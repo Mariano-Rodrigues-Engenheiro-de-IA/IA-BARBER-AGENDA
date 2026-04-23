@@ -2345,10 +2345,20 @@ async function callAIAgent(
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
 
-  if (!finalResponse && logToolCalls.length > 0) {
+  // Detect leaked reasoning/scratchpad (e.g., "Vou proceed. Need next user input.") and regenerate
+  if (finalResponse && isLeakedReasoningResponse(finalResponse)) {
+    console.warn(`[LeakDetected] Discarding leaked reasoning response: "${finalResponse.slice(0, 120)}"`);
+    logErrors.push(`Leaked reasoning detected and discarded: "${finalResponse.slice(0, 120)}"`);
+    finalResponse = "";
+  }
+
+  if (!finalResponse) {
     const recoveredResponse = await requestFinalNaturalResponse(messages);
-    if (recoveredResponse) {
+    if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
       finalResponse = recoveredResponse;
+    } else if (recoveredResponse) {
+      console.warn(`[LeakDetected] Recovery also leaked, discarding: "${recoveredResponse.slice(0, 120)}"`);
+      logErrors.push(`Recovery response also leaked: "${recoveredResponse.slice(0, 120)}"`);
     }
   }
 
