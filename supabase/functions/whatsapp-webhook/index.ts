@@ -1814,8 +1814,25 @@ async function callAIAgent(
       /\b(thinking|plan|step\s*\d|okay,\s*so|alright,\s*so)\b/i,
       /\bno\s+further\s+(action|response)\b/i,
       /\b(awaiting|pending)\s+(user|customer|client)\b/i,
+      // Portuguese meta-commentary leaks (model talking ABOUT the conversation instead of TO the user)
+      /\(\s*mensagem\s+duplicada/i,
+      /\(\s*duplicad[ao]\s*\)/i,
+      /\(\s*repetid[ao]/i,
+      /\(\s*sem\s+(resposta|altera|novidad|mudan)/i,
+      /\(\s*aguardando\s+(cliente|usu[aá]rio|resposta)/i,
+      /\(\s*mesma\s+mensagem/i,
+      /\(\s*continua\s+igual/i,
+      /\(\s*j[aá]\s+enviad[ao]/i,
+      /\(\s*nenhuma?\s+(altera|mudan|novidad|resposta)/i,
+      /\bmensagem\s+duplicada\s+acima\b/i,
     ];
     if (leakPatterns.some((re) => re.test(t))) return true;
+    // Whole response is just a parenthetical meta-note (e.g., "(Mensagem duplicada acima)")
+    if (/^\s*\([^)]{3,80}\)\s*$/.test(t)) {
+      const inner = t.replace(/^\s*\(|\)\s*$/g, "").toLowerCase();
+      const metaWords = /\b(duplicad|repetid|aguardand|mesma|continua|sem\s+(resposta|altera|novidad|mudan)|j[aá]\s+enviad|nenhuma?)\b/;
+      if (metaWords.test(inner)) return true;
+    }
     // Short responses without Portuguese signals that look like English are very likely leaks
     if (t.length < 120) {
       const hasPortugueseSignal = /[áàâãéêíóôõúüç]|\b(você|voce|olá|ola|obrigad|tudo bem|posso|quero|queria|gostaria|certo|claro|sim|não|nao|bom dia|boa tarde|boa noite|valeu|legal|beleza|agendar|horário|horario|marcar|atendiment|serviço|servico|preço|preco|profissional|barbeiro|salão|salao|gráfica|grafica|cliente|amanhã|amanha|hoje|próxim|proxim|fazem|fazemos|temos|fica|pode|posso|aqui|sim|nao|tem|sao|são|é|ja|já)\b/i.test(t);
@@ -3278,8 +3295,10 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): 
 ## 🌐 IDIOMA E FORMATO DA RESPOSTA (REGRA ABSOLUTA)
 - TODA resposta enviada ao cliente DEVE ser em PORTUGUÊS BRASILEIRO. NUNCA responda em inglês ou em qualquer outro idioma.
 - NUNCA escreva texto de raciocínio, planejamento ou notas internas no campo de resposta. Frases como "Vou proceed", "Need next user input", "Let me check", "I will now", "Thinking:", "Okay,", "Plan:", "Step 1" são PROIBIDAS.
+- 🚫 NUNCA escreva meta-comentários, observações de status ou notas entre parênteses sobre a própria conversa. Frases como "(Mensagem duplicada acima)", "(Sem resposta)", "(Repetido)", "(Aguardando cliente)", "(Sem alteração)", "(Continua igual)", "(Mesma mensagem)", "(Já enviado)", "(Sem novidades)" são ABSOLUTAMENTE PROIBIDAS. Se não tiver nada novo a dizer, NÃO ENVIE NADA — devolva uma string vazia.
+- NUNCA comente sobre mensagens anteriores, repetições ou estado da conversa. Apenas converse naturalmente como uma pessoa real no WhatsApp.
 - Sempre que você for responder ao cliente, escreva uma mensagem natural, curta e em português, como se fosse uma pessoa real conversando no WhatsApp.
-- Se você acabou de executar ferramentas (ex: enviar imagens, adicionar etiqueta), AINDA ASSIM você DEVE escrever uma mensagem natural em português ao cliente logo em seguida — nunca termine sem texto, nunca devolva texto telegráfico em inglês.
+- Se você acabou de executar ferramentas (ex: enviar imagens, adicionar etiqueta), AINDA ASSIM você DEVE escrever uma mensagem natural em português ao cliente logo em seguida — nunca termine sem texto, nunca devolva texto telegráfico em inglês, nunca devolva meta-comentário entre parênteses.
 
 ## 📅 DATA E HORA ATUAL
 - Data e hora (Brasília): ${dateComplete}
