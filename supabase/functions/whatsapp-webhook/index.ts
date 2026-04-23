@@ -1757,11 +1757,15 @@ async function callAIAgent(
   const requestFinalNaturalResponse = async (conversationMessages: any[]): Promise<string | null> => {
     // Re-issue the request WITHOUT tools so the model is forced to produce a natural text reply
     // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
-    // We do NOT inject any synthetic user message — that would lose context and make the AI
-    // produce generic filler like "Me diga como você quer continuar".
+    // We inject a strong reminder to respond in Portuguese, in character, never leaking reasoning.
+    const reminder = {
+      role: "system" as const,
+      content:
+        "LEMBRETE CRÍTICO: Responda agora ao cliente em PORTUGUÊS BRASILEIRO, com mensagem natural curta de WhatsApp, mantendo a persona do estabelecimento. NUNCA responda em inglês. NUNCA escreva texto de raciocínio interno (ex: 'Vou proceed', 'Need next user input', 'Let me', 'I will'). Apenas a mensagem final ao cliente, em português.",
+    };
     const finalBodyPayload: any = {
       model: modelUsed,
-      messages: conversationMessages,
+      messages: [...conversationMessages, reminder],
       max_completion_tokens: 800,
     };
     // Minimize reasoning latency on gpt-5* models — natural reply doesn't need deep reasoning
@@ -1770,7 +1774,7 @@ async function callAIAgent(
     }
     const finalBodyStr = JSON.stringify(finalBodyPayload);
 
-    console.log(`AI request (final text fallback): ${finalMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
+    console.log(`AI request (final text fallback): ${conversationMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
 
     const finalResponse = await fetch(aiEndpoint, {
       method: "POST",
@@ -1794,6 +1798,31 @@ async function callAIAgent(
       : "";
 
     return finalText || null;
+  };
+
+  // Detect "leaked" responses: model outputs internal reasoning/scratchpad in English
+  // instead of a natural Portuguese reply (e.g., "Vou proceed. Need next user input.")
+  const isLeakedReasoningResponse = (text: string): boolean => {
+    if (!text) return false;
+    const t = text.trim();
+    if (t.length === 0) return false;
+    const leakPatterns = [
+      /\bneed\s+(next|more|another)\s+(user|input|message|reply)\b/i,
+      /\bwait(ing)?\s+for\s+(user|next|more)\b/i,
+      /\b(let|i'?ll|i\s+will|i\s+need\s+to|let\s+me)\s+(proceed|check|wait|continue|now)\b/i,
+      /\bproceed\.\s*need\b/i,
+      /\b(thinking|plan|step\s*\d|okay,\s*so|alright,\s*so)\b/i,
+      /\bno\s+further\s+(action|response)\b/i,
+      /\b(awaiting|pending)\s+(user|customer|client)\b/i,
+    ];
+    if (leakPatterns.some((re) => re.test(t))) return true;
+    // Short responses without Portuguese signals that look like English are very likely leaks
+    if (t.length < 120) {
+      const hasPortugueseSignal = /[áàâãéêíóôõúüç]|\b(você|voce|olá|ola|obrigad|tudo bem|posso|quero|queria|gostaria|certo|claro|sim|não|nao|bom dia|boa tarde|boa noite|valeu|legal|beleza|agendar|horário|horario|marcar|atendiment|serviço|servico|preço|preco|profissional|barbeiro|salão|salao|gráfica|grafica|cliente|amanhã|amanha|hoje|próxim|proxim|fazem|fazemos|temos|fica|pode|posso|aqui|sim|nao|tem|sao|são|é|ja|já)\b/i.test(t);
+      const looksEnglish = /\b(the|and|will|need|user|input|next|please|let|me|check|now|continue|wait|proceed|thank|hello|message|reply|response|proceed)\b/i.test(t);
+      if (!hasPortugueseSignal && looksEnglish) return true;
+    }
+    return false;
   };
 
   const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
