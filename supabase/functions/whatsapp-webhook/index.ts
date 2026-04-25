@@ -612,36 +612,14 @@ Deno.serve(async (req) => {
       if (directResponse) {
         aiResponse = directResponse;
       } else {
-        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
+        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
         aiResponse = agentResult.response;
       }
 
-      // ===== LINK CLAIM ENFORCEMENT (provider "none") =====
-      // The AI sometimes says "te mandei o link" without actually pasting the URL.
-      // For provider "none", if the response claims a link was sent but tenant.booking_link
-      // is not literally in the text, append it as a safety net so the client always gets it.
-      if (provider === "none" && tenant.booking_link && aiResponse) {
-        const bookingLink: string = String(tenant.booking_link);
-        const linkAlreadyPresent = aiResponse.includes(bookingLink);
-        if (!linkAlreadyPresent) {
-          const linkClaimPatterns = [
-            /\b(mandei|enviei|te\s+(mandei|enviei)|segue|aqui\s+(est[áa]|vai|t[áa])|a[íi]\s+(est[áa]|vai|t[áa])|t[áa]\s+a[íi])\s+(o\s+)?link/i,
-            /\blink\s+(de\s+agendamento|pra\s+agendar|para\s+agendar|do\s+agendamento|abaixo|acima)/i,
-            /\bclic[ao]u?\s+(no\s+|a[íi]\s+no\s+)?link/i,
-            /\bs[óo]\s+clicar\s+(no\s+|a[íi]\s+no\s+)?link/i,
-            /\bsegue\s+(o\s+)?link\s+(abaixo|aqui)/i,
-          ];
-          const claimsLink = linkClaimPatterns.some((re) => re.test(aiResponse));
-          if (claimsLink) {
-            console.warn(`[LinkClaimGuard] AI claimed to send link but URL missing — auto-appending booking_link for ${phoneNumber}`);
-            aiResponse = `${aiResponse.trim()}\n\n${bookingLink}`;
-            if (agentResult) {
-              agentResult.response = aiResponse;
-              agentResult.errors = [...(agentResult.errors || []), "link_claim_without_url_auto_fixed"];
-            }
-          }
-        }
-      }
+      // NOTE: LinkClaimGuard removido a pedido do cliente. Preferimos que a IA siga
+      // exclusivamente o prompt do sistema. O prompt deve garantir o envio literal
+      // do booking_link sempre que prometido. Se a IA falhar e mandar o link 2x em
+      // mensagens próximas, é considerado aceitável (vs. dizer "mandei" sem mandar).
 
       // ===== FOLLOW-UP: Check if client confirmed booking (all providers) =====
       {
@@ -1853,6 +1831,7 @@ async function callAIAgent(
   provider: string,
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
+  senderName?: string,
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const logToolCalls: AgentResult["toolCalls"] = [];
@@ -1962,7 +1941,22 @@ async function callAIAgent(
     return false;
   };
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
+  // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
+  let leadName = "";
+  try {
+    const { data: leadRows } = await supabase
+      .from("crm_leads")
+      .select("name")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .limit(1);
+    leadName = leadRows?.[0]?.name || "";
+  } catch (e) {
+    console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
+  }
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}"`);
+
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -2133,6 +2127,28 @@ async function callAIAgent(
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
 
       if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey) && !isAddLabelTool) {
+        // Special case: for escalate_human, even when deduplicated, make sure the
+        // configured label is actually present on the WhatsApp chat. The owner may
+        // have removed the label between turns, leaving the lead without the
+        // pause flag — so we re-apply it silently before blocking the call.
+        if (matchedCustomTool?.type === "escalate_human") {
+          try {
+            const labelId = matchedCustomTool?.config?.label_id;
+            if (labelId) {
+              const reapply = await ensureChatLabelState(
+                tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "",
+                tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "",
+                phoneNumber,
+                String(labelId),
+                "present",
+                "EscalateHuman:dedup-reapply",
+              );
+              console.log(`[DedupGuard] escalate_human dedup → label reapply result: ${JSON.stringify({ ok: reapply.success, already: reapply.already })}`);
+            }
+          } catch (e) {
+            console.error("[DedupGuard] escalate_human label reapply error:", e);
+          }
+        }
         console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this conversation`);
         toolResult = {
           message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente sem chamar a ferramenta outra vez.`,
@@ -3391,13 +3407,31 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): string {
+function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
   const todayDate = br.todayDate;
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
+
+  // ===== CLIENT NAME — sanitize and decide whether to inject =====
+  // Priority: leadName (CRM, manually edited by owner) > senderName (WhatsApp pushName).
+  const rawName = (leadName && leadName.trim()) || (senderName && senderName.trim()) || "";
+  // Strip emojis and odd symbols. Keep letters (incl. accented), spaces and hyphens.
+  const cleanedName = rawName
+    .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
+    .replace(/[^\p{L}\s\-']/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Reject if too short or looks like a phone number / generic placeholder.
+  const looksLikeNumber = /\d/.test(rawName) || /^\+?\d/.test(cleanedName);
+  const isUsable = cleanedName.length >= 2 && !looksLikeNumber && !/^cliente$/i.test(cleanedName);
+  const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
+  const nameBlock = isUsable
+    ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
+    : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
+
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
@@ -3434,11 +3468,37 @@ ${nextDaysMap.join("\n")}
 4. Se não tiver certeza, NÃO invente. Consulte o calendário.
 5. "Amanhã" = ${nextDaysMap.length > 1 ? nextDaysMap[1].split("=")[1].trim().split(" ")[0] : "dia seguinte"}.
 6. Ao usar ferramentas de agendamento, use SEMPRE o formato YYYY-MM-DD extraído do calendário.
+
+🚨🚨 REGRA DE PRIVACIDADE DA DATA — USO ESTRITAMENTE INTERNO 🚨🚨
+A data e o calendário acima são para SEU USO INTERNO de raciocínio APENAS.
+NUNCA escreva ao cliente datas em nenhum formato (dd/mm, dd/mm/aaaa, "dia 25", "dia 25/04", "25 de abril", "amanhã, dia X", etc.).
+Sempre use referências relativas: "amanhã", "hoje", "sexta", "na próxima semana", "no próximo sábado", "no dia que você prefere".
+
+❌ ERROS REAIS QUE JÁ ACONTECERAM E QUE VOCÊ NÃO PODE REPETIR:
+  ❌ "Você quer agendar pra amanhã, dia 25/04?"
+  ❌ "Posso confirmar pra sexta, dia 17?"
+  ❌ "Hoje é sábado, dia 12."
+  ❌ "Confirmando: corte na quinta, 23/04."
+
+✅ FORMA CORRETA:
+  ✅ "Você quer agendar pra amanhã?"
+  ✅ "Posso confirmar pra sexta?"
+  ✅ "Pra qual dia você prefere?"
+  ✅ "Confirmando: corte na quinta. Pode ser?"
+
+Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje?", "amanhã é dia quantos?"), aí você pode informar.
+
+------------------------------------------
+
 ## 📱 TELEFONE DO CLIENTE
 ${phoneNumber}
 Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa informar o telefone.
 
 ------------------------------------------
+
+${nameBlock}
+------------------------------------------
+
 
 ## 🎯 TOM DE VOZ
 
