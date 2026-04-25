@@ -193,63 +193,85 @@ Deno.serve(async (req) => {
       }
 
       // ===== IA OFF CHECK =====
-      // Check from DB (crm_leads) AND from WhatsApp payload (chat.wa_label)
+      // Source of truth = WhatsApp itself (payload.chat.wa_label).
+      // We sync the DB to match WhatsApp state on every message:
+      //   - IA OFF present in WhatsApp → ensure flag in DB, block AI
+      //   - IA OFF absent in WhatsApp → remove stale flag from DB, allow AI
+      // Also reconciles all other configured flag labels (full bidirectional sync),
+      // since UAZAPI does not emit chats.update events on this account.
       {
         const kanbanCols: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
-        
-        // Find which label IDs correspond to "IA OFF" flags
+
         const iaOffLabelIds = kanbanCols
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
+        const allConfiguredFlagIds = kanbanCols
+          .filter((c: any) => c.type === "flag")
+          .map((c: any) => String(c.label_id));
 
-        let hasIaOff = false;
-
-        // 1) Check from DB (crm_leads flag_labels)
+        // Read DB state
         const { data: leadData } = await supabase
           .from("crm_leads")
-          .select("flag_labels")
+          .select("id, flag_labels")
           .eq("tenant_id", tenant.id)
           .eq("phone_number", phoneNumber)
           .limit(1);
-        
-        const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
-        if (flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f))) {
-          hasIaOff = true;
-        }
 
-        // 2) Check from WhatsApp payload (chat.wa_label) — works even without DB record
-        if (!hasIaOff && iaOffLabelIds.length > 0) {
-          const waLabelsRaw: any[] = Array.isArray(payload.chat?.wa_label) ? payload.chat.wa_label : [];
-          const waLabelIds = waLabelsRaw.map((l: any) => {
-            const raw = String(l ?? "");
-            return raw.includes(":") ? raw.split(":").pop()! : raw;
-          });
-          console.log(`[IA OFF Check] wa_label from payload: ${JSON.stringify(waLabelIds)}, iaOffLabelIds: ${JSON.stringify(iaOffLabelIds)}`);
-          if (waLabelIds.some((id: string) => iaOffLabelIds.includes(id))) {
-            hasIaOff = true;
-            // Also sync to DB so future checks are faster
+        const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
+        const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
+
+        // Read live WhatsApp state from payload
+        const waLabelsRaw: any[] = Array.isArray(payload.chat?.wa_label) ? payload.chat.wa_label : [];
+        const waLabelIds = waLabelsRaw.map((l: any) => {
+          const raw = String(l ?? "");
+          return raw.includes(":") ? raw.split(":").pop()! : raw;
+        });
+        const waHasIaOff = iaOffLabelIds.length > 0 && waLabelIds.some((id: string) => iaOffLabelIds.includes(id));
+
+        console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
+
+        // ----- Bidirectional flag reconciliation (WhatsApp = source of truth) -----
+        // Build the desired flag set from WhatsApp, but only for labels configured as type:"flag".
+        // Unknown labels (e.g. funnel labels) are ignored here.
+        if (allConfiguredFlagIds.length > 0) {
+          const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
+          const currentSorted = [...flagLabels].sort().join(",");
+          const desiredSorted = [...desiredFlags].sort().join(",");
+
+          if (currentSorted !== desiredSorted) {
             try {
-              const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
-              const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-              const matchedFlagId = waLabelIds.find((id: string) => iaOffLabelIds.includes(id))!;
-              const newFlags = [...new Set([...flagLabels, matchedFlagId])];
               if (leadData?.[0]) {
-                await sb.from("crm_leads").update({ flag_labels: newFlags, updated_at: new Date().toISOString() }).eq("tenant_id", tenant.id).eq("phone_number", phoneNumber);
-              } else {
-                await sb.from("crm_leads").insert({ tenant_id: tenant.id, phone_number: phoneNumber, label_id: "__none__", flag_labels: newFlags });
+                await supabase.from("crm_leads")
+                  .update({ flag_labels: desiredFlags, updated_at: new Date().toISOString() })
+                  .eq("id", leadData[0].id);
+                console.log(`[FlagSync] Reconciled flags for ${phoneNumber}: [${currentSorted}] → [${desiredSorted}]`);
+              } else if (desiredFlags.length > 0) {
+                const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
+                const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+                await sb.from("crm_leads").insert({
+                  tenant_id: tenant.id,
+                  phone_number: phoneNumber,
+                  label_id: "__none__",
+                  flag_labels: desiredFlags,
+                });
+                console.log(`[FlagSync] Created lead for ${phoneNumber} with flags [${desiredSorted}]`);
               }
-              console.log(`[IA OFF Check] Synced flag ${matchedFlagId} to DB for ${phoneNumber}`);
             } catch (e) {
-              console.error("[IA OFF Check] DB sync error:", e);
+              console.error("[FlagSync] error:", e);
             }
           }
         }
-          
-        if (hasIaOff) {
+
+        // Final decision: WhatsApp state wins.
+        if (waHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        }
+
+        if (dbHasIaOff && !waHasIaOff) {
+          console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — releasing AI`);
         }
       }
 
