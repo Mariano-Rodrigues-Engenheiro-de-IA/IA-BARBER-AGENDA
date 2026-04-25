@@ -612,7 +612,7 @@ Deno.serve(async (req) => {
       if (directResponse) {
         aiResponse = directResponse;
       } else {
-        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
+        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
         aiResponse = agentResult.response;
       }
 
