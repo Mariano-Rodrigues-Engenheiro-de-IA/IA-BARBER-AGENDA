@@ -492,6 +492,77 @@ Deno.serve(async (req) => {
       const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
       console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
+      // ===== IA OFF RECHECK (after debounce) =====
+      // The owner may apply IA OFF label DURING the 10s debounce window.
+      // We re-check the flag from DB AND from UAZAPI live (chat/details) before processing.
+      try {
+        const kanbanCols2: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        const iaOffLabelIds2 = kanbanCols2
+          .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
+          .map((c: any) => String(c.label_id));
+
+        if (iaOffLabelIds2.length > 0) {
+          let iaOffNow = false;
+
+          // 1) DB recheck
+          const { data: leadDataNow } = await supabase
+            .from("crm_leads")
+            .select("flag_labels")
+            .eq("tenant_id", tenant.id)
+            .eq("phone_number", phoneNumber)
+            .limit(1);
+          const flagsNow: string[] = leadDataNow?.[0]?.flag_labels || [];
+          if (flagsNow.some((f: string) => iaOffLabelIds2.includes(f) || /ia\s*off/i.test(f))) {
+            iaOffNow = true;
+          }
+
+          // 2) UAZAPI live recheck (only if DB did not flag)
+          if (!iaOffNow) {
+            try {
+              const uazUrlForCheck = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+              const uazTokenForCheck = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+              if (uazUrlForCheck && uazTokenForCheck) {
+                const { payload: chatDetails } = await fetchUazChatDetails(uazUrlForCheck, uazTokenForCheck, phoneNumber);
+                for (const lid of iaOffLabelIds2) {
+                  if (chatHasLabel(chatDetails, lid)) {
+                    iaOffNow = true;
+                    // sync DB so next message hits the early check
+                    try {
+                      const newFlags = [...new Set([...flagsNow, lid])];
+                      if (leadDataNow?.[0]) {
+                        await supabase.from("crm_leads")
+                          .update({ flag_labels: newFlags, updated_at: new Date().toISOString() })
+                          .eq("tenant_id", tenant.id).eq("phone_number", phoneNumber);
+                      } else {
+                        await supabase.from("crm_leads").insert({
+                          tenant_id: tenant.id, phone_number: phoneNumber,
+                          label_id: "__none__", flag_labels: newFlags,
+                        });
+                      }
+                    } catch (e) {
+                      console.error("[IA OFF Recheck] DB sync error:", e);
+                    }
+                    break;
+                  }
+                }
+              }
+            } catch (e) {
+              console.error("[IA OFF Recheck] UAZAPI fetch error:", e);
+            }
+          }
+
+          if (iaOffNow) {
+            console.log(`[IA OFF Recheck] Detected AFTER debounce for ${phoneNumber} — skipping AI response`);
+            // claimed messages stay processed=true so they won't be reprocessed
+            return new Response(JSON.stringify({ status: "ia_off_after_debounce" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+      } catch (e) {
+        console.error("[IA OFF Recheck] error:", e);
+      }
+
       const { data: historyRaw } = await supabase
         .from("chat_messages")
         .select("role, content, processed")
@@ -521,6 +592,33 @@ Deno.serve(async (req) => {
       } else {
         agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType);
         aiResponse = agentResult.response;
+      }
+
+      // ===== LINK CLAIM ENFORCEMENT (provider "none") =====
+      // The AI sometimes says "te mandei o link" without actually pasting the URL.
+      // For provider "none", if the response claims a link was sent but tenant.booking_link
+      // is not literally in the text, append it as a safety net so the client always gets it.
+      if (provider === "none" && tenant.booking_link && aiResponse) {
+        const bookingLink: string = String(tenant.booking_link);
+        const linkAlreadyPresent = aiResponse.includes(bookingLink);
+        if (!linkAlreadyPresent) {
+          const linkClaimPatterns = [
+            /\b(mandei|enviei|te\s+(mandei|enviei)|segue|aqui\s+(est[áa]|vai|t[áa])|a[íi]\s+(est[áa]|vai|t[áa])|t[áa]\s+a[íi])\s+(o\s+)?link/i,
+            /\blink\s+(de\s+agendamento|pra\s+agendar|para\s+agendar|do\s+agendamento|abaixo|acima)/i,
+            /\bclic[ao]u?\s+(no\s+|a[íi]\s+no\s+)?link/i,
+            /\bs[óo]\s+clicar\s+(no\s+|a[íi]\s+no\s+)?link/i,
+            /\bsegue\s+(o\s+)?link\s+(abaixo|aqui)/i,
+          ];
+          const claimsLink = linkClaimPatterns.some((re) => re.test(aiResponse));
+          if (claimsLink) {
+            console.warn(`[LinkClaimGuard] AI claimed to send link but URL missing — auto-appending booking_link for ${phoneNumber}`);
+            aiResponse = `${aiResponse.trim()}\n\n${bookingLink}`;
+            if (agentResult) {
+              agentResult.response = aiResponse;
+              agentResult.errors = [...(agentResult.errors || []), "link_claim_without_url_auto_fixed"];
+            }
+          }
+        }
       }
 
       // ===== FOLLOW-UP: Check if client confirmed booking (all providers) =====
