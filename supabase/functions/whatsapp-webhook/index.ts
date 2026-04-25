@@ -1941,7 +1941,22 @@ async function callAIAgent(
     return false;
   };
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider);
+  // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
+  let leadName = "";
+  try {
+    const { data: leadRows } = await supabase
+      .from("crm_leads")
+      .select("name")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .limit(1);
+    leadName = leadRows?.[0]?.name || "";
+  } catch (e) {
+    console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
+  }
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}"`);
+
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
