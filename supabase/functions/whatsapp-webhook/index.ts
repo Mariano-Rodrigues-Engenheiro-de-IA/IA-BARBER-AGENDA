@@ -1831,6 +1831,7 @@ async function callAIAgent(
   provider: string,
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
+  senderName?: string,
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const logToolCalls: AgentResult["toolCalls"] = [];
