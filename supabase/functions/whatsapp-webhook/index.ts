@@ -3369,13 +3369,31 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string): string {
+function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
   const todayDate = br.todayDate;
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
+
+  // ===== CLIENT NAME — sanitize and decide whether to inject =====
+  // Priority: leadName (CRM, manually edited by owner) > senderName (WhatsApp pushName).
+  const rawName = (leadName && leadName.trim()) || (senderName && senderName.trim()) || "";
+  // Strip emojis and odd symbols. Keep letters (incl. accented), spaces and hyphens.
+  const cleanedName = rawName
+    .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
+    .replace(/[^\p{L}\s\-']/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Reject if too short or looks like a phone number / generic placeholder.
+  const looksLikeNumber = /\d/.test(rawName) || /^\+?\d/.test(cleanedName);
+  const isUsable = cleanedName.length >= 2 && !looksLikeNumber && !/^cliente$/i.test(cleanedName);
+  const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
+  const nameBlock = isUsable
+    ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
+    : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
+
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
