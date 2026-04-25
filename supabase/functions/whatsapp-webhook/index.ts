@@ -594,6 +594,33 @@ Deno.serve(async (req) => {
         aiResponse = agentResult.response;
       }
 
+      // ===== LINK CLAIM ENFORCEMENT (provider "none") =====
+      // The AI sometimes says "te mandei o link" without actually pasting the URL.
+      // For provider "none", if the response claims a link was sent but tenant.booking_link
+      // is not literally in the text, append it as a safety net so the client always gets it.
+      if (provider === "none" && tenant.booking_link && aiResponse) {
+        const bookingLink: string = String(tenant.booking_link);
+        const linkAlreadyPresent = aiResponse.includes(bookingLink);
+        if (!linkAlreadyPresent) {
+          const linkClaimPatterns = [
+            /\b(mandei|enviei|te\s+(mandei|enviei)|segue|aqui\s+(est[áa]|vai|t[áa])|a[íi]\s+(est[áa]|vai|t[áa])|t[áa]\s+a[íi])\s+(o\s+)?link/i,
+            /\blink\s+(de\s+agendamento|pra\s+agendar|para\s+agendar|do\s+agendamento|abaixo|acima)/i,
+            /\bclic[ao]u?\s+(no\s+|a[íi]\s+no\s+)?link/i,
+            /\bs[óo]\s+clicar\s+(no\s+|a[íi]\s+no\s+)?link/i,
+            /\bsegue\s+(o\s+)?link\s+(abaixo|aqui)/i,
+          ];
+          const claimsLink = linkClaimPatterns.some((re) => re.test(aiResponse));
+          if (claimsLink) {
+            console.warn(`[LinkClaimGuard] AI claimed to send link but URL missing — auto-appending booking_link for ${phoneNumber}`);
+            aiResponse = `${aiResponse.trim()}\n\n${bookingLink}`;
+            if (agentResult) {
+              agentResult.response = aiResponse;
+              agentResult.errors = [...(agentResult.errors || []), "link_claim_without_url_auto_fixed"];
+            }
+          }
+        }
+      }
+
       // ===== FOLLOW-UP: Check if client confirmed booking (all providers) =====
       {
         const confirmPatterns = [
