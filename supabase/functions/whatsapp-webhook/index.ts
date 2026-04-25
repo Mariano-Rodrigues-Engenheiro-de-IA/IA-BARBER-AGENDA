@@ -2127,6 +2127,28 @@ async function callAIAgent(
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
 
       if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey) && !isAddLabelTool) {
+        // Special case: for escalate_human, even when deduplicated, make sure the
+        // configured label is actually present on the WhatsApp chat. The owner may
+        // have removed the label between turns, leaving the lead without the
+        // pause flag — so we re-apply it silently before blocking the call.
+        if (matchedCustomTool?.type === "escalate_human") {
+          try {
+            const labelId = matchedCustomTool?.config?.label_id;
+            if (labelId) {
+              const reapply = await ensureChatLabelState(
+                tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "",
+                tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "",
+                phoneNumber,
+                String(labelId),
+                "present",
+                "EscalateHuman:dedup-reapply",
+              );
+              console.log(`[DedupGuard] escalate_human dedup → label reapply result: ${JSON.stringify({ ok: reapply.success, already: reapply.already })}`);
+            }
+          } catch (e) {
+            console.error("[DedupGuard] escalate_human label reapply error:", e);
+          }
+        }
         console.log(`[DedupGuard] ${toolKey} BLOCKED: already executed in this conversation`);
         toolResult = {
           message: `A ferramenta "${toolKey}" já foi executada nesta conversa. Não execute novamente. Prossiga com a resposta ao cliente sem chamar a ferramenta outra vez.`,
