@@ -1085,6 +1085,7 @@ export default function TenantFormPage() {
     onebeleza_token: "",
     onebeleza_celular: "",
     frizzar_token: "",
+    frizzar_base_url: "",
     booking_link: "",
     uazapi_url: "",
     uazapi_token: "",
@@ -1108,6 +1109,7 @@ export default function TenantFormPage() {
         onebeleza_token: (existing as any).onebeleza_token ?? "",
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
         frizzar_token: (existing as any).frizzar_token ?? "",
+        frizzar_base_url: (existing as any).frizzar_base_url ?? "",
         booking_link: (existing as any).booking_link ?? "",
         uazapi_url: existing.uazapi_url ?? "",
         uazapi_token: existing.uazapi_token ?? "",
@@ -1509,6 +1511,20 @@ export default function TenantFormPage() {
                     </div>
                     <p className="text-xs text-muted-foreground">
                       Cole o token fornecido pela Frizzar. Pode ser apenas o token (vamos prefixar com "Basic ") ou já com o prefixo. A empresa é identificada automaticamente pelo token.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="frizzar_base_url">URL base da API (opcional)</Label>
+                    <Input
+                      id="frizzar_base_url"
+                      type="text"
+                      value={(form as any).frizzar_base_url || ""}
+                      onChange={(e) => handleChange("frizzar_base_url" as any, e.target.value)}
+                      placeholder="Deixe em branco para usar produção (api.frizzar.com.br)"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Em branco = produção <code>https://api.frizzar.com.br/api/bot</code> (com fallback automático para homologação se a produção estiver fora do ar). Preencha apenas se a Frizzar fornecer um endpoint diferente. Ex.: <code>https://homologacao.frizzar.com.br:8446/api/bot</code>.
                     </p>
                   </div>
                 </div>

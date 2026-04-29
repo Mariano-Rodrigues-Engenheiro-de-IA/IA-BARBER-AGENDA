@@ -266,6 +266,7 @@ export type Database = {
           booking_link: string | null
           created_at: string
           email: string | null
+          frizzar_base_url: string | null
           frizzar_token: string | null
           id: string
           kanban_columns: Json | null
@@ -291,6 +292,7 @@ export type Database = {
           booking_link?: string | null
           created_at?: string
           email?: string | null
+          frizzar_base_url?: string | null
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
@@ -316,6 +318,7 @@ export type Database = {
           booking_link?: string | null
           created_at?: string
           email?: string | null
+          frizzar_base_url?: string | null
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
