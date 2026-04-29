@@ -2421,13 +2421,36 @@ async function callAIAgent(
           }
         }
 
-        if (provider === "onebeleza" && toolCall.function.name === "buscar_horarios") {
+        if (provider === "onebeleza" && (toolCall.function.name === "buscar_horarios" || toolCall.function.name === "buscar_horarios_disponiveis")) {
           const slotOptions = extractOneBelezaSlotOptions(toolResult, parsedArgs);
           sessionState.oneBelezaSlotOptions = dedupeByKey(
             [...sessionState.oneBelezaSlotOptions, ...slotOptions],
             (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
           );
           console.log(`Tracked OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+
+          // For the consolidated tool, also extract professional options from the same response
+          if (toolCall.function.name === "buscar_horarios_disponiveis" && Array.isArray(toolResult)) {
+            const svcId = toPositiveInteger(parsedArgs?.servicoId ?? parsedArgs?.servicosId ?? parsedArgs?.servicoid);
+            const profOptions: OneBelezaProfessionalOption[] = [];
+            for (const item of toolResult) {
+              const disps = Array.isArray(item?.disponibilidades) ? item.disponibilidades : [];
+              for (const d of disps) {
+                const pid = toPositiveInteger(d?.profissionalId);
+                if (!pid) continue;
+                profOptions.push({
+                  servicosId: svcId,
+                  profissionalId: pid,
+                  nomeProfissional: String(d?.nomeProfissional || d?.nome || `Profissional ${pid}`),
+                });
+              }
+            }
+            sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+              [...sessionState.oneBelezaProfessionalOptions, ...profOptions],
+              (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+            );
+            console.log(`Tracked OneBeleza professional IDs (from consolidated): [${sessionState.oneBelezaProfessionalOptions.map((o) => o.profissionalId).join(", ")}]`);
+          }
 
           // Track selected date and professional from the args
           const resolvedDate = normalizeOneBelezaDate(parsedArgs?.date);
