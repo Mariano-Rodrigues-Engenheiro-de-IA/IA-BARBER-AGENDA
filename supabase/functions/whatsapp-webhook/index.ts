@@ -2223,7 +2223,7 @@ async function callAIAgent(
       } else {
         // ===== ONE BELEZA ID RESOLUTION LAYER =====
         if (provider === "onebeleza") {
-          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "agendar"];
+          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"];
           if (resolvableTools.includes(toolCall.function.name)) {
             const resolution = resolveOneBelezaToolArgs(toolCall.function.name, parsedArgs, sessionState);
             
