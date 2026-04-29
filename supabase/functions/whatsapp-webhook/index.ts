@@ -2535,6 +2535,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     case "onebeleza":
       providerTools = buildOneBelezaTools(tenant);
       break;
+    case "frizzar":
+      providerTools = buildFrizzarTools(tenant);
+      break;
     case "none":
       providerTools = buildNoneTools(tenant);
       break;
