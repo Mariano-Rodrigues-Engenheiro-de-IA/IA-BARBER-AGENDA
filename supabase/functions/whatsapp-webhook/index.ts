@@ -1123,6 +1123,7 @@ interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
+  allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
   // Persistent selections (survive across messages)
@@ -1139,6 +1140,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     criarAgendamentoSuccessId: null,
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
+    allowedServiceIds: [],
     oneBelezaProfessionalOptions: [],
     oneBelezaSlotOptions: [],
     selectedServiceId: null,
@@ -1170,6 +1172,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       criarAgendamentoSuccessId: null, // always reset per invocation
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
+      allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
       oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
       oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
       selectedServiceId: s.selectedServiceId ?? null,
@@ -1187,6 +1190,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
+      allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
       executedToolNames: state.executedToolNames,
@@ -1201,7 +1205,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -1504,6 +1508,34 @@ function normalizeOneBelezaTime(value: unknown): string {
   }
 
   return normalized;
+}
+
+function normalizeSearchText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getOneBelezaUnitFilterList(tenant: any): string[] {
+  const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
+  const list = Array.isArray(rawFilter)
+    ? rawFilter.filter((value: unknown) => typeof value === "string" && value.trim())
+    : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
+
+  return dedupeByKey(list.map((value) => value.trim()), (value) => normalizeSearchText(value));
+}
+
+function getAllowedOneBelezaServiceIds(sessionState: AgentSessionState): number[] {
+  if (sessionState.allowedServiceIds.length > 0) {
+    return dedupeByKey(sessionState.allowedServiceIds, (id) => String(id));
+  }
+
+  return dedupeByKey(
+    sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
+    (id) => String(id),
+  );
 }
 
 function extractOneBelezaServiceOptions(toolResult: any): OneBelezaServiceOption[] {
