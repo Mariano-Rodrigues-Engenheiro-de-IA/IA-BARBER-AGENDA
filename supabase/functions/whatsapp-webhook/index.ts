@@ -3535,6 +3535,7 @@ Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa inf
 ------------------------------------------
 
 ${nameBlock}
+${humanAttendantBlock}
 ------------------------------------------
 
 
