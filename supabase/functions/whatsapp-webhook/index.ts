@@ -5002,31 +5002,38 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 ## 🔷 FLUXO DE AGENDAMENTO (FRIZZAR — sequencial)
 
 1. **buscar_cliente** pelo telefone do cliente.
-   - Se não encontrar (404), peça o nome e use **cadastrar_cliente**.
-2. **listar_servicos** → mostre as opções disponíveis e deixe o cliente escolher 1 ou mais.
-3. **listar_profissionais** com a lista de serviços escolhidos (formato: [{ "codigo": 10 }, { "codigo": 15 }]).
-   - Mostre os profissionais que atendem TODOS os serviços selecionados.
-4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + body com os serviços.
-   - Use APENAS o campo "horariosLivres" de cada dia.
-5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm) + profissionalId + serviços no body.
+   - Se a resposta vier com \`notFound: true\` (404), peça o nome e use **cadastrar_cliente**.
+   - O ID do cliente é o campo **codigo** (ex: 1293959). Use esse valor como \`clienteId\` daqui pra frente.
+2. **listar_servicos** → mostre as opções e peça o cliente escolher 1 ou mais.
+   - Cada serviço tem \`codigo\`, \`nome\`, \`preco\` e \`duracao\` (HH:mm).
+3. **listar_profissionais** com a lista de serviços escolhidos no formato \`[{ "codigo": 67511 }, { "codigo": 67510 }]\`.
+   - Cada profissional retorna com \`codigo\` e \`nome\`. Use \`codigo\` como \`profissionalId\`.
+4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + serviços no body.
+   - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
+   - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
+   - Se \`horariosLivres\` estiver vazio, sugira outra data (use \`outrosDias\` se houver).
+5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
+   - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
+   - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
 
 ------------------------------------------
 
 ## 🔶 CANCELAMENTO
 
-1. **buscar_agendamentos** com clienteId → mostra agendamentos abertos.
+1. **buscar_agendamentos** com clienteId → retorna lista (vazia = sem agendamentos abertos).
 2. Confirme com o cliente qual cancelar.
-3. **cancelar_agendamento** com o agendamentoId.
-   - Se a resposta vier com status 405, avise: "Esse agendamento já foi realizado, não é possível cancelar."
+3. **cancelar_agendamento** com o agendamentoId (campo \`codigo\` do agendamento).
+   - Resposta \`{status: 200}\` = cancelado com sucesso.
+   - Resposta com status 405 = "Esse agendamento já foi realizado, não é possível cancelar."
 
 ------------------------------------------
 
 ## 📅 FORMATOS DE DATA E HORA
 
-- Data: sempre **yyyy-MM-dd** (ex: 2024-06-10).
-- Hora: sempre **HH:mm** em 24h (ex: 14:30).
+- Data: sempre **yyyy-MM-dd** (ex: 2026-04-29).
+- Hora: sempre **HH:mm** em 24h, copiada exatamente de \`horariosLivres\` (ex: "16:00", não "16:00:00").
 - DDI Brasil: **55** (number).
-- Telefone: somente dígitos, sem formatação.
+- Telefone: somente dígitos, sem DDI dentro do número (ex: "11988887777", não "5511988887777").
 `;
 }
 
@@ -5312,7 +5319,27 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         });
         const text = await res.text();
         console.log(`[Frizzar] listar_horarios response (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // A Frizzar devolve um array com uma entrada por dia: [{dia, horariosLivres: ["08:00", ...]}, ...]
+          // Normalizamos pra o agente: priorizamos a entrada da data solicitada e expomos
+          // horariosLivres direto, evitando que ele se perca na estrutura aninhada.
+          if (Array.isArray(parsed)) {
+            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const escolhido = exato ?? parsed[0];
+            return {
+              data: args.data,
+              horariosLivres: escolhido?.horariosLivres ?? [],
+              outrosDias: parsed
+                .filter((d: any) => d !== escolhido)
+                .map((d: any) => ({
+                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
+                  horariosLivres: d?.horariosLivres ?? [],
+                })),
+            };
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "agendar": {
@@ -5332,7 +5359,25 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (res.status === 403) {
           return { error: "Cliente bloqueado ou limite de agendamentos atingido." };
         }
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // A Frizzar devolve um array de agendamentos criados (1 entrada por serviço).
+          // Normalizamos para o agente: agendamentoId explícito + resumo amigável.
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const primeiro = parsed[0];
+            return {
+              ok: true,
+              agendamentoId: primeiro?.codigo,
+              inicioFormatado: primeiro?.inicioFormatado,
+              profissional: primeiro?.funcionarioNome,
+              servico: primeiro?.servicoNome,
+              total: primeiro?.totalComanda,
+              status: primeiro?.status,
+              agendamentos: parsed,
+            };
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "cancelar_agendamento": {
