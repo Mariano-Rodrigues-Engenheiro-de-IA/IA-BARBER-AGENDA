@@ -5186,14 +5186,14 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
   // Resolução da URL base da Frizzar:
   // 1) override por tenant (campo frizzar_base_url) — útil se a Frizzar mudar o host;
-  // 2) padrão = produção (api.frizzar.com.br);
-  // 3) fallback automático para homologação se a produção falhar por DNS/rede
-  //    (a Frizzar ainda não publicou o host de produção em DNS — confirmado em 2026-04).
-  const PROD_URL = "https://api.frizzar.com.br/api/bot";
-  const HOM_URL = "https://homologacao.frizzar.com.br:8446/api/bot";
+  // 2) padrão = host atualmente em uso pela própria Frizzar (confirmado via integração n8n
+  //    que já roda em produção). Apesar do nome "homologacao", é o endpoint REST oficial.
+  //    O domínio "api.frizzar.com.br" listado na doc ainda não tem DNS publicado (NXDOMAIN).
+  // 3) fallback secundário (mantido por segurança) caso o override aponte para um host quebrado.
+  const DEFAULT_URL = "https://homologacao.frizzar.com.br:8446/api/bot";
   const overrideUrl = (tenant.frizzar_base_url || "").trim().replace(/\/+$/, "");
-  const primaryBase = overrideUrl || PROD_URL;
-  const fallbackBase = overrideUrl ? null : HOM_URL;
+  const primaryBase = overrideUrl || DEFAULT_URL;
+  const fallbackBase = overrideUrl && overrideUrl !== DEFAULT_URL ? DEFAULT_URL : null;
 
   const rawToken = (tenant.frizzar_token || "").trim();
   if (!rawToken) {
