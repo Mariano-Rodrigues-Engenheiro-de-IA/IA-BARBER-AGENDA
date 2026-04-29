@@ -1521,10 +1521,10 @@ export default function TenantFormPage() {
                       type="text"
                       value={(form as any).frizzar_base_url || ""}
                       onChange={(e) => handleChange("frizzar_base_url" as any, e.target.value)}
-                      placeholder="Deixe em branco para usar produção (api.frizzar.com.br)"
+                      placeholder="Deixe em branco para usar o padrão"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Em branco = produção <code>https://api.frizzar.com.br/api/bot</code> (com fallback automático para homologação se a produção estiver fora do ar). Preencha apenas se a Frizzar fornecer um endpoint diferente. Ex.: <code>https://homologacao.frizzar.com.br:8446/api/bot</code>.
+                      Em branco usa o padrão atual: <code>https://homologacao.frizzar.com.br:8446/api/bot</code> (endpoint oficial em uso pela própria Frizzar). Preencha apenas se a Frizzar publicar uma nova URL.
                     </p>
                   </div>
                 </div>
