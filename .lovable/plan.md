@@ -1,81 +1,89 @@
-## Contexto
+## Diagnóstico
 
-Comparando os dois prompts:
+Olhando os logs reais da conversa de teste (BARBEARIA MARQUEZ Ceilândia):
 
-- **Bendita Barber** (validado, Trinks): tem ~1229 linhas com fluxo conversacional detalhado, regras de erro, edge cases (múltiplos serviços, dois agendamentos, atrasos, etc.).
-- **Marquez Ceilândia** (em validação, One Beleza): tem só ~138 linhas. Possui identidade, tom de voz, regras de visagismo, atrasos, descontos, elogios — mas **NÃO tem fluxo de agendamento conversacional** nem regras de filtro por unidade.
-
-**Importante**: o fluxo técnico One Beleza (sequência de tools, parâmetros, IDs) JÁ é injetado automaticamente no system prompt pela função `buildOneBelezaPromptSection` no webhook (linhas 3845-3993). Então o que falta no `agent_system_prompt` do tenant não é o fluxo técnico — é o **fluxo conversacional de negócio** (como conduzir a conversa, em que ordem perguntar serviço/barbeiro/dia, como apresentar opções), além de regras de filtragem por unidade.
-
-**Problema do token One Beleza**: o token atual da Marquez retorna serviços de 3 unidades (Barbearia Ceilândia, Estúdio Ceilândia, Estúdio Asa Sul). A IA fica perdida quando vê "Corte com técnica de visagismo" em mais de uma unidade. Como a unidade ativa é só **Barbearia Marquez Ceilândia Norte**, precisamos filtrar os serviços antes de entregar pra IA.
-
-## O que vou fazer
-
-### 1. Adicionar filtro de unidade no `buscar_servicos` (server-side)
-
-Em `supabase/functions/whatsapp-webhook/index.ts`, no case `buscar_servicos`:
-- Ler um novo campo `tenant.agent_settings.onebeleza_unit_filter` (string ou array de strings) com nomes/keywords de grupos permitidos (ex: `["Barbearia Marquêz", "Ceilândia"]`).
-- Após receber resposta da API, filtrar o array retornado mantendo apenas grupos cujo nome contenha alguma das keywords (case-insensitive).
-- Se filtro vazio ou ausente, manter comportamento atual (retorna tudo).
-- Logar quantos grupos foram filtrados pra debug.
-
-Aplicar mesmo filtro em `buscar_barbeiros_por_servico` se necessário (provavelmente não — barbeiros já vêm filtrados por servicosId).
-
-### 2. Configurar `onebeleza_unit_filter` no tenant Marquez Ceilândia
-
-Migration via SQL:
 ```
-UPDATE tenants
-SET agent_settings = jsonb_set(
-  COALESCE(agent_settings, '{}'::jsonb),
-  '{onebeleza_unit_filter}',
-  '["Barbearia Marquez", "Barbearia Marquêz"]'::jsonb
-)
-WHERE id = '3c6ebda0-f193-439a-b023-ed7135dc2d83';
+Tool result (buscar_servicos): [{"gservsID":565,"descricao":"Barbearia Asa Sul",...]
+Tracked OneBeleza service IDs: [2469, 2468, 2461, 2473, ...]  ← 48 IDs (todos os grupos)
 ```
 
-(Vou primeiro chamar `buscar_servicos` real pra ver os nomes exatos dos grupos retornados pela API e ajustar o filtro com precisão antes de aplicar.)
+A IA recebeu **48 serviços de TODAS as unidades** (Barbearia Asa Sul, Estúdio Asa Sul, Barbearia Ceilândia, Estúdio Ceilândia). Por isso pegou `servicosId 2467` que é da Asa Sul, e o `buscar_barbeiros` voltou `[]` (Nicolas não atende esse serviço da Asa Sul).
 
-### 3. Reescrever o `agent_system_prompt` da Marquez Ceilândia
+**Causa raiz**: o filtro `onebeleza_unit_filter: ["Ceilandia"]` está corretamente salvo no banco, mas no log NÃO aparece a linha `[OneBeleza] buscar_servicos unit filter: X → Y groups`. Isso indica que o filtro existente é silencioso quando falha, e provavelmente o `parsed` não passou no `Array.isArray()` (a API às vezes embrulha em `{data: [...]}`) OU o tenant em cache não trouxe `agent_settings`. De qualquer forma, **ter um único filtro silencioso é frágil** — qualquer falha nele expõe a IA a 48 serviços confusos.
 
-Manter tudo que já está bom (identidade, tom, visagismo, atrasos, descontos, elogios, infantil) e **adicionar** as seguintes seções, espelhando o estilo validado da Bendita:
+## Solução: três camadas de defesa
 
-- **🔷 FLUXO DE AGENDAMENTO (conversacional)** — como conduzir a conversa: 
-  - Etapa 1: identificar serviço (corte tradicional / corte com visagismo)
-  - Etapa 2: perguntar preferência de barbeiro
-  - Etapa 3: perguntar dia
-  - Etapa 4: oferecer horários
-  - Etapa 5: confirmar e executar
-  - Pular etapas quando o cliente já forneceu a informação na mensagem inicial
-- **🔷 REGRA DE UNIDADE — APENAS BARBEARIA CEILÂNDIA**
-  - "Você atende EXCLUSIVAMENTE na Barbearia Marquez Ceilândia Norte."
-  - "Os serviços retornados pelo sistema podem incluir nomes parecidos de outras unidades. SEMPRE escolha o serviço da Barbearia Ceilândia."
-  - "Se o cliente perguntar sobre Asa Sul ou outra unidade → ESCALAR_HUMANO."
-- **🔷 REGRAS DE ERRO E REJEIÇÕES** (estilo Bendita): nunca confirmar agendamento sem retorno de sucesso, nunca inventar horário, nunca listar horários sem ter serviço definido.
-- **🔷 MÚLTIPLOS SERVIÇOS NA MESMA VISITA** (ex: corte + barba) — adaptado pra One Beleza.
-- **🔷 REAGENDAMENTO E CANCELAMENTO** — espelho do que existe pra Bendita, adaptado.
+### Camada 1 — Filtro robusto em `buscar_servicos` (corrigir o atual)
 
-A migration vai aplicar via `UPDATE tenants SET agent_system_prompt = '...' WHERE id = '3c6ebda0-...'`.
+Em `supabase/functions/whatsapp-webhook/index.ts` (~linha 4828), reescrever o case `buscar_servicos`:
 
-### 4. Validação
+- Logar SEMPRE: `[OneBeleza] filter check: rawFilter=..., parsedType=..., parsedLen=...` antes de decidir filtrar — assim conseguimos diagnosticar imediatamente quando falhar.
+- Aceitar tanto `parsed` array direto quanto `{data: [...]}` ou `{grupos: [...]}` (defensivo).
+- Se `filterList` está configurado mas resultado filtrado é `[]`, retornar erro explícito `{ error: "Nenhum grupo de serviço da unidade configurada foi encontrado. Verifique onebeleza_unit_filter." }` em vez de array vazio (evita IA inventar).
 
-- Confirmar que o fluxo técnico injetado por `buildOneBelezaPromptSection` continua funcionando junto com o novo prompt customizado (não há conflito — o customizado vem antes e o técnico depois, ambos coexistem).
-- Pedir pro usuário fazer um teste real no WhatsApp depois de aplicado.
+### Camada 2 — Pré-filtro no nível de servicosId permitido (NOVO)
 
-## Detalhes técnicos
+Após filtrar grupos, computar o **set de servicosId permitidos** (todos os IDs dentro dos grupos que sobreviveram ao filtro) e armazenar em `sessionState.allowedServiceIds`.
 
-**Arquivos afetados**:
-- `supabase/functions/whatsapp-webhook/index.ts` (case `buscar_servicos`, ~10 linhas adicionadas)
-- 1 migration SQL (UPDATE em `tenants` para id `3c6ebda0-f193-439a-b023-ed7135dc2d83`)
+Em `resolveOneBelezaToolArgs` (camada de validação que já existe), adicionar regra:
 
-**Sem mudanças**: schema, RLS, novas tabelas, frontend.
+- Se `tool ∈ {buscar_barbeiros_por_servico, buscar_datas_disponiveis, buscar_horarios, agendar}` e o `servicosId` enviado pela IA **não está em `allowedServiceIds`**, **bloquear a chamada** retornando:
 
-**Risco**: baixo — filtro só ativa se `onebeleza_unit_filter` estiver setado. Outros tenants One Beleza não são afetados.
+```json
+{
+  "error": "servicosId X não pertence à unidade desta barbearia. Use APENAS um dos seguintes IDs: [lista]",
+  "blocked": true
+}
+```
 
-## Pergunta antes de executar
+Isso garante que mesmo se a IA tentar (ou alucinar) um ID da Asa Sul, o servidor recusa antes de chamar a API One Beleza.
 
-Antes de aplicar o filtro de unidade, eu preciso ver a resposta real do `buscar_servicos` da Marquez pra saber o nome exato dos grupos (ex: "Barbearia Marquez Ceilândia" vs "Estúdio Visagismo Ceilândia" vs "Estúdio Asa Sul"). Quer que eu:
+### Camada 3 — Reforço no prompt do sistema
 
-- **(a)** Faça uma chamada real à API One Beleza com o token da Marquez agora pra inspecionar os nomes dos grupos antes de definir o filtro, OU
-- **(b)** Você me passa os nomes exatos dos grupos que aparecem no app One Beleza, OU
-- **(c)** Eu uso um filtro genérico baseado em "Barbearia" + "Ceilândia" (excluindo "Estúdio" e "Asa Sul") e ajustamos depois se necessário.
+Adicionar no `agent_system_prompt` da Marquez Ceilândia (e da Asa Sul) uma seção curta e enfática logo no início:
+
+```
+🔒 REGRA INVIOLÁVEL DE UNIDADE
+Você atende EXCLUSIVAMENTE na unidade [Ceilândia/Asa Sul].
+O sistema retorna serviços de várias unidades — você DEVE usar APENAS
+serviços que vieram do grupo cuja descrição contém "[Ceilândia/Asa Sul]".
+NUNCA use IDs de outras unidades. Se o cliente pedir outra unidade,
+escalar humano.
+```
+
+E no `buildOneBelezaPromptSection` (~linha 3845), injetar dinamicamente a lista de `allowedServiceIds` a cada resposta, tipo:
+
+```
+SERVIÇOS PERMITIDOS NESTA UNIDADE (servicosId): 2475, 2476, 2477, 2467, ...
+NÃO use nenhum servicosId fora dessa lista.
+```
+
+## Arquivos afetados
+
+- `supabase/functions/whatsapp-webhook/index.ts`
+  - case `buscar_servicos` (~L4828): logging defensivo + tratamento de `[]` filtrado.
+  - bloco "Tracked OneBeleza service IDs" (~L2390): popular `sessionState.allowedServiceIds`.
+  - `resolveOneBelezaToolArgs` (função existente): adicionar guard de `allowedServiceIds`.
+  - `buildOneBelezaPromptSection` (~L3845): injetar lista permitida no prompt.
+- 1 migration SQL pra atualizar `agent_system_prompt` dos dois tenants Marquez com a regra inviolável no topo.
+
+## Sem mudanças
+
+- Schema do banco.
+- RLS, novas tabelas, tokens.
+- Frontend.
+
+## Validação
+
+Depois do deploy:
+1. Rodar `❌` no WhatsApp pra resetar `conversation_state`.
+2. Pedir um corte com visagismo.
+3. Conferir nos logs:
+   - `[OneBeleza] filter check: ...` (camada 1 ativa)
+   - `Tracked OneBeleza service IDs: [...]` deve ter ~12 IDs (só Ceilândia), não 48.
+   - Se a IA tentar um ID errado: `[Resolver] Blocked: servicosId X not in allowed set`
+4. Confirmar que `buscar_barbeiros` retorna lista NÃO-vazia.
+
+## Risco
+
+Baixo. As 3 camadas são aditivas e independentes — se uma falhar, as outras ainda protegem. Outros tenants One Beleza sem `onebeleza_unit_filter` continuam funcionando normalmente (filtro inativo por padrão).
