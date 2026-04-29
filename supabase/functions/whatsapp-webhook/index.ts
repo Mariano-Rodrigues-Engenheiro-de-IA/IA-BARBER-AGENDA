@@ -81,21 +81,54 @@ Deno.serve(async (req) => {
 
           if (tenantForStore) {
             const storeMessageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
-            // Check for duplicate
+            // Check for duplicate by message_id
             const { data: existingMsg } = storeMessageId
               ? await supabase.from("chat_messages").select("id").eq("message_id", storeMessageId).maybeSingle()
               : { data: null };
 
             if (!existingMsg) {
-              await supabase.from("chat_messages").insert({
-                tenant_id: tenantForStore.id,
-                phone_number: phoneNumber,
-                role: "assistant",
-                content: messageContent,
-                message_id: storeMessageId || null,
-                processed: true,
-              });
-              console.log(`Stored owner message for context: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              // Detect if this is just an echo of the AI's own recent reply (within 60s)
+              // to avoid duplicating and to avoid mislabeling AI messages as human-sent.
+              const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
+              const { data: recentAssistant } = await supabase
+                .from("chat_messages")
+                .select("id, content")
+                .eq("tenant_id", tenantForStore.id)
+                .eq("phone_number", phoneNumber)
+                .eq("role", "assistant")
+                .gte("created_at", sixtySecAgo)
+                .order("created_at", { ascending: false })
+                .limit(5);
+
+              const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+              const incoming = normalize(messageContent);
+              const isEchoOfAI = (recentAssistant || []).some(
+                (m: any) => m.content && normalize(m.content) === incoming
+              );
+
+              if (isEchoOfAI) {
+                // Just tag the existing AI message with the message_id (so future dedup works) and skip insert
+                if (storeMessageId && recentAssistant && recentAssistant[0]) {
+                  await supabase
+                    .from("chat_messages")
+                    .update({ message_id: storeMessageId, processed: true })
+                    .eq("id", recentAssistant[0].id);
+                }
+                console.log(`Skipped owner echo (matches AI reply): ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              } else {
+                // Real message sent manually by the human attendant (via app or WhatsApp).
+                // Tag with prefix so the AI clearly sees it was a human, not itself.
+                const taggedContent = `[ATENDENTE HUMANO]: ${messageContent}`;
+                await supabase.from("chat_messages").insert({
+                  tenant_id: tenantForStore.id,
+                  phone_number: phoneNumber,
+                  role: "assistant",
+                  content: taggedContent,
+                  message_id: storeMessageId || null,
+                  processed: true,
+                });
+                console.log(`Stored HUMAN attendant message: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              }
             }
           }
         }
@@ -3435,6 +3468,8 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
     ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
     : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
 
+  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n`;
+
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
@@ -3500,6 +3535,7 @@ Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa inf
 ------------------------------------------
 
 ${nameBlock}
+${humanAttendantBlock}
 ------------------------------------------
 
 
