@@ -1084,6 +1084,7 @@ export default function TenantFormPage() {
     trinks_establishment_id: "",
     onebeleza_token: "",
     onebeleza_celular: "",
+    frizzar_token: "",
     booking_link: "",
     uazapi_url: "",
     uazapi_token: "",
@@ -1106,6 +1107,7 @@ export default function TenantFormPage() {
         trinks_establishment_id: existing.trinks_establishment_id ?? "",
         onebeleza_token: (existing as any).onebeleza_token ?? "",
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
+        frizzar_token: (existing as any).frizzar_token ?? "",
         booking_link: (existing as any).booking_link ?? "",
         uazapi_url: existing.uazapi_url ?? "",
         uazapi_token: existing.uazapi_token ?? "",
@@ -1403,6 +1405,7 @@ export default function TenantFormPage() {
                   <SelectContent>
                     <SelectItem value="trinks">Trinks</SelectItem>
                     <SelectItem value="onebeleza">One Beleza</SelectItem>
+                    <SelectItem value="frizzar">Frizzar</SelectItem>
                     <SelectItem value="none">Nenhum (link direto)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1477,6 +1480,35 @@ export default function TenantFormPage() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Número usado nas chamadas à API One Beleza (sem código do país)
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {provider === "frizzar" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais Frizzar</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="frizzar_token">Token (Basic Auth)</Label>
+                    <div className="relative">
+                      <Input
+                        id="frizzar_token"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).frizzar_token || ""}
+                        onChange={(e) => handleChange("frizzar_token" as any, e.target.value)}
+                        placeholder="Token Basic da API Frizzar"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Cole o token fornecido pela Frizzar. Pode ser apenas o token (vamos prefixar com "Basic ") ou já com o prefixo. A empresa é identificada automaticamente pelo token.
                     </p>
                   </div>
                 </div>
