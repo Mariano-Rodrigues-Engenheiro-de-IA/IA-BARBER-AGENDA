@@ -165,13 +165,35 @@ Deno.serve(async (req) => {
       // 1) PRIORITY: Match by chat.owner (the WhatsApp number connected to the UAZAPI session)
       const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
       const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const incomingUnitHints = [
+        payload.chat?.name,
+        payload.chat?.title,
+        payload.chat?.description,
+        payload.pushName,
+        payload.senderName,
+        payload.notify,
+        payload.body,
+        payload.text,
+        messageContent,
+      ]
+        .map((value) => normalizeSearchText(value))
+        .filter(Boolean);
       let tenant: any = null;
       if (ownerDigits) {
-        tenant = tenants.find((t: any) => {
+        const ownerMatches = tenants.filter((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
           return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
         });
+        if (ownerMatches.length === 1) {
+          tenant = ownerMatches[0];
+        } else if (ownerMatches.length > 1) {
+          tenant = ownerMatches.find((candidate: any) => {
+            const unitFilters = getOneBelezaUnitFilterList(candidate).map(normalizeSearchText);
+            return unitFilters.length > 0 && unitFilters.some((filter) => incomingUnitHints.some((hint) => hint.includes(filter)));
+          }) || null;
+          console.log(`Multiple tenants matched owner (${ownerDigits}). Resolved by unit hint: ${tenant?.name || "none"}`);
+        }
         if (tenant) {
           console.log(`Tenant matched by owner (${ownerDigits}): ${tenant.name}`);
         }
@@ -1123,6 +1145,7 @@ interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
+  allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
   // Persistent selections (survive across messages)
@@ -1139,6 +1162,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     criarAgendamentoSuccessId: null,
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
+    allowedServiceIds: [],
     oneBelezaProfessionalOptions: [],
     oneBelezaSlotOptions: [],
     selectedServiceId: null,
@@ -1170,6 +1194,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       criarAgendamentoSuccessId: null, // always reset per invocation
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
+      allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
       oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
       oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
       selectedServiceId: s.selectedServiceId ?? null,
@@ -1187,6 +1212,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
+      allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
       executedToolNames: state.executedToolNames,
@@ -1201,7 +1227,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -1315,6 +1341,20 @@ function resolveOneBelezaToolArgs(
   };
 
   const corrections: string[] = [];
+  const shouldGuardServiceId = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"].includes(toolName);
+  const allowedServiceIds = getAllowedOneBelezaServiceIds(sessionState);
+
+  if (shouldGuardServiceId && allowedServiceIds.length > 0) {
+    const incomingServiceId = toPositiveInteger(
+      parsedArgs?.servicosId ?? parsedArgs?.servicoId ?? parsedArgs?.servicoid,
+    );
+
+    if (incomingServiceId && !allowedServiceIds.includes(incomingServiceId)) {
+      result.blocked = true;
+      result.blockMessage = `servicosId ${incomingServiceId} não pertence à unidade desta barbearia. Use APENAS um destes IDs: ${allowedServiceIds.join(", ")}.`;
+      return result;
+    }
+  }
 
   if (toolName === "buscar_barbeiros_por_servico") {
     const svc = resolveOneBelezaServiceId(parsedArgs, sessionState);
@@ -1504,6 +1544,34 @@ function normalizeOneBelezaTime(value: unknown): string {
   }
 
   return normalized;
+}
+
+function normalizeSearchText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function getOneBelezaUnitFilterList(tenant: any): string[] {
+  const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
+  const list = Array.isArray(rawFilter)
+    ? rawFilter.filter((value: unknown) => typeof value === "string" && value.trim())
+    : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
+
+  return dedupeByKey(list.map((value) => value.trim()), (value) => normalizeSearchText(value));
+}
+
+function getAllowedOneBelezaServiceIds(sessionState: AgentSessionState): number[] {
+  if (sessionState.allowedServiceIds.length > 0) {
+    return dedupeByKey(sessionState.allowedServiceIds, (id) => String(id));
+  }
+
+  return dedupeByKey(
+    sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
+    (id) => String(id),
+  );
 }
 
 function extractOneBelezaServiceOptions(toolResult: any): OneBelezaServiceOption[] {
@@ -1696,6 +1764,8 @@ function buildOneBelezaSchedulingValidationResult(
   parsedArgs: any,
   sessionState: AgentSessionState,
 ): any | null {
+  const allowedServiceIds = getAllowedOneBelezaServiceIds(sessionState);
+
   if (sessionState.oneBelezaServiceOptions.length === 0) {
     return {
       error: "Antes de agendar, execute buscar_servicos nesta interação e use um servicosId real do retorno.",
@@ -1722,6 +1792,14 @@ function buildOneBelezaSchedulingValidationResult(
   const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
   const horarioInicio = normalizeOneBelezaTime(parsedArgs?.horarioInicio);
   const horarioFim = normalizeOneBelezaTime(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal);
+
+  if (servicoId && allowedServiceIds.length > 0 && !allowedServiceIds.includes(servicoId)) {
+    return {
+      error: `servicoId ${servicoId} não pertence à unidade desta barbearia. Use APENAS um dos IDs permitidos: ${allowedServiceIds.join(", ")}.`,
+      allowedServiceIds,
+      blocked: true,
+    };
+  }
 
   if (!servicoId || !sessionState.oneBelezaServiceOptions.some((option) => option.servicosId === servicoId)) {
     return {
@@ -1807,6 +1885,10 @@ async function hydrateOneBelezaSessionStateFromProvider(
       sessionState.oneBelezaServiceOptions = dedupeByKey(
         [...sessionState.oneBelezaServiceOptions, ...serviceOptions],
         (option) => String(option.servicosId),
+      );
+      sessionState.allowedServiceIds = dedupeByKey(
+        [...sessionState.allowedServiceIds, ...serviceOptions.map((option) => option.servicosId)],
+        (id) => String(id),
       );
       console.log(`Hydrated OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
     }
@@ -2405,7 +2487,12 @@ async function callAIAgent(
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
           sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
+          sessionState.allowedServiceIds = dedupeByKey(
+            sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
+            (id) => String(id),
+          );
           console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
+          console.log(`Tracked allowed OneBeleza service IDs: [${sessionState.allowedServiceIds.join(", ")}]`);
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
