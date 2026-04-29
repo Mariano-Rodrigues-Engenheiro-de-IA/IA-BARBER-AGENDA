@@ -4831,25 +4831,56 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         const res = await fetch(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_servicos response (${res.status}):`, text.slice(0, 1000));
+
+        // Always read filter config and log diagnostic info — regardless of parse success
+        const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
+        const filterList: string[] = Array.isArray(rawFilter)
+          ? rawFilter.filter((s) => typeof s === "string" && s.trim())
+          : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
+
+        let parsed: any;
         try {
-          const parsed = JSON.parse(text);
-          // Filter by allowed unit names if configured (case/accent-insensitive substring match)
-          const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
-          const filterList: string[] = Array.isArray(rawFilter)
-            ? rawFilter
-            : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
-          if (filterList.length > 0 && Array.isArray(parsed)) {
-            const norm = (s: string) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-            const needles = filterList.map(norm);
-            const filtered = parsed.filter((g: any) => {
-              const name = norm(g?.descricao || "");
-              return needles.some((n) => name.includes(n));
-            });
-            console.log(`[OneBeleza] buscar_servicos unit filter: ${parsed.length} → ${filtered.length} groups (allowed: ${JSON.stringify(filterList)})`);
-            return filtered;
-          }
+          parsed = JSON.parse(text);
+        } catch {
+          console.log(`[OneBeleza] buscar_servicos: JSON parse failed`);
+          return { raw: text.slice(0, 200), status: res.status };
+        }
+
+        // Normalize: API may return array directly, or { data: [...] }, or { grupos: [...] }
+        let groups: any[];
+        if (Array.isArray(parsed)) {
+          groups = parsed;
+        } else if (Array.isArray(parsed?.data)) {
+          groups = parsed.data;
+        } else if (Array.isArray(parsed?.grupos)) {
+          groups = parsed.grupos;
+        } else {
+          console.log(`[OneBeleza] buscar_servicos: response is not an array, returning as-is. Type: ${typeof parsed}, keys: ${parsed && typeof parsed === "object" ? Object.keys(parsed).join(",") : "n/a"}`);
           return parsed;
-        } catch { return { raw: text.slice(0, 200), status: res.status }; }
+        }
+
+        console.log(`[OneBeleza] filter check: rawFilter=${JSON.stringify(rawFilter)}, filterList=${JSON.stringify(filterList)}, groupsCount=${groups.length}, groupNames=${JSON.stringify(groups.map((g: any) => g?.descricao || ""))}`);
+
+        if (filterList.length === 0) {
+          console.log(`[OneBeleza] buscar_servicos: no unit filter configured, returning all ${groups.length} groups`);
+          return groups;
+        }
+
+        const norm = (s: string) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+        const needles = filterList.map(norm);
+        const filtered = groups.filter((g: any) => {
+          const name = norm(g?.descricao || "");
+          return needles.some((n) => name.includes(n));
+        });
+        console.log(`[OneBeleza] buscar_servicos unit filter applied: ${groups.length} → ${filtered.length} groups (allowed: ${JSON.stringify(filterList)}, kept: ${JSON.stringify(filtered.map((g: any) => g?.descricao))})`);
+
+        if (filtered.length === 0) {
+          return {
+            error: `Nenhum grupo de serviço da unidade configurada (${filterList.join(", ")}) foi encontrado. Grupos retornados: ${groups.map((g: any) => g?.descricao).join(" | ")}. Verifique onebeleza_unit_filter no tenant.`,
+          };
+        }
+
+        return filtered;
       }
 
       case "buscar_barbeiros_por_servico": {
