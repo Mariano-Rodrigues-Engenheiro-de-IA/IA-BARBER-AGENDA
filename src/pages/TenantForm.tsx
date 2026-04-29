@@ -1485,6 +1485,35 @@ export default function TenantFormPage() {
                 </div>
               )}
 
+              {provider === "frizzar" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais Frizzar</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="frizzar_token">Token (Basic Auth)</Label>
+                    <div className="relative">
+                      <Input
+                        id="frizzar_token"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).frizzar_token || ""}
+                        onChange={(e) => handleChange("frizzar_token" as any, e.target.value)}
+                        placeholder="Token Basic da API Frizzar"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Cole o token fornecido pela Frizzar. Pode ser apenas o token (vamos prefixar com "Basic ") ou já com o prefixo. A empresa é identificada automaticamente pelo token.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {provider === "none" && (
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="text-sm font-medium text-foreground">Link no Prompt da IA</h4>
