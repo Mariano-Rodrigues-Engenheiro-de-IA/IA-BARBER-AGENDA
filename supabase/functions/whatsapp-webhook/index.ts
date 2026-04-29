@@ -3843,7 +3843,16 @@ Quando o cliente pedir para remarcar:
 // ===================== ONE BELEZA PROMPT SECTION =====================
 
 function buildOneBelezaPromptSection(_tenant: any): string {
-  return `
+  // Unit filter section — emphasizes single-branch operation when configured
+  const rawFilter = _tenant?.agent_settings?.onebeleza_unit_filter;
+  const filterList: string[] = Array.isArray(rawFilter)
+    ? rawFilter.filter((s: any) => typeof s === "string" && s.trim())
+    : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
+  const unitSection = filterList.length > 0
+    ? `\n------------------------------------------\n\n## 🔒 REGRA INVIOLÁVEL DE UNIDADE\n\nVocê atende EXCLUSIVAMENTE na unidade: **${filterList.join(" / ")}**.\n\nO sistema One Beleza retorna serviços de várias unidades (ex: Asa Sul, Ceilândia, Estúdio, Barbearia). O backend já filtra automaticamente para devolver APENAS os serviços da sua unidade — porém você DEVE:\n\n- Usar APENAS servicosId que vieram da chamada \`buscar_servicos\` desta conversa.\n- NUNCA mencionar ou aceitar agendamento para outras unidades.\n- Se o cliente pedir explicitamente outra unidade → responder educadamente que você atende apenas em ${filterList.join(" / ")} e oferecer escalar humano se ele insistir.\n- Se algum serviço parecer estar duplicado em outra unidade, IGNORE — só existe a versão da SUA unidade no que você recebeu.\n\n`
+    : "";
+
+  return `${unitSection}
 ------------------------------------------
 
 ## 🚨 REGRA ABSOLUTA — HORÁRIOS (ONE BELEZA)
