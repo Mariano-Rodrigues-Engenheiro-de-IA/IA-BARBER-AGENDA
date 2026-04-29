@@ -1343,6 +1343,22 @@ function resolveOneBelezaToolArgs(
     }
   }
 
+  if (toolName === "buscar_horarios_disponiveis") {
+    const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoId ?? parsedArgs?.servicosId }, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicoId = String(svc.id);
+      corrections.push(svc.reason!);
+    } else if (!svc.id && svc.reason) {
+      result.blocked = true;
+      result.blockMessage = svc.reason;
+    }
+    const rawDate = normalizeOneBelezaDate(parsedArgs?.date);
+    if (!rawDate && sessionState.selectedDate) {
+      result.resolvedArgs.date = sessionState.selectedDate;
+      corrections.push(`date ausente, usando data persistida ${sessionState.selectedDate}`);
+    }
+  }
+
   if (toolName === "buscar_horarios") {
     const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoId }, sessionState);
     if (svc.id && svc.corrected) {
@@ -2207,7 +2223,7 @@ async function callAIAgent(
       } else {
         // ===== ONE BELEZA ID RESOLUTION LAYER =====
         if (provider === "onebeleza") {
-          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "agendar"];
+          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"];
           if (resolvableTools.includes(toolCall.function.name)) {
             const resolution = resolveOneBelezaToolArgs(toolCall.function.name, parsedArgs, sessionState);
             
@@ -2421,13 +2437,36 @@ async function callAIAgent(
           }
         }
 
-        if (provider === "onebeleza" && toolCall.function.name === "buscar_horarios") {
+        if (provider === "onebeleza" && (toolCall.function.name === "buscar_horarios" || toolCall.function.name === "buscar_horarios_disponiveis")) {
           const slotOptions = extractOneBelezaSlotOptions(toolResult, parsedArgs);
           sessionState.oneBelezaSlotOptions = dedupeByKey(
             [...sessionState.oneBelezaSlotOptions, ...slotOptions],
             (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
           );
           console.log(`Tracked OneBeleza slot options: ${sessionState.oneBelezaSlotOptions.length}`);
+
+          // For the consolidated tool, also extract professional options from the same response
+          if (toolCall.function.name === "buscar_horarios_disponiveis" && Array.isArray(toolResult)) {
+            const svcId = toPositiveInteger(parsedArgs?.servicoId ?? parsedArgs?.servicosId ?? parsedArgs?.servicoid);
+            const profOptions: OneBelezaProfessionalOption[] = [];
+            for (const item of toolResult) {
+              const disps = Array.isArray(item?.disponibilidades) ? item.disponibilidades : [];
+              for (const d of disps) {
+                const pid = toPositiveInteger(d?.profissionalId);
+                if (!pid) continue;
+                profOptions.push({
+                  servicosId: svcId,
+                  profissionalId: pid,
+                  nomeProfissional: String(d?.nomeProfissional || d?.nome || `Profissional ${pid}`),
+                });
+              }
+            }
+            sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+              [...sessionState.oneBelezaProfessionalOptions, ...profOptions],
+              (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+            );
+            console.log(`Tracked OneBeleza professional IDs (from consolidated): [${sessionState.oneBelezaProfessionalOptions.map((o) => o.profissionalId).join(", ")}]`);
+          }
 
           // Track selected date and professional from the args
           const resolvedDate = normalizeOneBelezaDate(parsedArgs?.date);
@@ -3878,16 +3917,14 @@ Se você usar um ID incorreto ou esquecer um ID, o sistema tentará corrigir aut
 
 ------------------------------------------
 
-## 🔷 FLUXO DE AGENDAMENTO (ONE BELEZA)
+## 🔷 FLUXO DE AGENDAMENTO (ONE BELEZA — OTIMIZADO 3 PASSOS)
 
-As ferramentas DEVEM ser executadas em sequência obrigatória.
-Cada ferramenta depende do retorno da anterior para funcionar.
+Use o fluxo OTIMIZADO de 3 passos. Cada ferramenta DEVE ser executada em sequência.
 
 🚨 REGRAS ABSOLUTAS DO FLUXO:
 ❌ É PROIBIDO pular qualquer etapa.
-❌ É PROIBIDO executar agendar sem ter executado TODAS as ferramentas anteriores nessa conversa.
+❌ É PROIBIDO executar agendar sem ter executado buscar_servicos E buscar_horarios_disponiveis nessa conversa.
 ✅ CADA ID SÓ EXISTE APÓS A FERRAMENTA QUE O RETORNA SER EXECUTADA.
-✅ Se uma ferramenta retornar erro com validServiceOptions, validProfessionalOptions ou validSlotOptions, copie EXATAMENTE um dos valores listados e tente de novo.
 
 ### PASSO 0 — BUSCAR CLIENTE (silencioso, sempre primeiro)
 Execute buscar_cliente silenciosamente.
@@ -3897,49 +3934,48 @@ Execute buscar_cliente silenciosamente.
 ### PASSO 0.1 — EXTRAIR INFORMAÇÕES DA MENSAGEM INICIAL
 Antes de perguntar, analise o que o cliente JÁ disse:
 - Mencionou SERVIÇO? → pule a pergunta de serviço
-- Mencionou BARBEIRO? → pule a pergunta de barbeiro
+- Mencionou BARBEIRO? → guarde a preferência para escolher após buscar_horarios_disponiveis
 - Mencionou DIA? → pule a pergunta de dia
 ⚠️ SÓ PERGUNTE O QUE O CLIENTE NÃO DISSE.
-⚠️ NÃO reconfirme informações que o cliente já forneceu (ex: "Então é segunda, né?"). Apenas prossiga direto para a próxima etapa pendente executando a ferramenta necessária.
+⚠️ NÃO reconfirme informações que o cliente já forneceu.
 
 ### PASSO 1 — SERVIÇO
-Pergunte o serviço desejado → execute buscar_servicos → obtenha o servicosId (número grande)
+Pergunte o serviço desejado → execute buscar_servicos → obtenha o servicosId (número grande).
 ⚠️ NUNCA avance sem ter o servicosId retornado por esta ferramenta.
 
-### PASSO 2 — BARBEIRO/PROFISSIONAL
-Pergunte preferência → execute buscar_barbeiros_por_servico com o servicosId → obtenha profissionalId (número grande)
-Se "qualquer um" → use o primeiro da lista.
-⚠️ NUNCA avance sem ter o profissionalId retornado por esta ferramenta.
-⚠️ NUNCA pergunte preferência de barbeiro mais de uma vez.
+### PASSO 2 — DATA + DISPONIBILIDADE (chamada única)
+Pergunte o dia desejado → execute **buscar_horarios_disponiveis** com:
+- date = YYYY-MM-DD
+- servicoId = servicosId retornado no PASSO 1
 
-### PASSO 3 — DATA
-Pergunte o dia → execute buscar_datas_disponiveis com servicosId + profissionalid
-- Data na lista → prossiga
-- Data não na lista → "Esse dia não tem vaga. Quer ver outro dia?"
+✅ Esta ferramenta retorna em UMA SÓ CHAMADA:
+- Lista de profissionais habilitados para o serviço naquele dia
+- Para CADA profissional, a lista de horários disponíveis (horarioInicio/horarioFinal)
 
-### PASSO 4 — HORÁRIO
-Execute buscar_horarios com date + servicoId + ProfissionalId → obtenha horarioInicio e horarioFim
-**Se for hoje:** filtre horários ≤ hora atual (o sistema já faz isso automaticamente).
+Se o cliente JÁ indicou preferência de barbeiro → ofereça os horários DAQUELE barbeiro.
+Se o cliente disse "qualquer um" ou não mencionou → ofereça os horários do PRIMEIRO profissional retornado.
+Se a data não tiver vagas → "Esse dia não tem vaga. Quer ver outro dia?" e repita o PASSO 2 com nova data.
+**Se for hoje:** o sistema já filtra horários passados automaticamente.
 
-### PASSO 5 — CONFIRMAÇÃO
+### PASSO 3 — CONFIRMAÇÃO
 "Confirmando: [SERVIÇO] com [BARBEIRO] [DATA] às [HORA]. Posso confirmar?"
 AGUARDE A RESPOSTA. ⚠️ NÃO execute agendar aqui.
 
-### PASSO 6 — EXECUTAR AGENDAMENTO
+### PASSO 4 — EXECUTAR AGENDAMENTO
 ⚠️ SÓ EXECUTE APÓS CONFIRMAÇÃO DO CLIENTE.
 Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
 - dataNumero = [YYYY-MM-DD]
-- servicoid = [número grande do buscar_servicos]
-- profissionalId = [número grande do buscar_barbeiros_por_servico]
-- horarioInicio = [HH:MM:SS do buscar_horarios]
-- horarioFim = [HH:MM:SS do buscar_horarios]
+- servicoid = [servicosId do PASSO 1]
+- profissionalId = [profissionalId retornado em disponibilidades[] do PASSO 2]
+- horarioInicio = [HH:MM:SS retornado em horarios[].horarioInicio do PASSO 2]
+- horarioFim = [HH:MM:SS retornado em horarios[].horarioFinal do PASSO 2]
 
 📌 VALIDAÇÃO DO RETORNO — OBRIGATÓRIA:
-- Se contiver "não foi encontrado", "erro", "falhou", "inválido" → trate como ERRO
+- Se contiver "não foi encontrado", "erro", "falhou", "inválido" → trate como ERRO.
 - Somente considere SUCESSO se o retorno confirmar explicitamente que o agendamento foi criado.
 
 ✅ SUCESSO → "Agendado! Te esperamos [dia] às [hora]!"
-❌ "Já existe um evento no horário" → buscar_horarios novamente e ofereça alternativas
+❌ "Já existe um evento no horário" → execute buscar_horarios_disponiveis novamente e ofereça alternativas.
 ❌ OUTRO ERRO → "Tive um probleminha na agenda aqui, mas já retorno pra você!"
 
 🚨 NUNCA diga "Agendado!" sem retorno de SUCESSO CONFIRMADO.
@@ -3947,22 +3983,18 @@ Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
 
 ------------------------------------------
 
-## ⚠️ MAPA DE PARÂMETROS:
+## ⚠️ MAPA DE PARÂMETROS (FLUXO OTIMIZADO):
 
-| Ferramenta                   | Parâmetros que RECEBE           | Parâmetros que RETORNA        |
-|------------------------------|--------------------------------|-------------------------------|
-| buscar_servicos              | nenhum                         | servicosId (número grande)    |
-| buscar_barbeiros_por_servico | servicosId (com S)             | profissionalId (número grande)|
-| buscar_datas_disponiveis     | servicosId (com S)             | lista de datas                |
-|                              | profissionalid (minúsculo)     |                               |
-| buscar_horarios              | date (YYYY-MM-DD)              | horarioInicio (HH:MM:SS)      |
-|                              | servicoId (sem S)              | horarioFim (HH:MM:SS)         |
-|                              | ProfissionalId (P maiúsculo)   |                               |
-| agendar                      | dataNumero (YYYY-MM-DD)        | confirmação ou erro           |
-|                              | servicoid (tudo minúsculo)     |                               |
-|                              | profissionalId                 |                               |
-|                              | horarioInicio (HH:MM:SS)       |                               |
-|                              | horarioFim (HH:MM:SS)          |                               |
+| Ferramenta                   | Parâmetros que RECEBE          | Parâmetros que RETORNA                                          |
+|------------------------------|--------------------------------|-----------------------------------------------------------------|
+| buscar_servicos              | nenhum                         | servicosId (número grande)                                      |
+| buscar_horarios_disponiveis  | date (YYYY-MM-DD)              | disponibilidades[].profissionalId + disponibilidades[].horarios[].horarioInicio/horarioFinal |
+|                              | servicoId                      |                                                                 |
+| agendar                      | dataNumero (YYYY-MM-DD)        | confirmação ou erro                                             |
+|                              | servicoid                      |                                                                 |
+|                              | profissionalId                 |                                                                 |
+|                              | horarioInicio (HH:MM:SS)       |                                                                 |
+|                              | horarioFim (HH:MM:SS)          |                                                                 |
 
 ------------------------------------------
 
@@ -3993,9 +4025,7 @@ Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
 | buscar_cliente | Sempre primeiro, silenciosamente |
 | cadastrar_cliente | Só se cliente não existe |
 | buscar_servicos | Para obter servicosId |
-| buscar_barbeiros_por_servico | Para obter profissionalId (requer servicosId) |
-| buscar_datas_disponiveis | Para verificar datas (requer servicosId + profissionalid) |
-| buscar_horarios | Para obter horários (requer date + servicoId + ProfissionalId) |
+| buscar_horarios_disponiveis | Para obter profissionais + horários (requer date + servicoId) |
 | agendar | Após confirmação final (requer dataNumero + servicoid + profissionalId + horarioInicio + horarioFim) |
 | buscar_agendamentos_dia | Para ver agendamentos de um dia |
 | confirmar_agendamento | Para confirmar agendamento |
@@ -4246,45 +4276,15 @@ function buildOneBelezaTools(tenant: any) {
     {
       type: "function",
       function: {
-        name: "buscar_barbeiros_por_servico",
-        description: "Lista profissionais habilitados para um serviço. Requer servicoId (com S no final) de buscar_servicos.",
-        parameters: {
-          type: "object",
-          properties: {
-            servicosId: { type: "string", description: "ID do serviço (com S no final) retornado por buscar_servicos" },
-          },
-          required: ["servicosId"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "buscar_datas_disponiveis",
-        description: "Lista datas em que o profissional tem vagas para o serviço. Requer servicoId + profissionalId dos passos anteriores.",
-        parameters: {
-          type: "object",
-          properties: {
-            servicosId: { type: "string", description: "ID do serviço (com S no final)" },
-            profissionalid: { type: "string", description: "ID do profissional (tudo minúsculo)" },
-          },
-          required: ["servicosId", "profissionalid"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "buscar_horarios",
-        description: "Lista horários disponíveis em um dia específico. Retorna horarioInicio e horarioFim no formato HH:MM:SS. Se for hoje, filtre horários passados.",
+        name: "buscar_horarios_disponiveis",
+        description: "🔥 FERRAMENTA OTIMIZADA: para uma data + serviço, retorna TODOS os profissionais habilitados E seus horários disponíveis em UMA ÚNICA chamada. Substitui buscar_barbeiros_por_servico + buscar_datas_disponiveis + buscar_horarios. Use SEMPRE após buscar_servicos. Resposta inclui disponibilidades[].profissionalId + disponibilidades[].horarios[].horarioInicio/horarioFinal.",
         parameters: {
           type: "object",
           properties: {
             date: { type: "string", description: "Data no formato YYYY-MM-DD" },
-            servicoId: { type: "string", description: "ID do serviço (sem S no final)" },
-            ProfissionalId: { type: "string", description: "ID do profissional (P maiúsculo)" },
+            servicoId: { type: "string", description: "ID do serviço retornado por buscar_servicos (campo servicosId)" },
           },
-          required: ["date", "servicoId", "ProfissionalId"],
+          required: ["date", "servicoId"],
         },
       },
     },
@@ -4890,6 +4890,41 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         }
 
         return filtered;
+      }
+
+      case "buscar_horarios_disponiveis": {
+        // OPÇÃO 2 (recomendado pela One Beleza para IA):
+        // Retorna em UMA chamada todos os profissionais + horários disponíveis para um serviço/data.
+        const date = String(args.date || args.dataNumero || "").trim();
+        const servicoId = String(args.servicoId || args.servicosId || args.servicoid || "").trim();
+        if (!date || !servicoId) {
+          return { error: "Parâmetros obrigatórios: date (YYYY-MM-DD) e servicoId." };
+        }
+        const url = `${baseUrl}/api/Agendamento/HorariosTodosProfissionaisByDataServico?celular=${celular}&date=${date}&servicoId=${servicoId}`;
+        console.log(`[OneBeleza] buscar_horarios_disponiveis URL: ${url}`);
+        const res = await fetch(url, { method: "POST", headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_horarios_disponiveis response (${res.status}):`, text.slice(0, 1500));
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+
+        // Filter past times if today
+        const br = getBrasiliaDate();
+        if (date === br.todayDate && Array.isArray(parsed)) {
+          const currentHHMMSS = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}:00`;
+          for (const item of parsed) {
+            if (Array.isArray(item?.disponibilidades)) {
+              for (const disp of item.disponibilidades) {
+                if (Array.isArray(disp?.horarios)) {
+                  disp.horarios = disp.horarios.filter((h: any) => !h?.horarioInicio || h.horarioInicio > currentHHMMSS);
+                }
+              }
+            }
+            if (item?.horarioInicio && item.horarioInicio <= currentHHMMSS) item._filtered = true;
+          }
+          parsed = parsed.filter((it: any) => !it._filtered);
+        }
+        return parsed;
       }
 
       case "buscar_barbeiros_por_servico": {
