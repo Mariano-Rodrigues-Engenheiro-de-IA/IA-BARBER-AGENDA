@@ -165,13 +165,35 @@ Deno.serve(async (req) => {
       // 1) PRIORITY: Match by chat.owner (the WhatsApp number connected to the UAZAPI session)
       const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
       const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const incomingUnitHints = [
+        payload.chat?.name,
+        payload.chat?.title,
+        payload.chat?.description,
+        payload.pushName,
+        payload.senderName,
+        payload.notify,
+        payload.body,
+        payload.text,
+        messageContent,
+      ]
+        .map((value) => normalizeSearchText(value))
+        .filter(Boolean);
       let tenant: any = null;
       if (ownerDigits) {
-        tenant = tenants.find((t: any) => {
+        const ownerMatches = tenants.filter((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
           return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
         });
+        if (ownerMatches.length === 1) {
+          tenant = ownerMatches[0];
+        } else if (ownerMatches.length > 1) {
+          tenant = ownerMatches.find((candidate: any) => {
+            const unitFilters = getOneBelezaUnitFilterList(candidate).map(normalizeSearchText);
+            return unitFilters.length > 0 && unitFilters.some((filter) => incomingUnitHints.some((hint) => hint.includes(filter)));
+          }) || null;
+          console.log(`Multiple tenants matched owner (${ownerDigits}). Resolved by unit hint: ${tenant?.name || "none"}`);
+        }
         if (tenant) {
           console.log(`Tenant matched by owner (${ownerDigits}): ${tenant.name}`);
         }
@@ -2465,7 +2487,12 @@ async function callAIAgent(
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
           sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
+          sessionState.allowedServiceIds = dedupeByKey(
+            sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
+            (id) => String(id),
+          );
           console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
+          console.log(`Tracked allowed OneBeleza service IDs: [${sessionState.allowedServiceIds.join(", ")}]`);
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
