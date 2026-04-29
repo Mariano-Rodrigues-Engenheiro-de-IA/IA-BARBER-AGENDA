@@ -4831,7 +4831,25 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         const res = await fetch(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_servicos response (${res.status}):`, text.slice(0, 1000));
-        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+        try {
+          const parsed = JSON.parse(text);
+          // Filter by allowed unit names if configured (case/accent-insensitive substring match)
+          const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
+          const filterList: string[] = Array.isArray(rawFilter)
+            ? rawFilter
+            : (typeof rawFilter === "string" && rawFilter.trim() ? [rawFilter] : []);
+          if (filterList.length > 0 && Array.isArray(parsed)) {
+            const norm = (s: string) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+            const needles = filterList.map(norm);
+            const filtered = parsed.filter((g: any) => {
+              const name = norm(g?.descricao || "");
+              return needles.some((n) => name.includes(n));
+            });
+            console.log(`[OneBeleza] buscar_servicos unit filter: ${parsed.length} → ${filtered.length} groups (allowed: ${JSON.stringify(filterList)})`);
+            return filtered;
+          }
+          return parsed;
+        } catch { return { raw: text.slice(0, 200), status: res.status }; }
       }
 
       case "buscar_barbeiros_por_servico": {
