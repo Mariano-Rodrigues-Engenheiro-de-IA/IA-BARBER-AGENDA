@@ -3468,6 +3468,8 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
     ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
     : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
 
+  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n`;
+
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
