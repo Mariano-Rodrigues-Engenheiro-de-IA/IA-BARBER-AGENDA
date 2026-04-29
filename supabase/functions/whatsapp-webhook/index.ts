@@ -3613,6 +3613,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     providerPrompt = buildTrinksPromptSection(tenant);
   } else if (provider === "onebeleza") {
     providerPrompt = buildOneBelezaPromptSection(tenant);
+  } else if (provider === "frizzar") {
+    providerPrompt = buildFrizzarPromptSection(tenant);
   } else if (provider === "none") {
     providerPrompt = buildNonePromptSection(tenant);
   }
