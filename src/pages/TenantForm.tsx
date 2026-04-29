@@ -1084,6 +1084,7 @@ export default function TenantFormPage() {
     trinks_establishment_id: "",
     onebeleza_token: "",
     onebeleza_celular: "",
+    frizzar_token: "",
     booking_link: "",
     uazapi_url: "",
     uazapi_token: "",
