@@ -4246,45 +4246,15 @@ function buildOneBelezaTools(tenant: any) {
     {
       type: "function",
       function: {
-        name: "buscar_barbeiros_por_servico",
-        description: "Lista profissionais habilitados para um serviço. Requer servicoId (com S no final) de buscar_servicos.",
-        parameters: {
-          type: "object",
-          properties: {
-            servicosId: { type: "string", description: "ID do serviço (com S no final) retornado por buscar_servicos" },
-          },
-          required: ["servicosId"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "buscar_datas_disponiveis",
-        description: "Lista datas em que o profissional tem vagas para o serviço. Requer servicoId + profissionalId dos passos anteriores.",
-        parameters: {
-          type: "object",
-          properties: {
-            servicosId: { type: "string", description: "ID do serviço (com S no final)" },
-            profissionalid: { type: "string", description: "ID do profissional (tudo minúsculo)" },
-          },
-          required: ["servicosId", "profissionalid"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "buscar_horarios",
-        description: "Lista horários disponíveis em um dia específico. Retorna horarioInicio e horarioFim no formato HH:MM:SS. Se for hoje, filtre horários passados.",
+        name: "buscar_horarios_disponiveis",
+        description: "🔥 FERRAMENTA OTIMIZADA: para uma data + serviço, retorna TODOS os profissionais habilitados E seus horários disponíveis em UMA ÚNICA chamada. Substitui buscar_barbeiros_por_servico + buscar_datas_disponiveis + buscar_horarios. Use SEMPRE após buscar_servicos. Resposta inclui disponibilidades[].profissionalId + disponibilidades[].horarios[].horarioInicio/horarioFinal.",
         parameters: {
           type: "object",
           properties: {
             date: { type: "string", description: "Data no formato YYYY-MM-DD" },
-            servicoId: { type: "string", description: "ID do serviço (sem S no final)" },
-            ProfissionalId: { type: "string", description: "ID do profissional (P maiúsculo)" },
+            servicoId: { type: "string", description: "ID do serviço retornado por buscar_servicos (campo servicosId)" },
           },
-          required: ["date", "servicoId", "ProfissionalId"],
+          required: ["date", "servicoId"],
         },
       },
     },
