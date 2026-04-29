@@ -5241,9 +5241,8 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       case "buscar_cliente": {
         const tel = normalizePhone(args.telefone);
         const ddi = args.ddi || 55;
-        const url = `${baseUrl}/buscar/cliente/${tel}/${ddi}`;
-        console.log(`[Frizzar] buscar_cliente URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const path = `/buscar/cliente/${tel}/${ddi}`;
+        const res = await frizzarFetch(path, { headers });
         const text = await res.text();
         console.log(`[Frizzar] buscar_cliente response (${res.status}):`, text.slice(0, 400));
         if (res.status === 404) {
@@ -5260,7 +5259,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           ddi: args.ddi || 55,
         };
         console.log(`[Frizzar] cadastrar_cliente body:`, JSON.stringify(body));
-        const res = await fetch(`${baseUrl}/cadastrar/cliente`, {
+        const res = await frizzarFetch(`/cadastrar/cliente`, {
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify(body),
@@ -5271,18 +5270,14 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       }
 
       case "buscar_agendamentos": {
-        const url = `${baseUrl}/buscar/agendamentos/${args.clienteId}`;
-        console.log(`[Frizzar] buscar_agendamentos URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const res = await frizzarFetch(`/buscar/agendamentos/${args.clienteId}`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] buscar_agendamentos response (${res.status}):`, text.slice(0, 400));
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "listar_servicos": {
-        const url = `${baseUrl}/listar/servicos`;
-        console.log(`[Frizzar] listar_servicos URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const res = await frizzarFetch(`/listar/servicos`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] listar_servicos response (${res.status}):`, text.slice(0, 600));
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
@@ -5294,7 +5289,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           return { error: "Forneça ao menos um serviço em 'servicos': [{codigo: N}]" };
         }
         console.log(`[Frizzar] listar_profissionais body:`, JSON.stringify(body));
-        const res = await fetch(`${baseUrl}/listar/profissionais`, {
+        const res = await frizzarFetch(`/listar/profissionais`, {
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify(body),
@@ -5309,9 +5304,9 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (!args.profissionalId || !args.data || body.length === 0) {
           return { error: "Faltam parâmetros: profissionalId, data (yyyy-MM-dd) e servicos." };
         }
-        const url = `${baseUrl}/listar/horarios/${args.profissionalId}/${args.data}`;
-        console.log(`[Frizzar] listar_horarios URL: ${url} body:`, JSON.stringify(body));
-        const res = await fetch(url, {
+        const path = `/listar/horarios/${args.profissionalId}/${args.data}`;
+        console.log(`[Frizzar] listar_horarios body:`, JSON.stringify(body));
+        const res = await frizzarFetch(path, {
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify(body),
@@ -5326,9 +5321,9 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
-        const url = `${baseUrl}/agendar/cliente/${args.clienteId}/dia/${args.dia}/hora/${args.hora}/profissional/${args.profissionalId}`;
-        console.log(`[Frizzar] agendar URL: ${url} body:`, JSON.stringify(body));
-        const res = await fetch(url, {
+        const path = `/agendar/cliente/${args.clienteId}/dia/${args.dia}/hora/${args.hora}/profissional/${args.profissionalId}`;
+        console.log(`[Frizzar] agendar body:`, JSON.stringify(body));
+        const res = await frizzarFetch(path, {
           method: "POST",
           headers: jsonHeaders,
           body: JSON.stringify(body),
@@ -5342,9 +5337,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       }
 
       case "cancelar_agendamento": {
-        const url = `${baseUrl}/cancelaragendamento/${args.agendamentoId}`;
-        console.log(`[Frizzar] cancelar_agendamento URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const res = await frizzarFetch(`/cancelaragendamento/${args.agendamentoId}`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] cancelar_agendamento response (${res.status}):`, text.slice(0, 400));
         try {
