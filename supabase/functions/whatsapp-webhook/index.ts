@@ -81,21 +81,54 @@ Deno.serve(async (req) => {
 
           if (tenantForStore) {
             const storeMessageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
-            // Check for duplicate
+            // Check for duplicate by message_id
             const { data: existingMsg } = storeMessageId
               ? await supabase.from("chat_messages").select("id").eq("message_id", storeMessageId).maybeSingle()
               : { data: null };
 
             if (!existingMsg) {
-              await supabase.from("chat_messages").insert({
-                tenant_id: tenantForStore.id,
-                phone_number: phoneNumber,
-                role: "assistant",
-                content: messageContent,
-                message_id: storeMessageId || null,
-                processed: true,
-              });
-              console.log(`Stored owner message for context: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              // Detect if this is just an echo of the AI's own recent reply (within 60s)
+              // to avoid duplicating and to avoid mislabeling AI messages as human-sent.
+              const sixtySecAgo = new Date(Date.now() - 60_000).toISOString();
+              const { data: recentAssistant } = await supabase
+                .from("chat_messages")
+                .select("id, content")
+                .eq("tenant_id", tenantForStore.id)
+                .eq("phone_number", phoneNumber)
+                .eq("role", "assistant")
+                .gte("created_at", sixtySecAgo)
+                .order("created_at", { ascending: false })
+                .limit(5);
+
+              const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+              const incoming = normalize(messageContent);
+              const isEchoOfAI = (recentAssistant || []).some(
+                (m: any) => m.content && normalize(m.content) === incoming
+              );
+
+              if (isEchoOfAI) {
+                // Just tag the existing AI message with the message_id (so future dedup works) and skip insert
+                if (storeMessageId && recentAssistant && recentAssistant[0]) {
+                  await supabase
+                    .from("chat_messages")
+                    .update({ message_id: storeMessageId, processed: true })
+                    .eq("id", recentAssistant[0].id);
+                }
+                console.log(`Skipped owner echo (matches AI reply): ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              } else {
+                // Real message sent manually by the human attendant (via app or WhatsApp).
+                // Tag with prefix so the AI clearly sees it was a human, not itself.
+                const taggedContent = `[ATENDENTE HUMANO]: ${messageContent}`;
+                await supabase.from("chat_messages").insert({
+                  tenant_id: tenantForStore.id,
+                  phone_number: phoneNumber,
+                  role: "assistant",
+                  content: taggedContent,
+                  message_id: storeMessageId || null,
+                  processed: true,
+                });
+                console.log(`Stored HUMAN attendant message: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+              }
             }
           }
         }
