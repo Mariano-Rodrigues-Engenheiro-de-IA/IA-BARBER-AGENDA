@@ -1319,6 +1319,20 @@ function resolveOneBelezaToolArgs(
   };
 
   const corrections: string[] = [];
+  const shouldGuardServiceId = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"].includes(toolName);
+  const allowedServiceIds = getAllowedOneBelezaServiceIds(sessionState);
+
+  if (shouldGuardServiceId && allowedServiceIds.length > 0) {
+    const incomingServiceId = toPositiveInteger(
+      parsedArgs?.servicosId ?? parsedArgs?.servicoId ?? parsedArgs?.servicoid,
+    );
+
+    if (incomingServiceId && !allowedServiceIds.includes(incomingServiceId)) {
+      result.blocked = true;
+      result.blockMessage = `servicosId ${incomingServiceId} não pertence à unidade desta barbearia. Use APENAS um destes IDs: ${allowedServiceIds.join(", ")}.`;
+      return result;
+    }
+  }
 
   if (toolName === "buscar_barbeiros_por_servico") {
     const svc = resolveOneBelezaServiceId(parsedArgs, sessionState);
@@ -1728,6 +1742,8 @@ function buildOneBelezaSchedulingValidationResult(
   parsedArgs: any,
   sessionState: AgentSessionState,
 ): any | null {
+  const allowedServiceIds = getAllowedOneBelezaServiceIds(sessionState);
+
   if (sessionState.oneBelezaServiceOptions.length === 0) {
     return {
       error: "Antes de agendar, execute buscar_servicos nesta interação e use um servicosId real do retorno.",
@@ -1754,6 +1770,14 @@ function buildOneBelezaSchedulingValidationResult(
   const dataNumero = normalizeOneBelezaDate(parsedArgs?.dataNumero ?? parsedArgs?.dataAg ?? parsedArgs?.date ?? parsedArgs?.data);
   const horarioInicio = normalizeOneBelezaTime(parsedArgs?.horarioInicio);
   const horarioFim = normalizeOneBelezaTime(parsedArgs?.horarioFim ?? parsedArgs?.horarioFinal);
+
+  if (servicoId && allowedServiceIds.length > 0 && !allowedServiceIds.includes(servicoId)) {
+    return {
+      error: `servicoId ${servicoId} não pertence à unidade desta barbearia. Use APENAS um dos IDs permitidos: ${allowedServiceIds.join(", ")}.`,
+      allowedServiceIds,
+      blocked: true,
+    };
+  }
 
   if (!servicoId || !sessionState.oneBelezaServiceOptions.some((option) => option.servicosId === servicoId)) {
     return {
@@ -1839,6 +1863,10 @@ async function hydrateOneBelezaSessionStateFromProvider(
       sessionState.oneBelezaServiceOptions = dedupeByKey(
         [...sessionState.oneBelezaServiceOptions, ...serviceOptions],
         (option) => String(option.servicosId),
+      );
+      sessionState.allowedServiceIds = dedupeByKey(
+        [...sessionState.allowedServiceIds, ...serviceOptions.map((option) => option.servicosId)],
+        (id) => String(id),
       );
       console.log(`Hydrated OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
     }
