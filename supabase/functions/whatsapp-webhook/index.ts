@@ -5184,7 +5184,17 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
 
-  const baseUrl = "https://api.frizzar.com.br/api/bot";
+  // Resolução da URL base da Frizzar:
+  // 1) override por tenant (campo frizzar_base_url) — útil se a Frizzar mudar o host;
+  // 2) padrão = produção (api.frizzar.com.br);
+  // 3) fallback automático para homologação se a produção falhar por DNS/rede
+  //    (a Frizzar ainda não publicou o host de produção em DNS — confirmado em 2026-04).
+  const PROD_URL = "https://api.frizzar.com.br/api/bot";
+  const HOM_URL = "https://homologacao.frizzar.com.br:8446/api/bot";
+  const overrideUrl = (tenant.frizzar_base_url || "").trim().replace(/\/+$/, "");
+  const primaryBase = overrideUrl || PROD_URL;
+  const fallbackBase = overrideUrl ? null : HOM_URL;
+
   const rawToken = (tenant.frizzar_token || "").trim();
   if (!rawToken) {
     return { error: "Frizzar token não configurado para este estabelecimento." };
@@ -5195,6 +5205,29 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
     "Accept": "application/json",
   };
   const jsonHeaders: Record<string, string> = { ...headers, "Content-Type": "application/json" };
+
+  // wrapper que tenta a URL primária e, em caso de erro de rede/DNS, repete na URL de fallback
+  const frizzarFetch = async (path: string, init?: RequestInit): Promise<Response> => {
+    const tryFetch = async (base: string) => {
+      const url = base + path;
+      console.log(`[Frizzar] -> ${init?.method || "GET"} ${url}`);
+      return await fetch(url, init);
+    };
+    try {
+      return await tryFetch(primaryBase);
+    } catch (err) {
+      const msg = (err as Error)?.message || String(err);
+      const isNetwork = /dns|name not resolved|getaddrinfo|enotfound|network|fetch failed|connection|tcp/i.test(msg);
+      if (fallbackBase && isNetwork) {
+        console.warn(`[Frizzar] Falha de rede em ${primaryBase} (${msg}). Tentando fallback ${fallbackBase}.`);
+        return await tryFetch(fallbackBase);
+      }
+      throw err;
+    }
+  };
+
+  // baseUrl mantido apenas para logs/compat — chamadas devem usar frizzarFetch(path)
+  const baseUrl = primaryBase;
 
   const normalizePhone = (raw: string): string => {
     let tel = (raw || "").replace(/\D/g, "");
