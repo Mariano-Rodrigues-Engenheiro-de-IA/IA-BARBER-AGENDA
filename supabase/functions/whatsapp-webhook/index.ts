@@ -4862,6 +4862,41 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         return filtered;
       }
 
+      case "buscar_horarios_disponiveis": {
+        // OPÇÃO 2 (recomendado pela One Beleza para IA):
+        // Retorna em UMA chamada todos os profissionais + horários disponíveis para um serviço/data.
+        const date = String(args.date || args.dataNumero || "").trim();
+        const servicoId = String(args.servicoId || args.servicosId || args.servicoid || "").trim();
+        if (!date || !servicoId) {
+          return { error: "Parâmetros obrigatórios: date (YYYY-MM-DD) e servicoId." };
+        }
+        const url = `${baseUrl}/api/Agendamento/HorariosTodosProfissionaisByDataServico?celular=${celular}&date=${date}&servicoId=${servicoId}`;
+        console.log(`[OneBeleza] buscar_horarios_disponiveis URL: ${url}`);
+        const res = await fetch(url, { method: "POST", headers: authHeaders });
+        const text = await res.text();
+        console.log(`[OneBeleza] buscar_horarios_disponiveis response (${res.status}):`, text.slice(0, 1500));
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+
+        // Filter past times if today
+        const br = getBrasiliaDate();
+        if (date === br.todayDate && Array.isArray(parsed)) {
+          const currentHHMMSS = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}:00`;
+          for (const item of parsed) {
+            if (Array.isArray(item?.disponibilidades)) {
+              for (const disp of item.disponibilidades) {
+                if (Array.isArray(disp?.horarios)) {
+                  disp.horarios = disp.horarios.filter((h: any) => !h?.horarioInicio || h.horarioInicio > currentHHMMSS);
+                }
+              }
+            }
+            if (item?.horarioInicio && item.horarioInicio <= currentHHMMSS) item._filtered = true;
+          }
+          parsed = parsed.filter((it: any) => !it._filtered);
+        }
+        return parsed;
+      }
+
       case "buscar_barbeiros_por_servico": {
         const url = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${args.servicosId}`;
         console.log(`[OneBeleza] buscar_barbeiros URL: ${url}`);
