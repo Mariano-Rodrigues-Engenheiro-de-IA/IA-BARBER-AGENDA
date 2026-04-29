@@ -2603,6 +2603,8 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
       return executeTrinksTool(tenant, toolCall, phoneNumber);
     case "onebeleza":
       return executeOneBelezaTool(tenant, toolCall, phoneNumber);
+    case "frizzar":
+      return executeFrizzarTool(tenant, toolCall, phoneNumber);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
