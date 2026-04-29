@@ -266,6 +266,7 @@ export type Database = {
           booking_link: string | null
           created_at: string
           email: string | null
+          frizzar_token: string | null
           id: string
           kanban_columns: Json | null
           name: string
@@ -290,6 +291,7 @@ export type Database = {
           booking_link?: string | null
           created_at?: string
           email?: string | null
+          frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
           name: string
@@ -314,6 +316,7 @@ export type Database = {
           booking_link?: string | null
           created_at?: string
           email?: string | null
+          frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
           name?: string
@@ -366,7 +369,7 @@ export type Database = {
       }
     }
     Enums: {
-      api_provider: "trinks" | "onebeleza" | "none"
+      api_provider: "trinks" | "onebeleza" | "none" | "frizzar"
       app_role: "admin"
       tenant_status: "active" | "inactive" | "suspended"
     }
@@ -496,7 +499,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      api_provider: ["trinks", "onebeleza", "none"],
+      api_provider: ["trinks", "onebeleza", "none", "frizzar"],
       app_role: ["admin"],
       tenant_status: ["active", "inactive", "suspended"],
     },
