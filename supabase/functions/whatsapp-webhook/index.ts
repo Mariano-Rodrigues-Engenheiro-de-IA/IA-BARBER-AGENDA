@@ -2115,22 +2115,16 @@ async function callAIAgent(
       // funnel label across multiple messages as the conversation progresses.
       const toolKey = toolCall.function.name;
       // Lookup/read-only tools may be called multiple times across the conversation.
-      // Only mutating tools (criar/cancelar/editar agendamento, send_image/audio/video, etc.)
-      // are blocked from running twice in the same session.
-      const allowRepeatedTools = new Set([
-        "buscar_cliente",
-        "listar_horarios", "buscar_horarios",
-        "listar_servicos", "buscar_servicos",
-        "listar_servicos_profissional",
-        "listar_profissionais", "buscar_barbeiros_por_servico",
-        "buscar_datas_disponiveis",
-        "buscar_agendamentos_dia", "buscar_agendamento", "buscar_agendamentos",
-      ]);
+      // Any tool starting with `buscar_` or `listar_` is treated as read-only and
+      // never deduplicated. Only mutating tools (criar/cancelar/editar agendamento,
+      // cadastrar_cliente, send_image/audio/video, escalate_human, etc.) are blocked
+      // from running twice in the same session.
+      const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey);
       // Check if this is a custom tool of type "add_label" (always allow repeats)
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
 
-      if (executedToolsThisSession.has(toolKey) && !allowRepeatedTools.has(toolKey) && !isAddLabelTool) {
+      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool) {
         // Special case: for escalate_human, even when deduplicated, make sure the
         // configured label is actually present on the WhatsApp chat. The owner may
         // have removed the label between turns, leaving the lead without the
