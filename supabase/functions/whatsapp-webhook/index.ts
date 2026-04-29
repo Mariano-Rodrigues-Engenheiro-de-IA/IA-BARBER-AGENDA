@@ -2114,13 +2114,17 @@ async function callAIAgent(
       // and EXCEPT custom tools of type "add_label" — the AI may need to update the lead's
       // funnel label across multiple messages as the conversation progresses.
       const toolKey = toolCall.function.name;
+      // Lookup/read-only tools may be called multiple times across the conversation.
+      // Only mutating tools (criar/cancelar/editar agendamento, send_image/audio/video, etc.)
+      // are blocked from running twice in the same session.
       const allowRepeatedTools = new Set([
-        "buscar_cliente", "cadastrar_cliente",
+        "buscar_cliente",
         "listar_horarios", "buscar_horarios",
         "listar_servicos", "buscar_servicos",
+        "listar_servicos_profissional",
         "listar_profissionais", "buscar_barbeiros_por_servico",
         "buscar_datas_disponiveis",
-        "buscar_agendamentos_dia", "buscar_agendamento",
+        "buscar_agendamentos_dia", "buscar_agendamento", "buscar_agendamentos",
       ]);
       // Check if this is a custom tool of type "add_label" (always allow repeats)
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
