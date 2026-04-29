@@ -1343,6 +1343,22 @@ function resolveOneBelezaToolArgs(
     }
   }
 
+  if (toolName === "buscar_horarios_disponiveis") {
+    const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoId ?? parsedArgs?.servicosId }, sessionState);
+    if (svc.id && svc.corrected) {
+      result.resolvedArgs.servicoId = String(svc.id);
+      corrections.push(svc.reason!);
+    } else if (!svc.id && svc.reason) {
+      result.blocked = true;
+      result.blockMessage = svc.reason;
+    }
+    const rawDate = normalizeOneBelezaDate(parsedArgs?.date);
+    if (!rawDate && sessionState.selectedDate) {
+      result.resolvedArgs.date = sessionState.selectedDate;
+      corrections.push(`date ausente, usando data persistida ${sessionState.selectedDate}`);
+    }
+  }
+
   if (toolName === "buscar_horarios") {
     const svc = resolveOneBelezaServiceId({ servicoId: parsedArgs?.servicoId }, sessionState);
     if (svc.id && svc.corrected) {
