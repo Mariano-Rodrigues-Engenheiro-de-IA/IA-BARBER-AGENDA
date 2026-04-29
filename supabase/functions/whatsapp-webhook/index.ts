@@ -4970,3 +4970,367 @@ async function executeNoneTool(_tenant: any, toolCall: any): Promise<any> {
     error: `A ferramenta "${funcName}" não existe neste estabelecimento. Responda diretamente no texto, sem chamar ferramentas.`,
   };
 }
+
+// ===================== FRIZZAR PROMPT SECTION =====================
+
+function buildFrizzarPromptSection(_tenant: any): string {
+  return `
+------------------------------------------
+
+## 🚨 REGRA ABSOLUTA — HORÁRIOS (FRIZZAR)
+
+NUNCA cite, sugira ou confirme qualquer horário sem antes executar listar_horarios nessa interação.
+
+❌ PROIBIDO: qualquer horário baseado em suposição ou memória
+✅ CORRETO: execute listar_horarios → use APENAS horariosLivres → ofereça
+
+Se o cliente perguntar um horário específico ANTES de você listar:
+→ "Me diz o serviço, o profissional e o dia que já verifico pra você!"
+
+------------------------------------------
+
+## 🔶 REGRA CRÍTICA: IDs
+
+Cada ID tem uma fonte obrigatória — NUNCA invente:
+- clienteId (codigo) → buscar_cliente OU cadastrar_cliente
+- servicoId (codigo) → listar_servicos
+- profissionalId (codigo) → listar_profissionais (após escolher serviços)
+- agendamentoId (codigo) → buscar_agendamentos
+
+------------------------------------------
+
+## 🔷 FLUXO DE AGENDAMENTO (FRIZZAR — sequencial)
+
+1. **buscar_cliente** pelo telefone do cliente.
+   - Se não encontrar (404), peça o nome e use **cadastrar_cliente**.
+2. **listar_servicos** → mostre as opções disponíveis e deixe o cliente escolher 1 ou mais.
+3. **listar_profissionais** com a lista de serviços escolhidos (formato: [{ "codigo": 10 }, { "codigo": 15 }]).
+   - Mostre os profissionais que atendem TODOS os serviços selecionados.
+4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + body com os serviços.
+   - Use APENAS o campo "horariosLivres" de cada dia.
+5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm) + profissionalId + serviços no body.
+
+------------------------------------------
+
+## 🔶 CANCELAMENTO
+
+1. **buscar_agendamentos** com clienteId → mostra agendamentos abertos.
+2. Confirme com o cliente qual cancelar.
+3. **cancelar_agendamento** com o agendamentoId.
+   - Se a resposta vier com status 405, avise: "Esse agendamento já foi realizado, não é possível cancelar."
+
+------------------------------------------
+
+## 📅 FORMATOS DE DATA E HORA
+
+- Data: sempre **yyyy-MM-dd** (ex: 2024-06-10).
+- Hora: sempre **HH:mm** em 24h (ex: 14:30).
+- DDI Brasil: **55** (number).
+- Telefone: somente dígitos, sem formatação.
+`;
+}
+
+// ===================== FRIZZAR TOOLS DEFINITION =====================
+
+function buildFrizzarTools(tenant: any) {
+  if (!tenant.frizzar_token) return undefined;
+
+  return [
+    {
+      type: "function",
+      function: {
+        name: "buscar_cliente",
+        description: "Busca um cliente pelo telefone. Retorna codigo (id), nome, telefone e ddi.",
+        parameters: {
+          type: "object",
+          properties: {
+            telefone: { type: "string", description: "Telefone com DDD, somente dígitos (ex: 11999998888)" },
+            ddi: { type: "number", description: "DDI do país, padrão 55", default: 55 },
+          },
+          required: ["telefone"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cadastrar_cliente",
+        description: "Cadastra um novo cliente. Use somente se buscar_cliente retornar 404. Retorna o cliente criado (com codigo).",
+        parameters: {
+          type: "object",
+          properties: {
+            nome: { type: "string", description: "Nome completo (mín 2 chars, máx 70, somente letras e espaços)" },
+            telefone: { type: "string", description: "Telefone com DDD, somente dígitos" },
+            ddi: { type: "number", description: "DDI do país, padrão 55", default: 55 },
+          },
+          required: ["nome", "telefone"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "buscar_agendamentos",
+        description: "Lista agendamentos abertos do cliente (a partir das últimas ~2 horas).",
+        parameters: {
+          type: "object",
+          properties: {
+            clienteId: { type: "number", description: "ID (codigo) do cliente retornado por buscar_cliente" },
+          },
+          required: ["clienteId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_servicos",
+        description: "Lista todos os serviços da empresa que aceitam agendamento online.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_profissionais",
+        description: "Lista profissionais que atendem TODOS os serviços informados e têm horário disponível. Sempre chame após listar_servicos e o cliente ter escolhido o(s) serviço(s).",
+        parameters: {
+          type: "object",
+          properties: {
+            servicos: {
+              type: "array",
+              description: "Lista de serviços escolhidos pelo cliente",
+              items: {
+                type: "object",
+                properties: { codigo: { type: "number", description: "ID (codigo) do serviço" } },
+                required: ["codigo"],
+              },
+            },
+          },
+          required: ["servicos"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_horarios",
+        description: "Lista horários LIVRES do profissional a partir de uma data (cobre 14 dias). Use APENAS o campo horariosLivres da resposta.",
+        parameters: {
+          type: "object",
+          properties: {
+            profissionalId: { type: "number", description: "ID (codigo) do profissional" },
+            data: { type: "string", description: "Data inicial no formato yyyy-MM-dd" },
+            servicos: {
+              type: "array",
+              description: "Lista de serviços escolhidos",
+              items: {
+                type: "object",
+                properties: { codigo: { type: "number" } },
+                required: ["codigo"],
+              },
+            },
+          },
+          required: ["profissionalId", "data", "servicos"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "agendar",
+        description: "Cria o agendamento. Cada serviço gera um agendamento sequencial. Sempre confirme dia/hora/serviço com o cliente ANTES de chamar.",
+        parameters: {
+          type: "object",
+          properties: {
+            clienteId: { type: "number" },
+            dia: { type: "string", description: "Data no formato yyyy-MM-dd" },
+            hora: { type: "string", description: "Hora no formato HH:mm" },
+            profissionalId: { type: "number" },
+            servicos: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { codigo: { type: "number" } },
+                required: ["codigo"],
+              },
+            },
+          },
+          required: ["clienteId", "dia", "hora", "profissionalId", "servicos"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cancelar_agendamento",
+        description: "Cancela um agendamento pelo ID. Se o body retornar status 405, o agendamento já foi realizado e não pode ser cancelado.",
+        parameters: {
+          type: "object",
+          properties: {
+            agendamentoId: { type: "number", description: "ID (codigo) do agendamento" },
+          },
+          required: ["agendamentoId"],
+        },
+      },
+    },
+  ];
+}
+
+// ===================== FRIZZAR TOOL EXECUTION =====================
+
+async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+  let args: any = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const baseUrl = "https://api.frizzar.com.br/api/bot";
+  const rawToken = (tenant.frizzar_token || "").trim();
+  if (!rawToken) {
+    return { error: "Frizzar token não configurado para este estabelecimento." };
+  }
+  const authHeader = rawToken.toLowerCase().startsWith("basic ") ? rawToken : `Basic ${rawToken}`;
+  const headers: Record<string, string> = {
+    "Authorization": authHeader,
+    "Accept": "application/json",
+  };
+  const jsonHeaders: Record<string, string> = { ...headers, "Content-Type": "application/json" };
+
+  const normalizePhone = (raw: string): string => {
+    let tel = (raw || "").replace(/\D/g, "");
+    // remove DDI 55 se vier no número (a API espera ddi separado)
+    if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+    return tel;
+  };
+
+  try {
+    switch (funcName) {
+      case "buscar_cliente": {
+        const tel = normalizePhone(args.telefone);
+        const ddi = args.ddi || 55;
+        const url = `${baseUrl}/buscar/cliente/${tel}/${ddi}`;
+        console.log(`[Frizzar] buscar_cliente URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Frizzar] buscar_cliente response (${res.status}):`, text.slice(0, 400));
+        if (res.status === 404) {
+          return { notFound: true, message: "Cliente não encontrado. Use cadastrar_cliente." };
+        }
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "cadastrar_cliente": {
+        const tel = normalizePhone(args.telefone);
+        const body = {
+          nome: args.nome,
+          telefone: tel,
+          ddi: args.ddi || 55,
+        };
+        console.log(`[Frizzar] cadastrar_cliente body:`, JSON.stringify(body));
+        const res = await fetch(`${baseUrl}/cadastrar/cliente`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[Frizzar] cadastrar_cliente response (${res.status}):`, text.slice(0, 400));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "buscar_agendamentos": {
+        const url = `${baseUrl}/buscar/agendamentos/${args.clienteId}`;
+        console.log(`[Frizzar] buscar_agendamentos URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Frizzar] buscar_agendamentos response (${res.status}):`, text.slice(0, 400));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_servicos": {
+        const url = `${baseUrl}/listar/servicos`;
+        console.log(`[Frizzar] listar_servicos URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Frizzar] listar_servicos response (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_profissionais": {
+        const body = Array.isArray(args.servicos) ? args.servicos : [];
+        if (body.length === 0) {
+          return { error: "Forneça ao menos um serviço em 'servicos': [{codigo: N}]" };
+        }
+        console.log(`[Frizzar] listar_profissionais body:`, JSON.stringify(body));
+        const res = await fetch(`${baseUrl}/listar/profissionais`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[Frizzar] listar_profissionais response (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_horarios": {
+        const body = Array.isArray(args.servicos) ? args.servicos : [];
+        if (!args.profissionalId || !args.data || body.length === 0) {
+          return { error: "Faltam parâmetros: profissionalId, data (yyyy-MM-dd) e servicos." };
+        }
+        const url = `${baseUrl}/listar/horarios/${args.profissionalId}/${args.data}`;
+        console.log(`[Frizzar] listar_horarios URL: ${url} body:`, JSON.stringify(body));
+        const res = await fetch(url, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[Frizzar] listar_horarios response (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "agendar": {
+        const body = Array.isArray(args.servicos) ? args.servicos : [];
+        if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
+          return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
+        }
+        const url = `${baseUrl}/agendar/cliente/${args.clienteId}/dia/${args.dia}/hora/${args.hora}/profissional/${args.profissionalId}`;
+        console.log(`[Frizzar] agendar URL: ${url} body:`, JSON.stringify(body));
+        const res = await fetch(url, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[Frizzar] agendar response (${res.status}):`, text.slice(0, 600));
+        if (res.status === 403) {
+          return { error: "Cliente bloqueado ou limite de agendamentos atingido." };
+        }
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "cancelar_agendamento": {
+        const url = `${baseUrl}/cancelaragendamento/${args.agendamentoId}`;
+        console.log(`[Frizzar] cancelar_agendamento URL: ${url}`);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Frizzar] cancelar_agendamento response (${res.status}):`, text.slice(0, 400));
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed?.status === 405) {
+            return { ...parsed, message: "Agendamento já realizado — não pode ser cancelado." };
+          }
+          return parsed;
+        } catch {
+          return { error: `Status ${res.status}`, raw: text.slice(0, 200) };
+        }
+      }
+
+      default:
+        return { error: `Ferramenta Frizzar desconhecida: ${funcName}` };
+    }
+  } catch (error) {
+    console.error(`[Frizzar] tool error (${funcName}):`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
+  }
+}
