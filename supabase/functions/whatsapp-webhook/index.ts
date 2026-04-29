@@ -5302,7 +5302,17 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         });
         const text = await res.text();
         console.log(`[Frizzar] listar_profissionais response (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        // A API filtra por disponibilidade nas próximas horas — fora do expediente retorna [].
+        // Quando vazio, oriente a IA a perguntar uma data específica e seguir para listar_horarios.
+        if (Array.isArray(parsed) && parsed.length === 0) {
+          return {
+            profissionais: [],
+            aviso: "Nenhum profissional com horário livre nas próximas horas (a API filtra por disponibilidade imediata). Pergunte ao cliente uma DATA específica (ex.: amanhã, sexta, 30/04) e tente listar_horarios para cada profissional conhecido, ou peça ao cliente o nome do profissional preferido.",
+          };
+        }
+        return parsed;
       }
 
       case "listar_horarios": {
