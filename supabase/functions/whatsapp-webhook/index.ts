@@ -5312,7 +5312,27 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         });
         const text = await res.text();
         console.log(`[Frizzar] listar_horarios response (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // A Frizzar devolve um array com uma entrada por dia: [{dia, horariosLivres: ["08:00", ...]}, ...]
+          // Normalizamos pra o agente: priorizamos a entrada da data solicitada e expomos
+          // horariosLivres direto, evitando que ele se perca na estrutura aninhada.
+          if (Array.isArray(parsed)) {
+            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const escolhido = exato ?? parsed[0];
+            return {
+              data: args.data,
+              horariosLivres: escolhido?.horariosLivres ?? [],
+              outrosDias: parsed
+                .filter((d: any) => d !== escolhido)
+                .map((d: any) => ({
+                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
+                  horariosLivres: d?.horariosLivres ?? [],
+                })),
+            };
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "agendar": {
@@ -5332,7 +5352,25 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (res.status === 403) {
           return { error: "Cliente bloqueado ou limite de agendamentos atingido." };
         }
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // A Frizzar devolve um array de agendamentos criados (1 entrada por serviço).
+          // Normalizamos para o agente: agendamentoId explícito + resumo amigável.
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const primeiro = parsed[0];
+            return {
+              ok: true,
+              agendamentoId: primeiro?.codigo,
+              inicioFormatado: primeiro?.inicioFormatado,
+              profissional: primeiro?.funcionarioNome,
+              servico: primeiro?.servicoNome,
+              total: primeiro?.totalComanda,
+              status: primeiro?.status,
+              agendamentos: parsed,
+            };
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "cancelar_agendamento": {
