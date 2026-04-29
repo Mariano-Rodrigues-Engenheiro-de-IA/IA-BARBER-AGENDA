@@ -5226,8 +5226,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
     }
   };
 
-  // baseUrl mantido apenas para logs/compat — chamadas devem usar frizzarFetch(path)
-  const baseUrl = primaryBase;
+  console.log(`[Frizzar] base primária=${primaryBase} | fallback=${fallbackBase ?? "(nenhum)"}`);
 
   const normalizePhone = (raw: string): string => {
     let tel = (raw || "").replace(/\D/g, "");
