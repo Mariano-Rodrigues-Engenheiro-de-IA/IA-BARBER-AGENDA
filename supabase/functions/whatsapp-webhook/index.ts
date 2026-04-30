@@ -1354,6 +1354,27 @@ function resolveOneBelezaToolArgs(
       result.blockMessage = `servicosId ${incomingServiceId} não pertence à unidade desta barbearia. Use APENAS um destes IDs: ${allowedServiceIds.join(", ")}.`;
       return result;
     }
+
+    // Unit guard: prevent silently switching between gservsID groups (e.g., Barbearia ↔ Estúdio) mid-flow
+    const unitMap = (sessionState as any).oneBelezaServiceUnitMap as
+      | Record<string, { gservsID: number; descricao: string }>
+      | undefined;
+    const selectedUnit = (sessionState as any).selectedUnit as
+      | { gservsID: number; descricao: string }
+      | undefined;
+    if (incomingServiceId && unitMap && unitMap[String(incomingServiceId)]) {
+      const incomingUnit = unitMap[String(incomingServiceId)];
+      if (selectedUnit && selectedUnit.gservsID !== incomingUnit.gservsID) {
+        result.blocked = true;
+        result.blockMessage = `servicosId ${incomingServiceId} pertence a "${incomingUnit.descricao}", mas o cliente já está sendo atendido em "${selectedUnit.descricao}". Confirme com o cliente se ele quer trocar de unidade antes de prosseguir.`;
+        return result;
+      }
+      // Auto-set selected unit if not yet defined
+      if (!selectedUnit) {
+        (sessionState as any).selectedUnit = incomingUnit;
+        console.log(`[State] Auto-selected OneBeleza unit: ${incomingUnit.descricao} (gservsID=${incomingUnit.gservsID}) via servicosId=${incomingServiceId}`);
+      }
+    }
   }
 
   if (toolName === "buscar_barbeiros_por_servico") {
