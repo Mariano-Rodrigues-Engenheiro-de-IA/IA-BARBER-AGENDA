@@ -5023,6 +5023,12 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!date || !servicoId) {
           return { error: "Parâmetros obrigatórios: date (YYYY-MM-DD) e servicoId." };
         }
+
+        // Validate date format & not in past (helps disambiguate empty results)
+        const br = getBrasiliaDate();
+        const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+        const isPast = isValidDate && date < br.todayDate;
+
         const url = `${baseUrl}/api/Agendamento/HorariosTodosProfissionaisByDataServico?celular=${celular}&date=${date}&servicoId=${servicoId}`;
         console.log(`[OneBeleza] buscar_horarios_disponiveis URL: ${url}`);
         const res = await fetch(url, { method: "POST", headers: authHeaders });
@@ -5032,7 +5038,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         try { parsed = JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
 
         // Filter past times if today
-        const br = getBrasiliaDate();
         if (date === br.todayDate && Array.isArray(parsed)) {
           const currentHHMMSS = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}:00`;
           for (const item of parsed) {
@@ -5047,6 +5052,61 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           }
           parsed = parsed.filter((it: any) => !it._filtered);
         }
+
+        // Detect "empty result" — server-side disambiguation so the AI doesn't say generic "no slots"
+        const isEmpty = !Array.isArray(parsed) || parsed.length === 0 || parsed.every((it: any) => {
+          const disps = Array.isArray(it?.disponibilidades) ? it.disponibilidades : [];
+          if (disps.length === 0) return true;
+          return disps.every((d: any) => !Array.isArray(d?.horarios) || d.horarios.length === 0);
+        });
+
+        if (isEmpty) {
+          // Past date short-circuit
+          if (isPast) {
+            console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=data_passada`);
+            return {
+              vazio: true,
+              motivo: "data_invalida_ou_passada",
+              mensagem: `A data ${date} já passou. Peça ao cliente outra data (a partir de ${br.todayDate}).`,
+            };
+          }
+
+          // Discover whether the service has ANY professional enabled in this unit
+          let profCount = 0;
+          let profNames: string[] = [];
+          try {
+            const profUrl = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${servicoId}`;
+            const profRes = await fetch(profUrl, { headers: authHeaders });
+            const profText = await profRes.text();
+            const profParsed = JSON.parse(profText);
+            if (Array.isArray(profParsed)) {
+              profCount = profParsed.length;
+              profNames = profParsed
+                .map((p: any) => String(p?.nome || p?.nomeProfissional || "").trim())
+                .filter(Boolean);
+            }
+          } catch (e) {
+            console.log(`[OneBeleza][diag] profissionais lookup failed:`, (e as Error).message);
+          }
+
+          if (profCount === 0) {
+            console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=servico_sem_profissional profCount=0`);
+            return {
+              vazio: true,
+              motivo: "servico_sem_profissional",
+              mensagem: "Esse serviço não tem nenhum profissional habilitado nesta unidade. Ofereça um serviço equivalente OU escalar humano.",
+            };
+          }
+
+          console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=dia_sem_vaga profCount=${profCount} profs=${profNames.join("|")}`);
+          return {
+            vazio: true,
+            motivo: "dia_sem_vaga",
+            profissionais_habilitados: profNames,
+            mensagem: `Nenhum horário em ${date}. Profissionais habilitados para este serviço: ${profNames.join(", ") || "(nomes indisponíveis)"}. Pergunte ao cliente outro dia.`,
+          };
+        }
+
         return parsed;
       }
 
