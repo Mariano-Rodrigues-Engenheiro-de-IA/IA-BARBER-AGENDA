@@ -2491,8 +2491,23 @@ async function callAIAgent(
             sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
             (id) => String(id),
           );
+          // Build serviceId → unidade (gservsID + descricao) map for unit guard
+          const unitMap: Record<string, { gservsID: number; descricao: string }> = {};
+          if (Array.isArray(toolResult)) {
+            for (const grp of toolResult) {
+              const gid = toPositiveInteger(grp?.gservsID);
+              const desc = String(grp?.descricao || "").trim();
+              if (!gid || !Array.isArray(grp?.servicos)) continue;
+              for (const svc of grp.servicos) {
+                const sid = toPositiveInteger(svc?.servicosId);
+                if (sid) unitMap[String(sid)] = { gservsID: gid, descricao: desc };
+              }
+            }
+          }
+          (sessionState as any).oneBelezaServiceUnitMap = unitMap;
           console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
           console.log(`Tracked allowed OneBeleza service IDs: [${sessionState.allowedServiceIds.join(", ")}]`);
+          console.log(`Tracked OneBeleza service→unit map: ${Object.keys(unitMap).length} entries`);
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
