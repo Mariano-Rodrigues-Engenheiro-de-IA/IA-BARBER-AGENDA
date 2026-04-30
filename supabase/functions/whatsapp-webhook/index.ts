@@ -1354,6 +1354,27 @@ function resolveOneBelezaToolArgs(
       result.blockMessage = `servicosId ${incomingServiceId} não pertence à unidade desta barbearia. Use APENAS um destes IDs: ${allowedServiceIds.join(", ")}.`;
       return result;
     }
+
+    // Unit guard: prevent silently switching between gservsID groups (e.g., Barbearia ↔ Estúdio) mid-flow
+    const unitMap = (sessionState as any).oneBelezaServiceUnitMap as
+      | Record<string, { gservsID: number; descricao: string }>
+      | undefined;
+    const selectedUnit = (sessionState as any).selectedUnit as
+      | { gservsID: number; descricao: string }
+      | undefined;
+    if (incomingServiceId && unitMap && unitMap[String(incomingServiceId)]) {
+      const incomingUnit = unitMap[String(incomingServiceId)];
+      if (selectedUnit && selectedUnit.gservsID !== incomingUnit.gservsID) {
+        result.blocked = true;
+        result.blockMessage = `servicosId ${incomingServiceId} pertence a "${incomingUnit.descricao}", mas o cliente já está sendo atendido em "${selectedUnit.descricao}". Confirme com o cliente se ele quer trocar de unidade antes de prosseguir.`;
+        return result;
+      }
+      // Auto-set selected unit if not yet defined
+      if (!selectedUnit) {
+        (sessionState as any).selectedUnit = incomingUnit;
+        console.log(`[State] Auto-selected OneBeleza unit: ${incomingUnit.descricao} (gservsID=${incomingUnit.gservsID}) via servicosId=${incomingServiceId}`);
+      }
+    }
   }
 
   if (toolName === "buscar_barbeiros_por_servico") {
@@ -2491,8 +2512,23 @@ async function callAIAgent(
             sessionState.oneBelezaServiceOptions.map((option) => option.servicosId),
             (id) => String(id),
           );
+          // Build serviceId → unidade (gservsID + descricao) map for unit guard
+          const unitMap: Record<string, { gservsID: number; descricao: string }> = {};
+          if (Array.isArray(toolResult)) {
+            for (const grp of toolResult) {
+              const gid = toPositiveInteger(grp?.gservsID);
+              const desc = String(grp?.descricao || "").trim();
+              if (!gid || !Array.isArray(grp?.servicos)) continue;
+              for (const svc of grp.servicos) {
+                const sid = toPositiveInteger(svc?.servicosId);
+                if (sid) unitMap[String(sid)] = { gservsID: gid, descricao: desc };
+              }
+            }
+          }
+          (sessionState as any).oneBelezaServiceUnitMap = unitMap;
           console.log(`Tracked OneBeleza service IDs: [${sessionState.oneBelezaServiceOptions.map((option) => option.servicosId).join(", ")}]`);
           console.log(`Tracked allowed OneBeleza service IDs: [${sessionState.allowedServiceIds.join(", ")}]`);
+          console.log(`Tracked OneBeleza service→unit map: ${Object.keys(unitMap).length} entries`);
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_barbeiros_por_servico") {
@@ -4987,6 +5023,12 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!date || !servicoId) {
           return { error: "Parâmetros obrigatórios: date (YYYY-MM-DD) e servicoId." };
         }
+
+        // Validate date format & not in past (helps disambiguate empty results)
+        const br = getBrasiliaDate();
+        const isValidDate = /^\d{4}-\d{2}-\d{2}$/.test(date);
+        const isPast = isValidDate && date < br.todayDate;
+
         const url = `${baseUrl}/api/Agendamento/HorariosTodosProfissionaisByDataServico?celular=${celular}&date=${date}&servicoId=${servicoId}`;
         console.log(`[OneBeleza] buscar_horarios_disponiveis URL: ${url}`);
         const res = await fetch(url, { method: "POST", headers: authHeaders });
@@ -4996,7 +5038,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         try { parsed = JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
 
         // Filter past times if today
-        const br = getBrasiliaDate();
         if (date === br.todayDate && Array.isArray(parsed)) {
           const currentHHMMSS = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}:00`;
           for (const item of parsed) {
@@ -5011,6 +5052,61 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           }
           parsed = parsed.filter((it: any) => !it._filtered);
         }
+
+        // Detect "empty result" — server-side disambiguation so the AI doesn't say generic "no slots"
+        const isEmpty = !Array.isArray(parsed) || parsed.length === 0 || parsed.every((it: any) => {
+          const disps = Array.isArray(it?.disponibilidades) ? it.disponibilidades : [];
+          if (disps.length === 0) return true;
+          return disps.every((d: any) => !Array.isArray(d?.horarios) || d.horarios.length === 0);
+        });
+
+        if (isEmpty) {
+          // Past date short-circuit
+          if (isPast) {
+            console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=data_passada`);
+            return {
+              vazio: true,
+              motivo: "data_invalida_ou_passada",
+              mensagem: `A data ${date} já passou. Peça ao cliente outra data (a partir de ${br.todayDate}).`,
+            };
+          }
+
+          // Discover whether the service has ANY professional enabled in this unit
+          let profCount = 0;
+          let profNames: string[] = [];
+          try {
+            const profUrl = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${servicoId}`;
+            const profRes = await fetch(profUrl, { headers: authHeaders });
+            const profText = await profRes.text();
+            const profParsed = JSON.parse(profText);
+            if (Array.isArray(profParsed)) {
+              profCount = profParsed.length;
+              profNames = profParsed
+                .map((p: any) => String(p?.nome || p?.nomeProfissional || "").trim())
+                .filter(Boolean);
+            }
+          } catch (e) {
+            console.log(`[OneBeleza][diag] profissionais lookup failed:`, (e as Error).message);
+          }
+
+          if (profCount === 0) {
+            console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=servico_sem_profissional profCount=0`);
+            return {
+              vazio: true,
+              motivo: "servico_sem_profissional",
+              mensagem: "Esse serviço não tem nenhum profissional habilitado nesta unidade. Ofereça um serviço equivalente OU escalar humano.",
+            };
+          }
+
+          console.log(`[OneBeleza][diag] empty result servicoId=${servicoId} date=${date} reason=dia_sem_vaga profCount=${profCount} profs=${profNames.join("|")}`);
+          return {
+            vazio: true,
+            motivo: "dia_sem_vaga",
+            profissionais_habilitados: profNames,
+            mensagem: `Nenhum horário em ${date}. Profissionais habilitados para este serviço: ${profNames.join(", ") || "(nomes indisponíveis)"}. Pergunte ao cliente outro dia.`,
+          };
+        }
+
         return parsed;
       }
 
