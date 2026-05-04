@@ -5186,6 +5186,25 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           return { error: "profissionalId inválido. Execute buscar_barbeiros_por_servico novamente e use o profissionalId retornado (número grande, ex: 40658).", blocked: true };
         }
         
+        // Resolve cliente (cliforcolsid) by phone — required, otherwise the API associates booking with the token owner
+        let cliforcolsid = "";
+        try {
+          let tel = (phoneNumber || "").replace(/\D/g, "");
+          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+          const cliRes = await fetch(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`, { headers: authHeaders });
+          const cliText = await cliRes.text();
+          try {
+            const cli = JSON.parse(cliText);
+            cliforcolsid = String(cli?.cliforcolsid || cli?.cliForColsId || cli?.id || "").trim();
+          } catch { /* empty */ }
+          console.log(`[OneBeleza] agendar resolved cliente: tel=${tel} cliforcolsid=${cliforcolsid}`);
+        } catch (e) {
+          console.error(`[OneBeleza] agendar failed to resolve cliente:`, (e as Error).message);
+        }
+        if (!cliforcolsid) {
+          return { error: "Cliente não encontrado pelo telefone. Execute cadastrar_cliente antes de agendar.", blocked: true };
+        }
+
         // Build multipart form data
         const formData = new FormData();
         formData.append("dataAg", aDataAg);
@@ -5193,8 +5212,11 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         formData.append("profissionalId", aProfissionalId);
         formData.append("horarioInicio", aHorarioInicio);
         formData.append("horarioFim", aHorarioFim);
-        
-        console.log(`[OneBeleza] agendar URL: ${url}`, `dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim}`);
+        formData.append("cliforcolsid", cliforcolsid);
+        formData.append("cliForColsId", cliforcolsid);
+        formData.append("clienteId", cliforcolsid);
+
+        console.log(`[OneBeleza] agendar URL: ${url}`, `cliforcolsid=${cliforcolsid} dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim}`);
         
         const res = await fetch(url, {
           method: "POST",
