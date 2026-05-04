@@ -27,6 +27,17 @@ Deno.serve(async (req) => {
 
       // Detect message type
       const messageType = msg.messageType || msg.type || payload.messageType || "";
+      const reactionPayload =
+        msg?.reactionMessage ||
+        msg?.message?.reactionMessage ||
+        payload?.reactionMessage ||
+        payload?.data?.reactionMessage ||
+        payload?.data?.message?.reactionMessage;
+      const isReactionMessage =
+        /reaction/i.test(messageType) ||
+        Boolean(reactionPayload) ||
+        payload?.type === "reaction" ||
+        payload?.event === "reaction";
       const isAudioMessage = /audio|ptt/i.test(messageType);
       const isImageMessage = /image/i.test(messageType);
       const hasMedia = isAudioMessage || isImageMessage;
@@ -53,12 +64,20 @@ Deno.serve(async (req) => {
         "phoneSource:", phoneMatch?.source,
         "fromMe:", fromMe,
         "messageType:", messageType,
+        "isReaction:", isReactionMessage,
         "hasMedia:", hasMedia,
         "content:", messageContent?.slice(0, 100)
       );
 
       if (isGroupMessage || !phoneNumber) {
         return new Response(JSON.stringify({ status: "skipped" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      if (isReactionMessage) {
+        console.log(`Skipping reaction message from ${phoneNumber}`);
+        return new Response(JSON.stringify({ status: "reaction_ignored" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
@@ -5195,7 +5214,14 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           const cliText = await cliRes.text();
           try {
             const cli = JSON.parse(cliText);
-            cliforcolsid = String(cli?.cliforcolsid || cli?.cliForColsId || cli?.id || "").trim();
+            cliforcolsid = String(
+              cli?.cliforcolsid ||
+              cli?.cliForColsId ||
+              cli?.cliForColsid ||
+              cli?.clienteId ||
+              cli?.id ||
+              ""
+            ).trim();
           } catch { /* empty */ }
           console.log(`[OneBeleza] agendar resolved cliente: tel=${tel} cliforcolsid=${cliforcolsid}`);
         } catch (e) {
@@ -5213,6 +5239,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         formData.append("horarioInicio", aHorarioInicio);
         formData.append("horarioFim", aHorarioFim);
         formData.append("cliforcolsid", cliforcolsid);
+        formData.append("cliForColsid", cliforcolsid);
         formData.append("cliForColsId", cliforcolsid);
         formData.append("clienteId", cliforcolsid);
 
