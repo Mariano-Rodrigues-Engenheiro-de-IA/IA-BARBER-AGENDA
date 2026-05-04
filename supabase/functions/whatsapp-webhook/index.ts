@@ -5217,7 +5217,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
             cliforcolsid = String(
               cli?.cliforcolsid ||
               cli?.cliForColsId ||
-              cli?.cliforcolsid ||
+              cli?.cliForColsid ||
               cli?.clienteId ||
               cli?.id ||
               ""
@@ -5239,7 +5239,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         formData.append("horarioInicio", aHorarioInicio);
         formData.append("horarioFim", aHorarioFim);
         formData.append("cliforcolsid", cliforcolsid);
-        formData.append("cliforcolsid", cliforcolsid);
+        formData.append("cliForColsid", cliforcolsid);
         formData.append("cliForColsId", cliforcolsid);
         formData.append("clienteId", cliforcolsid);
 
