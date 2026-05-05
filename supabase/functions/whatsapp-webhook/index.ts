@@ -5180,8 +5180,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "agendar": {
-        const url = `${baseUrl}/api/Agendamento/MarcarAgendamentoForm?celular=${celular}`;
-        
         // Normalize args keys to handle case variations
         const normalizedArgs: Record<string, string> = {};
         for (const [k, v] of Object.entries(args)) {
@@ -5204,13 +5202,22 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           console.error(`[OneBeleza] agendar BLOCKED: profissionalId=${aProfissionalId} is suspiciously small (likely invented)`);
           return { error: "profissionalId inválido. Execute buscar_barbeiros_por_servico novamente e use o profissionalId retornado (número grande, ex: 40658).", blocked: true };
         }
-        
-        // Resolve cliente (cliforcolsid) by phone — required, otherwise the API associates booking with the token owner
+
+        // ⚠️ CRITICAL: the `celular` query param identifies the BOOKING CLIENT in the One Beleza API.
+        // Using the tenant owner's phone (tenant.onebeleza_celular) makes the appointment fall under the owner.
+        // We MUST use the conversation client's phone (the one writing on WhatsApp).
+        let clienteTel = (phoneNumber || "").replace(/\D/g, "");
+        if (clienteTel.startsWith("55") && clienteTel.length >= 12) clienteTel = clienteTel.substring(2);
+        if (!clienteTel) {
+          console.error(`[OneBeleza] agendar BLOCKED: empty client phone for booking`);
+          return { error: "Telefone do cliente ausente; não é possível agendar.", blocked: true };
+        }
+
+        // Resolve cliente (cliforcolsid) by the CLIENT phone
         let cliforcolsid = "";
+        let clienteNome = "";
         try {
-          let tel = (phoneNumber || "").replace(/\D/g, "");
-          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-          const cliRes = await fetch(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`, { headers: authHeaders });
+          const cliRes = await fetch(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${clienteTel}`, { headers: authHeaders });
           const cliText = await cliRes.text();
           try {
             const cli = JSON.parse(cliText);
@@ -5222,14 +5229,25 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
               cli?.id ||
               ""
             ).trim();
+            clienteNome = String(cli?.nome || cli?.Nome || "").trim();
           } catch { /* empty */ }
-          console.log(`[OneBeleza] agendar resolved cliente: tel=${tel} cliforcolsid=${cliforcolsid}`);
+          console.log(`[OneBeleza] agendar resolved cliente: tel=${clienteTel} cliforcolsid=${cliforcolsid} nome="${clienteNome}"`);
         } catch (e) {
           console.error(`[OneBeleza] agendar failed to resolve cliente:`, (e as Error).message);
         }
         if (!cliforcolsid) {
           return { error: "Cliente não encontrado pelo telefone. Execute cadastrar_cliente antes de agendar.", blocked: true };
         }
+
+        // Sanity guard: never allow the booking phone to be the tenant owner's phone
+        const ownerTel = String(tenant.onebeleza_celular || "").replace(/\D/g, "");
+        if (ownerTel && (ownerTel === clienteTel || ownerTel.endsWith(clienteTel) || clienteTel.endsWith(ownerTel))) {
+          console.error(`[OneBeleza] agendar BLOCKED: client phone (${clienteTel}) matches tenant owner phone (${ownerTel})`);
+          return { error: "Número do cliente coincide com o número da conta da barbearia. Agendamento bloqueado para evitar registro no dono.", blocked: true };
+        }
+
+        // ⚠️ Use the CLIENT phone in the URL — this is what the One Beleza API uses to attribute the booking.
+        const url = `${baseUrl}/api/Agendamento/MarcarAgendamentoForm?celular=${clienteTel}`;
 
         // Build multipart form data
         const formData = new FormData();
@@ -5243,8 +5261,8 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         formData.append("cliForColsId", cliforcolsid);
         formData.append("clienteId", cliforcolsid);
 
-        console.log(`[OneBeleza] agendar URL: ${url}`, `cliforcolsid=${cliforcolsid} dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim}`);
-        
+        console.log(`[OneBeleza] agendar FINAL REQUEST → URL=${url} | clienteTel=${clienteTel} cliforcolsid=${cliforcolsid} nome="${clienteNome}" | dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim} | ownerTel=${ownerTel}`);
+
         const res = await fetch(url, {
           method: "POST",
           headers: { "Authorization": bearerToken },

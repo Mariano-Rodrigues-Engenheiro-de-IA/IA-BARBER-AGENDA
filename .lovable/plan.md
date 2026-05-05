@@ -1,114 +1,96 @@
-## Diagnóstico
-
-Olhando o log real da última conversa (Mariano pedindo agendamento na Marquez Ceilândia):
-
-```
-buscar_servicos        → OK (filtro de unidade funcionou: 2 grupos, 26 serviços)
-buscar_horarios_disponiveis(date=2026-04-30, servicoId=2902 "Consultoria de Visagismo R$500") → []
-IA: "Putz, amanhã não tem vaga. Quer ver outro dia?"
-```
-
-A IA pulou direto de `buscar_servicos` para `buscar_horarios_disponiveis` (fluxo de 3 passos, está correto), mas a resposta `[]` da One Beleza é **ambígua**:
-- pode ser "nenhum profissional habilitado pra esse servicoId"
-- ou "todos profissionais lotados nesse dia"
-- ou "data inválida / no passado"
-
-Como `[]` é tratado como "sem vaga", a IA encerrou sem investigar. E o serviço escolhido (Consultoria de Visagismo R$500) tem altíssima chance de ter só 1 profissional (Nicolas) — então qualquer dia que ele não trabalhe devolve `[]` e o cliente pensa que a barbearia inteira fechou.
-
 ## Objetivo
+Garantir que a IA da One Beleza agende sempre no cliente correto da conversa, sem cair no cliente dono da conta.
 
-Garantir que o fluxo enxuto (cliente → serviço → unidade → horários) **nunca devolva `[]` sem explicação** e que o `servicoId` enviado pra API seja sempre o da unidade correta confirmada com o cliente.
+## Diagnóstico confirmado
+Pelos logs atuais, o fluxo já encontra o cliente certo antes de agendar:
+- `buscar_cliente` para o número do MZ retorna `cliforcolsid: 47417`
+- o `agendar` também registra `resolved cliente: cliforcolsid=47417`
+- mesmo assim, o agendamento continua sendo atribuído ao dono da conta
 
-## Mudanças propostas
+Isso indica que o problema não é mais “achar o cliente”, e sim “como o request final de agendamento está sendo montado/enviado para a One Beleza”. Hoje o código ainda depende de um request ambíguo: usa o `celular` da conta no endpoint e tenta forçar o cliente via multipart, mas a API aparentemente está ignorando esse vínculo.
 
-### 1. Enriquecer `buscar_horarios_disponiveis` com diagnóstico server-side
+Também identifiquei uma inconsistência real no código: o auto-cadastro da One Beleza considera cliente existente só se vier `clienteId` ou `id`, mas o retorno real do `buscar_cliente` vem com `cliforcolsid`. Isso mostra que o tratamento do identificador do cliente está inconsistente em partes diferentes do fluxo.
 
-Em `supabase/functions/whatsapp-webhook/index.ts` no case `buscar_horarios_disponiveis` (~L4982):
+## Plano
+### 1) Centralizar o ID real do cliente da One Beleza
+No `whatsapp-webhook`, vou criar uma resolução única de cliente para One Beleza que:
+- normalize o telefone do WhatsApp
+- busque o cliente pelo telefone
+- extraia sempre o ID em ordem de prioridade consistente (`cliforcolsid`, `cliForColsId`, `cliForColsid`, etc.)
+- retorne um objeto padronizado com `clientId`, `phone`, `name` e payload bruto
 
-Quando `parsed` for `[]` ou todos os `disponibilidades[]` estiverem vazios, **não retornar array vazio**. Em vez disso, fazer uma chamada paralela a `PesquisarProfissionais?servicosId=X` pra descobrir o motivo:
+Isso evita que cada trecho use uma lógica diferente para descobrir o cliente.
 
-```text
-- Se 0 profissionais habilitados pro serviço:
-    return { vazio: true, motivo: "servico_sem_profissional",
-             mensagem: "Esse serviço não tem profissional habilitado nesta unidade." }
-- Se há N profissionais mas 0 horários no dia:
-    return { vazio: true, motivo: "dia_sem_vaga",
-             profissionais_habilitados: [...nomes],
-             sugestao: "Tente outro dia ou outro profissional." }
-- Se a data é no passado / hoje sem horários restantes:
-    return { vazio: true, motivo: "data_invalida_ou_passada", ... }
-```
+### 2) Persistir o cliente resolvido no estado da conversa
+Vou adicionar ao `conversation_state` em memória da função algo como:
+- `selectedClientId`
+- `selectedClientPhone`
+- `selectedClientName`
 
-A IA recebe contexto rico em vez de `[]`, e o prompt instrui ela a **oferecer alternativa concreta** (outro dia, outro serviço equivalente da mesma unidade, ou escalar humano).
+E vou alimentar isso sempre que:
+- `buscar_cliente` retornar sucesso
+- `cadastrar_cliente` criar/encontrar um cliente
+- houver auto-registro da One Beleza
 
-### 2. Adicionar `unidade` resolvida ao `sessionState` e validar no resolver
+Assim, o fluxo inteiro passa a trabalhar com o cliente da conversa já travado, em vez de depender só de nova busca na hora do agendamento.
 
-Hoje `allowedServiceIds` mistura IDs de Barbearia (566) + Estúdio (567). Vamos adicionar `selectedUnit: 566 | 567 | null` que é gravado quando:
-- a IA confirma a unidade com o cliente, OU
-- o `servicoId` escolhido pertence inequivocamente a um grupo (ex: 2902 → 567).
+### 3) Travar o `agendar` para usar somente o cliente da conversa
+No case `agendar` da One Beleza, vou alterar a regra para:
+- usar primeiro o `selectedClientId` persistido na sessão
+- se não existir, resolver novamente por telefone
+- bloquear o agendamento se houver divergência entre cliente da sessão e cliente resolvido por telefone
+- bloquear se o cliente não existir
 
-Em `resolveOneBelezaToolArgs` (~L1344), adicionar guard: se `selectedUnit` está setado e o `servicoId` enviado pertence ao OUTRO grupo, **bloquear**:
+Ou seja: se a conversa é do MZ, o `agendar` só segue se o cliente final for o MZ.
 
-```json
-{ "error": "servicoId X é da unidade Y, mas o cliente confirmou Z. Confirme com o cliente antes de prosseguir.", "blocked": true }
-```
+### 4) Reestruturar o request final do agendamento
+Vou ajustar a montagem do request para eliminar ambiguidade do lado da One Beleza:
+- revisar os campos enviados no `FormData`
+- enviar apenas o conjunto de chaves que fizer sentido para o cliente real, em vez de múltiplos aliases soltos sem validação
+- garantir que o payload de agendamento use explicitamente o ID resolvido da conversa como fonte da verdade
+- manter logs detalhados do payload final enviado
 
-Isso fecha a brecha de a IA "trocar de unidade no meio do agendamento" sem perceber.
+A meta aqui é parar de “tentar vários nomes” e passar a montar um request determinístico.
 
-### 3. Ajustes no `agent_system_prompt` da Marquez Ceilândia
+### 5) Corrigir a detecção de cliente existente no auto-cadastro
+Vou corrigir o trecho de auto-registro da One Beleza para reconhecer cliente existente também quando o retorno vier com:
+- `cliforcolsid`
+- `cliForColsId`
+- `cliForColsid`
 
-Migration SQL adicionando duas instruções enxutas:
+Isso evita falso negativo de “cliente não existe” e remove comportamento inconsistente no começo do fluxo.
 
-```text
-## 🚨 INTERPRETANDO RESPOSTAS DE buscar_horarios_disponiveis
+### 6) Melhorar os logs para auditoria definitiva
+Vou deixar os logs do `agendar` mais explícitos, registrando:
+- telefone normalizado da conversa
+- cliente retornado pelo `buscar_cliente`
+- `selectedClientId` da sessão
+- cliente efetivamente enviado no request
+- campos finais do payload de agendamento
+- motivo de bloqueio em caso de divergência
 
-Quando a resposta vier com {vazio: true, motivo: ...}, NÃO diga genericamente
-"não tem vaga". Use o motivo:
+Assim fica fácil provar no monitor se a IA usou o cliente certo ou não.
 
-- "servico_sem_profissional" → "Esse serviço específico não está disponível
-   na [unidade]. Posso te oferecer [serviço equivalente] ou escalar pro
-   atendente humano."
-- "dia_sem_vaga" → "Nesse dia [profissionais habilitados] estão sem horário.
-   Quer ver outro dia?"
-- "data_invalida_ou_passada" → peça outra data.
+## Validação após a correção
+Depois de implementar, vou validar no fluxo real:
+1. mensagem do cliente entra
+2. `buscar_cliente` resolve o ID correto
+3. esse ID fica salvo na sessão
+4. `agendar` usa exatamente esse mesmo ID
+5. os logs mostram o cliente final usado no request
+6. o agendamento deixa de cair no dono da conta
 
-## 🔁 SEMPRE OFEREÇA UMA ALTERNATIVA antes de encerrar
-
-Nunca diga só "não tem vaga". Sempre proponha: outro dia, outro profissional,
-serviço similar da mesma unidade, ou escalar humano.
-```
-
-### 4. Logging adicional pra diagnóstico futuro
-
-No case `buscar_horarios_disponiveis`, quando devolver `vazio: true`, logar:
-```
-[OneBeleza][diag] empty result servicoId=X date=Y reason=... profCount=N
-```
-
-## Arquivos afetados
-
+## Detalhes técnicos
+Arquivos principais:
 - `supabase/functions/whatsapp-webhook/index.ts`
-  - case `buscar_horarios_disponiveis` (~L4982): enriquecer resposta vazia.
-  - tracking de tools (~L2488 e ~L2527): popular `sessionState.selectedUnit` quando inferível.
-  - `resolveOneBelezaToolArgs` (~L1344): guard de troca de unidade.
-- 1 migration SQL atualizando `agent_system_prompt` da Marquez Ceilândia (`3c6ebda0-...`) com as duas seções acima.
 
-## Sem mudanças
+Ajustes previstos:
+- ampliar `AgentSessionState`
+- atualizar `loadConversationState()` e `saveConversationState()`
+- capturar cliente ao processar `buscar_cliente` / `cadastrar_cliente`
+- criar helper único de resolução do cliente One Beleza
+- endurecer o `case "agendar"` para usar o cliente da sessão como verdade
+- corrigir a heurística de cliente existente no auto-registro
+- reforçar logs do tool call
 
-- Schema do banco, RLS, tabelas novas, frontend, tools expostas à IA (continua sendo o trio mínimo: `buscar_servicos`, `buscar_horarios_disponiveis`, `agendar`).
-- Marquez Asa Sul (`9e4d5866-...`) continua inativo conforme combinado.
-
-## Validação pós-deploy
-
-1. `❌` no WhatsApp pra resetar estado.
-2. Pedir "consultoria de visagismo amanhã" → deve responder com motivo específico (`servico_sem_profissional` ou `dia_sem_vaga` + nome do profissional habilitado).
-3. Pedir "corte amanhã" sem dizer unidade → IA deve perguntar Barbearia ou Estúdio antes de chamar horários.
-4. Forçar troca de unidade no meio (cliente diz Estúdio, depois pede serviço da Barbearia) → resolver bloqueia e IA reconfirma.
-5. Conferir log `[OneBeleza][diag] empty result ...` quando vier `[]`.
-
-## Risco
-
-Baixo. As mudanças são aditivas:
-- Resposta enriquecida ainda é JSON consumível pela IA.
-- Guard de unidade só dispara quando `selectedUnit` está setado (caso contrário, comportamento atual).
-- Outros tenants One Beleza sem `onebeleza_unit_filter` não são afetados.
+Se você aprovar, eu implemento isso agora.
