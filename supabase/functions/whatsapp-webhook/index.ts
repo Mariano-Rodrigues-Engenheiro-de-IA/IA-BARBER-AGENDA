@@ -2257,14 +2257,7 @@ async function callAIAgent(
   const bodyStr = JSON.stringify(requestBody);
   console.log(`AI request: ${messages.length} messages, ${tools?.length || 0} tools, body size: ${bodyStr.length} chars`);
 
-  let response = await fetch(aiEndpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiAuthKey}`,
-      "Content-Type": "application/json",
-    },
-    body: bodyStr,
-  });
+  let response = await fetchAIWithRetry(bodyStr, "initial");
 
   if (!response.ok) {
     const errText = await response.text();
