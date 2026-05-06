@@ -2024,6 +2024,42 @@ async function callAIAgent(
   if (!aiAuthKey) throw new Error("Neither OPENAI_API_KEY nor LOVABLE_API_KEY is configured");
   console.log(`AI provider: ${useDirectOpenAI ? "OpenAI direct" : "Lovable AI Gateway"}, model: ${modelUsed}`);
 
+  // Retry transient upstream errors (502/503/504) up to 3 attempts with exponential backoff.
+  const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
+    const transientStatuses = new Set([502, 503, 504]);
+    const maxAttempts = 3;
+    let lastResp: Response | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const resp = await fetch(aiEndpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${aiAuthKey}`,
+            "Content-Type": "application/json",
+          },
+          body,
+        });
+        if (resp.ok || !transientStatuses.has(resp.status)) return resp;
+        lastResp = resp;
+        // Drain body to free socket
+        try { await resp.text(); } catch {}
+        const delayMs = 600 * attempt;
+        console.warn(`AI gateway transient ${resp.status} on ${label}, attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms`);
+        await new Promise((r) => setTimeout(r, delayMs));
+      } catch (err) {
+        console.warn(`AI gateway fetch threw on ${label} attempt ${attempt}:`, err);
+        if (attempt === maxAttempts) throw err;
+        await new Promise((r) => setTimeout(r, 600 * attempt));
+      }
+    }
+    // Re-issue one last time to return a Response object (already drained above)
+    return lastResp ?? await fetch(aiEndpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${aiAuthKey}`, "Content-Type": "application/json" },
+      body,
+    });
+  };
+
   const requestFinalNaturalResponse = async (conversationMessages: any[]): Promise<string | null> => {
     // Re-issue the request WITHOUT tools so the model is forced to produce a natural text reply
     // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
@@ -2046,14 +2082,7 @@ async function callAIAgent(
 
     console.log(`AI request (final text fallback): ${conversationMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
 
-    const finalResponse = await fetch(aiEndpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${aiAuthKey}`,
-        "Content-Type": "application/json",
-      },
-      body: finalBodyStr,
-    });
+    const finalResponse = await fetchAIWithRetry(finalBodyStr, "final text fallback");
 
     if (!finalResponse.ok) {
       const errText = await finalResponse.text();
@@ -2228,14 +2257,7 @@ async function callAIAgent(
   const bodyStr = JSON.stringify(requestBody);
   console.log(`AI request: ${messages.length} messages, ${tools?.length || 0} tools, body size: ${bodyStr.length} chars`);
 
-  let response = await fetch(aiEndpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiAuthKey}`,
-      "Content-Type": "application/json",
-    },
-    body: bodyStr,
-  });
+  let response = await fetchAIWithRetry(bodyStr, "initial");
 
   if (!response.ok) {
     const errText = await response.text();
@@ -2683,14 +2705,7 @@ async function callAIAgent(
     const roundBodyStr = JSON.stringify(roundBody);
     console.log(`AI request (round ${rounds}): ${messages.length} msgs, body size: ${roundBodyStr.length} chars`);
 
-    response = await fetch(aiEndpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${aiAuthKey}`,
-        "Content-Type": "application/json",
-      },
-      body: roundBodyStr,
-    });
+    response = await fetchAIWithRetry(roundBodyStr, `tool round ${rounds}`);
 
     if (!response.ok) {
       const errText = await response.text();
