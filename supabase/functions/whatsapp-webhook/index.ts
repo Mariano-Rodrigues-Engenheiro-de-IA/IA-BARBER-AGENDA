@@ -2082,14 +2082,7 @@ async function callAIAgent(
 
     console.log(`AI request (final text fallback): ${conversationMessages.length} msgs, body size: ${finalBodyStr.length} chars`);
 
-    const finalResponse = await fetch(aiEndpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${aiAuthKey}`,
-        "Content-Type": "application/json",
-      },
-      body: finalBodyStr,
-    });
+    const finalResponse = await fetchAIWithRetry(finalBodyStr, "final text fallback");
 
     if (!finalResponse.ok) {
       const errText = await finalResponse.text();
