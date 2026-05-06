@@ -2705,14 +2705,7 @@ async function callAIAgent(
     const roundBodyStr = JSON.stringify(roundBody);
     console.log(`AI request (round ${rounds}): ${messages.length} msgs, body size: ${roundBodyStr.length} chars`);
 
-    response = await fetch(aiEndpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${aiAuthKey}`,
-        "Content-Type": "application/json",
-      },
-      body: roundBodyStr,
-    });
+    response = await fetchAIWithRetry(roundBodyStr, `tool round ${rounds}`);
 
     if (!response.ok) {
       const errText = await response.text();
