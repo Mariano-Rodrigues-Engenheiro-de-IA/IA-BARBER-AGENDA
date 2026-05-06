@@ -2134,8 +2134,11 @@ async function callAIAgent(
     }
     // Short responses without Portuguese signals that look like English are very likely leaks
     if (t.length < 120) {
-      const hasPortugueseSignal = /[áàâãéêíóôõúüç]|\b(você|voce|olá|ola|obrigad|tudo bem|posso|quero|queria|gostaria|certo|claro|sim|não|nao|bom dia|boa tarde|boa noite|valeu|legal|beleza|agendar|horário|horario|marcar|atendiment|serviço|servico|preço|preco|profissional|barbeiro|salão|salao|gráfica|grafica|cliente|amanhã|amanha|hoje|próxim|proxim|fazem|fazemos|temos|fica|pode|posso|aqui|sim|nao|tem|sao|são|é|ja|já)\b/i.test(t);
-      const looksEnglish = /\b(the|and|will|need|user|input|next|please|let|me|check|now|continue|wait|proceed|thank|hello|message|reply|response|proceed)\b/i.test(t);
+      const hasPortugueseSignal = /[áàâãéêíóôõúüç]|\b(você|voce|olá|ola|obrigad|tudo bem|posso|quero|queria|gostaria|certo|claro|sim|não|nao|bom dia|boa tarde|boa noite|valeu|legal|beleza|agendar|horário|horario|marcar|atendiment|serviço|servico|preço|preco|profissional|barbeiro|salão|salao|gráfica|grafica|cliente|amanhã|amanha|hoje|próxim|proxim|fazem|fazemos|temos|fica|pode|posso|aqui|sim|nao|tem|sao|são|é|ja|já|sem|por favor|favor|nome|completo|cadastro|cadastrar|nascimento|email|e-mail|fechou|qualquer|coisa|chama|tamo|junto|valeu|obrigado|obrigada|tranquilo|tranquila|combinado|perfeito|ótimo|otimo|show|massa|firmeza|abraço|abraco|até|ate|tchau|oi|opa|eai|e ai|aí|ai|pra|pro|me passa|me manda|me diz|me fala|me envia|me chama|me avisa|me confirma)\b/i.test(t);
+      // Require at least 2 distinct English content words to avoid false positives on words shared with PT (e.g. "me")
+      const englishMatches = t.match(/\b(the|and|will|need|user|input|next|please|let|check|continue|wait|proceed|thank|hello|message|reply|response|now)\b/gi) || [];
+      const distinctEnglish = new Set(englishMatches.map((w) => w.toLowerCase()));
+      const looksEnglish = distinctEnglish.size >= 2;
       if (!hasPortugueseSignal && looksEnglish) return true;
     }
     return false;
