@@ -2366,13 +2366,34 @@ async function callAIAgent(
         continue;
       }
 
-      // Block duplicate scheduling across all providers
+      // Block duplicate scheduling for the SAME service across all providers.
+      // Different services in the same session are allowed (e.g. corte + barba in
+      // separate appointments). Cancel/desmarcar tools are never blocked here.
       const isSchedulingTool = ["criar_agendamento", "agendar"].includes(toolCall.function.name);
-      if (isSchedulingTool && sessionState.criarAgendamentoSuccessId) {
-        console.log(`${toolCall.function.name} BLOCKED: already created id=${sessionState.criarAgendamentoSuccessId} in this session`);
+      let attemptedServiceIds: number[] = [];
+      if (isSchedulingTool) {
+        const candidateIds = [
+          parsedArgs?.servicoId,
+          parsedArgs?.servicoid,
+          parsedArgs?.servicosId,
+        ];
+        if (Array.isArray(parsedArgs?.servicos)) {
+          for (const s of parsedArgs.servicos) {
+            candidateIds.push(s?.codigo, s?.servicoId, s?.servicosId);
+          }
+        }
+        attemptedServiceIds = candidateIds
+          .map((v) => toPositiveInteger(v))
+          .filter((v): v is number => typeof v === "number");
+      }
+      const alreadyScheduledSameService =
+        isSchedulingTool &&
+        attemptedServiceIds.length > 0 &&
+        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
+      if (isSchedulingTool && alreadyScheduledSameService) {
+        console.log(`${toolCall.function.name} BLOCKED: service(s) [${attemptedServiceIds.join(",")}] already scheduled in this session`);
         toolResult = {
-          id: sessionState.criarAgendamentoSuccessId,
-          message: "Agendamento já foi criado com sucesso nesta interação. NÃO crie outro. Confirme o agendamento existente ao cliente.",
+          message: "Esse(s) serviço(s) já foi(ram) agendado(s) nesta interação. Para agendar um serviço diferente, basta passar outro servicoId. Não repita o mesmo serviço.",
           blocked: true,
         };
         wasBlocked = true;
