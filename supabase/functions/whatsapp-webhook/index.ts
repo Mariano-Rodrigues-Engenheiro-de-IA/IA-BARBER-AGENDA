@@ -1233,6 +1233,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
   try {
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
+      scheduledServiceIds: state.scheduledServiceIds,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
       allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
