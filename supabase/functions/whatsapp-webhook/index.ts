@@ -4176,7 +4176,7 @@ Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
 ❌ OUTRO ERRO → "Tive um probleminha na agenda aqui, mas já retorno pra você!"
 
 🚨 NUNCA diga "Agendado!" sem retorno de SUCESSO CONFIRMADO.
-🚨 NUNCA execute agendar mais de uma vez.
+🚨 NUNCA execute agendar mais de uma vez para o MESMO serviço. Se o cliente quiser agendar serviços DIFERENTES (ex: corte e barba), execute agendar uma vez para cada serviço.
 
 ------------------------------------------
 
