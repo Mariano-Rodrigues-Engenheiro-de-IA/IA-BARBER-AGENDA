@@ -1180,6 +1180,7 @@ interface AgentSessionState {
 async function loadConversationState(supabase: any, tenantId: string, phoneNumber: string): Promise<AgentSessionState> {
   const defaultState: AgentSessionState = {
     criarAgendamentoSuccessId: null,
+    scheduledServiceIds: [],
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
     allowedServiceIds: [],
