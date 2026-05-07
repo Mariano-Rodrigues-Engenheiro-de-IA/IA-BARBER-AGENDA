@@ -1213,6 +1213,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     const s = data.state;
     return {
       criarAgendamentoSuccessId: null, // always reset per invocation
+      scheduledServiceIds: Array.isArray(s.scheduledServiceIds) ? s.scheduledServiceIds.filter((id: unknown) => typeof id === "number") : [],
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
       allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
