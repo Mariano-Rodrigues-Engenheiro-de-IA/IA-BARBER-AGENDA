@@ -2320,6 +2320,12 @@ async function callAIAgent(
       // cadastrar_cliente, send_image/audio/video, escalate_human, etc.) are blocked
       // from running twice in the same session.
       const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey);
+      // Scheduling and cancel/edit tools may legitimately repeat (different services or
+      // multiple appointments). They have their own per-service / per-id dedup logic below.
+      const isSchedulingOrCancelTool = [
+        "criar_agendamento", "agendar", "editar_agendamento",
+        "cancelar_agendamento", "desmarcar_agendamento", "confirmar_agendamento",
+      ].includes(toolKey);
       // Check if this is a custom tool of type "add_label" (always allow repeats)
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
