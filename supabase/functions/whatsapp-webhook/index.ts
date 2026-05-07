@@ -2568,10 +2568,16 @@ async function callAIAgent(
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
         }
 
-        // Track successful creation
-        if (isSchedulingTool && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
-          sessionState.criarAgendamentoSuccessId = toolResult.id;
-          console.log(`${toolCall.function.name}: session locked with id=${toolResult.id}`);
+        // Track successful scheduling per service (allow other services to be booked next)
+        const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
+        if (scheduleSucceeded) {
+          if (toolResult?.id) sessionState.criarAgendamentoSuccessId = toolResult.id;
+          for (const sid of attemptedServiceIds) {
+            if (!sessionState.scheduledServiceIds.includes(sid)) {
+              sessionState.scheduledServiceIds.push(sid);
+            }
+          }
+          console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}]`);
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
