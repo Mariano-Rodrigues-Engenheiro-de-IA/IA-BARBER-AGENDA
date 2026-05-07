@@ -1162,6 +1162,7 @@ interface OneBelezaSlotOption {
 
 interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
+  scheduledServiceIds: number[];
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
   allowedServiceIds: number[];
