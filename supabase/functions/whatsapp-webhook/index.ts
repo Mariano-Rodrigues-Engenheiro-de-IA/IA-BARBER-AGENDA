@@ -4003,7 +4003,7 @@ Execute criar_agendamento com todos os IDs obtidos das ferramentas.
 ❌ OUTRO ERRO: → "Tive um probleminha na agenda aqui. Pode tentar novamente?"
 
 🚨 NUNCA diga "✅ Agendado" sem retorno com "id".
-🚨 NUNCA execute criar_agendamento mais de uma vez para o mesmo pedido.
+🚨 NUNCA execute criar_agendamento mais de uma vez para o MESMO serviço. Para serviços DIFERENTES (ex: corte e barba em horários separados), pode executar uma vez para cada serviço.
 
 ------------------------------------------
 
