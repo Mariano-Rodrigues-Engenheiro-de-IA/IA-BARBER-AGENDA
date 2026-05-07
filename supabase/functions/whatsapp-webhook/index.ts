@@ -1162,6 +1162,7 @@ interface OneBelezaSlotOption {
 
 interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
+  scheduledServiceIds: number[];
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
   allowedServiceIds: number[];
@@ -1179,6 +1180,7 @@ interface AgentSessionState {
 async function loadConversationState(supabase: any, tenantId: string, phoneNumber: string): Promise<AgentSessionState> {
   const defaultState: AgentSessionState = {
     criarAgendamentoSuccessId: null,
+    scheduledServiceIds: [],
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
     allowedServiceIds: [],
@@ -1211,6 +1213,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     const s = data.state;
     return {
       criarAgendamentoSuccessId: null, // always reset per invocation
+      scheduledServiceIds: Array.isArray(s.scheduledServiceIds) ? s.scheduledServiceIds.filter((id: unknown) => typeof id === "number") : [],
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
       allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
@@ -1230,6 +1233,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
   try {
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
+      scheduledServiceIds: state.scheduledServiceIds,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
       allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
@@ -2316,11 +2320,17 @@ async function callAIAgent(
       // cadastrar_cliente, send_image/audio/video, escalate_human, etc.) are blocked
       // from running twice in the same session.
       const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey);
+      // Scheduling and cancel/edit tools may legitimately repeat (different services or
+      // multiple appointments). They have their own per-service / per-id dedup logic below.
+      const isSchedulingOrCancelTool = [
+        "criar_agendamento", "agendar", "editar_agendamento",
+        "cancelar_agendamento", "desmarcar_agendamento", "confirmar_agendamento",
+      ].includes(toolKey);
       // Check if this is a custom tool of type "add_label" (always allow repeats)
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
 
-      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool) {
+      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isSchedulingOrCancelTool) {
         // Special case: for escalate_human, even when deduplicated, make sure the
         // configured label is actually present on the WhatsApp chat. The owner may
         // have removed the label between turns, leaving the lead without the
@@ -2356,13 +2366,34 @@ async function callAIAgent(
         continue;
       }
 
-      // Block duplicate scheduling across all providers
+      // Block duplicate scheduling for the SAME service across all providers.
+      // Different services in the same session are allowed (e.g. corte + barba in
+      // separate appointments). Cancel/desmarcar tools are never blocked here.
       const isSchedulingTool = ["criar_agendamento", "agendar"].includes(toolCall.function.name);
-      if (isSchedulingTool && sessionState.criarAgendamentoSuccessId) {
-        console.log(`${toolCall.function.name} BLOCKED: already created id=${sessionState.criarAgendamentoSuccessId} in this session`);
+      let attemptedServiceIds: number[] = [];
+      if (isSchedulingTool) {
+        const candidateIds = [
+          parsedArgs?.servicoId,
+          parsedArgs?.servicoid,
+          parsedArgs?.servicosId,
+        ];
+        if (Array.isArray(parsedArgs?.servicos)) {
+          for (const s of parsedArgs.servicos) {
+            candidateIds.push(s?.codigo, s?.servicoId, s?.servicosId);
+          }
+        }
+        attemptedServiceIds = candidateIds
+          .map((v) => toPositiveInteger(v))
+          .filter((v): v is number => typeof v === "number");
+      }
+      const alreadyScheduledSameService =
+        isSchedulingTool &&
+        attemptedServiceIds.length > 0 &&
+        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
+      if (isSchedulingTool && alreadyScheduledSameService) {
+        console.log(`${toolCall.function.name} BLOCKED: service(s) [${attemptedServiceIds.join(",")}] already scheduled in this session`);
         toolResult = {
-          id: sessionState.criarAgendamentoSuccessId,
-          message: "Agendamento já foi criado com sucesso nesta interação. NÃO crie outro. Confirme o agendamento existente ao cliente.",
+          message: "Esse(s) serviço(s) já foi(ram) agendado(s) nesta interação. Para agendar um serviço diferente, basta passar outro servicoId. Não repita o mesmo serviço.",
           blocked: true,
         };
         wasBlocked = true;
@@ -2537,10 +2568,16 @@ async function callAIAgent(
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
         }
 
-        // Track successful creation
-        if (isSchedulingTool && toolResult?.id && !toolResult?.error && !toolResult?.blocked) {
-          sessionState.criarAgendamentoSuccessId = toolResult.id;
-          console.log(`${toolCall.function.name}: session locked with id=${toolResult.id}`);
+        // Track successful scheduling per service (allow other services to be booked next)
+        const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
+        if (scheduleSucceeded) {
+          if (toolResult?.id) sessionState.criarAgendamentoSuccessId = toolResult.id;
+          for (const sid of attemptedServiceIds) {
+            if (!sessionState.scheduledServiceIds.includes(sid)) {
+              sessionState.scheduledServiceIds.push(sid);
+            }
+          }
+          console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}]`);
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
@@ -3966,7 +4003,7 @@ Execute criar_agendamento com todos os IDs obtidos das ferramentas.
 ❌ OUTRO ERRO: → "Tive um probleminha na agenda aqui. Pode tentar novamente?"
 
 🚨 NUNCA diga "✅ Agendado" sem retorno com "id".
-🚨 NUNCA execute criar_agendamento mais de uma vez para o mesmo pedido.
+🚨 NUNCA execute criar_agendamento mais de uma vez para o MESMO serviço. Para serviços DIFERENTES (ex: corte e barba em horários separados), pode executar uma vez para cada serviço.
 
 ------------------------------------------
 
@@ -4139,7 +4176,7 @@ Execute agendar (UMA ÚNICA VEZ) com os parâmetros:
 ❌ OUTRO ERRO → "Tive um probleminha na agenda aqui, mas já retorno pra você!"
 
 🚨 NUNCA diga "Agendado!" sem retorno de SUCESSO CONFIRMADO.
-🚨 NUNCA execute agendar mais de uma vez.
+🚨 NUNCA execute agendar mais de uma vez para o MESMO serviço. Se o cliente quiser agendar serviços DIFERENTES (ex: corte e barba), execute agendar uma vez para cada serviço.
 
 ------------------------------------------
 
