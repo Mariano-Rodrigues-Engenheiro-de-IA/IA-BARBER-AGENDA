@@ -2330,7 +2330,7 @@ async function callAIAgent(
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
 
-      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool) {
+      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isSchedulingOrCancelTool) {
         // Special case: for escalate_human, even when deduplicated, make sure the
         // configured label is actually present on the WhatsApp chat. The owner may
         // have removed the label between turns, leaving the lead without the
