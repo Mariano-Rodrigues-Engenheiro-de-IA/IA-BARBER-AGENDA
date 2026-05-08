@@ -6126,7 +6126,7 @@ Você está conectada à API **Bemp**. Os nomes de ferramenta que você TEM aces
 - **listar_unidades** — lista os salões/unidades.
 - **consultar_cliente** — verifica se o telefone do cliente já tem cadastro (retorna o nome).
 - **listar_servicos** — lista os serviços do salão.
-- **listar_profissionais** — lista profissionais do serviço (opcional).
+- **listar_profissionais** — lista profissionais do serviço (**obrigatório** antes de listar_horarios e agendar).
 - **listar_horarios** — lista horários disponíveis em um dia.
 - **listar_agendamentos** — lista os agendamentos abertos do cliente.
 - **agendar** — cria o agendamento.
