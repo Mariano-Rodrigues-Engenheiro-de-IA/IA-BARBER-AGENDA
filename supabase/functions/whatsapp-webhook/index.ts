@@ -5893,6 +5893,8 @@ Você está conectada à API **Bemp**. Os nomes de ferramenta que você TEM aces
 
 ⚠️ Quaisquer outros nomes que apareçam em exemplos do prompt (como "buscar_servicos", "buscar_barbeiros", "buscar_datas", "buscar_horarios", "buscar_cliente", "criar_agendamento") são de OUTRO sistema e NÃO existem aqui — IGNORE esses exemplos. Use SOMENTE os nomes acima.
 
+✅ COMPATIBILIDADE INTERNA: se por reflexo você pensar em nomes antigos como **buscar_cliente**, **buscar_servicos**, **buscar_barbeiros**, **buscar_horarios**, **buscar_agendamento**, **criar_agendamento** ou **desmarcar_agendamento**, eles serão roteados internamente para as tools corretas da Bemp. Mesmo assim, PREFIRA sempre os nomes canônicos da lista acima.
+
 ------------------------------------------
 
 ## ⚡ EXECUTE FERRAMENTAS — NÃO FIQUE SÓ CONVERSANDO
