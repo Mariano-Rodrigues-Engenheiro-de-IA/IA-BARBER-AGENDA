@@ -6144,7 +6144,13 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         const res = await bempFetch(`${apiBase}/salons`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_unidades (${res.status}):`, text.slice(0, 400));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            return data.map((s: any) => ({ id: s.id, name: s.name, address: s.address, phone: s.phone }));
+          }
+          return data;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "listar_servicos": {
@@ -6152,7 +6158,20 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_servicos (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            return data.map((s: any) => ({
+              id: s.id,
+              name: s.name,
+              duration_minutes: s.duration ? Math.round(s.duration / 60) : null,
+              price: s.price,
+              price_text: s.price_currency,
+              group: s.group?.name,
+            }));
+          }
+          return data;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "listar_profissionais": {
@@ -6160,7 +6179,13 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_profissionais (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const data = JSON.parse(text);
+          if (Array.isArray(data)) {
+            return data.map((p: any) => ({ id: p.id, name: p.name }));
+          }
+          return data;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "listar_horarios": {
