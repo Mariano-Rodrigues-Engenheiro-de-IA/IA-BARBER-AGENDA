@@ -1168,6 +1168,10 @@ interface AgentSessionState {
   allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
+  bempSalonOptions: Array<{
+    salonId: number;
+    name: string;
+  }>;
   bempProfessionalOptions: Array<{
     salonId: number | null;
     serviceId: number | null;
@@ -1184,6 +1188,7 @@ interface AgentSessionState {
     start_text?: string;
     end_text?: string;
   }>;
+  selectedSalonId: number | null;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
@@ -1202,8 +1207,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     allowedServiceIds: [],
     oneBelezaProfessionalOptions: [],
     oneBelezaSlotOptions: [],
+    bempSalonOptions: [],
     bempProfessionalOptions: [],
     bempSlotOptions: [],
+    selectedSalonId: null,
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
@@ -1237,8 +1244,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
       oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
       oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
+      bempSalonOptions: Array.isArray(s.bempSalonOptions) ? s.bempSalonOptions : [],
       bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
       bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
+      selectedSalonId: s.selectedSalonId ?? null,
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
@@ -1258,9 +1267,11 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
+      bempSalonOptions: state.bempSalonOptions,
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
       executedToolNames: state.executedToolNames,
+      selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
@@ -1272,7 +1283,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
