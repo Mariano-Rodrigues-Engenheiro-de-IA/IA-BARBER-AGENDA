@@ -6040,7 +6040,7 @@ function buildBempTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_profissionais",
-        description: "Lista profissionais disponíveis para uma unidade + serviço. Use SOMENTE se o cliente quiser escolher um profissional específico.",
+        description: "Lista profissionais disponíveis para uma unidade + serviço. No Bemp, rode SEMPRE antes de listar_horarios e antes de agendar, porque professionalId é obrigatório.",
         parameters: {
           type: "object",
           properties: {
@@ -6055,16 +6055,16 @@ function buildBempTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios",
-        description: "Lista horários disponíveis para uma unidade + serviço + data. Inclua professionalId APENAS se o cliente escolheu um profissional específico.",
+        description: "Lista horários disponíveis para uma unidade + serviço + data. No Bemp, professionalId é OBRIGATÓRIO para gerar slots válidos para agendamento.",
         parameters: {
           type: "object",
           properties: {
             salonId: { type: "number" },
             serviceId: { type: "number" },
             data: { type: "string", description: "Data no formato yyyy-MM-dd" },
-            professionalId: { type: "number", description: "Opcional. Só passe se o cliente escolheu um profissional." },
+            professionalId: { type: "number", description: "OBRIGATÓRIO. Vem de listar_profissionais." },
           },
-          required: ["salonId", "serviceId", "data"],
+          required: ["salonId", "serviceId", "data", "professionalId"],
         },
       },
     },
