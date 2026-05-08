@@ -6244,9 +6244,36 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
           return { error: "Faltam parâmetros: salonId, serviceId, start, end, name." };
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
+
+        // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta auto-resolver:
+        let professionalId = args.professionalId;
+        if (!professionalId) {
+          try {
+            const profRes = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
+            const profText = await profRes.text();
+            const profs = JSON.parse(profText);
+            if (Array.isArray(profs) && profs.length === 1) {
+              professionalId = profs[0].id;
+              console.log(`[Bemp] agendar auto-resolved professionalId=${professionalId} (único)`);
+            } else if (Array.isArray(profs) && profs.length > 1) {
+              return {
+                error: "professional_id é obrigatório.",
+                blocked: true,
+                message: "Antes de agendar, chame listar_profissionais e peça ao cliente para escolher um profissional. Em seguida chame listar_horarios COM professionalId e use o slot dessa resposta.",
+                profissionais_disponiveis: profs.map((p: any) => ({ id: p.id, name: p.name })),
+              };
+            } else {
+              return { error: "Nenhum profissional disponível para este serviço.", blocked: true };
+            }
+          } catch (e) {
+            return { error: "Falha ao resolver profissional automaticamente. Chame listar_profissionais explicitamente.", blocked: true };
+          }
+        }
+
         const body: Record<string, unknown> = {
           salon_id: args.salonId,
           service_id: args.serviceId,
+          professional_id: professionalId,
           start: args.start,
           end: args.end,
           name: args.name,
@@ -6254,7 +6281,6 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
           phone_area_code: phone.area,
           phone_number: phone.number,
         };
-        if (args.professionalId) body.professional_id = args.professionalId;
         console.log(`[Bemp] agendar body:`, JSON.stringify(body));
         const res = await bempFetch(`${webhooksBase}/whatsapp_schedule`, {
           method: "POST",
