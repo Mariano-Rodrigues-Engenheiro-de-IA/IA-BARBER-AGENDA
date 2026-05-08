@@ -2481,6 +2481,47 @@ async function callAIAgent(
             corrections.push(`data ausente, usando seleção persistida ${sessionState.selectedDate}`);
           }
 
+          if (!toolResult && toolName === "agendar") {
+            const requestedSalonId = toPositiveInteger(parsedArgs?.salonId);
+            const requestedServiceId = toPositiveInteger(parsedArgs?.serviceId);
+            const requestedProfessionalId = toPositiveInteger(parsedArgs?.professionalId);
+            const requestedStart = typeof parsedArgs?.start === "string" ? parsedArgs.start : "";
+            const requestedEnd = typeof parsedArgs?.end === "string" ? parsedArgs.end : "";
+            const requestedDate = requestedStart.slice(0, 10) || sessionState.selectedDate;
+
+            const matchingSlots = sessionState.bempSlotOptions.filter((slot) => {
+              const salonMatches = !requestedSalonId || slot.salonId === null || slot.salonId === requestedSalonId;
+              const serviceMatches = !requestedServiceId || slot.serviceId === null || slot.serviceId === requestedServiceId;
+              const professionalMatches = !requestedProfessionalId || slot.professionalId === null || slot.professionalId === requestedProfessionalId;
+              const dateMatches = !requestedDate || slot.date === null || slot.date === requestedDate;
+              return salonMatches && serviceMatches && professionalMatches && dateMatches;
+            });
+
+            if (matchingSlots.length === 0) {
+              toolResult = {
+                error: "Nenhum horário válido em memória para este profissional.",
+                blocked: true,
+                message: "Antes de agendar, rode listar_horarios COM professionalId e use exatamente um slot retornado nessa resposta.",
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (!matchingSlots.some((slot) => slot.start === requestedStart && slot.end === requestedEnd)) {
+              toolResult = {
+                error: "O horário informado não bate com os slots válidos retornados pela Bemp.",
+                blocked: true,
+                message: "Rode listar_horarios novamente com professionalId e use exatamente start/end de um slot retornado.",
+                horarios_validos: matchingSlots.slice(0, 20).map((slot) => ({
+                  start: slot.start,
+                  end: slot.end,
+                  start_text: slot.start_text,
+                  end_text: slot.end_text,
+                })),
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            }
+          }
+
           if (!toolResult && corrections.length > 0) {
             correctionReason = corrections.join("; ");
             toolCallToExecute = {
