@@ -2679,6 +2679,63 @@ async function callAIAgent(
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
 
+        if (provider === "bemp" && toolCall.function.name === "listar_profissionais" && Array.isArray(toolResult)) {
+          const salonId = toPositiveInteger(parsedArgs?.salonId);
+          const serviceId = toPositiveInteger(parsedArgs?.serviceId);
+          const professionalOptions = toolResult
+            .map((option: any) => ({
+              salonId: salonId ?? null,
+              serviceId: serviceId ?? null,
+              professionalId: toPositiveInteger(option?.id) ?? 0,
+              name: String(option?.name || "").trim(),
+            }))
+            .filter((option: any) => option.professionalId > 0);
+
+          sessionState.bempProfessionalOptions = dedupeByKey(
+            [...sessionState.bempProfessionalOptions, ...professionalOptions],
+            (option) => `${option.salonId ?? "any"}:${option.serviceId ?? "any"}:${option.professionalId}`,
+          );
+
+          if (serviceId) sessionState.selectedServiceId = serviceId;
+          if (professionalOptions.length === 1) {
+            sessionState.selectedProfessionalId = professionalOptions[0].professionalId;
+          }
+
+          console.log(`Tracked Bemp professional IDs: [${sessionState.bempProfessionalOptions.map((o) => o.professionalId).join(", ")}]`);
+        }
+
+        if (provider === "bemp" && toolCall.function.name === "listar_horarios" && Array.isArray(toolResult)) {
+          const salonId = toPositiveInteger(parsedArgs?.salonId);
+          const serviceId = toPositiveInteger(parsedArgs?.serviceId);
+          const professionalId = toPositiveInteger(parsedArgs?.professionalId);
+          const date = typeof parsedArgs?.data === "string" ? parsedArgs.data : null;
+
+          sessionState.bempSlotOptions = dedupeByKey(
+            [
+              ...sessionState.bempSlotOptions,
+              ...toolResult
+                .map((slot: any) => ({
+                  salonId: salonId ?? null,
+                  serviceId: serviceId ?? null,
+                  professionalId: professionalId ?? null,
+                  date,
+                  start: String(slot?.start || ""),
+                  end: String(slot?.end || ""),
+                  start_text: typeof slot?.start_text === "string" ? slot.start_text : undefined,
+                  end_text: typeof slot?.end_text === "string" ? slot.end_text : undefined,
+                }))
+                .filter((slot: any) => slot.start && slot.end),
+            ],
+            (slot) => `${slot.salonId ?? "any"}:${slot.serviceId ?? "any"}:${slot.professionalId ?? "any"}:${slot.start}:${slot.end}`,
+          );
+
+          if (serviceId) sessionState.selectedServiceId = serviceId;
+          if (professionalId) sessionState.selectedProfessionalId = professionalId;
+          if (date) sessionState.selectedDate = date;
+
+          console.log(`Tracked Bemp slot options: ${sessionState.bempSlotOptions.length}`);
+        }
+
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
           sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
           sessionState.allowedServiceIds = dedupeByKey(
