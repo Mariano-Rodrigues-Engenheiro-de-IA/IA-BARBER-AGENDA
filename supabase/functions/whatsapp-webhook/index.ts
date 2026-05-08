@@ -6099,9 +6099,26 @@ function buildBempTools(tenant: any) {
 // ===================== BEMP TOOL EXECUTION =====================
 
 async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
-  const funcName = toolCall.function.name;
+  const rawFuncName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const funcName = ({
+    buscar_cliente: "consultar_cliente",
+    buscar_servicos: "listar_servicos",
+    buscar_barbeiros: "listar_profissionais",
+    buscar_barbeiros_por_servico: "listar_profissionais",
+    buscar_horarios: "listar_horarios",
+    buscar_horarios_disponiveis: "listar_horarios",
+    buscar_agendamento: "listar_agendamentos",
+    buscar_agendamentos: "listar_agendamentos",
+    criar_agendamento: "agendar",
+    desmarcar_agendamento: "cancelar_agendamento",
+  } as Record<string, string>)[rawFuncName] || rawFuncName;
+
+  if (funcName !== rawFuncName) {
+    console.log(`[Bemp] alias mapped: ${rawFuncName} -> ${funcName}`);
+  }
 
   const domain = (tenant.bemp_domain || "").trim().replace(/^https?:\/\//, "").replace(/\.bemp\.app.*$/, "").replace(/\/.*$/, "");
   const token = (tenant.bemp_token || "").trim();
