@@ -1168,6 +1168,10 @@ interface AgentSessionState {
   allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
+  bempSalonOptions: Array<{
+    salonId: number;
+    name: string;
+  }>;
   bempProfessionalOptions: Array<{
     salonId: number | null;
     serviceId: number | null;
@@ -1184,6 +1188,7 @@ interface AgentSessionState {
     start_text?: string;
     end_text?: string;
   }>;
+  selectedSalonId: number | null;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
@@ -1202,8 +1207,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     allowedServiceIds: [],
     oneBelezaProfessionalOptions: [],
     oneBelezaSlotOptions: [],
+    bempSalonOptions: [],
     bempProfessionalOptions: [],
     bempSlotOptions: [],
+    selectedSalonId: null,
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
@@ -1237,8 +1244,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
       oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
       oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
+      bempSalonOptions: Array.isArray(s.bempSalonOptions) ? s.bempSalonOptions : [],
       bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
       bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
+      selectedSalonId: s.selectedSalonId ?? null,
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
@@ -1258,9 +1267,11 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
+      bempSalonOptions: state.bempSalonOptions,
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
       executedToolNames: state.executedToolNames,
+      selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
@@ -1272,7 +1283,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -2439,16 +2450,48 @@ async function callAIAgent(
         // ===== BEMP STATE-BASED RESOLUTION LAYER =====
         if (provider === "bemp") {
           const toolName = toolCall.function.name;
+          if (["listar_servicos", "listar_profissionais", "listar_horarios", "agendar"].includes(toolName) && !toPositiveInteger(parsedArgs?.salonId)) {
+            if (sessionState.selectedSalonId) {
+              parsedArgs.salonId = sessionState.selectedSalonId;
+            } else if (sessionState.bempSalonOptions.length === 1) {
+              parsedArgs.salonId = sessionState.bempSalonOptions[0].salonId;
+            }
+          }
           const bempToolsNeedingService = ["listar_profissionais", "listar_horarios", "agendar"];
           const bempToolsNeedingProfessional = ["listar_horarios", "agendar"];
           const corrections: string[] = [];
 
-          if (bempToolsNeedingService.includes(toolName) && !toPositiveInteger(parsedArgs?.serviceId) && sessionState.selectedServiceId) {
+          if (["listar_servicos", "listar_profissionais", "listar_horarios", "agendar"].includes(toolName)) {
+            const requestedSalonId = toPositiveInteger(parsedArgs?.salonId);
+            if (!requestedSalonId) {
+              toolResult = {
+                error: "salonId é obrigatório na Bemp.",
+                blocked: true,
+                message: "Antes de seguir, chame listar_unidades e use um salonId real do retorno.",
+                unidades_disponiveis: sessionState.bempSalonOptions.map((option) => ({ id: option.salonId, name: option.name })),
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (sessionState.bempSalonOptions.length > 0 && !sessionState.bempSalonOptions.some((option) => option.salonId === requestedSalonId)) {
+              toolResult = {
+                error: `salonId ${requestedSalonId} não pertence às unidades válidas da Bemp.`,
+                blocked: true,
+                message: "Use um salonId real retornado por listar_unidades nesta conversa.",
+                unidades_disponiveis: sessionState.bempSalonOptions.map((option) => ({ id: option.salonId, name: option.name })),
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (requestedSalonId && sessionState.selectedSalonId !== requestedSalonId) {
+              corrections.push(`salonId validado ${requestedSalonId}`);
+            }
+          }
+
+          if (!toolResult && bempToolsNeedingService.includes(toolName) && !toPositiveInteger(parsedArgs?.serviceId) && sessionState.selectedServiceId) {
             parsedArgs.serviceId = sessionState.selectedServiceId;
             corrections.push(`serviceId ausente, usando seleção persistida ${sessionState.selectedServiceId}`);
           }
 
-          if (bempToolsNeedingProfessional.includes(toolName) && !toPositiveInteger(parsedArgs?.professionalId)) {
+          if (!toolResult && bempToolsNeedingProfessional.includes(toolName) && !toPositiveInteger(parsedArgs?.professionalId)) {
             const requestedSalonId = toPositiveInteger(parsedArgs?.salonId);
             const requestedServiceId = toPositiveInteger(parsedArgs?.serviceId);
 
@@ -2720,6 +2763,26 @@ async function callAIAgent(
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
 
+        if (provider === "bemp" && toolCall.function.name === "listar_unidades" && Array.isArray(toolResult)) {
+          const salonOptions = toolResult
+            .map((option: any) => ({
+              salonId: toPositiveInteger(option?.id) ?? 0,
+              name: String(option?.name || "").trim(),
+            }))
+            .filter((option: any) => option.salonId > 0);
+
+          sessionState.bempSalonOptions = dedupeByKey(
+            [...sessionState.bempSalonOptions, ...salonOptions],
+            (option) => String(option.salonId),
+          );
+
+          if (salonOptions.length === 1) {
+            sessionState.selectedSalonId = salonOptions[0].salonId;
+          }
+
+          console.log(`Tracked Bemp salons: [${sessionState.bempSalonOptions.map((o) => o.salonId).join(", ")}]`);
+        }
+
         if (provider === "bemp" && toolCall.function.name === "listar_profissionais" && Array.isArray(toolResult)) {
           const salonId = toPositiveInteger(parsedArgs?.salonId);
           const serviceId = toPositiveInteger(parsedArgs?.serviceId);
@@ -2737,6 +2800,7 @@ async function callAIAgent(
             (option) => `${option.salonId ?? "any"}:${option.serviceId ?? "any"}:${option.professionalId}`,
           );
 
+          if (salonId) sessionState.selectedSalonId = salonId;
           if (serviceId) sessionState.selectedServiceId = serviceId;
           if (professionalOptions.length === 1) {
             sessionState.selectedProfessionalId = professionalOptions[0].professionalId;
@@ -2770,6 +2834,7 @@ async function callAIAgent(
             (slot) => `${slot.salonId ?? "any"}:${slot.serviceId ?? "any"}:${slot.professionalId ?? "any"}:${slot.start}:${slot.end}`,
           );
 
+          if (salonId) sessionState.selectedSalonId = salonId;
           if (serviceId) sessionState.selectedServiceId = serviceId;
           if (professionalId) sessionState.selectedProfessionalId = professionalId;
           if (date) sessionState.selectedDate = date;
@@ -6061,7 +6126,7 @@ Você está conectada à API **Bemp**. Os nomes de ferramenta que você TEM aces
 - **listar_unidades** — lista os salões/unidades.
 - **consultar_cliente** — verifica se o telefone do cliente já tem cadastro (retorna o nome).
 - **listar_servicos** — lista os serviços do salão.
-- **listar_profissionais** — lista profissionais do serviço (opcional).
+- **listar_profissionais** — lista profissionais do serviço (**obrigatório** antes de listar_horarios e agendar).
 - **listar_horarios** — lista horários disponíveis em um dia.
 - **listar_agendamentos** — lista os agendamentos abertos do cliente.
 - **agendar** — cria o agendamento.
@@ -6335,6 +6400,50 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
     return await fetch(url, init);
   };
 
+  let cachedSalons: any[] | null = null;
+  const fetchBempSalons = async (): Promise<any[]> => {
+    if (cachedSalons) return cachedSalons;
+    const res = await bempFetch(`${apiBase}/salons`, { headers });
+    const text = await res.text();
+    console.log(`[Bemp] fetchBempSalons (${res.status}):`, text.slice(0, 400));
+    try {
+      const data = JSON.parse(text);
+      cachedSalons = Array.isArray(data) ? data : [];
+    } catch {
+      cachedSalons = [];
+    }
+    return cachedSalons;
+  };
+
+  const resolveBempSalonId = async (rawSalonId: unknown) => {
+    const salons = await fetchBempSalons();
+    const requestedSalonId = toPositiveInteger(rawSalonId);
+
+    if (requestedSalonId && salons.some((salon: any) => Number(salon?.id) === requestedSalonId)) {
+      return { salonId: requestedSalonId, corrected: false, salons };
+    }
+
+    if (salons.length === 1) {
+      const onlySalonId = toPositiveInteger(salons[0]?.id);
+      if (onlySalonId) {
+        console.log(`[Bemp] auto-corrected salonId ${requestedSalonId ?? "null"} -> ${onlySalonId}`);
+        return { salonId: onlySalonId, corrected: requestedSalonId !== onlySalonId, salons };
+      }
+    }
+
+    return {
+      salonId: null,
+      corrected: false,
+      salons,
+      error: requestedSalonId
+        ? `salonId ${requestedSalonId} inválido para este domínio Bemp.`
+        : "salonId é obrigatório na Bemp.",
+      blocked: true,
+      message: "Chame listar_unidades e use um salonId real retornado pela Bemp.",
+      unidades_disponiveis: salons.map((salon: any) => ({ id: salon.id, name: salon.name })),
+    };
+  };
+
   try {
     switch (funcName) {
       case "listar_unidades": {
@@ -6344,6 +6453,7 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         try {
           const data = JSON.parse(text);
           if (Array.isArray(data)) {
+            cachedSalons = data;
             return data.map((s: any) => ({ id: s.id, name: s.name, address: s.address, phone: s.phone }));
           }
           return data;
@@ -6351,7 +6461,9 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_servicos": {
-        if (!args.salonId) return { error: "Faltou salonId." };
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_servicos (${res.status}):`, text.slice(0, 600));
@@ -6372,7 +6484,10 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_profissionais": {
-        if (!args.salonId || !args.serviceId) return { error: "Faltam salonId/serviceId." };
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId) return { error: "Falta serviceId." };
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_profissionais (${res.status}):`, text.slice(0, 600));
@@ -6386,7 +6501,10 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_horarios": {
-        if (!args.salonId || !args.serviceId || !args.data) {
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId || !args.data) {
           return { error: "Faltam salonId, serviceId e/ou data (yyyy-MM-dd)." };
         }
         if (!args.professionalId) {
@@ -6423,7 +6541,10 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "agendar": {
-        if (!args.salonId || !args.serviceId || !args.start || !args.end || !args.name) {
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId || !args.start || !args.end || !args.name) {
           return { error: "Faltam parâmetros: salonId, serviceId, start, end, name." };
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
