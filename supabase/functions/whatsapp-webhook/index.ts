@@ -5878,6 +5878,39 @@ function buildBempPromptSection(_tenant: any): string {
   return `
 ------------------------------------------
 
+## 🛠️ FERRAMENTAS DISPONÍVEIS (BEMP) — USE ESSES NOMES EXATOS
+
+Você está conectada à API **Bemp**. Os nomes de ferramenta que você TEM acesso são EXATAMENTE estes (use SOMENTE estes):
+
+- **listar_unidades** — lista os salões/unidades.
+- **consultar_cliente** — verifica se o telefone do cliente já tem cadastro (retorna o nome).
+- **listar_servicos** — lista os serviços do salão.
+- **listar_profissionais** — lista profissionais do serviço (opcional).
+- **listar_horarios** — lista horários disponíveis em um dia.
+- **listar_agendamentos** — lista os agendamentos abertos do cliente.
+- **agendar** — cria o agendamento.
+- **cancelar_agendamento** — cancela um agendamento existente.
+
+⚠️ Quaisquer outros nomes que apareçam em exemplos do prompt (como "buscar_servicos", "buscar_barbeiros", "buscar_datas", "buscar_horarios", "buscar_cliente", "criar_agendamento") são de OUTRO sistema e NÃO existem aqui — IGNORE esses exemplos. Use SOMENTE os nomes acima.
+
+------------------------------------------
+
+## ⚡ EXECUTE FERRAMENTAS — NÃO FIQUE SÓ CONVERSANDO
+
+🚨 Se o cliente sinalizar QUALQUER intenção de agendar / remarcar / cancelar / ver horários, você DEVE chamar as ferramentas IMEDIATAMENTE no mesmo turno, em silêncio, sem pedir mais informação se já dá pra prosseguir. NUNCA fique perguntando coisas vagas ("qual procedimento?", "qual barbeiro?") sem antes ter chamado **listar_unidades** + **consultar_cliente** + **listar_servicos** pelo menos uma vez nesta conversa.
+
+Sequência obrigatória ao receber intenção de agendamento:
+1. Chame **listar_unidades** (se ainda não chamou nesta conversa).
+2. Chame **consultar_cliente** (1x, em paralelo).
+3. Chame **listar_servicos** com o salonId obtido.
+4. Só ENTÃO mostre as opções de serviço pro cliente, com os NOMES reais que vieram da API (sem ID).
+
+❌ PROIBIDO responder "qual serviço você quer?" sem ter chamado listar_servicos antes — você precisa OFERECER as opções reais.
+❌ PROIBIDO inventar nomes de barbeiros (ex: "Alan, Davi, Joelson") — só fale nomes que vierem de listar_profissionais.
+❌ PROIBIDO responder "Tive um probleminha" se NENHUMA ferramenta foi chamada e nenhuma falhou. Essa frase é SÓ para quando uma tool retornou erro de verdade.
+
+------------------------------------------
+
 ## 🚨 REGRA ABSOLUTA — HORÁRIOS (BEMP)
 
 NUNCA cite, sugira ou confirme qualquer horário sem antes executar **listar_horarios** NESSA interação (mesmo que tenha listado em mensagem antiga — slots ficam obsoletos rápido).
