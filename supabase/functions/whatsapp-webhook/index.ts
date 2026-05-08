@@ -1168,6 +1168,22 @@ interface AgentSessionState {
   allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
   oneBelezaSlotOptions: OneBelezaSlotOption[];
+  bempProfessionalOptions: Array<{
+    salonId: number | null;
+    serviceId: number | null;
+    professionalId: number;
+    name: string;
+  }>;
+  bempSlotOptions: Array<{
+    salonId: number | null;
+    serviceId: number | null;
+    professionalId: number | null;
+    date: string | null;
+    start: string;
+    end: string;
+    start_text?: string;
+    end_text?: string;
+  }>;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
@@ -1186,6 +1202,8 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     allowedServiceIds: [],
     oneBelezaProfessionalOptions: [],
     oneBelezaSlotOptions: [],
+    bempProfessionalOptions: [],
+    bempSlotOptions: [],
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
@@ -1219,6 +1237,8 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: Array.isArray(s.allowedServiceIds) ? s.allowedServiceIds.filter((id: unknown) => typeof id === "number") : [],
       oneBelezaProfessionalOptions: Array.isArray(s.oneBelezaProfessionalOptions) ? s.oneBelezaProfessionalOptions : [],
       oneBelezaSlotOptions: Array.isArray(s.oneBelezaSlotOptions) ? s.oneBelezaSlotOptions : [],
+      bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
+      bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
@@ -1238,6 +1258,8 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       allowedServiceIds: state.allowedServiceIds,
       oneBelezaProfessionalOptions: state.oneBelezaProfessionalOptions,
       oneBelezaSlotOptions: state.oneBelezaSlotOptions,
+      bempProfessionalOptions: state.bempProfessionalOptions,
+      bempSlotOptions: state.bempSlotOptions,
       executedToolNames: state.executedToolNames,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
