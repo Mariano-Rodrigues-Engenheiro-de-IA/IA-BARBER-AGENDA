@@ -5932,23 +5932,25 @@ Se a tool voltar vazio: avise que aquele dia não tem vaga e sugira o próximo d
 Cada ID/parâmetro tem uma fonte obrigatória — NUNCA invente, NUNCA chute, NUNCA reuse de outra conversa:
 - salonId → \`listar_unidades\` (se vier 1 só, use direto sem perguntar)
 - serviceId → \`listar_servicos\`
-- professionalId → \`listar_profissionais\` (opcional)
+- professionalId → \`listar_profissionais\` (**OBRIGATÓRIO** para agendar)
 - agendamentoId → \`listar_agendamentos\` (campo \`id\`)
-- start/end → derivados do horário escolhido pelo cliente DENTRO do que listar_horarios retornou
+- start/end → derivados do horário escolhido pelo cliente DENTRO do que listar_horarios retornou (slot DEVE vir de chamada COM professionalId)
 
 Se você não tem um ID válido vindo de uma tool, **rode a tool**. Não pergunte ID/JSON/código pro cliente.
 
 ------------------------------------------
 
-## 🔷 FLUXO DE AGENDAMENTO (BEMP — sequencial)
+## 🔷 FLUXO DE AGENDAMENTO (BEMP — sequencial e OBRIGATÓRIO)
 
 1. **listar_unidades** → se vier 1 só, use direto. Se várias, peça o cliente escolher pelo nome.
 2. **consultar_cliente** → roda 1x no início pra pegar o nome cadastrado (se existir). Se já tem cadastro, NÃO pergunte o nome de novo. Se não tem (notFound), peça o nome quando for confirmar o agendamento.
 3. **listar_servicos** com salonId → mostre as opções e peça pra escolher.
-4. (Opcional) **listar_profissionais** com salonId+serviceId → só se o cliente quiser profissional específico. Senão, pule.
-5. **listar_horarios** com salonId+serviceId+data (yyyy-MM-dd) [+professionalId se escolhido].
-6. Confirme com o cliente: serviço + dia + horário (em PT-BR, formato humano: "quarta, 29/04 às 13:30").
-7. **agendar** com salonId+serviceId [+professionalId] + start + end + name. Telefone é injetado automático — NUNCA pergunte nem passe.
+4. **listar_profissionais** com salonId+serviceId → SEMPRE chame. Se vier 1 só, use direto. Se vier mais de 1, pergunte ao cliente qual ele prefere (pelo nome real retornado, NUNCA invente nomes). Aceita "qualquer um" / "tanto faz" → escolha o primeiro da lista.
+5. **listar_horarios** com salonId+serviceId+professionalId+data (yyyy-MM-dd). SEMPRE inclua o professionalId — slots sem profissional não servem para agendar.
+6. Confirme com o cliente: serviço + profissional + dia + horário (em PT-BR humano: "quarta, 29/04 às 13:30 com Fulano").
+7. **agendar** com salonId+serviceId+**professionalId**+start+end+name. Telefone é injetado automático — NUNCA pergunte nem passe.
+
+⚠️ Se você chamar **agendar** SEM professionalId, o sistema vai BLOQUEAR. Sempre passe o professionalId vindo de listar_profissionais.
 
 ⚠️ Permitido agendar VÁRIOS serviços diferentes no mesmo fluxo. Apenas BLOQUEIE se for o MESMO serviço já agendado pelo cliente (rode listar_agendamentos antes pra checar duplicidade do mesmo serviço).
 
@@ -6064,18 +6066,18 @@ function buildBempTools(tenant: any) {
       type: "function",
       function: {
         name: "agendar",
-        description: "Cria um agendamento. Confirme dia/hora/serviço com o cliente ANTES de chamar. O telefone do cliente é injetado automaticamente.",
+        description: "Cria um agendamento. ⚠️ professionalId é OBRIGATÓRIO — antes de chamar, rode listar_profissionais e (se houver mais de 1) confirme com o cliente qual ele prefere; em seguida rode listar_horarios COM professionalId e use o slot exato retornado. Telefone do cliente é injetado automático.",
         parameters: {
           type: "object",
           properties: {
             salonId: { type: "number" },
             serviceId: { type: "number" },
-            professionalId: { type: "number", description: "Opcional. Só inclua se o cliente escolheu um profissional." },
+            professionalId: { type: "number", description: "OBRIGATÓRIO. Vem de listar_profissionais." },
             start: { type: "string", description: "Início do horário em ISO 8601 com timezone -03:00 (ex: 2026-04-29T13:30:00.000-03:00)" },
             end: { type: "string", description: "Fim do horário em ISO 8601 com timezone -03:00" },
             name: { type: "string", description: "Nome completo do cliente" },
           },
-          required: ["salonId", "serviceId", "start", "end", "name"],
+          required: ["salonId", "serviceId", "professionalId", "start", "end", "name"],
         },
       },
     },
@@ -6244,9 +6246,36 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
           return { error: "Faltam parâmetros: salonId, serviceId, start, end, name." };
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
+
+        // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta auto-resolver:
+        let professionalId = args.professionalId;
+        if (!professionalId) {
+          try {
+            const profRes = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
+            const profText = await profRes.text();
+            const profs = JSON.parse(profText);
+            if (Array.isArray(profs) && profs.length === 1) {
+              professionalId = profs[0].id;
+              console.log(`[Bemp] agendar auto-resolved professionalId=${professionalId} (único)`);
+            } else if (Array.isArray(profs) && profs.length > 1) {
+              return {
+                error: "professional_id é obrigatório.",
+                blocked: true,
+                message: "Antes de agendar, chame listar_profissionais e peça ao cliente para escolher um profissional. Em seguida chame listar_horarios COM professionalId e use o slot dessa resposta.",
+                profissionais_disponiveis: profs.map((p: any) => ({ id: p.id, name: p.name })),
+              };
+            } else {
+              return { error: "Nenhum profissional disponível para este serviço.", blocked: true };
+            }
+          } catch (e) {
+            return { error: "Falha ao resolver profissional automaticamente. Chame listar_profissionais explicitamente.", blocked: true };
+          }
+        }
+
         const body: Record<string, unknown> = {
           salon_id: args.salonId,
           service_id: args.serviceId,
+          professional_id: professionalId,
           start: args.start,
           end: args.end,
           name: args.name,
@@ -6254,7 +6283,6 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
           phone_area_code: phone.area,
           phone_number: phone.number,
         };
-        if (args.professionalId) body.professional_id = args.professionalId;
         console.log(`[Bemp] agendar body:`, JSON.stringify(body));
         const res = await bempFetch(`${webhooksBase}/whatsapp_schedule`, {
           method: "POST",
