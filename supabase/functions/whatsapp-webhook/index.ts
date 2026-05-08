@@ -2765,6 +2765,9 @@ async function callAIAgent(
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
 
+  // Strip leaked internal prefixes (NEVER expose to client)
+  finalResponse = stripInternalPrefixes(finalResponse);
+
   // Detect leaked reasoning/scratchpad (e.g., "Vou proceed. Need next user input.") and regenerate
   if (finalResponse && isLeakedReasoningResponse(finalResponse)) {
     console.warn(`[LeakDetected] Discarding leaked reasoning response: "${finalResponse.slice(0, 120)}"`);
