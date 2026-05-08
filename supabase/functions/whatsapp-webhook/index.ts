@@ -6064,18 +6064,18 @@ function buildBempTools(tenant: any) {
       type: "function",
       function: {
         name: "agendar",
-        description: "Cria um agendamento. Confirme dia/hora/serviço com o cliente ANTES de chamar. O telefone do cliente é injetado automaticamente.",
+        description: "Cria um agendamento. ⚠️ professionalId é OBRIGATÓRIO — antes de chamar, rode listar_profissionais e (se houver mais de 1) confirme com o cliente qual ele prefere; em seguida rode listar_horarios COM professionalId e use o slot exato retornado. Telefone do cliente é injetado automático.",
         parameters: {
           type: "object",
           properties: {
             salonId: { type: "number" },
             serviceId: { type: "number" },
-            professionalId: { type: "number", description: "Opcional. Só inclua se o cliente escolheu um profissional." },
+            professionalId: { type: "number", description: "OBRIGATÓRIO. Vem de listar_profissionais." },
             start: { type: "string", description: "Início do horário em ISO 8601 com timezone -03:00 (ex: 2026-04-29T13:30:00.000-03:00)" },
             end: { type: "string", description: "Fim do horário em ISO 8601 com timezone -03:00" },
             name: { type: "string", description: "Nome completo do cliente" },
           },
-          required: ["salonId", "serviceId", "start", "end", "name"],
+          required: ["salonId", "serviceId", "professionalId", "start", "end", "name"],
         },
       },
     },
