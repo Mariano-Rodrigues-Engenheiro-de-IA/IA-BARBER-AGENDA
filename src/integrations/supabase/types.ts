@@ -263,6 +263,8 @@ export type Database = {
           agent_settings: Json | null
           agent_system_prompt: string | null
           api_provider: Database["public"]["Enums"]["api_provider"]
+          bemp_domain: string | null
+          bemp_token: string | null
           booking_link: string | null
           created_at: string
           email: string | null
@@ -289,6 +291,8 @@ export type Database = {
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
+          bemp_domain?: string | null
+          bemp_token?: string | null
           booking_link?: string | null
           created_at?: string
           email?: string | null
@@ -315,6 +319,8 @@ export type Database = {
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
+          bemp_domain?: string | null
+          bemp_token?: string | null
           booking_link?: string | null
           created_at?: string
           email?: string | null
@@ -372,7 +378,7 @@ export type Database = {
       }
     }
     Enums: {
-      api_provider: "trinks" | "onebeleza" | "none" | "frizzar"
+      api_provider: "trinks" | "onebeleza" | "none" | "frizzar" | "bemp"
       app_role: "admin"
       tenant_status: "active" | "inactive" | "suspended"
     }
@@ -502,7 +508,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      api_provider: ["trinks", "onebeleza", "none", "frizzar"],
+      api_provider: ["trinks", "onebeleza", "none", "frizzar", "bemp"],
       app_role: ["admin"],
       tenant_status: ["active", "inactive", "suspended"],
     },
