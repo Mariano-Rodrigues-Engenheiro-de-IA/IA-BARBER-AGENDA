@@ -1086,6 +1086,8 @@ export default function TenantFormPage() {
     onebeleza_celular: "",
     frizzar_token: "",
     frizzar_base_url: "",
+    bemp_domain: "",
+    bemp_token: "",
     booking_link: "",
     uazapi_url: "",
     uazapi_token: "",
@@ -1110,6 +1112,8 @@ export default function TenantFormPage() {
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
         frizzar_token: (existing as any).frizzar_token ?? "",
         frizzar_base_url: (existing as any).frizzar_base_url ?? "",
+        bemp_domain: (existing as any).bemp_domain ?? "",
+        bemp_token: (existing as any).bemp_token ?? "",
         booking_link: (existing as any).booking_link ?? "",
         uazapi_url: existing.uazapi_url ?? "",
         uazapi_token: existing.uazapi_token ?? "",
@@ -1408,6 +1412,7 @@ export default function TenantFormPage() {
                     <SelectItem value="trinks">Trinks</SelectItem>
                     <SelectItem value="onebeleza">One Beleza</SelectItem>
                     <SelectItem value="frizzar">Frizzar</SelectItem>
+                    <SelectItem value="bemp">Bemp</SelectItem>
                     <SelectItem value="none">Nenhum (link direto)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -1525,6 +1530,47 @@ export default function TenantFormPage() {
                     />
                     <p className="text-xs text-muted-foreground">
                       Em branco usa o padrão atual: <code>https://homologacao.frizzar.com.br:8446/api/bot</code> (endpoint oficial em uso pela própria Frizzar). Preencha apenas se a Frizzar publicar uma nova URL.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {provider === "bemp" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais Bemp</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="bemp_domain">Domínio Bemp</Label>
+                    <Input
+                      id="bemp_domain"
+                      value={(form as any).bemp_domain || ""}
+                      onChange={(e) => handleChange("bemp_domain" as any, e.target.value)}
+                      placeholder="ex: doncastrobarbearia"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Apenas o subdomínio (sem <code>.bemp.app</code>). Ex: <code>doncastrobarbearia</code> → vira <code>https://doncastrobarbearia.bemp.app</code>.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="bemp_token">Token de API</Label>
+                    <div className="relative">
+                      <Input
+                        id="bemp_token"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).bemp_token || ""}
+                        onChange={(e) => handleChange("bemp_token" as any, e.target.value)}
+                        placeholder="Token fornecido pelo suporte Bemp"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Solicitado dentro da plataforma Bemp (menu AJUDA). Será enviado como <code>Authorization: Token …</code>.
                     </p>
                   </div>
                 </div>
