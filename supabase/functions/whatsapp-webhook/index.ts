@@ -2148,6 +2148,20 @@ async function callAIAgent(
     return false;
   };
 
+  // Strip internal-only prefixes/markers that must NEVER reach the end client.
+  // These are tags used internally to mark messages from the human attendant in chat history.
+  const stripInternalPrefixes = (text: string): string => {
+    if (!text) return text;
+    let out = text;
+    // Remove ALL occurrences of [ATENDENTE HUMANO]: (with variations) anywhere in the text
+    out = out.replace(/\[\s*ATENDENTE\s+HUMANO\s*\]\s*:?\s*/gi, "");
+    // Remove other internal markers if they ever leak
+    out = out.replace(/\[\s*(SISTEMA|SYSTEM|INTERNAL|INTERNO|CONTEXTO)\s*\]\s*:?\s*/gi, "");
+    // Collapse extra whitespace/newlines created by removals
+    out = out.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return out;
+  };
+
   // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
   let leadName = "";
   try {
@@ -2765,6 +2779,9 @@ async function callAIAgent(
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
 
+  // Strip leaked internal prefixes (NEVER expose to client)
+  finalResponse = stripInternalPrefixes(finalResponse);
+
   // Detect leaked reasoning/scratchpad (e.g., "Vou proceed. Need next user input.") and regenerate
   if (finalResponse && isLeakedReasoningResponse(finalResponse)) {
     console.warn(`[LeakDetected] Discarding leaked reasoning response: "${finalResponse.slice(0, 120)}"`);
@@ -2773,7 +2790,8 @@ async function callAIAgent(
   }
 
   if (!finalResponse) {
-    const recoveredResponse = await requestFinalNaturalResponse(messages);
+    const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
+    const recoveredResponse = stripInternalPrefixes(recoveredResponseRaw || "");
     if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
       finalResponse = recoveredResponse;
     } else if (recoveredResponse) {
@@ -3704,7 +3722,7 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
     ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
     : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
 
-  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n`;
+  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n`;
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
