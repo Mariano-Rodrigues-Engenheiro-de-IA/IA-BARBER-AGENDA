@@ -5871,3 +5871,328 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
+
+// ===================== BEMP PROMPT SECTION =====================
+
+function buildBempPromptSection(_tenant: any): string {
+  return `
+------------------------------------------
+
+## 🚨 REGRA ABSOLUTA — HORÁRIOS (BEMP)
+
+NUNCA cite, sugira ou confirme qualquer horário sem antes executar listar_horarios nessa interação.
+
+❌ PROIBIDO: qualquer horário baseado em suposição ou memória
+✅ CORRETO: execute listar_horarios → use APENAS os horários retornados → ofereça
+
+Se o cliente perguntar um horário específico ANTES de você listar:
+→ "Me diz o serviço, o profissional (se tiver preferência) e o dia que já verifico pra você!"
+
+------------------------------------------
+
+## 🔶 REGRA CRÍTICA: IDs
+
+Cada ID tem uma fonte obrigatória — NUNCA invente:
+- salonId → listar_unidades (se houver mais de uma; se a tool retornar uma só, use ela direto)
+- serviceId → listar_servicos
+- professionalId → listar_profissionais (opcional — só se o cliente escolher um profissional específico)
+- agendamentoId → listar_agendamentos (campo \`id\`)
+
+------------------------------------------
+
+## 🔷 FLUXO DE AGENDAMENTO (BEMP — sequencial)
+
+1. **listar_unidades** → se retornar só 1 unidade, use direto sem perguntar. Se retornar várias, peça o cliente escolher.
+2. **listar_servicos** com salonId → mostre as opções e peça o cliente escolher.
+3. (Opcional) **listar_profissionais** com salonId + serviceId → só chame se o cliente quiser escolher um profissional específico. Caso contrário, pule e use listar_horarios SEM professionalId.
+4. **listar_horarios** com salonId + serviceId + data (yyyy-MM-dd) [+ professionalId se foi escolhido].
+   - Use APENAS os horários retornados na resposta.
+   - Se vier vazio, sugira outra data.
+5. **agendar** com salonId + serviceId [+ professionalId] + start (ISO 8601 com timezone -03:00) + end (ISO 8601) + name + phone (será preenchido automaticamente).
+   - O cliente Bemp é identificado pelo telefone — NÃO existe ID de cliente separado, então NUNCA peça nem invente.
+   - Antes de chamar, confirme dia/hora/serviço com o cliente.
+
+------------------------------------------
+
+## 🔶 OUTRAS OPERAÇÕES
+
+- **consultar_cliente**: confere se o telefone do cliente já tem cadastro Bemp (retorna nome, etc.).
+- **listar_agendamentos**: lista agendamentos abertos do cliente atual (pelo telefone).
+- **cancelar_agendamento**: cancela usando o \`id\` retornado por listar_agendamentos.
+- ⚠️ A Bemp **NÃO tem endpoint de remarcar** — para remarcar, cancele o atual e crie um novo.
+
+------------------------------------------
+
+## 📅 FORMATOS DE DATA E HORA
+
+- Data (slots): sempre **yyyy-MM-dd** (ex: 2026-04-29).
+- Start/end (agendar): **ISO 8601 com timezone -03:00** (ex: "2026-04-29T13:30:00.000-03:00").
+- Telefone: o sistema injeta automaticamente DDI/DDD/número do cliente atual — você NUNCA precisa passar telefone nas tools.
+`;
+}
+
+// ===================== BEMP TOOLS DEFINITION =====================
+
+function buildBempTools(tenant: any) {
+  if (!tenant.bemp_domain || !tenant.bemp_token) return undefined;
+
+  return [
+    {
+      type: "function",
+      function: {
+        name: "listar_unidades",
+        description: "Lista todas as unidades (salões) disponíveis. Se retornar apenas uma, use direto sem perguntar ao cliente.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_servicos",
+        description: "Lista os serviços disponíveis para uma unidade específica.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number", description: "ID da unidade (vem de listar_unidades)" },
+          },
+          required: ["salonId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_profissionais",
+        description: "Lista profissionais disponíveis para uma unidade + serviço. Use SOMENTE se o cliente quiser escolher um profissional específico.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number" },
+            serviceId: { type: "number" },
+          },
+          required: ["salonId", "serviceId"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_horarios",
+        description: "Lista horários disponíveis para uma unidade + serviço + data. Inclua professionalId APENAS se o cliente escolheu um profissional específico.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number" },
+            serviceId: { type: "number" },
+            data: { type: "string", description: "Data no formato yyyy-MM-dd" },
+            professionalId: { type: "number", description: "Opcional. Só passe se o cliente escolheu um profissional." },
+          },
+          required: ["salonId", "serviceId", "data"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "consultar_cliente",
+        description: "Verifica se o telefone do cliente atual já tem cadastro Bemp. Retorna nome e dados se existir.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_agendamentos",
+        description: "Lista agendamentos abertos do cliente atual (identificado pelo telefone).",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "agendar",
+        description: "Cria um agendamento. Confirme dia/hora/serviço com o cliente ANTES de chamar. O telefone do cliente é injetado automaticamente.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number" },
+            serviceId: { type: "number" },
+            professionalId: { type: "number", description: "Opcional. Só inclua se o cliente escolheu um profissional." },
+            start: { type: "string", description: "Início do horário em ISO 8601 com timezone -03:00 (ex: 2026-04-29T13:30:00.000-03:00)" },
+            end: { type: "string", description: "Fim do horário em ISO 8601 com timezone -03:00" },
+            name: { type: "string", description: "Nome completo do cliente" },
+          },
+          required: ["salonId", "serviceId", "start", "end", "name"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cancelar_agendamento",
+        description: "Cancela um agendamento aberto do cliente atual pelo ID. Pegue o ID em listar_agendamentos.",
+        parameters: {
+          type: "object",
+          properties: {
+            agendamentoId: { type: "number", description: "ID do agendamento (campo `id` retornado por listar_agendamentos)" },
+          },
+          required: ["agendamentoId"],
+        },
+      },
+    },
+  ];
+}
+
+// ===================== BEMP TOOL EXECUTION =====================
+
+async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+  let args: any = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const domain = (tenant.bemp_domain || "").trim().replace(/^https?:\/\//, "").replace(/\.bemp\.app.*$/, "").replace(/\/.*$/, "");
+  const token = (tenant.bemp_token || "").trim();
+  if (!domain || !token) {
+    return { error: "Bemp não está configurado para este estabelecimento (domínio ou token ausente)." };
+  }
+
+  const apiBase = `https://${domain}.bemp.app/api`;
+  const webhooksBase = `https://webhooks.bemp.app/webhooks`;
+  const headers: Record<string, string> = {
+    "Authorization": `Token ${token}`,
+    "Accept": "application/json",
+  };
+  const jsonHeaders: Record<string, string> = { ...headers, "Content-Type": "application/json" };
+
+  // Telefone do cliente atual: separar em country/area/number (Brasil DDI 55, DDD 2 dígitos)
+  const splitPhone = (raw: string) => {
+    const digits = (raw || "").replace(/\D/g, "");
+    let rest = digits;
+    let country = "55";
+    if (rest.startsWith("55") && rest.length >= 12) {
+      country = "55";
+      rest = rest.substring(2);
+    } else if (rest.length >= 11) {
+      // assume Brasil sem DDI
+      country = "55";
+    }
+    const area = rest.substring(0, 2);
+    const number = rest.substring(2);
+    return { country, area, number };
+  };
+  const phone = splitPhone(phoneNumber || "");
+
+  const bempFetch = async (url: string, init?: RequestInit): Promise<Response> => {
+    console.log(`[Bemp] -> ${init?.method || "GET"} ${url}`);
+    return await fetch(url, init);
+  };
+
+  try {
+    switch (funcName) {
+      case "listar_unidades": {
+        const res = await bempFetch(`${apiBase}/salons`, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] listar_unidades (${res.status}):`, text.slice(0, 400));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_servicos": {
+        if (!args.salonId) return { error: "Faltou salonId." };
+        const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services`, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] listar_servicos (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_profissionais": {
+        if (!args.salonId || !args.serviceId) return { error: "Faltam salonId/serviceId." };
+        const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] listar_profissionais (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_horarios": {
+        if (!args.salonId || !args.serviceId || !args.data) {
+          return { error: "Faltam salonId, serviceId e/ou data (yyyy-MM-dd)." };
+        }
+        const url = args.professionalId
+          ? `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${args.professionalId}/slots/${args.data}`
+          : `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/slots/${args.data}`;
+        const res = await bempFetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] listar_horarios (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "consultar_cliente": {
+        if (!phone.number) return { error: "Telefone do cliente atual indisponível." };
+        const url = `${webhooksBase}/whatsapp_customer?phone_country_code=${phone.country}&phone_area_code=${phone.area}&phone_number=${phone.number}`;
+        const res = await bempFetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] consultar_cliente (${res.status}):`, text.slice(0, 400));
+        if (res.status === 404) return { notFound: true, message: "Cliente ainda não tem cadastro Bemp — será criado automaticamente ao agendar." };
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_agendamentos": {
+        if (!phone.number) return { error: "Telefone do cliente atual indisponível." };
+        const url = `${webhooksBase}/whatsapp_schedule?phone_country_code=${phone.country}&phone_area_code=${phone.area}&phone_number=${phone.number}`;
+        const res = await bempFetch(url, { headers });
+        const text = await res.text();
+        console.log(`[Bemp] listar_agendamentos (${res.status}):`, text.slice(0, 600));
+        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "agendar": {
+        if (!args.salonId || !args.serviceId || !args.start || !args.end || !args.name) {
+          return { error: "Faltam parâmetros: salonId, serviceId, start, end, name." };
+        }
+        if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
+        const body: Record<string, unknown> = {
+          salon_id: args.salonId,
+          service_id: args.serviceId,
+          start: args.start,
+          end: args.end,
+          name: args.name,
+          phone_country_code: phone.country,
+          phone_area_code: phone.area,
+          phone_number: phone.number,
+        };
+        if (args.professionalId) body.professional_id = args.professionalId;
+        console.log(`[Bemp] agendar body:`, JSON.stringify(body));
+        const res = await bempFetch(`${webhooksBase}/whatsapp_schedule`, {
+          method: "POST",
+          headers: jsonHeaders,
+          body: JSON.stringify(body),
+        });
+        const text = await res.text();
+        console.log(`[Bemp] agendar (${res.status}):`, text.slice(0, 600));
+        try {
+          const parsed = JSON.parse(text);
+          if (res.ok) return { ok: true, ...parsed };
+          return { error: `Status ${res.status}`, ...parsed };
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "cancelar_agendamento": {
+        if (!args.agendamentoId) return { error: "Faltou agendamentoId." };
+        if (!phone.number) return { error: "Telefone do cliente atual indisponível." };
+        const url = `${webhooksBase}/whatsapp_schedule?phone_country_code=${phone.country}&phone_area_code=${phone.area}&phone_number=${phone.number}&id=${args.agendamentoId}`;
+        const res = await bempFetch(url, { method: "DELETE", headers });
+        const text = await res.text();
+        console.log(`[Bemp] cancelar_agendamento (${res.status}):`, text.slice(0, 400));
+        if (res.ok) return { ok: true, message: "Agendamento cancelado." };
+        try { return { error: `Status ${res.status}`, ...JSON.parse(text) }; }
+        catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      default:
+        return { error: `Ferramenta Bemp desconhecida: ${funcName}` };
+    }
+  } catch (error) {
+    console.error(`[Bemp] tool error (${funcName}):`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
+  }
+}
