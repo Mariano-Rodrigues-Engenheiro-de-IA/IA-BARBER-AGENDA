@@ -2450,16 +2450,48 @@ async function callAIAgent(
         // ===== BEMP STATE-BASED RESOLUTION LAYER =====
         if (provider === "bemp") {
           const toolName = toolCall.function.name;
+          if (["listar_servicos", "listar_profissionais", "listar_horarios", "agendar"].includes(toolName) && !toPositiveInteger(parsedArgs?.salonId)) {
+            if (sessionState.selectedSalonId) {
+              parsedArgs.salonId = sessionState.selectedSalonId;
+            } else if (sessionState.bempSalonOptions.length === 1) {
+              parsedArgs.salonId = sessionState.bempSalonOptions[0].salonId;
+            }
+          }
           const bempToolsNeedingService = ["listar_profissionais", "listar_horarios", "agendar"];
           const bempToolsNeedingProfessional = ["listar_horarios", "agendar"];
           const corrections: string[] = [];
 
-          if (bempToolsNeedingService.includes(toolName) && !toPositiveInteger(parsedArgs?.serviceId) && sessionState.selectedServiceId) {
+          if (["listar_servicos", "listar_profissionais", "listar_horarios", "agendar"].includes(toolName)) {
+            const requestedSalonId = toPositiveInteger(parsedArgs?.salonId);
+            if (!requestedSalonId) {
+              toolResult = {
+                error: "salonId é obrigatório na Bemp.",
+                blocked: true,
+                message: "Antes de seguir, chame listar_unidades e use um salonId real do retorno.",
+                unidades_disponiveis: sessionState.bempSalonOptions.map((option) => ({ id: option.salonId, name: option.name })),
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (sessionState.bempSalonOptions.length > 0 && !sessionState.bempSalonOptions.some((option) => option.salonId === requestedSalonId)) {
+              toolResult = {
+                error: `salonId ${requestedSalonId} não pertence às unidades válidas da Bemp.`,
+                blocked: true,
+                message: "Use um salonId real retornado por listar_unidades nesta conversa.",
+                unidades_disponiveis: sessionState.bempSalonOptions.map((option) => ({ id: option.salonId, name: option.name })),
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            } else if (requestedSalonId && sessionState.selectedSalonId !== requestedSalonId) {
+              corrections.push(`salonId validado ${requestedSalonId}`);
+            }
+          }
+
+          if (!toolResult && bempToolsNeedingService.includes(toolName) && !toPositiveInteger(parsedArgs?.serviceId) && sessionState.selectedServiceId) {
             parsedArgs.serviceId = sessionState.selectedServiceId;
             corrections.push(`serviceId ausente, usando seleção persistida ${sessionState.selectedServiceId}`);
           }
 
-          if (bempToolsNeedingProfessional.includes(toolName) && !toPositiveInteger(parsedArgs?.professionalId)) {
+          if (!toolResult && bempToolsNeedingProfessional.includes(toolName) && !toPositiveInteger(parsedArgs?.professionalId)) {
             const requestedSalonId = toPositiveInteger(parsedArgs?.salonId);
             const requestedServiceId = toPositiveInteger(parsedArgs?.serviceId);
 
@@ -2748,6 +2780,7 @@ async function callAIAgent(
             (option) => `${option.salonId ?? "any"}:${option.serviceId ?? "any"}:${option.professionalId}`,
           );
 
+          if (salonId) sessionState.selectedSalonId = salonId;
           if (serviceId) sessionState.selectedServiceId = serviceId;
           if (professionalOptions.length === 1) {
             sessionState.selectedProfessionalId = professionalOptions[0].professionalId;
@@ -2781,6 +2814,7 @@ async function callAIAgent(
             (slot) => `${slot.salonId ?? "any"}:${slot.serviceId ?? "any"}:${slot.professionalId ?? "any"}:${slot.start}:${slot.end}`,
           );
 
+          if (salonId) sessionState.selectedSalonId = salonId;
           if (serviceId) sessionState.selectedServiceId = serviceId;
           if (professionalId) sessionState.selectedProfessionalId = professionalId;
           if (date) sessionState.selectedDate = date;
