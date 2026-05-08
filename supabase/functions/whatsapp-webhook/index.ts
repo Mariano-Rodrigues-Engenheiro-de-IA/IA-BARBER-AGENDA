@@ -2148,6 +2148,20 @@ async function callAIAgent(
     return false;
   };
 
+  // Strip internal-only prefixes/markers that must NEVER reach the end client.
+  // These are tags used internally to mark messages from the human attendant in chat history.
+  const stripInternalPrefixes = (text: string): string => {
+    if (!text) return text;
+    let out = text;
+    // Remove ALL occurrences of [ATENDENTE HUMANO]: (with variations) anywhere in the text
+    out = out.replace(/\[\s*ATENDENTE\s+HUMANO\s*\]\s*:?\s*/gi, "");
+    // Remove other internal markers if they ever leak
+    out = out.replace(/\[\s*(SISTEMA|SYSTEM|INTERNAL|INTERNO|CONTEXTO)\s*\]\s*:?\s*/gi, "");
+    // Collapse extra whitespace/newlines created by removals
+    out = out.replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+    return out;
+  };
+
   // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
   let leadName = "";
   try {
