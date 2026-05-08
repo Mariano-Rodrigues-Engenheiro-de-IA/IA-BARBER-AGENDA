@@ -6400,6 +6400,50 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
     return await fetch(url, init);
   };
 
+  let cachedSalons: any[] | null = null;
+  const fetchBempSalons = async (): Promise<any[]> => {
+    if (cachedSalons) return cachedSalons;
+    const res = await bempFetch(`${apiBase}/salons`, { headers });
+    const text = await res.text();
+    console.log(`[Bemp] fetchBempSalons (${res.status}):`, text.slice(0, 400));
+    try {
+      const data = JSON.parse(text);
+      cachedSalons = Array.isArray(data) ? data : [];
+    } catch {
+      cachedSalons = [];
+    }
+    return cachedSalons;
+  };
+
+  const resolveBempSalonId = async (rawSalonId: unknown) => {
+    const salons = await fetchBempSalons();
+    const requestedSalonId = toPositiveInteger(rawSalonId);
+
+    if (requestedSalonId && salons.some((salon: any) => Number(salon?.id) === requestedSalonId)) {
+      return { salonId: requestedSalonId, corrected: false, salons };
+    }
+
+    if (salons.length === 1) {
+      const onlySalonId = toPositiveInteger(salons[0]?.id);
+      if (onlySalonId) {
+        console.log(`[Bemp] auto-corrected salonId ${requestedSalonId ?? "null"} -> ${onlySalonId}`);
+        return { salonId: onlySalonId, corrected: requestedSalonId !== onlySalonId, salons };
+      }
+    }
+
+    return {
+      salonId: null,
+      corrected: false,
+      salons,
+      error: requestedSalonId
+        ? `salonId ${requestedSalonId} inválido para este domínio Bemp.`
+        : "salonId é obrigatório na Bemp.",
+      blocked: true,
+      message: "Chame listar_unidades e use um salonId real retornado pela Bemp.",
+      unidades_disponiveis: salons.map((salon: any) => ({ id: salon.id, name: salon.name })),
+    };
+  };
+
   try {
     switch (funcName) {
       case "listar_unidades": {
@@ -6409,6 +6453,7 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         try {
           const data = JSON.parse(text);
           if (Array.isArray(data)) {
+            cachedSalons = data;
             return data.map((s: any) => ({ id: s.id, name: s.name, address: s.address, phone: s.phone }));
           }
           return data;
@@ -6416,7 +6461,9 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_servicos": {
-        if (!args.salonId) return { error: "Faltou salonId." };
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_servicos (${res.status}):`, text.slice(0, 600));
@@ -6437,7 +6484,10 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_profissionais": {
-        if (!args.salonId || !args.serviceId) return { error: "Faltam salonId/serviceId." };
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId) return { error: "Falta serviceId." };
         const res = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_profissionais (${res.status}):`, text.slice(0, 600));
@@ -6451,7 +6501,10 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "listar_horarios": {
-        if (!args.salonId || !args.serviceId || !args.data) {
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId || !args.data) {
           return { error: "Faltam salonId, serviceId e/ou data (yyyy-MM-dd)." };
         }
         if (!args.professionalId) {
@@ -6488,26 +6541,13 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
       }
 
       case "agendar": {
-        if (!args.salonId || !args.serviceId || !args.start || !args.end || !args.name) {
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId || !args.start || !args.end || !args.name) {
           return { error: "Faltam parâmetros: salonId, serviceId, start, end, name." };
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
-
-        try {
-          const salonsRes = await bempFetch(`${apiBase}/salons`, { headers });
-          const salonsText = await salonsRes.text();
-          const salons = JSON.parse(salonsText);
-          if (Array.isArray(salons) && !salons.some((salon: any) => Number(salon?.id) === Number(args.salonId))) {
-            return {
-              error: `salonId ${args.salonId} inválido para este domínio Bemp.`,
-              blocked: true,
-              message: "Use a unidade real retornada por listar_unidades antes de continuar o agendamento.",
-              unidades_disponiveis: salons.map((salon: any) => ({ id: salon.id, name: salon.name })),
-            };
-          }
-        } catch (_e) {
-          console.log("[Bemp] aviso: não foi possível validar salons antes do agendamento");
-        }
 
         // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta usar a seleção persistida;
         // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
