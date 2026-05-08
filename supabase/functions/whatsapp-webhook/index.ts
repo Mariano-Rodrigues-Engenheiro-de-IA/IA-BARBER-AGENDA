@@ -6391,11 +6391,6 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
         let professionalId = args.professionalId;
         if (!professionalId) {
-          const selectedProfessionalId = Number.isFinite(Number(args.serviceId))
-            ? (tenant ? null : null)
-            : null;
-        }
-        if (!professionalId) {
           try {
             const profRes = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
             const profText = await profRes.text();
