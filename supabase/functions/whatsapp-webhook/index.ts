@@ -2776,7 +2776,8 @@ async function callAIAgent(
   }
 
   if (!finalResponse) {
-    const recoveredResponse = await requestFinalNaturalResponse(messages);
+    const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
+    const recoveredResponse = stripInternalPrefixes(recoveredResponseRaw || "");
     if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
       finalResponse = recoveredResponse;
     } else if (recoveredResponse) {
