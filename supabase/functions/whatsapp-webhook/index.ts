@@ -6235,9 +6235,14 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         if (!args.salonId || !args.serviceId || !args.data) {
           return { error: "Faltam salonId, serviceId e/ou data (yyyy-MM-dd)." };
         }
-        const url = args.professionalId
-          ? `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${args.professionalId}/slots/${args.data}`
-          : `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/slots/${args.data}`;
+        if (!args.professionalId) {
+          return {
+            error: "professionalId é obrigatório para listar_horarios na Bemp.",
+            blocked: true,
+            message: "Antes de listar horários, chame listar_profissionais, use um professionalId real do retorno e só então rode listar_horarios.",
+          };
+        }
+        const url = `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${args.professionalId}/slots/${args.data}`;
         const res = await bempFetch(url, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_horarios (${res.status}):`, text.slice(0, 600));
@@ -6269,8 +6274,14 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
 
-        // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta auto-resolver:
+        // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta usar a seleção persistida;
+        // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
         let professionalId = args.professionalId;
+        if (!professionalId) {
+          const selectedProfessionalId = Number.isFinite(Number(args.serviceId))
+            ? (tenant ? null : null)
+            : null;
+        }
         if (!professionalId) {
           try {
             const profRes = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
