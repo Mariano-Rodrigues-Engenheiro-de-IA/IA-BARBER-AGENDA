@@ -2823,6 +2823,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     case "frizzar":
       providerTools = buildFrizzarTools(tenant);
       break;
+    case "bemp":
+      providerTools = buildBempTools(tenant);
+      break;
     case "none":
       providerTools = buildNoneTools(tenant);
       break;
@@ -2890,6 +2893,8 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
       return executeOneBelezaTool(tenant, toolCall, phoneNumber);
     case "frizzar":
       return executeFrizzarTool(tenant, toolCall, phoneNumber);
+    case "bemp":
+      return executeBempTool(tenant, toolCall, phoneNumber);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
@@ -3903,6 +3908,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     providerPrompt = buildOneBelezaPromptSection(tenant);
   } else if (provider === "frizzar") {
     providerPrompt = buildFrizzarPromptSection(tenant);
+  } else if (provider === "bemp") {
+    providerPrompt = buildBempPromptSection(tenant);
   } else if (provider === "none") {
     providerPrompt = buildNonePromptSection(tenant);
   }
