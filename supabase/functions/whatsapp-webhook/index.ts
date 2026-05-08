@@ -6473,6 +6473,22 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
 
+        try {
+          const salonsRes = await bempFetch(`${apiBase}/salons`, { headers });
+          const salonsText = await salonsRes.text();
+          const salons = JSON.parse(salonsText);
+          if (Array.isArray(salons) && !salons.some((salon: any) => Number(salon?.id) === Number(args.salonId))) {
+            return {
+              error: `salonId ${args.salonId} inválido para este domínio Bemp.`,
+              blocked: true,
+              message: "Use a unidade real retornada por listar_unidades antes de continuar o agendamento.",
+              unidades_disponiveis: salons.map((salon: any) => ({ id: salon.id, name: salon.name })),
+            };
+          }
+        } catch (_e) {
+          console.log("[Bemp] aviso: não foi possível validar salons antes do agendamento");
+        }
+
         // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta usar a seleção persistida;
         // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
         let professionalId = args.professionalId;
