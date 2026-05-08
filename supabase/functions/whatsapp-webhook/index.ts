@@ -2763,6 +2763,26 @@ async function callAIAgent(
           console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
         }
 
+        if (provider === "bemp" && toolCall.function.name === "listar_unidades" && Array.isArray(toolResult)) {
+          const salonOptions = toolResult
+            .map((option: any) => ({
+              salonId: toPositiveInteger(option?.id) ?? 0,
+              name: String(option?.name || "").trim(),
+            }))
+            .filter((option: any) => option.salonId > 0);
+
+          sessionState.bempSalonOptions = dedupeByKey(
+            [...sessionState.bempSalonOptions, ...salonOptions],
+            (option) => String(option.salonId),
+          );
+
+          if (salonOptions.length === 1) {
+            sessionState.selectedSalonId = salonOptions[0].salonId;
+          }
+
+          console.log(`Tracked Bemp salons: [${sessionState.bempSalonOptions.map((o) => o.salonId).join(", ")}]`);
+        }
+
         if (provider === "bemp" && toolCall.function.name === "listar_profissionais" && Array.isArray(toolResult)) {
           const salonId = toPositiveInteger(parsedArgs?.salonId);
           const serviceId = toPositiveInteger(parsedArgs?.serviceId);
