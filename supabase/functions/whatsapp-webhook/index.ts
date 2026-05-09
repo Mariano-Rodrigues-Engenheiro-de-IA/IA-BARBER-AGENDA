@@ -191,15 +191,9 @@ Deno.serve(async (req) => {
 
       const activeTenants = allTenantsRaw.filter((t: any) => t.status === "active");
 
-      // EXACT match helper (evita substring perigoso entre números diferentes)
-      const exactDigitsMatch = (a: string, b: string) => {
-        if (!a || !b) return false;
-        return a === b;
-      };
-
       // 1) PRIORITY: Match by chat.owner (o número WhatsApp conectado à sessão UAZAPI)
       const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
-      const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const ownerDigits = digitsOnly(ownerNumber);
       const incomingUnitHints = [
         payload.chat?.name,
         payload.chat?.title,
