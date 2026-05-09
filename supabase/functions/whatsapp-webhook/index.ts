@@ -903,7 +903,7 @@ Deno.serve(async (req) => {
     if (event === "chats.update" || event === "chats.upsert" || event === "chat.update" || event === "chat_labels") {
       const chat = payload.chat || payload.data?.chat || payload;
       const ownerNumber = chat?.owner || payload.owner || "";
-      const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const ownerDigits = digitsOnly(ownerNumber);
       const chatPhone = String(chat?.phone || chat?.id || "").replace(/\D/g, "").replace(/@.*/, "");
       
       console.log(`[LabelSync] Event: ${event}, owner: ${ownerDigits}, chatPhone: ${chatPhone}`);
@@ -940,11 +940,9 @@ Deno.serve(async (req) => {
       if (!syncTenant && ownerDigits && allTenants) {
         syncTenant = allTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
-          const n = t.whatsapp_number.replace(/\D/g, "");
-          return ownerDigits.includes(n) || n.includes(ownerDigits);
+          return exactDigitsMatch(ownerDigits, t.whatsapp_number);
         });
       }
-      if (!syncTenant && allTenants?.length) syncTenant = allTenants[0];
 
       if (!syncTenant) {
         return new Response(JSON.stringify({ status: "no_tenant" }), {
