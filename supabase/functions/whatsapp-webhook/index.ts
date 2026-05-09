@@ -5,6 +5,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
 };
 
+const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
+const exactDigitsMatch = (a: unknown, b: unknown) => {
+  const left = digitsOnly(a);
+  const right = digitsOnly(b);
+  return Boolean(left && right && left === right);
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -91,11 +98,10 @@ Deno.serve(async (req) => {
             .select("id, whatsapp_number")
             .eq("status", "active");
 
-          const ownerNumStore = String(payload.chat?.owner || payload.owner || payload.to || "").replace(/\D/g, "");
+          const ownerNumStore = digitsOnly(payload.chat?.owner || payload.owner || payload.to || "");
           const tenantForStore = (tenantsForStore || []).find((t: any) => {
             if (!t.whatsapp_number) return false;
-            const n = t.whatsapp_number.replace(/\D/g, "");
-            return ownerNumStore.includes(n) || n.includes(ownerNumStore);
+            return exactDigitsMatch(ownerNumStore, t.whatsapp_number);
           });
 
           if (tenantForStore) {
@@ -185,15 +191,9 @@ Deno.serve(async (req) => {
 
       const activeTenants = allTenantsRaw.filter((t: any) => t.status === "active");
 
-      // EXACT match helper (evita substring perigoso entre números diferentes)
-      const exactDigitsMatch = (a: string, b: string) => {
-        if (!a || !b) return false;
-        return a === b;
-      };
-
       // 1) PRIORITY: Match by chat.owner (o número WhatsApp conectado à sessão UAZAPI)
       const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
-      const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const ownerDigits = digitsOnly(ownerNumber);
       const incomingUnitHints = [
         payload.chat?.name,
         payload.chat?.title,
@@ -903,7 +903,7 @@ Deno.serve(async (req) => {
     if (event === "chats.update" || event === "chats.upsert" || event === "chat.update" || event === "chat_labels") {
       const chat = payload.chat || payload.data?.chat || payload;
       const ownerNumber = chat?.owner || payload.owner || "";
-      const ownerDigits = String(ownerNumber).replace(/\D/g, "");
+      const ownerDigits = digitsOnly(ownerNumber);
       const chatPhone = String(chat?.phone || chat?.id || "").replace(/\D/g, "").replace(/@.*/, "");
       
       console.log(`[LabelSync] Event: ${event}, owner: ${ownerDigits}, chatPhone: ${chatPhone}`);
@@ -940,11 +940,9 @@ Deno.serve(async (req) => {
       if (!syncTenant && ownerDigits && allTenants) {
         syncTenant = allTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
-          const n = t.whatsapp_number.replace(/\D/g, "");
-          return ownerDigits.includes(n) || n.includes(ownerDigits);
+          return exactDigitsMatch(ownerDigits, t.whatsapp_number);
         });
       }
-      if (!syncTenant && allTenants?.length) syncTenant = allTenants[0];
 
       if (!syncTenant) {
         return new Response(JSON.stringify({ status: "no_tenant" }), {
