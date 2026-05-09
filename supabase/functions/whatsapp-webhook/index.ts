@@ -168,12 +168,14 @@ Deno.serve(async (req) => {
       console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "senderName:", senderName, "msg.key:", JSON.stringify(msg.key || {}));
 
       // ===== TENANT LOOKUP =====
-      const { data: tenants, error: tenantError } = await supabase
+      // Buscar TODOS os tenants (inclusive inativos) para conseguir identificar
+      // mensagens que chegam de instâncias desativadas e ignorar com segurança,
+      // em vez de cair em fallback errado para outro tenant ativo.
+      const { data: allTenantsRaw, error: tenantError } = await supabase
         .from("tenants")
-        .select("*")
-        .eq("status", "active");
+        .select("*");
 
-      if (tenantError || !tenants?.length) {
+      if (tenantError || !allTenantsRaw?.length) {
         console.error("No tenant found:", tenantError);
         return new Response(JSON.stringify({ error: "No tenant configured" }), {
           status: 200,
@@ -181,7 +183,15 @@ Deno.serve(async (req) => {
         });
       }
 
-      // 1) PRIORITY: Match by chat.owner (the WhatsApp number connected to the UAZAPI session)
+      const activeTenants = allTenantsRaw.filter((t: any) => t.status === "active");
+
+      // EXACT match helper (evita substring perigoso entre números diferentes)
+      const exactDigitsMatch = (a: string, b: string) => {
+        if (!a || !b) return false;
+        return a === b;
+      };
+
+      // 1) PRIORITY: Match by chat.owner (o número WhatsApp conectado à sessão UAZAPI)
       const ownerNumber = payload.chat?.owner || payload.owner || payload.to || "";
       const ownerDigits = String(ownerNumber).replace(/\D/g, "");
       const incomingUnitHints = [
@@ -197,33 +207,53 @@ Deno.serve(async (req) => {
       ]
         .map((value) => normalizeSearchText(value))
         .filter(Boolean);
+
       let tenant: any = null;
+      let matchedInactive: any = null;
+
       if (ownerDigits) {
-        const ownerMatches = tenants.filter((t: any) => {
+        // Match EXATO contra TODOS os tenants (ativos + inativos) para detectar inativos
+        const allOwnerMatches = allTenantsRaw.filter((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
-          return ownerDigits.includes(normalized) || normalized.includes(ownerDigits);
+          return exactDigitsMatch(ownerDigits, normalized);
         });
-        if (ownerMatches.length === 1) {
-          tenant = ownerMatches[0];
-        } else if (ownerMatches.length > 1) {
-          tenant = ownerMatches.find((candidate: any) => {
+
+        const activeOwnerMatches = allOwnerMatches.filter((t: any) => t.status === "active");
+        const inactiveOwnerMatches = allOwnerMatches.filter((t: any) => t.status !== "active");
+
+        if (activeOwnerMatches.length === 1) {
+          tenant = activeOwnerMatches[0];
+        } else if (activeOwnerMatches.length > 1) {
+          tenant = activeOwnerMatches.find((candidate: any) => {
             const unitFilters = getOneBelezaUnitFilterList(candidate).map(normalizeSearchText);
             return unitFilters.length > 0 && unitFilters.some((filter) => incomingUnitHints.some((hint) => hint.includes(filter)));
           }) || null;
-          console.log(`Multiple tenants matched owner (${ownerDigits}). Resolved by unit hint: ${tenant?.name || "none"}`);
+          console.log(`Multiple ACTIVE tenants matched owner (${ownerDigits}). Resolved by unit hint: ${tenant?.name || "none"}`);
+        } else if (inactiveOwnerMatches.length > 0) {
+          matchedInactive = inactiveOwnerMatches[0];
         }
+
         if (tenant) {
           console.log(`Tenant matched by owner (${ownerDigits}): ${tenant.name}`);
         }
       }
 
-      // 2) Match by UAZAPI BaseUrl (only if unique per tenant)
+      // 🚨 BLINDAGEM: se o owner number bate EXATAMENTE com um tenant INATIVO,
+      // ignorar a mensagem em vez de cair em outro tenant ativo (causa de vazamento entre unidades).
+      if (!tenant && matchedInactive) {
+        console.log(`[BLOCKED] Owner ${ownerDigits} pertence a tenant INATIVO "${matchedInactive.name}" (${matchedInactive.id}). Ignorando mensagem para evitar roteamento cruzado.`);
+        return new Response(JSON.stringify({ ok: true, ignored: "tenant_inactive", tenant: matchedInactive.name }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // 2) Match by UAZAPI BaseUrl (apenas se único entre ativos)
       if (!tenant) {
         const incomingBaseUrl = (payload.BaseUrl || "").replace(/\/+$/, "").toLowerCase();
         if (incomingBaseUrl) {
-          // Only use BaseUrl matching if exactly ONE active tenant has this URL
-          const urlMatches = tenants.filter((t: any) => {
+          const urlMatches = activeTenants.filter((t: any) => {
             if (!t.uazapi_url) return false;
             return t.uazapi_url.replace(/\/+$/, "").toLowerCase() === incomingBaseUrl;
           });
@@ -236,18 +266,22 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 3) Match by client phone number against whatsapp_number
+      // 3) Match EXATO por whatsapp_number do cliente (raro, mas mantido)
       if (!tenant) {
-        tenant = tenants.find((t: any) => {
+        tenant = activeTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
-          return phoneNumber.includes(normalized) || normalized.includes(phoneNumber);
-        });
+          return exactDigitsMatch(phoneNumber, normalized);
+        }) || null;
       }
 
+      // 🚨 BLINDAGEM FINAL: SEM fallback para tenants[0]. Se não casou ninguém, ignora.
       if (!tenant) {
-        tenant = tenants[0]; // fallback
-        console.log(`Tenant fallback to first active: ${tenant.name}`);
+        console.log(`[BLOCKED] Nenhum tenant ativo casou com owner=${ownerDigits} / phone=${phoneNumber}. Ignorando para evitar roteamento errado.`);
+        return new Response(JSON.stringify({ ok: true, ignored: "no_tenant_match", owner: ownerDigits }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       const provider: string = tenant.api_provider || "trinks";
