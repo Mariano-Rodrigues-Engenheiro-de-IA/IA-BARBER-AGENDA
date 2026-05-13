@@ -3639,6 +3639,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         return { success: true, message: `Contato enviado com sucesso`, type: toolType };
       }
 
+      case "send_combo": {
         const comboItems = config.combo_items;
         if (!Array.isArray(comboItems) || comboItems.length === 0) {
           return { error: "Nenhum item configurado no combo." };
