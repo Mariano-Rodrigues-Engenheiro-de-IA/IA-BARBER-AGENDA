@@ -621,6 +621,35 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
           </div>
         </div>
       );
+    case "send_contact":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Nome completo do contato</Label>
+            <Input
+              value={config.contact_full_name || ""}
+              onChange={(e) => onChange({ ...config, contact_full_name: e.target.value })}
+              placeholder="Ex: João Silva"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Telefone (com DDI, somente números)</Label>
+            <Input
+              value={config.contact_phone || ""}
+              onChange={(e) => onChange({ ...config, contact_phone: e.target.value })}
+              placeholder="5511999998888"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Organização (opcional)</Label>
+            <Input
+              value={config.contact_organization || ""}
+              onChange={(e) => onChange({ ...config, contact_organization: e.target.value })}
+              placeholder="Ex: Barbearia Exemplo"
+            />
+          </div>
+        </div>
+      );
     default:
       return null;
   }
