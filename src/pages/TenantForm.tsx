@@ -83,6 +83,9 @@ interface CustomToolConfig {
   pix_key?: string;
   pix_name?: string;
   merchant_name?: string;
+  contact_full_name?: string;
+  contact_phone?: string;
+  contact_organization?: string;
 }
 
 interface CustomTool {
@@ -90,7 +93,7 @@ interface CustomTool {
   name: string;
   display_name: string;
   description: string;
-  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label" | "remove_label" | "send_pix";
+  type: "send_text" | "send_image" | "send_audio" | "send_video" | "send_location" | "send_document" | "send_link" | "escalate_human" | "send_combo" | "add_label" | "remove_label" | "send_pix" | "send_contact";
   config: CustomToolConfig;
   prompt_instruction: string;
   enabled: boolean;
@@ -109,6 +112,7 @@ const TOOL_TYPE_LABELS: Record<CustomTool["type"], string> = {
   add_label: "Adicionar Etiqueta",
   remove_label: "Remover Etiqueta",
   send_pix: "Botão PIX (WhatsApp)",
+  send_contact: "Enviar Contato (vCard)",
 };
 
 const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
@@ -164,6 +168,15 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     type: "remove_label",
     config: { label_id: "" },
     prompt_instruction: "Use quando precisar remover uma etiqueta do contato do cliente.",
+    enabled: true,
+  },
+  {
+    name: "enviar_contato",
+    display_name: "Enviar Contato",
+    description: "Envia um cartão de contato (vCard) para o cliente",
+    type: "send_contact",
+    config: { contact_full_name: "", contact_phone: "", contact_organization: "" },
+    prompt_instruction: "Use quando o cliente pedir o contato/telefone do estabelecimento, do atendente ou de algum profissional.",
     enabled: true,
   },
 ];
@@ -605,6 +618,35 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
               placeholder="Barbearia Exemplo"
             />
             <p className="text-xs text-muted-foreground">Texto exibido no botão. Padrão: "Pix"</p>
+          </div>
+        </div>
+      );
+    case "send_contact":
+      return (
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label>Nome completo do contato</Label>
+            <Input
+              value={config.contact_full_name || ""}
+              onChange={(e) => onChange({ ...config, contact_full_name: e.target.value })}
+              placeholder="Ex: João Silva"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Telefone (com DDI, somente números)</Label>
+            <Input
+              value={config.contact_phone || ""}
+              onChange={(e) => onChange({ ...config, contact_phone: e.target.value })}
+              placeholder="5511999998888"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Organização (opcional)</Label>
+            <Input
+              value={config.contact_organization || ""}
+              onChange={(e) => onChange({ ...config, contact_organization: e.target.value })}
+              placeholder="Ex: Barbearia Exemplo"
+            />
           </div>
         </div>
       );
