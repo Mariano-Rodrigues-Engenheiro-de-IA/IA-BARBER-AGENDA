@@ -170,6 +170,15 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     prompt_instruction: "Use quando precisar remover uma etiqueta do contato do cliente.",
     enabled: true,
   },
+  {
+    name: "enviar_contato",
+    display_name: "Enviar Contato",
+    description: "Envia um cartão de contato (vCard) para o cliente",
+    type: "send_contact",
+    config: { contact_full_name: "", contact_phone: "", contact_organization: "" },
+    prompt_instruction: "Use quando o cliente pedir o contato/telefone do estabelecimento, do atendente ou de algum profissional.",
+    enabled: true,
+  },
 ];
 
 function generateToolId(): string {
