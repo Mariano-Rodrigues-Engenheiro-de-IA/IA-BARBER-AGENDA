@@ -29,23 +29,24 @@ interface AgentLog {
 const getTimingMetrics = (log: AgentLog) => {
   const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
   const debounceBatch = toolCalls.find((tc) => tc?.name === "__debounce_batch__");
-  const configuredDebounceMs = typeof debounceBatch?.args?.debounce_seconds === "number"
-    ? debounceBatch.args.debounce_seconds * 1000
-    : 0;
-  const aiProcessingMs = typeof debounceBatch?.result?.ai_processing_ms === "number"
-    ? debounceBatch.result.ai_processing_ms
-    : 0;
-  const storedDebounceMs = typeof debounceBatch?.result?.debounce_wait_ms === "number"
-    ? debounceBatch.result.debounce_wait_ms
-    : 0;
-  const displayedDebounceMs = Math.max(configuredDebounceMs, storedDebounceMs);
-  const displayedTotalMs = Math.max(log.duration_ms ?? 0, displayedDebounceMs + aiProcessingMs);
+  const result = debounceBatch?.result || {};
+  const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+  // New fields (post-fix)
+  const totalResponseMs = num(result.total_response_ms);
+  const debounceWaitMs = num(result.debounce_wait_ms);
+  const aiProcessingMs = num(result.ai_processing_ms);
+  const uazapiSendMs = num(result.uazapi_send_ms);
+
+  // Fallback for old logs
+  const fallbackTotal = num(log.duration_ms) ?? 0;
 
   return {
     debounceBatch,
-    aiProcessingMs,
-    displayedDebounceMs,
-    displayedTotalMs,
+    totalMs: totalResponseMs ?? fallbackTotal,
+    debounceMs: debounceWaitMs ?? 0,
+    aiMs: aiProcessingMs ?? 0,
+    uazapiMs: uazapiSendMs,
   };
 };
 
