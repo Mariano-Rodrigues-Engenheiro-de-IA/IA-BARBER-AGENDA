@@ -1925,12 +1925,29 @@ function reconcileOneBelezaSchedulingArgs(
     };
   }
 
-  const validSlotOptions = sessionState.oneBelezaSlotOptions.filter((slot) => {
+  const validSlotOptionsForDate = sessionState.oneBelezaSlotOptions.filter((slot) => {
     if (slot.servicoId !== servicoId) return false;
-    if (slot.profissionalId !== profissionalId) return false;
     if (slot.date !== dataNumero) return false;
     return true;
   });
+
+  const validSlotOptions = validSlotOptionsForDate.filter((slot) => slot.profissionalId === profissionalId);
+
+  if (validSlotOptions.length === 0 && horarioInicio) {
+    const uniqueStartMatchAcrossProfessionals = validSlotOptionsForDate.filter((slot) => {
+      if (slot.horarioInicio !== horarioInicio) return false;
+      if (horarioFim && slot.horarioFim !== horarioFim) return false;
+      return true;
+    });
+
+    if (uniqueStartMatchAcrossProfessionals.length === 1) {
+      return {
+        args: buildNormalizedOneBelezaAgendarArgs(normalizedArgs, uniqueStartMatchAcrossProfessionals[0]),
+        adjusted: true,
+        corrected: true,
+      };
+    }
+  }
 
   if (validSlotOptions.length === 0) {
     return {
