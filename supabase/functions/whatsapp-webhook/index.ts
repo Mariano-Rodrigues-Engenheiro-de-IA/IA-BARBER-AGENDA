@@ -2346,9 +2346,13 @@ async function callAIAgent(
   } catch (e) {
     console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
   }
-  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}"`);
+  const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
+  const previousAssistantMessage = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
+  const explicitClientName = extractExplicitClientName(userMessage, previousAssistantMessage) || sessionState.explicitClientName || null;
+  sessionState.explicitClientName = explicitClientName;
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -2465,8 +2469,6 @@ async function callAIAgent(
   let rounds = 0;
 
   // Load persisted state for the whole conversation
-  const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
-
   // Always reset per-invocation fields
   sessionState.criarAgendamentoSuccessId = null;
 
@@ -2489,6 +2491,22 @@ async function callAIAgent(
       const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
       let toolCallToExecute = toolCall;
       let correctionReason: string | null = null;
+
+      if (toolCall.function.name === "cadastrar_cliente" && isUsableClientName(sessionState.explicitClientName)) {
+        const forcedName = sanitizeClientName(sessionState.explicitClientName);
+        if (parsedArgs?.nome !== forcedName) {
+          parsedArgs = { ...parsedArgs, nome: forcedName };
+          correctionReason = `nome corrigido para o nome informado pelo cliente na conversa: ${forcedName}`;
+          toolCallToExecute = {
+            ...toolCall,
+            function: {
+              ...toolCall.function,
+              arguments: JSON.stringify(parsedArgs),
+            },
+          };
+        }
+      }
+
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
