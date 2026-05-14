@@ -5340,7 +5340,8 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
         const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
-        const body = { celular: tel, nome: args.nome || "Cliente" };
+        const body: any = { celular: tel, nome: args.nome || "Cliente" };
+        if (args.email && String(args.email).trim()) body.email = String(args.email).trim();
         console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
         const res = await fetch(url, {
           method: "POST",
