@@ -319,15 +319,12 @@ export default function AgentLogsPage() {
                     </div>
 
                     {/* Meta */}
-                    <div className="flex gap-4 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {displayedTotalMs > 0 && <span>Tempo total: {(displayedTotalMs / 1000).toFixed(1)}s</span>}
-                      {displayedDebounceMs > 0 && (
-                        <span>Espera (debounce): {(displayedDebounceMs / 1000).toFixed(1)}s</span>
-                      )}
-                      {aiProcessingMs > 0 && (
-                        <span>Processamento IA: {(aiProcessingMs / 1000).toFixed(1)}s</span>
-                      )}
+                      {totalMs > 0 && <span><strong>Total (cliente esperou):</strong> {(totalMs / 1000).toFixed(1)}s</span>}
+                      {debounceMs > 0 && <span>Espera (debounce): {(debounceMs / 1000).toFixed(1)}s</span>}
+                      {aiMs > 0 && <span>Processamento IA: {(aiMs / 1000).toFixed(1)}s</span>}
+                      {uazapiMs !== null && uazapiMs > 0 && <span>Envio WhatsApp: {(uazapiMs / 1000).toFixed(1)}s</span>}
                     </div>
                   </CardContent>
                 )}
