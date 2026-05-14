@@ -11,7 +11,7 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
-const normalizeLooseText = (value: unknown) => String(value ?? "")
+const normalizeUserFacingText = (value: unknown) => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
   .toLowerCase()
@@ -23,7 +23,7 @@ const sanitizeClientName = (value: unknown) => String(value ?? "")
   .trim();
 const isUsableClientName = (value: unknown) => {
   const cleaned = sanitizeClientName(value);
-  const normalized = normalizeLooseText(cleaned);
+  const normalized = normalizeUserFacingText(cleaned);
   if (!cleaned || cleaned.length < 2 || cleaned.length > 70) return false;
   if (/\d/.test(cleaned)) return false;
   return ![
@@ -45,7 +45,7 @@ const extractExplicitClientName = (userMessage: unknown, previousAssistantMessag
   const rawMessage = String(userMessage ?? "").trim();
   if (!rawMessage) return null;
 
-  const normalizedAssistant = normalizeLooseText(previousAssistantMessage);
+  const normalizedAssistant = normalizeUserFacingText(previousAssistantMessage);
   const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) seu nome|me passa seu nome|me diga seu nome|pode me passar seu nome|seu nome)/.test(normalizedAssistant);
   const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
   if (!assistantAskedForName && !introMatch) return null;
@@ -60,7 +60,7 @@ const buildOneBelezaGenericEmail = (phone: unknown) => {
 };
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
-  const normalized = normalizeLooseText(responseText);
+  const normalized = normalizeUserFacingText(responseText);
 
   return /\b(e-?mail|email)\b/.test(normalized) && (
     normalized.includes("obrigat") ||
@@ -2458,6 +2458,7 @@ async function callAIAgent(
   }
 
   let result = await response.json();
+  console.log("AI response metadata (initial):", JSON.stringify({ finishReason: result?.choices?.[0]?.finish_reason || null, hasMessage: Boolean(result?.choices?.[0]?.message), hasToolCalls: Boolean(result?.choices?.[0]?.message?.tool_calls?.length), contentLength: typeof result?.choices?.[0]?.message?.content === "string" ? result.choices[0].message.content.length : 0 }).slice(0, 300));
   let assistantMessage = result.choices?.[0]?.message;
 
   // Handle tool calls (up to 8 rounds)
@@ -3165,6 +3166,7 @@ async function callAIAgent(
     }
 
     result = await response.json();
+    console.log(`AI response metadata (round ${rounds}):`, JSON.stringify({ finishReason: result?.choices?.[0]?.finish_reason || null, hasMessage: Boolean(result?.choices?.[0]?.message), hasToolCalls: Boolean(result?.choices?.[0]?.message?.tool_calls?.length), contentLength: typeof result?.choices?.[0]?.message?.content === "string" ? result.choices[0].message.content.length : 0 }).slice(0, 300));
     assistantMessage = result.choices?.[0]?.message;
   }
 
@@ -3905,7 +3907,7 @@ function isAffirmativeReply(value: string): boolean {
   const raw = value.trim();
   if (["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "✅"].includes(raw)) return true;
 
-  const normalized = normalizeLooseText(raw);
+  const normalized = normalizeUserFacingText(raw);
   if (!normalized) return false;
 
   return /^(sim|s|ok|okay|pode|pode sim|isso|isso mesmo|confirmo|confirmado|certo|beleza|perfeito|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
@@ -3922,7 +3924,7 @@ function getLastAssistantMessage(history: { role: string; content: string }[]): 
 }
 
 function isSingleCancellationConfirmationPrompt(value: string): boolean {
-  const normalized = normalizeLooseText(value);
+  const normalized = normalizeUserFacingText(value);
   if (!normalized.includes("quer cancelar")) return false;
   const words = new Set(normalized.split(" "));
   return words.has("esse") || words.has("esta") || words.has("este");
