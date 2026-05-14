@@ -1328,6 +1328,7 @@ interface AgentSessionState {
   selectedProfessionalId: number | null;
   selectedDate: string | null;
   executedToolNames: string[];
+  explicitClientName: string | null;
 }
 
 // ===================== PERSISTENT STATE =====================
@@ -1349,6 +1350,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedProfessionalId: null,
     selectedDate: null,
     executedToolNames: [],
+    explicitClientName: null,
   };
 
   try {
@@ -1386,6 +1388,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
+      explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
     };
   } catch {
     return defaultState;
@@ -1409,6 +1412,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
+      explicitClientName: state.explicitClientName,
     };
 
     await supabase
