@@ -74,6 +74,11 @@ const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => 
   );
 };
 
+const parseTimestampMs = (value: unknown) => {
+  const timestamp = new Date(String(value ?? "")).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
 async function registerOneBelezaClient(
   authHeaders: Record<string, string>,
   tel: string,
@@ -700,6 +705,26 @@ Deno.serve(async (req) => {
       if (!unclaimed?.length) {
         console.log(`Debounce: no unclaimed messages for ${phoneNumber}, another webhook handled them`);
         return new Response(JSON.stringify({ status: "debounce_skip" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const newestQueuedAtMs = Math.max(...unclaimed.map((message: any) => parseTimestampMs(message.created_at)), 0);
+      const remainingDebounceMs = newestQueuedAtMs
+        ? newestQueuedAtMs + DEBOUNCE_MS - Date.now()
+        : 0;
+
+      if (remainingDebounceMs > 250) {
+        const newestQueuedAtIso = new Date(newestQueuedAtMs).toISOString();
+        console.log(
+          `Debounce: recent activity detected for ${phoneNumber}; newest queued message at ${newestQueuedAtIso}. ` +
+          `Remaining quiet window: ${Math.ceil(remainingDebounceMs / 1000)}s. Skipping this run so a newer webhook can process the full batch.`
+        );
+        return new Response(JSON.stringify({
+          status: "debounce_rearmed",
+          remaining_ms: remainingDebounceMs,
+          newest_message_at: newestQueuedAtIso,
+        }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
