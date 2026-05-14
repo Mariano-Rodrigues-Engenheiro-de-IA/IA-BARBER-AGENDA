@@ -4772,11 +4772,12 @@ function buildOneBelezaTools(tenant: any) {
       type: "function",
       function: {
         name: "cadastrar_cliente",
-        description: "Cadastra um novo cliente. Use quando buscar_cliente retornar vazio.",
+        description: "Cadastra um novo cliente. Use quando buscar_cliente retornar vazio. Sempre envie nome e, se o cliente informar, email. Se o cadastro falhar com 'e-mail já em uso', peça outro e-mail ao cliente e tente novamente com o novo email.",
         parameters: {
           type: "object",
           properties: {
             nome: { type: "string", description: "Nome do cliente" },
+            email: { type: "string", description: "E-mail do cliente (opcional, mas envie sempre que o cliente informar)" },
           },
           required: ["nome"],
         },
