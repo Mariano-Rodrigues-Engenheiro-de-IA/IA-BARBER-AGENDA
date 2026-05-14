@@ -11,7 +11,7 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
-const normalizeLooseText = (value: unknown) => String(value ?? "")
+const normalizeUserFacingText = (value: unknown) => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
   .toLowerCase()
@@ -23,7 +23,7 @@ const sanitizeClientName = (value: unknown) => String(value ?? "")
   .trim();
 const isUsableClientName = (value: unknown) => {
   const cleaned = sanitizeClientName(value);
-  const normalized = normalizeLooseText(cleaned);
+  const normalized = normalizeUserFacingText(cleaned);
   if (!cleaned || cleaned.length < 2 || cleaned.length > 70) return false;
   if (/\d/.test(cleaned)) return false;
   return ![
@@ -45,7 +45,7 @@ const extractExplicitClientName = (userMessage: unknown, previousAssistantMessag
   const rawMessage = String(userMessage ?? "").trim();
   if (!rawMessage) return null;
 
-  const normalizedAssistant = normalizeLooseText(previousAssistantMessage);
+  const normalizedAssistant = normalizeUserFacingText(previousAssistantMessage);
   const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) seu nome|me passa seu nome|me diga seu nome|pode me passar seu nome|seu nome)/.test(normalizedAssistant);
   const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
   if (!assistantAskedForName && !introMatch) return null;
@@ -60,7 +60,7 @@ const buildOneBelezaGenericEmail = (phone: unknown) => {
 };
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
-  const normalized = normalizeLooseText(responseText);
+  const normalized = normalizeUserFacingText(responseText);
 
   return /\b(e-?mail|email)\b/.test(normalized) && (
     normalized.includes("obrigat") ||
@@ -1171,92 +1171,8 @@ Deno.serve(async (req) => {
 
 // ===================== AUTO-REGISTER CLIENT =====================
 
-async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string): Promise<void> {
-  try {
-    if (provider === "trinks") {
-      if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return;
-
-      let tel = phoneNumber.replace(/\D/g, "");
-      if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-      const ddd = tel.substring(0, 2);
-      let rest = tel.substring(2);
-      if (rest.length === 8) rest = "9" + rest;
-      tel = ddd + rest;
-
-      const baseUrl = "https://api.trinks.com/v1";
-      const headers: Record<string, string> = {
-        "X-Api-Key": tenant.trinks_api_key,
-        "Accept": "application/json",
-        "estabelecimentoId": tenant.trinks_establishment_id,
-      };
-
-      const searchRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-      const searchText = await searchRes.text();
-      console.log(`[AutoRegister/Trinks] buscar_cliente (${searchRes.status}):`, searchText.slice(0, 300));
-
-      let searchData: any;
-      try { searchData = JSON.parse(searchText); } catch { return; }
-
-      const hasClient = searchData?.totalRecords > 0 || (Array.isArray(searchData?.data) && searchData.data.length > 0);
-      if (hasClient) {
-        console.log(`[AutoRegister/Trinks] Client already exists for ${phoneNumber}`);
-        return;
-      }
-
-      // Client not found → register with phone number as name (AI will update later if needed)
-      const body = {
-        nome: phoneNumber,
-        telefones: [{ ddi: "55", ddd, numero: rest, tipoId: 1 }],
-      };
-      const regRes = await fetch(`${baseUrl}/clientes`, {
-        method: "POST",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const regText = await regRes.text();
-      console.log(`[AutoRegister/Trinks] cadastrar_cliente (${regRes.status}):`, regText.slice(0, 300));
-
-    } else if (provider === "onebeleza") {
-      if (!tenant.onebeleza_token) return;
-
-      let tel = phoneNumber.replace(/\D/g, "");
-      if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-
-      const rawToken = (tenant.onebeleza_token || "").trim();
-      const bearerToken = rawToken.startsWith("Bearer ") ? rawToken : `Bearer ${rawToken}`;
-      const authHeaders: Record<string, string> = {
-        "Authorization": bearerToken,
-        "Accept": "application/json",
-      };
-
-      const baseUrl = "https://onechatbotapi.azurewebsites.net";
-      const searchRes = await fetch(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`, { headers: authHeaders });
-      const searchText = await searchRes.text();
-      console.log(`[AutoRegister/OneBeleza] buscar_cliente (${searchRes.status}):`, searchText.slice(0, 300));
-
-      let searchData: any;
-      try { searchData = JSON.parse(searchText); } catch { return; }
-
-      // Check if client exists (non-empty response with valid data)
-      const hasClient = searchData && (searchData.clienteId || searchData.id || (Array.isArray(searchData) && searchData.length > 0));
-      if (hasClient) {
-        console.log(`[AutoRegister/OneBeleza] Client already exists for ${phoneNumber}`);
-        return;
-      }
-
-      // Client not found → register
-      const { res: regRes, text: regText } = await registerOneBelezaClient(
-        authHeaders,
-        tel,
-        "Cliente",
-        "[AutoRegister/OneBeleza]",
-      );
-      console.log(`[AutoRegister/OneBeleza] cadastrar_cliente final (${regRes.status}):`, regText.slice(0, 300));
-    }
-  } catch (err) {
-    console.error(`[AutoRegister] Error for ${provider}/${phoneNumber}:`, err);
-    // Non-blocking: don't fail the main flow
-  }
+async function autoRegisterClient(_tenant: any, phoneNumber: string, provider: string): Promise<void> {
+  console.log(`[AutoRegister] Skipped generic auto-registration for ${provider}/${phoneNumber} — waiting for explicit client name.`);
 }
 
 // ===================== AI AGENT =====================
@@ -2458,6 +2374,7 @@ async function callAIAgent(
   }
 
   let result = await response.json();
+  console.log("AI response metadata (initial):", JSON.stringify({ finishReason: result?.choices?.[0]?.finish_reason || null, hasMessage: Boolean(result?.choices?.[0]?.message), hasToolCalls: Boolean(result?.choices?.[0]?.message?.tool_calls?.length), contentLength: typeof result?.choices?.[0]?.message?.content === "string" ? result.choices[0].message.content.length : 0 }).slice(0, 300));
   let assistantMessage = result.choices?.[0]?.message;
 
   // Handle tool calls (up to 8 rounds)
@@ -3165,6 +3082,7 @@ async function callAIAgent(
     }
 
     result = await response.json();
+    console.log(`AI response metadata (round ${rounds}):`, JSON.stringify({ finishReason: result?.choices?.[0]?.finish_reason || null, hasMessage: Boolean(result?.choices?.[0]?.message), hasToolCalls: Boolean(result?.choices?.[0]?.message?.tool_calls?.length), contentLength: typeof result?.choices?.[0]?.message?.content === "string" ? result.choices[0].message.content.length : 0 }).slice(0, 300));
     assistantMessage = result.choices?.[0]?.message;
   }
 
@@ -3905,7 +3823,7 @@ function isAffirmativeReply(value: string): boolean {
   const raw = value.trim();
   if (["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "✅"].includes(raw)) return true;
 
-  const normalized = normalizeLooseText(raw);
+  const normalized = normalizeUserFacingText(raw);
   if (!normalized) return false;
 
   return /^(sim|s|ok|okay|pode|pode sim|isso|isso mesmo|confirmo|confirmado|certo|beleza|perfeito|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
@@ -3922,7 +3840,7 @@ function getLastAssistantMessage(history: { role: string; content: string }[]): 
 }
 
 function isSingleCancellationConfirmationPrompt(value: string): boolean {
-  const normalized = normalizeLooseText(value);
+  const normalized = normalizeUserFacingText(value);
   if (!normalized.includes("quer cancelar")) return false;
   const words = new Set(normalized.split(" "));
   return words.has("esse") || words.has("esta") || words.has("este");
