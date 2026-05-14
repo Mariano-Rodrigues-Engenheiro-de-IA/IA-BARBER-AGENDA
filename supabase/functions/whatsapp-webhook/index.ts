@@ -11,22 +11,66 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
+const normalizeLooseText = (value: unknown) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .trim();
+const sanitizeClientName = (value: unknown) => String(value ?? "")
+  .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
+  .replace(/[^\p{L}\s\-']/gu, "")
+  .replace(/\s+/g, " ")
+  .trim();
+const isUsableClientName = (value: unknown) => {
+  const cleaned = sanitizeClientName(value);
+  const normalized = normalizeLooseText(cleaned);
+  if (!cleaned || cleaned.length < 2 || cleaned.length > 70) return false;
+  if (/\d/.test(cleaned)) return false;
+  return ![
+    "cliente",
+    "primeira vez",
+    "primeira",
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "sim",
+    "nao",
+    "não",
+  ].includes(normalized);
+};
+const extractExplicitClientName = (userMessage: unknown, previousAssistantMessage?: unknown) => {
+  const rawMessage = String(userMessage ?? "").trim();
+  if (!rawMessage) return null;
+
+  const normalizedAssistant = normalizeLooseText(previousAssistantMessage);
+  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) seu nome|me passa seu nome|me diga seu nome|pode me passar seu nome|seu nome)/.test(normalizedAssistant);
+  const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
+  if (!assistantAskedForName && !introMatch) return null;
+
+  const candidate = introMatch?.[1] || rawMessage;
+  const cleaned = sanitizeClientName(candidate);
+  return isUsableClientName(cleaned) ? cleaned : null;
+};
 const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
 };
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
-  const normalized = String(responseText || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  const normalized = normalizeLooseText(responseText);
 
   return /\b(e-?mail|email)\b/.test(normalized) && (
     normalized.includes("obrigat") ||
     normalized.includes("required") ||
     normalized.includes("necessar") ||
-    normalized.includes("inval")
+    normalized.includes("inval") ||
+    normalized.includes("ja esta em uso") ||
+    normalized.includes("em uso") ||
+    normalized.includes("already in use") ||
+    normalized.includes("choose another")
   );
 };
 
