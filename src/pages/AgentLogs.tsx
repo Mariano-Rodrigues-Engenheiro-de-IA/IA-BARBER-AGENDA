@@ -38,12 +38,12 @@ const getTimingMetrics = (log: AgentLog) => {
   const aiProcessingMs = num(result.ai_processing_ms);
   const uazapiSendMs = num(result.uazapi_send_ms);
 
-  // Fallback for old logs
-  const fallbackTotal = num(log.duration_ms) ?? 0;
+  const hasExactTiming = totalResponseMs !== null;
 
   return {
     debounceBatch,
-    totalMs: totalResponseMs ?? fallbackTotal,
+    hasExactTiming,
+    totalMs: totalResponseMs ?? 0,
     debounceMs: debounceWaitMs ?? 0,
     aiMs: aiProcessingMs ?? 0,
     uazapiMs: uazapiSendMs,
@@ -160,7 +160,7 @@ export default function AgentLogsPage() {
           {logs.map((log) => {
             const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
             const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
-            const { debounceBatch, totalMs, debounceMs, aiMs, uazapiMs } = getTimingMetrics(log);
+            const { debounceBatch, hasExactTiming, totalMs, debounceMs, aiMs, uazapiMs } = getTimingMetrics(log);
             const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
             const visibleToolCalls = toolCalls.filter((tc) => tc?.name !== "__debounce_batch__");
             const toolCount = visibleToolCalls.length;
@@ -197,6 +197,11 @@ export default function AgentLogsPage() {
                               {toolCount} tool{toolCount > 1 ? "s" : ""}
                             </Badge>
                           )}
+                          {!hasExactTiming && (
+                            <Badge variant="outline" className="text-xs">
+                              Métrica antiga
+                            </Badge>
+                          )}
                           {hasErrors && (
                             <Badge variant="destructive" className="text-xs">
                               {log.errors.length} erro{log.errors.length > 1 ? "s" : ""}
@@ -211,7 +216,7 @@ export default function AgentLogsPage() {
                     <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right text-xs text-muted-foreground">
                         <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) }</div>
-                      {totalMs > 0 && (
+                      {hasExactTiming && totalMs > 0 && (
                         <div className="flex items-center gap-1 justify-end" title="Tempo total que o cliente esperou: da última mensagem dele até a primeira parte enviada pela UAZAPI">
                           <Clock className="w-3 h-3" />
                           {(totalMs / 1000).toFixed(1)}s total
@@ -321,10 +326,16 @@ export default function AgentLogsPage() {
                     {/* Meta */}
                     <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {totalMs > 0 && <span><strong>Total (cliente esperou):</strong> {(totalMs / 1000).toFixed(1)}s</span>}
-                      {debounceMs > 0 && <span>Espera (debounce): {(debounceMs / 1000).toFixed(1)}s</span>}
-                      {aiMs > 0 && <span>Processamento IA: {(aiMs / 1000).toFixed(1)}s</span>}
-                      {uazapiMs !== null && uazapiMs > 0 && <span>Envio WhatsApp: {(uazapiMs / 1000).toFixed(1)}s</span>}
+                      {hasExactTiming ? (
+                        <>
+                          {totalMs > 0 && <span><strong>Total (cliente esperou):</strong> {(totalMs / 1000).toFixed(1)}s</span>}
+                          {debounceMs > 0 && <span>Espera (debounce): {(debounceMs / 1000).toFixed(1)}s</span>}
+                          {aiMs > 0 && <span>Processamento IA: {(aiMs / 1000).toFixed(1)}s</span>}
+                          {uazapiMs !== null && uazapiMs > 0 && <span>Envio WhatsApp: {(uazapiMs / 1000).toFixed(1)}s</span>}
+                        </>
+                      ) : (
+                        <span>Esse log foi salvo antes da correção de tempo exato.</span>
+                      )}
                     </div>
                   </CardContent>
                 )}
