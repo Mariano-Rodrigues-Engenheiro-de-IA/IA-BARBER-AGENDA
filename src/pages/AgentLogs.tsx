@@ -135,7 +135,11 @@ export default function AgentLogsPage() {
         <div className="space-y-3">
           {logs.map((log) => {
             const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
-            const toolCount = Array.isArray(log.tool_calls) ? log.tool_calls.length : 0;
+            const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
+            const debounceBatch = toolCalls.find((tc) => tc?.name === "__debounce_batch__");
+            const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
+            const visibleToolCalls = toolCalls.filter((tc) => tc?.name !== "__debounce_batch__");
+            const toolCount = visibleToolCalls.length;
             const isExpanded = expandedId === log.id;
 
             return (
@@ -201,27 +205,21 @@ export default function AgentLogsPage() {
                     <div>
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Mensagem do cliente</h4>
                       <div className="bg-muted rounded-lg p-3 text-sm">{log.user_message}</div>
-                      {Array.isArray(log.tool_calls) && (() => {
-                        const debounceBatch = (log.tool_calls as any[]).find((tc) => tc?.name === "__debounce_batch__");
-                        const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
-                        if (!batchMessages.length) return null;
-
-                        return (
-                          <div className="mt-3 space-y-2">
-                            <h5 className="text-xs font-semibold text-muted-foreground uppercase">Mensagens recebidas no lote</h5>
-                            <div className="space-y-2">
-                              {batchMessages.map((message: any, index: number) => (
-                                <div key={`${message.created_at}-${index}`} className="rounded-lg border border-border bg-background p-3 text-sm">
-                                  <div className="text-xs text-muted-foreground mb-1">
-                                    {message.created_at ? format(new Date(message.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) : "Sem horário"}
-                                  </div>
-                                  <div className="whitespace-pre-wrap">{message.content || "—"}</div>
+                      {batchMessages.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <h5 className="text-xs font-semibold text-muted-foreground uppercase">Mensagens recebidas no lote</h5>
+                          <div className="space-y-2">
+                            {batchMessages.map((message: any, index: number) => (
+                              <div key={`${message.created_at}-${index}`} className="rounded-lg border border-border bg-background p-3 text-sm">
+                                <div className="text-xs text-muted-foreground mb-1">
+                                  {message.created_at ? format(new Date(message.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) : "Sem horário"}
                                 </div>
-                              ))}
-                            </div>
+                                <div className="whitespace-pre-wrap">{message.content || "—"}</div>
+                              </div>
+                            ))}
                           </div>
-                        );
-                      })()}
+                        </div>
+                      )}
                     </div>
 
                     {/* Tool calls */}
@@ -231,7 +229,7 @@ export default function AgentLogsPage() {
                           Ferramentas chamadas ({toolCount})
                         </h4>
                         <div className="space-y-2">
-                          {(log.tool_calls as any[]).map((tc, i) => (
+                          {visibleToolCalls.map((tc, i) => (
                             <div key={i} className={`rounded-lg border p-3 text-sm ${tc.blocked ? "border-destructive/50 bg-destructive/5" : "border-border"}`}>
                               <div className="flex items-center gap-2 mb-2">
                                 <Wrench className="w-4 h-4 text-primary" />
