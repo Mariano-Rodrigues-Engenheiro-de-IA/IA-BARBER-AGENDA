@@ -185,15 +185,15 @@ export default function AgentLogsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="text-right text-xs text-muted-foreground">
-                          <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
-                        {log.duration_ms != null && (
-                          <div className="flex items-center gap-1 justify-end">
-                            <Clock className="w-3 h-3" />
-                            {(log.duration_ms / 1000).toFixed(1)}s
-                          </div>
-                        )}
-                      </div>
+                    <div className="text-right text-xs text-muted-foreground">
+                        <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
+                      {log.duration_ms != null && (
+                        <div className="flex items-center gap-1 justify-end" title="Tempo total: espera (debounce) + processamento da IA">
+                          <Clock className="w-3 h-3" />
+                          {(log.duration_ms / 1000).toFixed(1)}s total
+                        </div>
+                      )}
+                    </div>
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </div>
                   </div>
