@@ -13,8 +13,64 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
 };
 const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
-  return `cliente+${digits}@example.com`;
+  return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
 };
+const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
+  if (status >= 200 && status < 300) return false;
+  const normalized = String(responseText || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  return /\b(e-?mail|email)\b/.test(normalized) && (
+    normalized.includes("obrigat") ||
+    normalized.includes("required") ||
+    normalized.includes("necessar") ||
+    normalized.includes("inval")
+  );
+};
+
+async function registerOneBelezaClient(
+  authHeaders: Record<string, string>,
+  tel: string,
+  nome: string,
+  logPrefix: string,
+) {
+  const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
+  const baseBody = {
+    celular: tel,
+    nome: nome || "Cliente",
+  };
+
+  console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(baseBody));
+  let res = await fetch(regUrl, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(baseBody),
+  });
+  let text = await res.text();
+  console.log(`${logPrefix} cadastrar_cliente response (${res.status}):`, text.slice(0, 500));
+
+  if (!shouldRetryOneBelezaWithEmail(res.status, text)) {
+    return { res, text };
+  }
+
+  const fallbackEmail = buildOneBelezaGenericEmail(tel);
+  const retryBody = {
+    ...baseBody,
+    email: fallbackEmail,
+  };
+
+  console.log(`${logPrefix} cadastrar_cliente retry with generated email: ${fallbackEmail}`);
+  res = await fetch(regUrl, {
+    method: "POST",
+    headers: { ...authHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify(retryBody),
+  });
+  text = await res.text();
+  console.log(`${logPrefix} cadastrar_cliente retry response (${res.status}):`, text.slice(0, 500));
+  return { res, text };
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -1150,19 +1206,13 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
       }
 
       // Client not found → register
-      const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
-      const body = {
-        celular: tel,
-        nome: senderName || "Cliente",
-        email: buildOneBelezaGenericEmail(tel),
-      };
-      const regRes = await fetch(regUrl, {
-        method: "POST",
-        headers: { ...authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const regText = await regRes.text();
-      console.log(`[AutoRegister/OneBeleza] cadastrar_cliente (${regRes.status}):`, regText.slice(0, 300));
+      const { res: regRes, text: regText } = await registerOneBelezaClient(
+        authHeaders,
+        tel,
+        senderName || "Cliente",
+        "[AutoRegister/OneBeleza]",
+      );
+      console.log(`[AutoRegister/OneBeleza] cadastrar_cliente final (${regRes.status}):`, regText.slice(0, 300));
     }
   } catch (err) {
     console.error(`[AutoRegister] Error for ${provider}/${phoneNumber}:`, err);
@@ -5348,20 +5398,12 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
-        const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
-        const body: any = {
-          celular: tel,
-          nome: args.nome || "Cliente",
-          email: buildOneBelezaGenericEmail(tel),
-        };
-        console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { ...authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`[OneBeleza] cadastrar_cliente response (${res.status}):`, text.slice(0, 500));
+        const { res, text } = await registerOneBelezaClient(
+          authHeaders,
+          tel,
+          args.nome || "Cliente",
+          "[OneBeleza]",
+        );
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
       }
 
