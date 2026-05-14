@@ -74,6 +74,11 @@ const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => 
   );
 };
 
+const parseTimestampMs = (value: unknown) => {
+  const timestamp = new Date(String(value ?? "")).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
 async function registerOneBelezaClient(
   authHeaders: Record<string, string>,
   tel: string,
@@ -704,6 +709,26 @@ Deno.serve(async (req) => {
         });
       }
 
+      const newestQueuedAtMs = Math.max(...unclaimed.map((message: any) => parseTimestampMs(message.created_at)), 0);
+      const remainingDebounceMs = newestQueuedAtMs
+        ? newestQueuedAtMs + DEBOUNCE_MS - Date.now()
+        : 0;
+
+      if (remainingDebounceMs > 250) {
+        const newestQueuedAtIso = new Date(newestQueuedAtMs).toISOString();
+        console.log(
+          `Debounce: recent activity detected for ${phoneNumber}; newest queued message at ${newestQueuedAtIso}. ` +
+          `Remaining quiet window: ${Math.ceil(remainingDebounceMs / 1000)}s. Skipping this run so a newer webhook can process the full batch.`
+        );
+        return new Response(JSON.stringify({
+          status: "debounce_rearmed",
+          remaining_ms: remainingDebounceMs,
+          newest_message_at: newestQueuedAtIso,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       const unclaimedIds = unclaimed.map((m: any) => m.id);
       const { data: claimed, error: claimErr } = await supabase
         .from("chat_messages")
@@ -954,7 +979,24 @@ Deno.serve(async (req) => {
         phone_number: phoneNumber,
         user_message: combinedContent,
         ai_response: aiResponse,
-        tool_calls: agentResult?.toolCalls || [],
+        tool_calls: [
+          {
+            name: "__debounce_batch__",
+            args: {
+              debounce_seconds: DEBOUNCE_MS / 1000,
+              message_count: claimedMessages.length,
+              messages: claimedMessages.map((message: any) => ({
+                created_at: message.created_at,
+                content: message.content,
+              })),
+            },
+            result: {
+              combined_content: combinedContent,
+            },
+            blocked: false,
+          },
+          ...(agentResult?.toolCalls || []),
+        ],
         errors: agentResult?.errors || [],
         model_used: agentResult?.model || "direct_handler",
         duration_ms: agentResult?.durationMs || 0,
