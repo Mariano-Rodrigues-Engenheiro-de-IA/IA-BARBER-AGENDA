@@ -2404,18 +2404,37 @@ async function callAIAgent(
       let toolCallToExecute = toolCall;
       let correctionReason: string | null = null;
 
-      if (toolCall.function.name === "cadastrar_cliente" && isUsableClientName(sessionState.explicitClientName)) {
-        const forcedName = sanitizeClientName(sessionState.explicitClientName);
-        if (parsedArgs?.nome !== forcedName) {
-          parsedArgs = { ...parsedArgs, nome: forcedName };
-          correctionReason = `nome corrigido para o nome informado pelo cliente na conversa: ${forcedName}`;
-          toolCallToExecute = {
-            ...toolCall,
-            function: {
-              ...toolCall.function,
-              arguments: JSON.stringify(parsedArgs),
-            },
+      if (toolCall.function.name === "cadastrar_cliente") {
+        const explicit = sessionState.explicitClientName;
+        if (isUsableClientName(explicit)) {
+          const forcedName = sanitizeClientName(explicit);
+          if (parsedArgs?.nome !== forcedName) {
+            parsedArgs = { ...parsedArgs, nome: forcedName };
+            correctionReason = `nome corrigido para o nome informado pelo cliente na conversa: ${forcedName}`;
+            toolCallToExecute = {
+              ...toolCall,
+              function: {
+                ...toolCall.function,
+                arguments: JSON.stringify(parsedArgs),
+              },
+            };
+          }
+        } else {
+          // Block: AI tried to register before collecting the real name from the conversation.
+          console.log(`[CadastrarCliente] BLOCKED — explicitClientName ausente. AI tentou cadastrar sem coletar nome. argsRecebidos:`, toolCall.function.arguments);
+          const blockedResult = {
+            error: "NOME_NAO_COLETADO",
+            message: "Você ainda não perguntou o nome do cliente nesta conversa. NÃO chame cadastrar_cliente agora. Primeiro pergunte ao cliente: 'Qual é o seu nome completo?' e aguarde a resposta. Só depois que o cliente informar o nome real você pode chamar cadastrar_cliente. NUNCA use 'Cliente', o pushName do WhatsApp, ou qualquer placeholder.",
+            blocked: true,
           };
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            name: toolCall.function.name,
+            content: JSON.stringify(blockedResult),
+          });
+          executedToolsThisSession.add(toolCall.function.name);
+          continue;
         }
       }
 
