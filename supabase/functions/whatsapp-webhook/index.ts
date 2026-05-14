@@ -979,7 +979,24 @@ Deno.serve(async (req) => {
         phone_number: phoneNumber,
         user_message: combinedContent,
         ai_response: aiResponse,
-        tool_calls: agentResult?.toolCalls || [],
+        tool_calls: [
+          {
+            name: "__debounce_batch__",
+            args: {
+              debounce_seconds: DEBOUNCE_MS / 1000,
+              message_count: claimedMessages.length,
+              messages: claimedMessages.map((message: any) => ({
+                created_at: message.created_at,
+                content: message.content,
+              })),
+            },
+            result: {
+              combined_content: combinedContent,
+            },
+            blocked: false,
+          },
+          ...(agentResult?.toolCalls || []),
+        ],
         errors: agentResult?.errors || [],
         model_used: agentResult?.model || "direct_handler",
         duration_ms: agentResult?.durationMs || 0,
