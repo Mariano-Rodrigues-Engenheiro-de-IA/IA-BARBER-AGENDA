@@ -848,6 +848,7 @@ Deno.serve(async (req) => {
         agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
         aiResponse = agentResult.response;
       }
+      const tAiDone = Date.now();
 
       // NOTE: LinkClaimGuard removido a pedido do cliente. Preferimos que a IA siga
       // exclusivamente o prompt do sistema. O prompt deve garantir o envio literal
