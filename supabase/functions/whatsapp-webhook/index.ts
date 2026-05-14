@@ -974,17 +974,18 @@ Deno.serve(async (req) => {
       }
 
       // Log to agent_logs
-      // duration_ms = TOTAL wait time the client experienced:
-      //   from the oldest queued message in the batch until the AI response is ready.
-      //   Includes debounce window + AI/tool processing time.
-      const oldestQueuedAtMs = Math.min(
+      // duration_ms = TOTAL wait time percebido pelo cliente desde a ÚLTIMA
+      // mensagem do lote até a resposta final da IA, sempre incluindo o debounce.
+      const newestQueuedAtMsForTotal = Math.max(
         ...claimedMessages.map((m: any) => parseTimestampMs(m.created_at)).filter((n: number) => n > 0),
       );
       const aiDurationMs = agentResult?.durationMs || 0;
-      const totalDurationMs = Number.isFinite(oldestQueuedAtMs) && oldestQueuedAtMs > 0
-        ? Date.now() - oldestQueuedAtMs
-        : aiDurationMs;
-      const debounceWaitMs = Math.max(0, totalDurationMs - aiDurationMs);
+      const measuredTotalMs = Number.isFinite(newestQueuedAtMsForTotal) && newestQueuedAtMsForTotal > 0
+        ? Date.now() - newestQueuedAtMsForTotal
+        : 0;
+      const minimumExpectedTotalMs = DEBOUNCE_MS + aiDurationMs;
+      const totalDurationMs = Math.max(measuredTotalMs, minimumExpectedTotalMs);
+      const debounceWaitMs = Math.max(DEBOUNCE_MS, totalDurationMs - aiDurationMs);
 
       await supabase.from("agent_logs").insert({
         tenant_id: tenant.id,
