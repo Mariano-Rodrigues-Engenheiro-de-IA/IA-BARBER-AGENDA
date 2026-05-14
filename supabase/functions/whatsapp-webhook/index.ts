@@ -4123,7 +4123,7 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string): string {
+function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string, explicitClientName?: string | null): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
@@ -4131,18 +4131,11 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // ===== CLIENT NAME — sanitize and decide whether to inject =====
-  // Priority: leadName (CRM, manually edited by owner) > senderName (WhatsApp pushName).
-  const rawName = (leadName && leadName.trim()) || (senderName && senderName.trim()) || "";
-  // Strip emojis and odd symbols. Keep letters (incl. accented), spaces and hyphens.
-  const cleanedName = rawName
-    .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
-    .replace(/[^\p{L}\s\-']/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  // Reject if too short or looks like a phone number / generic placeholder.
-  const looksLikeNumber = /\d/.test(rawName) || /^\+?\d/.test(cleanedName);
-  const isUsable = cleanedName.length >= 2 && !looksLikeNumber && !/^cliente$/i.test(cleanedName);
+  // ===== CLIENT NAME — only trust explicit conversation name or CRM lead name =====
+  // WhatsApp pushName is just display metadata and must never be used for cadastro.
+  const rawName = (explicitClientName && explicitClientName.trim()) || (leadName && leadName.trim()) || "";
+  const cleanedName = sanitizeClientName(rawName);
+  const isUsable = isUsableClientName(cleanedName);
   const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
   const nameBlock = isUsable
     ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
