@@ -1171,7 +1171,7 @@ Deno.serve(async (req) => {
 
 // ===================== AUTO-REGISTER CLIENT =====================
 
-async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string, senderName?: string): Promise<void> {
+async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string): Promise<void> {
   try {
     if (provider === "trinks") {
       if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return;
@@ -1205,7 +1205,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
 
       // Client not found → register with phone number as name (AI will update later if needed)
       const body = {
-        nome: senderName || phoneNumber,
+        nome: phoneNumber,
         telefones: [{ ddi: "55", ddd, numero: rest, tipoId: 1 }],
       };
       const regRes = await fetch(`${baseUrl}/clientes`, {
@@ -1248,7 +1248,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
       const { res: regRes, text: regText } = await registerOneBelezaClient(
         authHeaders,
         tel,
-        senderName || "Cliente",
+        "Cliente",
         "[AutoRegister/OneBeleza]",
       );
       console.log(`[AutoRegister/OneBeleza] cadastrar_cliente final (${regRes.status}):`, regText.slice(0, 300));
