@@ -4917,10 +4917,12 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         let numero = tel.substring(2);
         if (numero.length === 8) numero = "9" + numero;
 
-        const body = {
+        const body: any = {
           nome: args.nome,
           telefones: [{ ddi: "55", ddd, numero, tipoId: 1 }],
         };
+        if (args.sobrenome && String(args.sobrenome).trim()) body.sobrenome = String(args.sobrenome).trim();
+        if (args.email && String(args.email).trim()) body.email = String(args.email).trim();
         console.log("cadastrar_cliente body:", JSON.stringify(body));
         const res = await fetch(`${baseUrl}/clientes`, {
           method: "POST",
