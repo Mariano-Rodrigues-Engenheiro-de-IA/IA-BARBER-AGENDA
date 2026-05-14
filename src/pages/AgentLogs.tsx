@@ -297,7 +297,13 @@ export default function AgentLogsPage() {
                     {/* Meta */}
                     <div className="flex gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {log.duration_ms != null && <span>Duração: {(log.duration_ms / 1000).toFixed(1)}s</span>}
+                      {log.duration_ms != null && <span>Tempo total: {(log.duration_ms / 1000).toFixed(1)}s</span>}
+                      {debounceBatch?.result?.debounce_wait_ms != null && (
+                        <span>Espera (debounce): {(debounceBatch.result.debounce_wait_ms / 1000).toFixed(1)}s</span>
+                      )}
+                      {debounceBatch?.result?.ai_processing_ms != null && (
+                        <span>Processamento IA: {(debounceBatch.result.ai_processing_ms / 1000).toFixed(1)}s</span>
+                      )}
                     </div>
                   </CardContent>
                 )}
