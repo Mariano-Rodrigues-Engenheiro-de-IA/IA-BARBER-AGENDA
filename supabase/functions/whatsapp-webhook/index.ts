@@ -1799,6 +1799,31 @@ function extractOneBelezaProfessionalOptions(toolResult: any, args: any): OneBel
   return dedupeByKey(options, (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`);
 }
 
+function extractOneBelezaProfessionalOptionsFromAvailability(toolResult: any, args: any): OneBelezaProfessionalOption[] {
+  if (!Array.isArray(toolResult)) return [];
+
+  const servicosId = toPositiveInteger(args?.servicoId ?? args?.servicosId ?? args?.servicoid);
+  const options: OneBelezaProfessionalOption[] = [];
+
+  for (const item of toolResult) {
+    const disponibilidades = Array.isArray(item?.disponibilidades) ? item.disponibilidades : [];
+    for (const disponibilidade of disponibilidades) {
+      const profissionalId = toPositiveInteger(disponibilidade?.profissionalId);
+      if (!profissionalId) continue;
+
+      options.push({
+        servicosId,
+        profissionalId,
+        nomeProfissional: String(
+          disponibilidade?.profissionalNome || disponibilidade?.nomeProfissional || disponibilidade?.nome || `Profissional ${profissionalId}`,
+        ),
+      });
+    }
+  }
+
+  return dedupeByKey(options, (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`);
+}
+
 function extractOneBelezaSlotOptions(toolResult: any, args: any): OneBelezaSlotOption[] {
   if (!Array.isArray(toolResult)) return [];
 
@@ -2104,16 +2129,58 @@ async function hydrateOneBelezaSessionStateFromProvider(
     }
   }
 
-  if (profissionalId && dataNumero) {
+  const effectiveProfessionalId = (() => {
+    if (!profissionalId) return null;
+    const isTrackedForService = sessionState.oneBelezaProfessionalOptions.some(
+      (option) => option.profissionalId === profissionalId && (option.servicosId === servicoId || option.servicosId === null),
+    );
+    return isTrackedForService ? profissionalId : null;
+  })();
+
+  if (dataNumero && (!effectiveProfessionalId || sessionState.oneBelezaSlotOptions.length === 0)) {
+    const consolidatedArgs = {
+      date: dataNumero,
+      servicoId: String(servicoId),
+    };
+    const consolidatedResult = await executeOneBelezaTool(
+      tenant,
+      {
+        function: {
+          name: "buscar_horarios_disponiveis",
+          arguments: JSON.stringify(consolidatedArgs),
+        },
+      },
+    );
+    const consolidatedProfessionalOptions = extractOneBelezaProfessionalOptionsFromAvailability(consolidatedResult, consolidatedArgs);
+    const consolidatedSlotOptions = extractOneBelezaSlotOptions(consolidatedResult, consolidatedArgs);
+
+    if (consolidatedProfessionalOptions.length > 0) {
+      sessionState.oneBelezaProfessionalOptions = dedupeByKey(
+        [...sessionState.oneBelezaProfessionalOptions, ...consolidatedProfessionalOptions],
+        (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
+      );
+      console.log(`Hydrated OneBeleza professional IDs (from consolidated): [${sessionState.oneBelezaProfessionalOptions.map((option) => option.profissionalId).join(", ")}]`);
+    }
+
+    if (consolidatedSlotOptions.length > 0) {
+      sessionState.oneBelezaSlotOptions = dedupeByKey(
+        [...sessionState.oneBelezaSlotOptions, ...consolidatedSlotOptions],
+        (slot) => `${slot.date}:${slot.servicoId}:${slot.profissionalId}:${slot.horarioInicio}:${slot.horarioFim}`,
+      );
+      console.log(`Hydrated OneBeleza slot options (from consolidated): ${sessionState.oneBelezaSlotOptions.length}`);
+    }
+  }
+
+  if (effectiveProfessionalId && dataNumero) {
     const hasSlot = sessionState.oneBelezaSlotOptions.some(
-      (slot) => slot.servicoId === servicoId && slot.profissionalId === profissionalId && slot.date === dataNumero,
+      (slot) => slot.servicoId === servicoId && slot.profissionalId === effectiveProfessionalId && slot.date === dataNumero,
     );
 
     if (!hasSlot) {
       const slotArgs = {
         date: dataNumero,
         servicoId: String(servicoId),
-        ProfissionalId: String(profissionalId),
+        ProfissionalId: String(effectiveProfessionalId),
       };
       const slotResult = await executeOneBelezaTool(
         tenant,
@@ -3052,20 +3119,7 @@ async function callAIAgent(
 
           // For the consolidated tool, also extract professional options from the same response
           if (toolCall.function.name === "buscar_horarios_disponiveis" && Array.isArray(toolResult)) {
-            const svcId = toPositiveInteger(parsedArgs?.servicoId ?? parsedArgs?.servicosId ?? parsedArgs?.servicoid);
-            const profOptions: OneBelezaProfessionalOption[] = [];
-            for (const item of toolResult) {
-              const disps = Array.isArray(item?.disponibilidades) ? item.disponibilidades : [];
-              for (const d of disps) {
-                const pid = toPositiveInteger(d?.profissionalId);
-                if (!pid) continue;
-                profOptions.push({
-                  servicosId: svcId,
-                  profissionalId: pid,
-                  nomeProfissional: String(d?.nomeProfissional || d?.nome || `Profissional ${pid}`),
-                });
-              }
-            }
+            const profOptions = extractOneBelezaProfessionalOptionsFromAvailability(toolResult, parsedArgs);
             sessionState.oneBelezaProfessionalOptions = dedupeByKey(
               [...sessionState.oneBelezaProfessionalOptions, ...profOptions],
               (option) => `${option.servicosId ?? "any"}:${option.profissionalId}`,
