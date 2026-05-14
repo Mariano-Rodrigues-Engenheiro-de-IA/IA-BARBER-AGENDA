@@ -182,7 +182,7 @@ export default function AgentLogsPage() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right text-xs text-muted-foreground">
-                        <div>{format(new Date(log.created_at), "dd/MM HH:mm", { locale: ptBR })}</div>
+                          <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
                         {log.duration_ms != null && (
                           <div className="flex items-center gap-1 justify-end">
                             <Clock className="w-3 h-3" />
@@ -201,6 +201,27 @@ export default function AgentLogsPage() {
                     <div>
                       <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Mensagem do cliente</h4>
                       <div className="bg-muted rounded-lg p-3 text-sm">{log.user_message}</div>
+                      {Array.isArray(log.tool_calls) && (() => {
+                        const debounceBatch = (log.tool_calls as any[]).find((tc) => tc?.name === "__debounce_batch__");
+                        const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
+                        if (!batchMessages.length) return null;
+
+                        return (
+                          <div className="mt-3 space-y-2">
+                            <h5 className="text-xs font-semibold text-muted-foreground uppercase">Mensagens recebidas no lote</h5>
+                            <div className="space-y-2">
+                              {batchMessages.map((message: any, index: number) => (
+                                <div key={`${message.created_at}-${index}`} className="rounded-lg border border-border bg-background p-3 text-sm">
+                                  <div className="text-xs text-muted-foreground mb-1">
+                                    {message.created_at ? format(new Date(message.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) : "Sem horário"}
+                                  </div>
+                                  <div className="whitespace-pre-wrap">{message.content || "—"}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Tool calls */}
