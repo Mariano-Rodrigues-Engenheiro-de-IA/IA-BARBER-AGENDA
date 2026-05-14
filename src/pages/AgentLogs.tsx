@@ -26,6 +26,29 @@ interface AgentLog {
   created_at: string;
 }
 
+const getTimingMetrics = (log: AgentLog) => {
+  const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
+  const debounceBatch = toolCalls.find((tc) => tc?.name === "__debounce_batch__");
+  const configuredDebounceMs = typeof debounceBatch?.args?.debounce_seconds === "number"
+    ? debounceBatch.args.debounce_seconds * 1000
+    : 0;
+  const aiProcessingMs = typeof debounceBatch?.result?.ai_processing_ms === "number"
+    ? debounceBatch.result.ai_processing_ms
+    : 0;
+  const storedDebounceMs = typeof debounceBatch?.result?.debounce_wait_ms === "number"
+    ? debounceBatch.result.debounce_wait_ms
+    : 0;
+  const displayedDebounceMs = Math.max(configuredDebounceMs, storedDebounceMs);
+  const displayedTotalMs = Math.max(log.duration_ms ?? 0, displayedDebounceMs + aiProcessingMs);
+
+  return {
+    debounceBatch,
+    aiProcessingMs,
+    displayedDebounceMs,
+    displayedTotalMs,
+  };
+};
+
 export default function AgentLogsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filterPhone, setFilterPhone] = useState("");
@@ -136,7 +159,7 @@ export default function AgentLogsPage() {
           {logs.map((log) => {
             const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
             const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
-            const debounceBatch = toolCalls.find((tc) => tc?.name === "__debounce_batch__");
+            const { debounceBatch, aiProcessingMs, displayedDebounceMs, displayedTotalMs } = getTimingMetrics(log);
             const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
             const visibleToolCalls = toolCalls.filter((tc) => tc?.name !== "__debounce_batch__");
             const toolCount = visibleToolCalls.length;
@@ -187,10 +210,10 @@ export default function AgentLogsPage() {
                     <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right text-xs text-muted-foreground">
                         <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
-                      {log.duration_ms != null && (
+                      {displayedTotalMs > 0 && (
                         <div className="flex items-center gap-1 justify-end" title="Tempo total: espera (debounce) + processamento da IA">
                           <Clock className="w-3 h-3" />
-                          {(log.duration_ms / 1000).toFixed(1)}s total
+                          {(displayedTotalMs / 1000).toFixed(1)}s total
                         </div>
                       )}
                     </div>
@@ -297,12 +320,12 @@ export default function AgentLogsPage() {
                     {/* Meta */}
                     <div className="flex gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {log.duration_ms != null && <span>Tempo total: {(log.duration_ms / 1000).toFixed(1)}s</span>}
-                      {debounceBatch?.result?.debounce_wait_ms != null && (
-                        <span>Espera (debounce): {(debounceBatch.result.debounce_wait_ms / 1000).toFixed(1)}s</span>
+                      {displayedTotalMs > 0 && <span>Tempo total: {(displayedTotalMs / 1000).toFixed(1)}s</span>}
+                      {displayedDebounceMs > 0 && (
+                        <span>Espera (debounce): {(displayedDebounceMs / 1000).toFixed(1)}s</span>
                       )}
-                      {debounceBatch?.result?.ai_processing_ms != null && (
-                        <span>Processamento IA: {(debounceBatch.result.ai_processing_ms / 1000).toFixed(1)}s</span>
+                      {aiProcessingMs > 0 && (
+                        <span>Processamento IA: {(aiProcessingMs / 1000).toFixed(1)}s</span>
                       )}
                     </div>
                   </CardContent>
