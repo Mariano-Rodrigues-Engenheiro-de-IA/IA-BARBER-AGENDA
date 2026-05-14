@@ -4626,13 +4626,11 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "cadastrar_cliente",
-        description: "Cadastra um novo cliente no sistema Trinks. Use quando buscar_cliente retornar vazio (cliente não existe). Sempre envie nome e, se o cliente informar, sobrenome e e-mail. Se o cadastro falhar com 'e-mail já em uso', peça outro e-mail ao cliente e tente novamente.",
+        description: "Cadastra um novo cliente no sistema Trinks. Use quando buscar_cliente retornar vazio (cliente não existe). Envie o nome do cliente e o telefone.",
         parameters: {
           type: "object",
           properties: {
-            nome: { type: "string", description: "Primeiro nome do cliente" },
-            sobrenome: { type: "string", description: "Sobrenome do cliente (opcional)" },
-            email: { type: "string", description: "E-mail do cliente (opcional, mas recomendado quando o cliente informar)" },
+            nome: { type: "string", description: "Nome do cliente" },
             telefone: { type: "string", description: "Telefone completo do cliente (com DDD)" },
           },
           required: ["nome", "telefone"],
@@ -4774,11 +4772,12 @@ function buildOneBelezaTools(tenant: any) {
       type: "function",
       function: {
         name: "cadastrar_cliente",
-        description: "Cadastra um novo cliente. Use quando buscar_cliente retornar vazio.",
+        description: "Cadastra um novo cliente. Use quando buscar_cliente retornar vazio. Sempre envie nome e, se o cliente informar, email. Se o cadastro falhar com 'e-mail já em uso', peça outro e-mail ao cliente e tente novamente com o novo email.",
         parameters: {
           type: "object",
           properties: {
             nome: { type: "string", description: "Nome do cliente" },
+            email: { type: "string", description: "E-mail do cliente (opcional, mas envie sempre que o cliente informar)" },
           },
           required: ["nome"],
         },
@@ -4917,12 +4916,10 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         let numero = tel.substring(2);
         if (numero.length === 8) numero = "9" + numero;
 
-        const body: any = {
+        const body = {
           nome: args.nome,
           telefones: [{ ddi: "55", ddd, numero, tipoId: 1 }],
         };
-        if (args.sobrenome && String(args.sobrenome).trim()) body.sobrenome = String(args.sobrenome).trim();
-        if (args.email && String(args.email).trim()) body.email = String(args.email).trim();
         console.log("cadastrar_cliente body:", JSON.stringify(body));
         const res = await fetch(`${baseUrl}/clientes`, {
           method: "POST",
@@ -5343,7 +5340,8 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
         const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
-        const body = { celular: tel, nome: args.nome || "Cliente" };
+        const body: any = { celular: tel, nome: args.nome || "Cliente" };
+        if (args.email && String(args.email).trim()) body.email = String(args.email).trim();
         console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
         const res = await fetch(url, {
           method: "POST",
