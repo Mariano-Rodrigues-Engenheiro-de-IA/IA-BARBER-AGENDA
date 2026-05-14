@@ -38,12 +38,12 @@ const getTimingMetrics = (log: AgentLog) => {
   const aiProcessingMs = num(result.ai_processing_ms);
   const uazapiSendMs = num(result.uazapi_send_ms);
 
-  // Fallback for old logs
-  const fallbackTotal = num(log.duration_ms) ?? 0;
+  const hasExactTiming = totalResponseMs !== null;
 
   return {
     debounceBatch,
-    totalMs: totalResponseMs ?? fallbackTotal,
+    hasExactTiming,
+    totalMs: totalResponseMs ?? 0,
     debounceMs: debounceWaitMs ?? 0,
     aiMs: aiProcessingMs ?? 0,
     uazapiMs: uazapiSendMs,
