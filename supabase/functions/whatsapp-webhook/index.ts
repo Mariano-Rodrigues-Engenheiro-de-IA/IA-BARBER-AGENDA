@@ -4626,11 +4626,13 @@ function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "cadastrar_cliente",
-        description: "Cadastra um novo cliente no sistema Trinks. Use quando buscar_cliente retornar vazio (cliente não existe). Envie o nome do cliente e o telefone.",
+        description: "Cadastra um novo cliente no sistema Trinks. Use quando buscar_cliente retornar vazio (cliente não existe). Sempre envie nome e, se o cliente informar, sobrenome e e-mail. Se o cadastro falhar com 'e-mail já em uso', peça outro e-mail ao cliente e tente novamente.",
         parameters: {
           type: "object",
           properties: {
-            nome: { type: "string", description: "Nome do cliente" },
+            nome: { type: "string", description: "Primeiro nome do cliente" },
+            sobrenome: { type: "string", description: "Sobrenome do cliente (opcional)" },
+            email: { type: "string", description: "E-mail do cliente (opcional, mas recomendado quando o cliente informar)" },
             telefone: { type: "string", description: "Telefone completo do cliente (com DDD)" },
           },
           required: ["nome", "telefone"],
