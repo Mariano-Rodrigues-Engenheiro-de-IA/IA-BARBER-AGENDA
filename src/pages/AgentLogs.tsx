@@ -160,7 +160,7 @@ export default function AgentLogsPage() {
           {logs.map((log) => {
             const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
             const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
-            const { debounceBatch, aiProcessingMs, displayedDebounceMs, displayedTotalMs } = getTimingMetrics(log);
+            const { debounceBatch, totalMs, debounceMs, aiMs, uazapiMs } = getTimingMetrics(log);
             const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
             const visibleToolCalls = toolCalls.filter((tc) => tc?.name !== "__debounce_batch__");
             const toolCount = visibleToolCalls.length;
