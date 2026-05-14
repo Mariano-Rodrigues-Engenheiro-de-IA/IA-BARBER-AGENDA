@@ -11,22 +11,66 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
+const normalizeLooseText = (value: unknown) => String(value ?? "")
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase()
+  .trim();
+const sanitizeClientName = (value: unknown) => String(value ?? "")
+  .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
+  .replace(/[^\p{L}\s\-']/gu, "")
+  .replace(/\s+/g, " ")
+  .trim();
+const isUsableClientName = (value: unknown) => {
+  const cleaned = sanitizeClientName(value);
+  const normalized = normalizeLooseText(cleaned);
+  if (!cleaned || cleaned.length < 2 || cleaned.length > 70) return false;
+  if (/\d/.test(cleaned)) return false;
+  return ![
+    "cliente",
+    "primeira vez",
+    "primeira",
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "sim",
+    "nao",
+    "não",
+  ].includes(normalized);
+};
+const extractExplicitClientName = (userMessage: unknown, previousAssistantMessage?: unknown) => {
+  const rawMessage = String(userMessage ?? "").trim();
+  if (!rawMessage) return null;
+
+  const normalizedAssistant = normalizeLooseText(previousAssistantMessage);
+  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) seu nome|me passa seu nome|me diga seu nome|pode me passar seu nome|seu nome)/.test(normalizedAssistant);
+  const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
+  if (!assistantAskedForName && !introMatch) return null;
+
+  const candidate = introMatch?.[1] || rawMessage;
+  const cleaned = sanitizeClientName(candidate);
+  return isUsableClientName(cleaned) ? cleaned : null;
+};
 const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
 };
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
-  const normalized = String(responseText || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  const normalized = normalizeLooseText(responseText);
 
   return /\b(e-?mail|email)\b/.test(normalized) && (
     normalized.includes("obrigat") ||
     normalized.includes("required") ||
     normalized.includes("necessar") ||
-    normalized.includes("inval")
+    normalized.includes("inval") ||
+    normalized.includes("ja esta em uso") ||
+    normalized.includes("em uso") ||
+    normalized.includes("already in use") ||
+    normalized.includes("choose another")
   );
 };
 
@@ -763,11 +807,6 @@ Deno.serve(async (req) => {
         .limit(50);
       const history = (historyRaw || []).reverse();
 
-      // ===== AUTO-REGISTER CLIENT (Trinks & One Beleza) =====
-      if (provider === "trinks" || provider === "onebeleza") {
-        await autoRegisterClient(tenant, phoneNumber, provider, senderName);
-      }
-
       // Provider-specific direct handlers
       let directResponse: string | null = null;
       if (provider === "trinks") {
@@ -1132,7 +1171,7 @@ Deno.serve(async (req) => {
 
 // ===================== AUTO-REGISTER CLIENT =====================
 
-async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string, senderName?: string): Promise<void> {
+async function autoRegisterClient(tenant: any, phoneNumber: string, provider: string): Promise<void> {
   try {
     if (provider === "trinks") {
       if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return;
@@ -1166,7 +1205,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
 
       // Client not found → register with phone number as name (AI will update later if needed)
       const body = {
-        nome: senderName || phoneNumber,
+        nome: phoneNumber,
         telefones: [{ ddi: "55", ddd, numero: rest, tipoId: 1 }],
       };
       const regRes = await fetch(`${baseUrl}/clientes`, {
@@ -1209,7 +1248,7 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
       const { res: regRes, text: regText } = await registerOneBelezaClient(
         authHeaders,
         tel,
-        senderName || "Cliente",
+        "Cliente",
         "[AutoRegister/OneBeleza]",
       );
       console.log(`[AutoRegister/OneBeleza] cadastrar_cliente final (${regRes.status}):`, regText.slice(0, 300));
@@ -1284,6 +1323,7 @@ interface AgentSessionState {
   selectedProfessionalId: number | null;
   selectedDate: string | null;
   executedToolNames: string[];
+  explicitClientName: string | null;
 }
 
 // ===================== PERSISTENT STATE =====================
@@ -1305,6 +1345,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedProfessionalId: null,
     selectedDate: null,
     executedToolNames: [],
+    explicitClientName: null,
   };
 
   try {
@@ -1342,6 +1383,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
+      explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
     };
   } catch {
     return defaultState;
@@ -1365,6 +1407,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
+      explicitClientName: state.explicitClientName,
     };
 
     await supabase
@@ -2298,9 +2341,13 @@ async function callAIAgent(
   } catch (e) {
     console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
   }
-  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}"`);
+  const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
+  const previousAssistantMessage = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
+  const explicitClientName = extractExplicitClientName(userMessage, previousAssistantMessage) || sessionState.explicitClientName || null;
+  sessionState.explicitClientName = explicitClientName;
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -2417,8 +2464,6 @@ async function callAIAgent(
   let rounds = 0;
 
   // Load persisted state for the whole conversation
-  const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
-
   // Always reset per-invocation fields
   sessionState.criarAgendamentoSuccessId = null;
 
@@ -2441,6 +2486,22 @@ async function callAIAgent(
       const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
       let toolCallToExecute = toolCall;
       let correctionReason: string | null = null;
+
+      if (toolCall.function.name === "cadastrar_cliente" && isUsableClientName(sessionState.explicitClientName)) {
+        const forcedName = sanitizeClientName(sessionState.explicitClientName);
+        if (parsedArgs?.nome !== forcedName) {
+          parsedArgs = { ...parsedArgs, nome: forcedName };
+          correctionReason = `nome corrigido para o nome informado pelo cliente na conversa: ${forcedName}`;
+          toolCallToExecute = {
+            ...toolCall,
+            function: {
+              ...toolCall.function,
+              arguments: JSON.stringify(parsedArgs),
+            },
+          };
+        }
+      }
+
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
       let toolResult: any;
@@ -4057,7 +4118,7 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string): string {
+function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string, explicitClientName?: string | null): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
@@ -4065,18 +4126,11 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // ===== CLIENT NAME — sanitize and decide whether to inject =====
-  // Priority: leadName (CRM, manually edited by owner) > senderName (WhatsApp pushName).
-  const rawName = (leadName && leadName.trim()) || (senderName && senderName.trim()) || "";
-  // Strip emojis and odd symbols. Keep letters (incl. accented), spaces and hyphens.
-  const cleanedName = rawName
-    .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
-    .replace(/[^\p{L}\s\-']/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  // Reject if too short or looks like a phone number / generic placeholder.
-  const looksLikeNumber = /\d/.test(rawName) || /^\+?\d/.test(cleanedName);
-  const isUsable = cleanedName.length >= 2 && !looksLikeNumber && !/^cliente$/i.test(cleanedName);
+  // ===== CLIENT NAME — only trust explicit conversation name or CRM lead name =====
+  // WhatsApp pushName is just display metadata and must never be used for cadastro.
+  const rawName = (explicitClientName && explicitClientName.trim()) || (leadName && leadName.trim()) || "";
+  const cleanedName = sanitizeClientName(rawName);
+  const isUsable = isUsableClientName(cleanedName);
   const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
   const nameBlock = isUsable
     ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
