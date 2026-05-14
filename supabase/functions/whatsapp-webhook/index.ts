@@ -749,6 +749,7 @@ Deno.serve(async (req) => {
       const claimedIds = new Set(claimed.map((c: any) => c.id));
       const claimedMessages = unclaimed.filter((m: any) => claimedIds.has(m.id));
       const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
+      const tDebounceEnd = Date.now();
       console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
       // ===== IA OFF RECHECK (after debounce) =====
@@ -847,6 +848,7 @@ Deno.serve(async (req) => {
         agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
         aiResponse = agentResult.response;
       }
+      const tAiDone = Date.now();
 
       // NOTE: LinkClaimGuard removido a pedido do cliente. Preferimos que a IA siga
       // exclusivamente o prompt do sistema. O prompt deve garantir o envio literal
@@ -973,19 +975,69 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Log to agent_logs
-      // duration_ms = TOTAL wait time percebido pelo cliente desde a ÚLTIMA
-      // mensagem do lote até a resposta final da IA, sempre incluindo o debounce.
+      // Persist assistant message immediately so history stays consistent
+      await supabase.from("chat_messages").insert({
+        tenant_id: tenant.id,
+        phone_number: phoneNumber,
+        role: "assistant",
+        content: aiResponse,
+      });
+
+      // ===== SPLIT RESPONSE: Send each paragraph as a separate message =====
+      const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+      const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+
+      const messageParts = splitIntoMessages(aiResponse);
+
+      let tFirstSend = 0;
+      let firstSendError: string | null = null;
+
+      for (let i = 0; i < messageParts.length; i++) {
+        const part = messageParts[i].trim();
+        if (!part) continue;
+
+        try {
+          const sendResult = await fetch(`${uazapiUrl}/send/text`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "token": uazapiToken,
+            },
+            body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
+          });
+          const sendData = await sendResult.json();
+          console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
+          if (i === 0) {
+            tFirstSend = Date.now();
+            if (!sendResult.ok) {
+              firstSendError = `UAZAPI status ${sendResult.status}`;
+            }
+          }
+        } catch (e: any) {
+          if (i === 0) {
+            tFirstSend = Date.now();
+            firstSendError = `UAZAPI fetch error: ${e?.message || String(e)}`;
+          }
+          console.error(`UAZAPI send error part ${i + 1}:`, e?.message || e);
+        }
+      }
+
+      // ===== Log to agent_logs (AFTER first send so we measure real wait) =====
       const newestQueuedAtMsForTotal = Math.max(
         ...claimedMessages.map((m: any) => parseTimestampMs(m.created_at)).filter((n: number) => n > 0),
       );
       const aiDurationMs = agentResult?.durationMs || 0;
-      const measuredTotalMs = Number.isFinite(newestQueuedAtMsForTotal) && newestQueuedAtMsForTotal > 0
-        ? Date.now() - newestQueuedAtMsForTotal
-        : 0;
-      const minimumExpectedTotalMs = DEBOUNCE_MS + aiDurationMs;
-      const totalDurationMs = Math.max(measuredTotalMs, minimumExpectedTotalMs);
-      const debounceWaitMs = Math.max(DEBOUNCE_MS, totalDurationMs - aiDurationMs);
+      const debounceWaitMs = newestQueuedAtMsForTotal > 0
+        ? Math.max(0, tDebounceEnd - newestQueuedAtMsForTotal)
+        : DEBOUNCE_MS;
+      const uazapiSendMs = tFirstSend > 0 ? Math.max(0, tFirstSend - tAiDone) : null;
+      const totalResponseMs = tFirstSend > 0 && newestQueuedAtMsForTotal > 0
+        ? tFirstSend - newestQueuedAtMsForTotal
+        : (debounceWaitMs + aiDurationMs + (uazapiSendMs || 0));
+
+      const logErrors = [...(agentResult?.errors || [])];
+      if (firstSendError) logErrors.push(firstSendError);
 
       await supabase.from("agent_logs").insert({
         tenant_id: tenant.id,
@@ -1005,51 +1057,22 @@ Deno.serve(async (req) => {
             },
             result: {
               combined_content: combinedContent,
-              total_duration_ms: totalDurationMs,
+              total_response_ms: totalResponseMs,
               debounce_wait_ms: debounceWaitMs,
               ai_processing_ms: aiDurationMs,
+              uazapi_send_ms: uazapiSendMs,
             },
             blocked: false,
           },
           ...(agentResult?.toolCalls || []),
         ],
-        errors: agentResult?.errors || [],
+        errors: logErrors,
         model_used: agentResult?.model || "direct_handler",
-        duration_ms: totalDurationMs,
+        duration_ms: totalResponseMs,
         session_blocked: agentResult?.sessionBlocked || false,
       }).then(({ error }) => {
         if (error) console.error("Failed to log agent execution:", error.message);
       });
-
-      await supabase.from("chat_messages").insert({
-        tenant_id: tenant.id,
-        phone_number: phoneNumber,
-        role: "assistant",
-        content: aiResponse,
-      });
-
-      // ===== SPLIT RESPONSE: Send each paragraph as a separate message =====
-      const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
-      const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-
-      const messageParts = splitIntoMessages(aiResponse);
-
-      for (let i = 0; i < messageParts.length; i++) {
-        const part = messageParts[i].trim();
-        if (!part) continue;
-
-        const sendResult = await fetch(`${uazapiUrl}/send/text`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "token": uazapiToken,
-          },
-          body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
-        });
-        const sendData = await sendResult.json();
-        console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
-      }
 
       return new Response(JSON.stringify({ status: "ok", parts: messageParts.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

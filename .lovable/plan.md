@@ -1,96 +1,73 @@
-## Objetivo
-Garantir que a IA da One Beleza agende sempre no cliente correto da conversa, sem cair no cliente dono da conta.
+## Diagnóstico
 
-## Diagnóstico confirmado
-Pelos logs atuais, o fluxo já encontra o cliente certo antes de agendar:
-- `buscar_cliente` para o número do MZ retorna `cliforcolsid: 47417`
-- o `agendar` também registra `resolved cliente: cliforcolsid=47417`
-- mesmo assim, o agendamento continua sendo atribuído ao dono da conta
+Hoje, no painel, o "tempo total" é praticamente sempre `25s + processamento da IA`, porque a métrica é construída assim no `whatsapp-webhook`:
 
-Isso indica que o problema não é mais “achar o cliente”, e sim “como o request final de agendamento está sendo montado/enviado para a One Beleza”. Hoje o código ainda depende de um request ambíguo: usa o `celular` da conta no endpoint e tenta forçar o cliente via multipart, mas a API aparentemente está ignorando esse vínculo.
+- `aiDurationMs` = só o tempo dentro de `callAIAgent` (chamada ao modelo + tools).
+- `totalDurationMs` = `Date.now() - última_mensagem_do_lote`, mas com um `Math.max(..., DEBOUNCE_MS + aiDurationMs)` que **força o piso** em "debounce + IA".
+- O log é gravado **antes** dos `fetch` para a UAZAPI (`/send/text`). Ou seja, o tempo até o cliente realmente receber a resposta nunca entra na conta.
+- Resultado: praticamente todos os logs aparecem como `25s` (debounce) + alguns segundos de IA, mesmo quando, no mundo real, demorou 40s, 1min, etc.
 
-Também identifiquei uma inconsistência real no código: o auto-cadastro da One Beleza considera cliente existente só se vier `clienteId` ou `id`, mas o retorno real do `buscar_cliente` vem com `cliforcolsid`. Isso mostra que o tratamento do identificador do cliente está inconsistente em partes diferentes do fluxo.
+Além disso, o frontend (`AgentLogs.tsx → getTimingMetrics`) ainda re-aplica `Math.max(configuredDebounceMs, storedDebounceMs)` e `Math.max(duration_ms, debounce + ai)`, o que mascara qualquer valor mais baixo ou diferente que viesse do banco.
 
-## Plano
-### 1) Centralizar o ID real do cliente da One Beleza
-No `whatsapp-webhook`, vou criar uma resolução única de cliente para One Beleza que:
-- normalize o telefone do WhatsApp
-- busque o cliente pelo telefone
-- extraia sempre o ID em ordem de prioridade consistente (`cliforcolsid`, `cliForColsId`, `cliForColsid`, etc.)
-- retorne um objeto padronizado com `clientId`, `phone`, `name` e payload bruto
+## O que vou mudar
 
-Isso evita que cada trecho use uma lógica diferente para descobrir o cliente.
+Quero medir e mostrar o tempo **real** percebido pelo cliente, sem pisos artificiais, com marcos claros.
 
-### 2) Persistir o cliente resolvido no estado da conversa
-Vou adicionar ao `conversation_state` em memória da função algo como:
-- `selectedClientId`
-- `selectedClientPhone`
-- `selectedClientName`
+### 1) Edge function `whatsapp-webhook` — medir os marcos certos
 
-E vou alimentar isso sempre que:
-- `buscar_cliente` retornar sucesso
-- `cadastrar_cliente` criar/encontrar um cliente
-- houver auto-registro da One Beleza
+Capturar 4 timestamps por execução:
 
-Assim, o fluxo inteiro passa a trabalhar com o cliente da conversa já travado, em vez de depender só de nova busca na hora do agendamento.
+- `t_last_msg` = `created_at` da última mensagem do cliente no lote (já temos via `newestQueuedAtMsForTotal`).
+- `t_debounce_end` = `Date.now()` logo após o claim das mensagens (fim do silêncio de 25s).
+- `t_ai_done` = momento em que `callAIAgent` retorna (já temos via `agentResult.durationMs`).
+- `t_first_send` = momento logo após o primeiro `fetch /send/text` da UAZAPI retornar OK (mover o log para depois desse envio).
 
-### 3) Travar o `agendar` para usar somente o cliente da conversa
-No case `agendar` da One Beleza, vou alterar a regra para:
-- usar primeiro o `selectedClientId` persistido na sessão
-- se não existir, resolver novamente por telefone
-- bloquear o agendamento se houver divergência entre cliente da sessão e cliente resolvido por telefone
-- bloquear se o cliente não existir
+A partir disso, calcular sem `Math.max` artificial:
 
-Ou seja: se a conversa é do MZ, o `agendar` só segue se o cliente final for o MZ.
+- `debounce_wait_ms` = `t_debounce_end − t_last_msg` (real, pode ser 25s, 26s, 28s — o que de fato esperou).
+- `ai_processing_ms` = `agentResult.durationMs` (modelo + tools internas).
+- `uazapi_send_ms` = `t_first_send − t_ai_done` (tempo da UAZAPI até a resposta sair).
+- `total_response_ms` = `t_first_send − t_last_msg` (tempo total que o cliente esperou da última mensagem dele até começar a receber a resposta).
 
-### 4) Reestruturar o request final do agendamento
-Vou ajustar a montagem do request para eliminar ambiguidade do lado da One Beleza:
-- revisar os campos enviados no `FormData`
-- enviar apenas o conjunto de chaves que fizer sentido para o cliente real, em vez de múltiplos aliases soltos sem validação
-- garantir que o payload de agendamento use explicitamente o ID resolvido da conversa como fonte da verdade
-- manter logs detalhados do payload final enviado
+Mover o `supabase.from("agent_logs").insert(...)` para **depois do primeiro `/send/text` bem-sucedido**, registrando esses 4 valores em `tool_calls[0].result` e em `duration_ms = total_response_ms`. Se o envio falhar, ainda assim logar com `uazapi_send_ms = null` e marcar erro.
 
-A meta aqui é parar de “tentar vários nomes” e passar a montar um request determinístico.
+Remover qualquer `Math.max(measuredTotalMs, DEBOUNCE_MS + aiDurationMs)` — o número precisa ser o real.
 
-### 5) Corrigir a detecção de cliente existente no auto-cadastro
-Vou corrigir o trecho de auto-registro da One Beleza para reconhecer cliente existente também quando o retorno vier com:
-- `cliforcolsid`
-- `cliForColsId`
-- `cliForColsid`
+### 2) Frontend `AgentLogs.tsx` — mostrar os tempos exatos
 
-Isso evita falso negativo de “cliente não existe” e remove comportamento inconsistente no começo do fluxo.
+Em `getTimingMetrics`, parar de aplicar `Math.max` defensivo. Ler diretamente de `tool_calls[0].result`:
 
-### 6) Melhorar os logs para auditoria definitiva
-Vou deixar os logs do `agendar` mais explícitos, registrando:
-- telefone normalizado da conversa
-- cliente retornado pelo `buscar_cliente`
-- `selectedClientId` da sessão
-- cliente efetivamente enviado no request
-- campos finais do payload de agendamento
-- motivo de bloqueio em caso de divergência
+- `total_response_ms` (badge principal do reloginho — "tempo total que o cliente esperou")
+- `debounce_wait_ms`
+- `ai_processing_ms`
+- `uazapi_send_ms`
 
-Assim fica fácil provar no monitor se a IA usou o cliente certo ou não.
+No card resumido (cabeçalho), o reloginho passa a mostrar `total_response_ms` em segundos (ex.: `47.2s total`).
 
-## Validação após a correção
-Depois de implementar, vou validar no fluxo real:
-1. mensagem do cliente entra
-2. `buscar_cliente` resolve o ID correto
-3. esse ID fica salvo na sessão
-4. `agendar` usa exatamente esse mesmo ID
-5. os logs mostram o cliente final usado no request
-6. o agendamento deixa de cair no dono da conta
+No expandido, a linha "Meta" passa a mostrar 4 métricas separadas, com labels claros:
+
+- `Total (cliente esperou): 47.2s`
+- `Espera (debounce): 25.3s`
+- `Processamento IA: 18.4s`
+- `Envio WhatsApp: 3.5s`
+
+Para logs antigos sem os novos campos, manter fallback ao `duration_ms` cru.
+
+### 3) Sanidade dos timestamps no painel
+
+Os timestamps `dd/MM HH:mm:ss` já existem (mensagem do cliente, mensagens do lote). Não mexer nesse ponto — só garantir que o `total` agora seja consistente com a diferença visível entre o `created_at` da última mensagem do cliente e o `created_at` do log.
 
 ## Detalhes técnicos
-Arquivos principais:
-- `supabase/functions/whatsapp-webhook/index.ts`
 
-Ajustes previstos:
-- ampliar `AgentSessionState`
-- atualizar `loadConversationState()` e `saveConversationState()`
-- capturar cliente ao processar `buscar_cliente` / `cadastrar_cliente`
-- criar helper único de resolução do cliente One Beleza
-- endurecer o `case "agendar"` para usar o cliente da sessão como verdade
-- corrigir a heurística de cliente existente no auto-registro
-- reforçar logs do tool call
+- Arquivo: `supabase/functions/whatsapp-webhook/index.ts`
+  - Adicionar `const tDebounceEnd = Date.now();` logo após o `claim` bem-sucedido (~linha 750).
+  - Capturar `const tAiDone = Date.now();` imediatamente após `await callAIAgent(...)` (~linha 847).
+  - Mover o bloco `await supabase.from("agent_logs").insert(...)` (linhas 990-1022) para **depois** do primeiro `/send/text` no loop (~linha 1041), capturando `const tFirstSend = Date.now();` após o primeiro envio.
+  - Substituir as fórmulas (linhas 982-988) pelas novas, sem `Math.max` defensivo.
+- Arquivo: `src/pages/AgentLogs.tsx`
+  - Reescrever `getTimingMetrics` para ler `total_response_ms`, `debounce_wait_ms`, `ai_processing_ms`, `uazapi_send_ms` diretamente.
+  - Atualizar header (linhas 211-218) e Meta (linhas ~292-301) para exibir as 4 métricas.
 
-Se você aprovar, eu implemento isso agora.
+## Sobre o erro do agendamento (IA escolhendo profissional sem listar)
+
+Não vou misturar isso aqui — é outra causa (prompt/tool flow do Trinks). Posso abrir um plano separado depois que esse de monitoramento estiver de pé, porque vamos precisar dos novos tempos para diagnosticar se o problema é timeout/race ou prompt.

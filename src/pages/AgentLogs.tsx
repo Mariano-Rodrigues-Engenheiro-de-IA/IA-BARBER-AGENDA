@@ -29,23 +29,24 @@ interface AgentLog {
 const getTimingMetrics = (log: AgentLog) => {
   const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
   const debounceBatch = toolCalls.find((tc) => tc?.name === "__debounce_batch__");
-  const configuredDebounceMs = typeof debounceBatch?.args?.debounce_seconds === "number"
-    ? debounceBatch.args.debounce_seconds * 1000
-    : 0;
-  const aiProcessingMs = typeof debounceBatch?.result?.ai_processing_ms === "number"
-    ? debounceBatch.result.ai_processing_ms
-    : 0;
-  const storedDebounceMs = typeof debounceBatch?.result?.debounce_wait_ms === "number"
-    ? debounceBatch.result.debounce_wait_ms
-    : 0;
-  const displayedDebounceMs = Math.max(configuredDebounceMs, storedDebounceMs);
-  const displayedTotalMs = Math.max(log.duration_ms ?? 0, displayedDebounceMs + aiProcessingMs);
+  const result = debounceBatch?.result || {};
+  const num = (v: any) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+  // New fields (post-fix)
+  const totalResponseMs = num(result.total_response_ms);
+  const debounceWaitMs = num(result.debounce_wait_ms);
+  const aiProcessingMs = num(result.ai_processing_ms);
+  const uazapiSendMs = num(result.uazapi_send_ms);
+
+  // Fallback for old logs
+  const fallbackTotal = num(log.duration_ms) ?? 0;
 
   return {
     debounceBatch,
-    aiProcessingMs,
-    displayedDebounceMs,
-    displayedTotalMs,
+    totalMs: totalResponseMs ?? fallbackTotal,
+    debounceMs: debounceWaitMs ?? 0,
+    aiMs: aiProcessingMs ?? 0,
+    uazapiMs: uazapiSendMs,
   };
 };
 
@@ -159,7 +160,7 @@ export default function AgentLogsPage() {
           {logs.map((log) => {
             const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
             const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
-            const { debounceBatch, aiProcessingMs, displayedDebounceMs, displayedTotalMs } = getTimingMetrics(log);
+            const { debounceBatch, totalMs, debounceMs, aiMs, uazapiMs } = getTimingMetrics(log);
             const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
             const visibleToolCalls = toolCalls.filter((tc) => tc?.name !== "__debounce_batch__");
             const toolCount = visibleToolCalls.length;
@@ -209,11 +210,11 @@ export default function AgentLogsPage() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                     <div className="text-right text-xs text-muted-foreground">
-                        <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
-                      {displayedTotalMs > 0 && (
-                        <div className="flex items-center gap-1 justify-end" title="Tempo total: espera (debounce) + processamento da IA">
+                        <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) }</div>
+                      {totalMs > 0 && (
+                        <div className="flex items-center gap-1 justify-end" title="Tempo total que o cliente esperou: da última mensagem dele até a primeira parte enviada pela UAZAPI">
                           <Clock className="w-3 h-3" />
-                          {(displayedTotalMs / 1000).toFixed(1)}s total
+                          {(totalMs / 1000).toFixed(1)}s total
                         </div>
                       )}
                     </div>
@@ -318,15 +319,12 @@ export default function AgentLogsPage() {
                     </div>
 
                     {/* Meta */}
-                    <div className="flex gap-4 text-xs text-muted-foreground">
+                    <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {displayedTotalMs > 0 && <span>Tempo total: {(displayedTotalMs / 1000).toFixed(1)}s</span>}
-                      {displayedDebounceMs > 0 && (
-                        <span>Espera (debounce): {(displayedDebounceMs / 1000).toFixed(1)}s</span>
-                      )}
-                      {aiProcessingMs > 0 && (
-                        <span>Processamento IA: {(aiProcessingMs / 1000).toFixed(1)}s</span>
-                      )}
+                      {totalMs > 0 && <span><strong>Total (cliente esperou):</strong> {(totalMs / 1000).toFixed(1)}s</span>}
+                      {debounceMs > 0 && <span>Espera (debounce): {(debounceMs / 1000).toFixed(1)}s</span>}
+                      {aiMs > 0 && <span>Processamento IA: {(aiMs / 1000).toFixed(1)}s</span>}
+                      {uazapiMs !== null && uazapiMs > 0 && <span>Envio WhatsApp: {(uazapiMs / 1000).toFixed(1)}s</span>}
                     </div>
                   </CardContent>
                 )}
