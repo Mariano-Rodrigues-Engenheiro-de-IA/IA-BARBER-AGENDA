@@ -11,6 +11,10 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
+const buildOneBelezaGenericEmail = (phone: unknown) => {
+  const digits = digitsOnly(phone) || `${Date.now()}`;
+  return `cliente+${digits}@example.com`;
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -1147,7 +1151,11 @@ async function autoRegisterClient(tenant: any, phoneNumber: string, provider: st
 
       // Client not found → register
       const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
-      const body = { celular: tel, nome: senderName || "Cliente" };
+      const body = {
+        celular: tel,
+        nome: senderName || "Cliente",
+        email: buildOneBelezaGenericEmail(tel),
+      };
       const regRes = await fetch(regUrl, {
         method: "POST",
         headers: { ...authHeaders, "Content-Type": "application/json" },
@@ -5339,7 +5347,11 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         
         const url = `https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario`;
-        const body: any = { celular: tel, nome: args.nome || "Cliente" };
+        const body: any = {
+          celular: tel,
+          nome: args.nome || "Cliente",
+          email: buildOneBelezaGenericEmail(tel),
+        };
         console.log(`[OneBeleza] cadastrar_cliente URL: ${url}`, JSON.stringify(body));
         const res = await fetch(url, {
           method: "POST",
