@@ -2406,7 +2406,9 @@ async function callAIAgent(
       // never deduplicated. Only mutating tools (criar/cancelar/editar agendamento,
       // cadastrar_cliente, send_image/audio/video, escalate_human, etc.) are blocked
       // from running twice in the same session.
-      const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey);
+      // cadastrar_cliente is allowed to repeat — backend returns "already registered"
+      // when duplicate, so it's safe to call as many times as needed in the conversation.
+      const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
