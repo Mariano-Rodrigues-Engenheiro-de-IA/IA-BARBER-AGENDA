@@ -185,15 +185,15 @@ export default function AgentLogsPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <div className="text-right text-xs text-muted-foreground">
-                          <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
-                        {log.duration_ms != null && (
-                          <div className="flex items-center gap-1 justify-end">
-                            <Clock className="w-3 h-3" />
-                            {(log.duration_ms / 1000).toFixed(1)}s
-                          </div>
-                        )}
-                      </div>
+                    <div className="text-right text-xs text-muted-foreground">
+                        <div>{format(new Date(log.created_at), "dd/MM HH:mm:ss", { locale: ptBR })}</div>
+                      {log.duration_ms != null && (
+                        <div className="flex items-center gap-1 justify-end" title="Tempo total: espera (debounce) + processamento da IA">
+                          <Clock className="w-3 h-3" />
+                          {(log.duration_ms / 1000).toFixed(1)}s total
+                        </div>
+                      )}
+                    </div>
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </div>
                   </div>
@@ -297,7 +297,13 @@ export default function AgentLogsPage() {
                     {/* Meta */}
                     <div className="flex gap-4 text-xs text-muted-foreground">
                       <span>Modelo: {log.model_used || "—"}</span>
-                      {log.duration_ms != null && <span>Duração: {(log.duration_ms / 1000).toFixed(1)}s</span>}
+                      {log.duration_ms != null && <span>Tempo total: {(log.duration_ms / 1000).toFixed(1)}s</span>}
+                      {debounceBatch?.result?.debounce_wait_ms != null && (
+                        <span>Espera (debounce): {(debounceBatch.result.debounce_wait_ms / 1000).toFixed(1)}s</span>
+                      )}
+                      {debounceBatch?.result?.ai_processing_ms != null && (
+                        <span>Processamento IA: {(debounceBatch.result.ai_processing_ms / 1000).toFixed(1)}s</span>
+                      )}
                     </div>
                   </CardContent>
                 )}

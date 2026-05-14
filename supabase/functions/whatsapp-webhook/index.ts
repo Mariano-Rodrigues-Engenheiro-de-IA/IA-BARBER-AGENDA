@@ -974,6 +974,18 @@ Deno.serve(async (req) => {
       }
 
       // Log to agent_logs
+      // duration_ms = TOTAL wait time the client experienced:
+      //   from the oldest queued message in the batch until the AI response is ready.
+      //   Includes debounce window + AI/tool processing time.
+      const oldestQueuedAtMs = Math.min(
+        ...claimedMessages.map((m: any) => parseTimestampMs(m.created_at)).filter((n: number) => n > 0),
+      );
+      const aiDurationMs = agentResult?.durationMs || 0;
+      const totalDurationMs = Number.isFinite(oldestQueuedAtMs) && oldestQueuedAtMs > 0
+        ? Date.now() - oldestQueuedAtMs
+        : aiDurationMs;
+      const debounceWaitMs = Math.max(0, totalDurationMs - aiDurationMs);
+
       await supabase.from("agent_logs").insert({
         tenant_id: tenant.id,
         phone_number: phoneNumber,
@@ -992,6 +1004,9 @@ Deno.serve(async (req) => {
             },
             result: {
               combined_content: combinedContent,
+              total_duration_ms: totalDurationMs,
+              debounce_wait_ms: debounceWaitMs,
+              ai_processing_ms: aiDurationMs,
             },
             blocked: false,
           },
@@ -999,7 +1014,7 @@ Deno.serve(async (req) => {
         ],
         errors: agentResult?.errors || [],
         model_used: agentResult?.model || "direct_handler",
-        duration_ms: agentResult?.durationMs || 0,
+        duration_ms: totalDurationMs,
         session_blocked: agentResult?.sessionBlocked || false,
       }).then(({ error }) => {
         if (error) console.error("Failed to log agent execution:", error.message);
