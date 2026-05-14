@@ -749,6 +749,7 @@ Deno.serve(async (req) => {
       const claimedIds = new Set(claimed.map((c: any) => c.id));
       const claimedMessages = unclaimed.filter((m: any) => claimedIds.has(m.id));
       const combinedContent = claimedMessages.map((m: any) => m.content).join("\n");
+      const tDebounceEnd = Date.now();
       console.log(`Debounce: processing ${claimedMessages.length} messages combined for ${phoneNumber}`);
 
       // ===== IA OFF RECHECK (after debounce) =====
