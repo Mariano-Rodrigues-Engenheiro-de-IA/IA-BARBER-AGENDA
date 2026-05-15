@@ -31,7 +31,7 @@ export default function ClientAi() {
 
   const save = async (fields: Record<string, any>, action: string) => {
     if (!tenantId) return;
-    const { error } = await supabase.from("tenants").update(fields).eq("id", tenantId);
+    const { error } = await supabase.from("tenants").update(fields as any).eq("id", tenantId);
     if (error) return toast.error(error.message);
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId, user_id: user?.id, actor_role: "client",
