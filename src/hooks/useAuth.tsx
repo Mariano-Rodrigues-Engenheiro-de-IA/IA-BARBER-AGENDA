@@ -71,8 +71,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     });
 
+    let lastUserId: string | null = null;
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s); setUser(s?.user ?? null);
+      const newUserId = s?.user?.id ?? null;
+      if (newUserId === lastUserId) return; // ignore TOKEN_REFRESHED etc.
+      lastUserId = newUserId;
       if (s?.user) {
         loadProfile(s.user.id).then(apply);
       } else {
