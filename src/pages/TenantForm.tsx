@@ -1277,7 +1277,7 @@ export default function TenantFormPage() {
         <Button variant="ghost" size="icon" onClick={() => navigate("/tenants")}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
-        <div>
+        <div className="flex-1">
           <h2 className="text-2xl font-bold text-foreground">
             {isEditing ? "Editar Empresa" : "Nova Empresa"}
           </h2>
@@ -1285,6 +1285,11 @@ export default function TenantFormPage() {
             {isEditing ? "Atualize as informações do estabelecimento" : "Cadastre um novo salão ou barbearia"}
           </p>
         </div>
+        {isEditing && id && (
+          <Button variant="outline" onClick={() => navigate(`/tenants/${id}/access`)}>
+            Acessos &amp; Permissões
+          </Button>
+        )}
       </div>
 
       <form onSubmit={handleSubmit}>
