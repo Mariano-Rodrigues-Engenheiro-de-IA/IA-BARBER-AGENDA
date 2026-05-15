@@ -209,41 +209,127 @@ export type Database = {
         }
         Relationships: []
       }
+      follow_up_sequences: {
+        Row: {
+          business_hours: Json
+          created_at: string
+          enabled: boolean
+          id: string
+          name: string
+          tenant_id: string
+          trigger_config: Json
+          trigger_type: string
+          updated_at: string
+        }
+        Insert: {
+          business_hours?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name: string
+          tenant_id: string
+          trigger_config?: Json
+          trigger_type?: string
+          updated_at?: string
+        }
+        Update: {
+          business_hours?: Json
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name?: string
+          tenant_id?: string
+          trigger_config?: Json
+          trigger_type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      follow_up_steps: {
+        Row: {
+          created_at: string
+          delay_minutes: number
+          id: string
+          message: string
+          sequence_id: string
+          step_order: number
+        }
+        Insert: {
+          created_at?: string
+          delay_minutes?: number
+          id?: string
+          message: string
+          sequence_id: string
+          step_order: number
+        }
+        Update: {
+          created_at?: string
+          delay_minutes?: number
+          id?: string
+          message?: string
+          sequence_id?: string
+          step_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "follow_up_steps_sequence_id_fkey"
+            columns: ["sequence_id"]
+            isOneToOne: false
+            referencedRelation: "follow_up_sequences"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       follow_ups: {
         Row: {
+          cancel_reason: string | null
+          cancelled_at: string | null
           confirmed_at: string | null
           created_at: string
           follow_up_at: string
           follow_up_message: string | null
           id: string
           link_sent_at: string
+          matched_keyword: string | null
           phone_number: string
           sent_at: string | null
+          sequence_id: string | null
           status: string
+          step_order: number | null
           tenant_id: string
         }
         Insert: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
           confirmed_at?: string | null
           created_at?: string
           follow_up_at: string
           follow_up_message?: string | null
           id?: string
           link_sent_at?: string
+          matched_keyword?: string | null
           phone_number: string
           sent_at?: string | null
+          sequence_id?: string | null
           status?: string
+          step_order?: number | null
           tenant_id: string
         }
         Update: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
           confirmed_at?: string | null
           created_at?: string
           follow_up_at?: string
           follow_up_message?: string | null
           id?: string
           link_sent_at?: string
+          matched_keyword?: string | null
           phone_number?: string
           sent_at?: string | null
+          sequence_id?: string | null
           status?: string
+          step_order?: number | null
           tenant_id?: string
         }
         Relationships: [

@@ -9,10 +9,11 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { SequencesEditor } from "@/components/SequencesEditor";
 
 function slugify(text: string) {
   return text
@@ -1301,6 +1302,10 @@ export default function TenantFormPage() {
               <Kanban className="w-3.5 h-3.5" />
               Kanban
             </TabsTrigger>
+            <TabsTrigger value="sequences" className="flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              Cadências
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-4">
@@ -1793,6 +1798,16 @@ export default function TenantFormPage() {
                 <strong>Funil:</strong> etapas do CRM (colunas no Kanban). <strong>Flag:</strong> marcações independentes que aparecem como badges nos cards (ex: IA OFF).
               </p>
             </div>
+          </TabsContent>
+
+          <TabsContent value="sequences" className="space-y-4">
+            {id && id !== "new" ? (
+              <SequencesEditor tenantId={id} />
+            ) : (
+              <div className="glass-card p-6 text-center text-muted-foreground">
+                Salve o estabelecimento primeiro para configurar cadências.
+              </div>
+            )}
           </TabsContent>
         </Tabs>
 

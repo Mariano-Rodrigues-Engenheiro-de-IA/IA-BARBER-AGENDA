@@ -1,73 +1,122 @@
-## Diagnóstico
 
-Hoje, no painel, o "tempo total" é praticamente sempre `25s + processamento da IA`, porque a métrica é construída assim no `whatsapp-webhook`:
+# Follow-ups de Primeiro Contato (Tráfego Pago)
 
-- `aiDurationMs` = só o tempo dentro de `callAIAgent` (chamada ao modelo + tools).
-- `totalDurationMs` = `Date.now() - última_mensagem_do_lote`, mas com um `Math.max(..., DEBOUNCE_MS + aiDurationMs)` que **força o piso** em "debounce + IA".
-- O log é gravado **antes** dos `fetch` para a UAZAPI (`/send/text`). Ou seja, o tempo até o cliente realmente receber a resposta nunca entra na conta.
-- Resultado: praticamente todos os logs aparecem como `25s` (debounce) + alguns segundos de IA, mesmo quando, no mundo real, demorou 40s, 1min, etc.
+## Objetivo
+Quando um lead chega via tráfego pago (identificado por palavra-chave na 1ª mensagem), disparar uma sequência de follow-ups configurável. Se o lead responder em qualquer etapa, a sequência é interrompida. Tudo monitorado num painel completo.
 
-Além disso, o frontend (`AgentLogs.tsx → getTimingMetrics`) ainda re-aplica `Math.max(configuredDebounceMs, storedDebounceMs)` e `Math.max(duration_ms, debounce + ai)`, o que mascara qualquer valor mais baixo ou diferente que viesse do banco.
+## Análise da proposta + sugestões (experiência)
 
-## O que vou mudar
+Sua proposta está sólida. Pontos que sugiro reforçar:
 
-Quero medir e mostrar o tempo **real** percebido pelo cliente, sem pisos artificiais, com marcos claros.
+1. **Detecção do lead de tráfego** — além de palavra-chave exata, suportar:
+   - Lista de palavras-chave (não só uma) com match case-insensitive
+   - Match parcial OU regex (ex: "quero saber mais", "vi o anúncio", "instagram")
+   - Campo opcional **"qualquer primeira mensagem"** (catch-all) para barbearias que rodam tráfego intenso e querem follow-up em todo lead novo
+   - Salvar a `keyword` que casou no lead (vira métrica: qual criativo converte mais)
 
-### 1) Edge function `whatsapp-webhook` — medir os marcos certos
+2. **Gatilho preciso** — disparar a sequência quando:
+   - É a 1ª interação do telefone com o tenant (não tem histórico)
+   - A mensagem casa com a regra de keyword (ou catch-all está ativo)
+   - A IA responde normalmente
+   - **Cancela tudo** assim que o lead enviar QUALQUER nova mensagem
 
-Capturar 4 timestamps por execução:
+3. **Sequência reciclável (template)** — em vez de configurar 4 mensagens travadas:
+   - Criar conceito de **"Cadência"** (template reutilizável): nome + lista ordenada de etapas `[{ ordem, delay_minutes, mensagem }]`
+   - Cadência default já vem com 4 etapas pré-preenchidas
+   - Você pode adicionar/remover etapas, reordenar (drag), editar texto e intervalo
+   - **Reciclável**: a mesma cadência pode ser usada em vários gatilhos futuros (não só tráfego — depois "lead frio", "pós-atendimento" etc.)
 
-- `t_last_msg` = `created_at` da última mensagem do cliente no lote (já temos via `newestQueuedAtMsForTotal`).
-- `t_debounce_end` = `Date.now()` logo após o claim das mensagens (fim do silêncio de 25s).
-- `t_ai_done` = momento em que `callAIAgent` retorna (já temos via `agentResult.durationMs`).
-- `t_first_send` = momento logo após o primeiro `fetch /send/text` da UAZAPI retornar OK (mover o log para depois desse envio).
+4. **Janelas de horário** (sugestão forte) — não enviar follow-up às 3h da manhã. Definir horário comercial (ex: 8h-21h). Se o disparo cair fora, agenda pro próximo horário válido.
 
-A partir disso, calcular sem `Math.max` artificial:
+5. **Anti-spam / segurança**:
+   - Limite máximo de etapas por sequência (ex: 10)
+   - Intervalo mínimo entre etapas (ex: 5 min)
+   - Não disparar se o tenant estiver `inactive`
+   - Se a IA já respondeu o lead e ele respondeu de volta antes do 1º follow-up, cancela
 
-- `debounce_wait_ms` = `t_debounce_end − t_last_msg` (real, pode ser 25s, 26s, 28s — o que de fato esperou).
-- `ai_processing_ms` = `agentResult.durationMs` (modelo + tools internas).
-- `uazapi_send_ms` = `t_first_send − t_ai_done` (tempo da UAZAPI até a resposta sair).
-- `total_response_ms` = `t_first_send − t_last_msg` (tempo total que o cliente esperou da última mensagem dele até começar a receber a resposta).
+6. **Métricas no painel** — completas:
+   - Total de leads de tráfego identificados (por período + por keyword)
+   - Sequências em andamento / pausadas (lead respondeu) / completadas (4/4 enviadas sem resposta) / convertidas (lead respondeu após follow-up X)
+   - Taxa de resposta por etapa (qual mensagem mais converte)
+   - Tempo médio até a primeira resposta
+   - Funil visual: 100 leads → 60 responderam após etapa 1 → 25 após etapa 2 ...
+   - Drill-down por lead: ver a timeline completa (chegou às 14h, IA respondeu, etapa 1 enviada às 14h30, etapa 2 às 15h, lead respondeu às 15h05 → convertido)
 
-Mover o `supabase.from("agent_logs").insert(...)` para **depois do primeiro `/send/text` bem-sucedido**, registrando esses 4 valores em `tool_calls[0].result` e em `duration_ms = total_response_ms`. Se o envio falhar, ainda assim logar com `uazapi_send_ms = null` e marcar erro.
+## Estrutura técnica
 
-Remover qualquer `Math.max(measuredTotalMs, DEBOUNCE_MS + aiDurationMs)` — o número precisa ser o real.
+### 1. Banco de dados (migration)
 
-### 2) Frontend `AgentLogs.tsx` — mostrar os tempos exatos
+**Nova tabela `follow_up_sequences`** (templates reutilizáveis):
+- `tenant_id`, `name`, `trigger_type` (`first_contact_traffic` por enquanto, expansível)
+- `trigger_config` jsonb: `{ keywords: string[], match_mode: "any"|"all"|"regex", catch_all: bool }`
+- `business_hours` jsonb: `{ enabled, start: "08:00", end: "21:00", timezone: "America/Sao_Paulo" }`
+- `enabled` bool
 
-Em `getTimingMetrics`, parar de aplicar `Math.max` defensivo. Ler diretamente de `tool_calls[0].result`:
+**Nova tabela `follow_up_steps`**:
+- `sequence_id`, `step_order`, `delay_minutes` (do passo anterior, ou do gatilho se for o 1º), `message`
 
-- `total_response_ms` (badge principal do reloginho — "tempo total que o cliente esperou")
-- `debounce_wait_ms`
-- `ai_processing_ms`
-- `uazapi_send_ms`
+**Estender `follow_ups`** (agendamentos individuais):
+- `sequence_id` uuid (nullable — mantém compat com follow-ups antigos)
+- `step_order` int
+- `matched_keyword` text (qual keyword disparou — vira métrica)
+- `cancelled_at` timestamptz, `cancel_reason` text (`lead_replied`, `tenant_inactive`, etc.)
 
-No card resumido (cabeçalho), o reloginho passa a mostrar `total_response_ms` em segundos (ex.: `47.2s total`).
+Manter `follow_ups` atual funcionando — apenas estender.
 
-No expandido, a linha "Meta" passa a mostrar 4 métricas separadas, com labels claros:
+### 2. Edge function `whatsapp-webhook`
 
-- `Total (cliente esperou): 47.2s`
-- `Espera (debounce): 25.3s`
-- `Processamento IA: 18.4s`
-- `Envio WhatsApp: 3.5s`
+Ao processar uma mensagem de usuário:
 
-Para logs antigos sem os novos campos, manter fallback ao `duration_ms` cru.
+```text
+SE é primeira interação do phone+tenant
+E existe sequence ativa do tipo "first_contact_traffic"
+E (catch_all OU mensagem casa keywords)
+ENTÃO:
+  - registra `matched_keyword` no log
+  - agenda APENAS a etapa 1 (próximo follow_up_at = agora + step1.delay,
+    respeitando business_hours)
+  - salva sequence_id + step_order=1 no follow_ups
 
-### 3) Sanidade dos timestamps no painel
+SE NÃO é primeira interação E existem follow_ups pending/sent dessa sequence
+ENTÃO:
+  - cancela todos os pending dessa sequence (cancelled_at, reason="lead_replied")
+  - marca os já enviados como "responded" (nova coluna de status ou usa confirmed)
+```
 
-Os timestamps `dd/MM HH:mm:ss` já existem (mensagem do cliente, mensagens do lote). Não mexer nesse ponto — só garantir que o `total` agora seja consistente com a diferença visível entre o `created_at` da última mensagem do cliente e o `created_at` do log.
+### 3. Edge function `process-followups`
 
-## Detalhes técnicos
+Quando dispara uma etapa N:
+- Envia mensagem
+- Se existe etapa N+1 na sequence E lead ainda não respondeu → agenda N+1 com delay configurado
+- Se é a última etapa → marca sequência como `completed`
+- Tudo respeita business_hours
 
-- Arquivo: `supabase/functions/whatsapp-webhook/index.ts`
-  - Adicionar `const tDebounceEnd = Date.now();` logo após o `claim` bem-sucedido (~linha 750).
-  - Capturar `const tAiDone = Date.now();` imediatamente após `await callAIAgent(...)` (~linha 847).
-  - Mover o bloco `await supabase.from("agent_logs").insert(...)` (linhas 990-1022) para **depois** do primeiro `/send/text` no loop (~linha 1041), capturando `const tFirstSend = Date.now();` após o primeiro envio.
-  - Substituir as fórmulas (linhas 982-988) pelas novas, sem `Math.max` defensivo.
-- Arquivo: `src/pages/AgentLogs.tsx`
-  - Reescrever `getTimingMetrics` para ler `total_response_ms`, `debounce_wait_ms`, `ai_processing_ms`, `uazapi_send_ms` diretamente.
-  - Atualizar header (linhas 211-218) e Meta (linhas ~292-301) para exibir as 4 métricas.
+### 4. UI
 
-## Sobre o erro do agendamento (IA escolhendo profissional sem listar)
+**Aba "Cadências" no TenantForm** (CRUD de templates):
+- Card por cadência: nome, gatilho, status, qtd de etapas
+- Editor: gatilho + lista drag-and-drop de etapas (cada uma com `delay`, `mensagem`, preview)
+- Templates pré-prontos: "Tráfego pago — 4 etapas (padrão)", customizáveis
 
-Não vou misturar isso aqui — é outra causa (prompt/tool flow do Trinks). Posso abrir um plano separado depois que esse de monitoramento estiver de pé, porque vamos precisar dos novos tempos para diagnosticar se o problema é timeout/race ou prompt.
+**Painel `/follow-ups` reformulado**:
+- Filtros: período, tenant, sequence, keyword
+- Cards de métricas: leads captados, sequências ativas/canceladas/completadas, taxa de resposta global, tempo médio até resposta
+- Funil por etapa (gráfico de barras decrescentes)
+- Tabela de leads: telefone, keyword, etapa atual, status, última atualização → clicar abre timeline
+- Modal timeline: linha do tempo com cada etapa enviada + resposta do lead
+
+## Entregáveis (ordem de implementação)
+
+1. Migration: `follow_up_sequences`, `follow_up_steps`, novas colunas em `follow_ups`
+2. Backfill: criar uma sequence default por tenant ativo (opcional, ou só ao usuário criar)
+3. Webhook: lógica de detecção de keyword + agendamento da etapa 1 + cancelamento ao receber resposta
+4. `process-followups`: lógica de encadeamento + business_hours
+5. UI Cadências (TenantForm)
+6. Painel Follow-ups reformulado (métricas + funil + timeline)
+
+## Decisões que preciso de você
+
+- **Business hours**: implemento (8h-21h default) ou pula por enquanto?
+- **Catch-all opcional** (todo lead novo entra na sequência) você quer? Se sim, fica como toggle por cadência.
+- **Múltiplas cadências por tenant** ou só uma de "primeiro contato" por enquanto? (recomendo permitir múltiplas desde já — custo é zero e abre futuro).
+- **Compatibilidade**: mantenho follow-ups antigos (`after_link_sent`, `after_no_reply`) funcionando ou migro tudo pro novo modelo de cadência?
