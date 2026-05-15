@@ -9,10 +9,11 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { SequencesEditor } from "@/components/SequencesEditor";
 
 function slugify(text: string) {
   return text
