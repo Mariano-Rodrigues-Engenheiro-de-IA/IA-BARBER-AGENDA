@@ -1799,6 +1799,16 @@ export default function TenantFormPage() {
               </p>
             </div>
           </TabsContent>
+
+          <TabsContent value="sequences" className="space-y-4">
+            {id && id !== "new" ? (
+              <SequencesEditor tenantId={id} />
+            ) : (
+              <div className="glass-card p-6 text-center text-muted-foreground">
+                Salve o estabelecimento primeiro para configurar cadências.
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
 
         <div className="flex justify-end gap-3 mt-6">
