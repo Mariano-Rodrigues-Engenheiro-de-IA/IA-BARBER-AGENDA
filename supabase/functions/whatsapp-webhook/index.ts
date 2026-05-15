@@ -417,6 +417,15 @@ Deno.serve(async (req) => {
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
+      // 🛑 IA pausada manualmente pelo cliente — ignora a mensagem (mas registra)
+      if (tenant.agent_paused) {
+        console.log(`[PAUSED] Tenant ${tenant.name} está com a IA pausada. Mensagem ignorada.`);
+        return new Response(JSON.stringify({ ok: true, ignored: "agent_paused" }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       if (messageId) {
         const { data: existing } = await supabase
           .from("chat_messages")

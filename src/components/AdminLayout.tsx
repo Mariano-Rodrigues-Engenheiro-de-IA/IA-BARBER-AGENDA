@@ -5,7 +5,7 @@ import { useTenants } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoZaylo from "@/assets/logo-zaylo.png";
 
@@ -14,6 +14,7 @@ const navItems = [
   { to: "/tenants", icon: Building2, label: "Empresas", countKey: "tenants" as const },
   { to: "/follow-ups", icon: Clock, label: "Follow-ups" },
   { to: "/agent-logs", icon: Activity, label: "Monitor IA" },
+  { to: "/audit", icon: ShieldCheck, label: "Auditoria" },
   { to: "/settings", icon: Settings, label: "Configurações" },
 ];
 

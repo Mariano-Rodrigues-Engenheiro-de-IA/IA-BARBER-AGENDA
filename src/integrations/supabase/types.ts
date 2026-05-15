@@ -67,6 +67,45 @@ export type Database = {
           },
         ]
       }
+      audit_logs: {
+        Row: {
+          action: string
+          actor_role: string | null
+          after: Json | null
+          before: Json | null
+          created_at: string
+          entity: string
+          entity_id: string | null
+          id: string
+          tenant_id: string | null
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          actor_role?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          entity: string
+          entity_id?: string | null
+          id?: string
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          actor_role?: string | null
+          after?: Json | null
+          before?: Json | null
+          created_at?: string
+          entity?: string
+          entity_id?: string | null
+          id?: string
+          tenant_id?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       chat_messages: {
         Row: {
           content: string
@@ -342,10 +381,59 @@ export type Database = {
           },
         ]
       }
+      tenant_permissions: {
+        Row: {
+          created_at: string
+          id: string
+          module: string
+          tenant_id: string
+          updated_at: string
+          visibility: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          module: string
+          tenant_id: string
+          updated_at?: string
+          visibility?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          module?: string
+          tenant_id?: string
+          updated_at?: string
+          visibility?: string
+        }
+        Relationships: []
+      }
+      tenant_users: {
+        Row: {
+          created_at: string
+          id: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tenants: {
         Row: {
           address: string | null
           agent_knowledge_base: string | null
+          agent_paused: boolean
           agent_settings: Json | null
           agent_system_prompt: string | null
           api_provider: Database["public"]["Enums"]["api_provider"]
@@ -374,6 +462,7 @@ export type Database = {
         Insert: {
           address?: string | null
           agent_knowledge_base?: string | null
+          agent_paused?: boolean
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
@@ -402,6 +491,7 @@ export type Database = {
         Update: {
           address?: string | null
           agent_knowledge_base?: string | null
+          agent_paused?: boolean
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
@@ -455,6 +545,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_edit_module: {
+        Args: { _module: string; _tenant_id: string; _user_id: string }
+        Returns: boolean
+      }
+      get_user_tenant_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -462,10 +557,14 @@ export type Database = {
         }
         Returns: boolean
       }
+      module_visibility: {
+        Args: { _module: string; _tenant_id: string; _user_id: string }
+        Returns: string
+      }
     }
     Enums: {
       api_provider: "trinks" | "onebeleza" | "none" | "frizzar" | "bemp"
-      app_role: "admin"
+      app_role: "admin" | "client"
       tenant_status: "active" | "inactive" | "suspended"
     }
     CompositeTypes: {
@@ -595,7 +694,7 @@ export const Constants = {
   public: {
     Enums: {
       api_provider: ["trinks", "onebeleza", "none", "frizzar", "bemp"],
-      app_role: ["admin"],
+      app_role: ["admin", "client"],
       tenant_status: ["active", "inactive", "suspended"],
     },
   },
