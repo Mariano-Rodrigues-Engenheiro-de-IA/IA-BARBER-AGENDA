@@ -5208,13 +5208,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
     switch (funcName) {
       case "buscar_cliente": {
         let tel = (args.telefone || "").replace(/\D/g, "");
-        if (!tel && phoneNumber) {
-          tel = String(phoneNumber).replace(/\D/g, "");
-          console.log(`buscar_cliente: telefone ausente nos args, usando phoneNumber da conversa: ${tel}`);
-        }
-        if (!tel) {
-          return { error: "Telefone não informado e não foi possível inferir do contato.", totalRecords: 0, data: [] };
-        }
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         const ddd = tel.substring(0, 2);
         let rest = tel.substring(2);
@@ -5231,13 +5224,6 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
       case "cadastrar_cliente": {
         let tel = (args.telefone || "").replace(/\D/g, "");
-        if (!tel && phoneNumber) {
-          tel = String(phoneNumber).replace(/\D/g, "");
-          console.log(`cadastrar_cliente: telefone ausente nos args, usando phoneNumber da conversa: ${tel}`);
-        }
-        if (!tel) {
-          return { error: "Telefone não informado e não foi possível inferir do contato. Peça o telefone ao cliente." };
-        }
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
         const ddd = tel.substring(0, 2);
         let numero = tel.substring(2);
