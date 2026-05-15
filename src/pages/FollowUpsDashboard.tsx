@@ -174,7 +174,8 @@ export default function FollowUpsDashboard() {
   const maxStep = Math.max(0, ...Object.keys(seqMetrics.stepReached).map(Number));
   const funnelData = Array.from({ length: maxStep }, (_, i) => {
     const step = i + 1;
-    const reached = Array.from({ length: maxStep - i }).reduce((acc: number, _, j) => acc + (seqMetrics.stepReached[step + j] || 0), 0);
+    let reached = 0;
+    for (let j = step; j <= maxStep; j++) reached += (seqMetrics.stepReached[j] || 0);
     return { step, reached, responded: seqMetrics.stepResponded[step] || 0 };
   });
   const maxReached = Math.max(1, ...funnelData.map((f) => f.reached));
