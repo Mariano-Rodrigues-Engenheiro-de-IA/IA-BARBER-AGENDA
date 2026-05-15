@@ -975,6 +975,108 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ===== SEQUENCES: cancel pending steps when lead replies (any message after step 1 was scheduled) =====
+      try {
+        const userMsgCountForSeq = (history || []).filter((m: any) => m.role === "user").length;
+        // Only cancel if this is NOT the first interaction — first msg may be the trigger itself
+        if (userMsgCountForSeq > 1) {
+          const { data: pendingSeqFU } = await supabase
+            .from("follow_ups")
+            .select("id")
+            .eq("tenant_id", tenant.id)
+            .eq("phone_number", phoneNumber)
+            .eq("status", "pending")
+            .not("sequence_id", "is", null);
+          if (pendingSeqFU?.length) {
+            await supabase
+              .from("follow_ups")
+              .update({ status: "expired", cancelled_at: new Date().toISOString(), cancel_reason: "lead_replied" })
+              .in("id", pendingSeqFU.map((f: any) => f.id));
+            console.log(`[Sequence] Cancelled ${pendingSeqFU.length} pending steps for ${phoneNumber} (lead replied)`);
+          }
+        }
+      } catch (e) {
+        console.error("[Sequence] cancel error:", e);
+      }
+
+      // ===== SEQUENCES: trigger first_contact_traffic on first interaction =====
+      try {
+        const userMsgCountForTrigger = (history || []).filter((m: any) => m.role === "user").length;
+        const isFirstInteraction = userMsgCountForTrigger <= 1;
+        if (isFirstInteraction) {
+          const { data: sequences } = await supabase
+            .from("follow_up_sequences")
+            .select("*, follow_up_steps(*)")
+            .eq("tenant_id", tenant.id)
+            .eq("enabled", true)
+            .eq("trigger_type", "first_contact_traffic");
+
+          for (const seq of sequences || []) {
+            const cfg = seq.trigger_config || {};
+            const keywords: string[] = Array.isArray(cfg.keywords) ? cfg.keywords : [];
+            const matchMode: string = cfg.match_mode || "any";
+            const catchAll: boolean = !!cfg.catch_all;
+            const text = String(combinedContent || "").toLowerCase();
+            let matchedKeyword: string | null = null;
+
+            if (catchAll) {
+              matchedKeyword = "__catch_all__";
+            } else if (keywords.length > 0) {
+              if (matchMode === "regex") {
+                for (const k of keywords) {
+                  try {
+                    if (new RegExp(k, "i").test(combinedContent)) { matchedKeyword = k; break; }
+                  } catch {}
+                }
+              } else {
+                const matches = keywords.filter((k) => text.includes(String(k).toLowerCase()));
+                if (matchMode === "all" && matches.length === keywords.length && matches.length > 0) matchedKeyword = matches.join(",");
+                else if (matchMode === "any" && matches.length > 0) matchedKeyword = matches[0];
+              }
+            }
+
+            if (!matchedKeyword) continue;
+
+            // Check no existing follow-up of this sequence for this phone
+            const { data: existing } = await supabase
+              .from("follow_ups")
+              .select("id")
+              .eq("tenant_id", tenant.id)
+              .eq("phone_number", phoneNumber)
+              .eq("sequence_id", seq.id)
+              .limit(1);
+            if (existing?.length) {
+              console.log(`[Sequence] Skip "${seq.name}": already has follow-ups for ${phoneNumber}`);
+              continue;
+            }
+
+            const steps = (seq.follow_up_steps || []).sort((a: any, b: any) => a.step_order - b.step_order);
+            if (!steps.length) continue;
+            const step1 = steps[0];
+
+            // Compute follow_up_at respecting business_hours
+            let triggerAt = new Date(Date.now() + (step1.delay_minutes || 30) * 60 * 1000);
+            const bh = seq.business_hours || {};
+            if (bh.enabled) {
+              triggerAt = adjustToBusinessHours(triggerAt, bh.start || "08:00", bh.end || "21:00", bh.timezone || "America/Sao_Paulo");
+            }
+
+            await supabase.from("follow_ups").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              follow_up_at: triggerAt.toISOString(),
+              follow_up_message: step1.message,
+              sequence_id: seq.id,
+              step_order: step1.step_order,
+              matched_keyword: matchedKeyword,
+            });
+            console.log(`[Sequence] Triggered "${seq.name}" step ${step1.step_order} for ${phoneNumber} at ${triggerAt.toISOString()} (kw=${matchedKeyword})`);
+          }
+        }
+      } catch (e) {
+        console.error("[Sequence] trigger error:", e);
+      }
+
       // Persist assistant message immediately so history stays consistent
       await supabase.from("chat_messages").insert({
         tenant_id: tenant.id,
