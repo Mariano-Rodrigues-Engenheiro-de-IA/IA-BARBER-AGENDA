@@ -65,14 +65,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    let lastUserId: string | null = null;
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session); setUser(session?.user ?? null);
-      if (session?.user) apply(await loadProfile(session.user.id));
+      if (session?.user) {
+        lastUserId = session.user.id;
+        apply(await loadProfile(session.user.id));
+      }
       setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s); setUser(s?.user ?? null);
+      const newUserId = s?.user?.id ?? null;
+      if (newUserId === lastUserId) return; // ignore TOKEN_REFRESHED etc.
+      lastUserId = newUserId;
       if (s?.user) {
         loadProfile(s.user.id).then(apply);
       } else {
