@@ -1020,11 +1020,9 @@ Deno.serve(async (req) => {
         console.error("[Sequence] cancel error:", e);
       }
 
-      // ===== SEQUENCES: trigger first_contact_traffic on first interaction =====
+      // ===== SEQUENCES: trigger first_contact_traffic when keyword matches (and no sequence yet for this phone) =====
       try {
-        const userMsgCountForTrigger = (history || []).filter((m: any) => m.role === "user").length;
-        const isFirstInteraction = userMsgCountForTrigger <= 1;
-        if (isFirstInteraction) {
+        {
           const { data: sequences } = await supabase
             .from("follow_up_sequences")
             .select("*, follow_up_steps(*)")
