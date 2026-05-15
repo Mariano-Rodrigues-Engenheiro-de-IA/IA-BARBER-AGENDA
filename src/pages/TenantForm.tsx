@@ -1302,6 +1302,10 @@ export default function TenantFormPage() {
               <Kanban className="w-3.5 h-3.5" />
               Kanban
             </TabsTrigger>
+            <TabsTrigger value="sequences" className="flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5" />
+              Cadências
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-4">
