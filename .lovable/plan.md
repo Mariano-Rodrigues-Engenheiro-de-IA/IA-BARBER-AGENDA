@@ -1,122 +1,94 @@
+# Plano: Painel do Cliente (multi-tenant) com permissões granulares
 
-# Follow-ups de Primeiro Contato (Tráfego Pago)
+## Visão geral
 
-## Objetivo
-Quando um lead chega via tráfego pago (identificado por palavra-chave na 1ª mensagem), disparar uma sequência de follow-ups configurável. Se o lead responder em qualquer etapa, a sequência é interrompida. Tudo monitorado num painel completo.
+Criar um segundo painel ("Painel do Cliente") onde cada cliente acessa apenas a própria empresa, com login e senha. Você (ADM) controla, por empresa, quais funcionalidades ficam visíveis e se são editáveis ou somente-leitura. Tudo o que o cliente fizer (e o que você fizer no ADM) gera log de auditoria.
 
-## Análise da proposta + sugestões (experiência)
+## O que muda na experiência
 
-Sua proposta está sólida. Pontos que sugiro reforçar:
+**Para o ADM (você):** continua com tudo. Ganha:
+- Botão "Criar acesso do cliente" em cada empresa (gera email + senha temporária para compartilhar).
+- Aba "Permissões" dentro de cada empresa: ligar/desligar e marcar como somente-leitura cada módulo.
+- Aba "Auditoria" global: quem alterou o quê e quando.
 
-1. **Detecção do lead de tráfego** — além de palavra-chave exata, suportar:
-   - Lista de palavras-chave (não só uma) com match case-insensitive
-   - Match parcial OU regex (ex: "quero saber mais", "vi o anúncio", "instagram")
-   - Campo opcional **"qualquer primeira mensagem"** (catch-all) para barbearias que rodam tráfego intenso e querem follow-up em todo lead novo
-   - Salvar a `keyword` que casou no lead (vira métrica: qual criativo converte mais)
+**Para o cliente:** painel simplificado com linguagem amigável e logo + nome da própria empresa no topo (white-label leve). Menus:
+- **Visão Geral** — métricas principais
+- **Conversas** (antes "Monitor IA")
+- **Follow-ups**
+- **Sua IA** (antes "Empresas") — dados, integrações, prompt e base de conhecimento, conforme liberado
+- **CRM** (kanban de leads)
 
-2. **Gatilho preciso** — disparar a sequência quando:
-   - É a 1ª interação do telefone com o tenant (não tem histórico)
-   - A mensagem casa com a regra de keyword (ou catch-all está ativo)
-   - A IA responde normalmente
-   - **Cancela tudo** assim que o lead enviar QUALQUER nova mensagem
+Itens ocultados pelo ADM simplesmente não aparecem no menu nem nas rotas. Itens marcados como somente-leitura aparecem com campos desabilitados e botões de salvar escondidos.
 
-3. **Sequência reciclável (template)** — em vez de configurar 4 mensagens travadas:
-   - Criar conceito de **"Cadência"** (template reutilizável): nome + lista ordenada de etapas `[{ ordem, delay_minutes, mensagem }]`
-   - Cadência default já vem com 4 etapas pré-preenchidas
-   - Você pode adicionar/remover etapas, reordenar (drag), editar texto e intervalo
-   - **Reciclável**: a mesma cadência pode ser usada em vários gatilhos futuros (não só tráfego — depois "lead frio", "pós-atendimento" etc.)
+## Modelo de permissões
 
-4. **Janelas de horário** (sugestão forte) — não enviar follow-up às 3h da manhã. Definir horário comercial (ex: 8h-21h). Se o disparo cair fora, agenda pro próximo horário válido.
+8 módulos controláveis por empresa:
+`overview`, `conversations`, `followups`, `crm`, `ai_prompt`, `ai_knowledge`, `integrations`, `company_data`.
 
-5. **Anti-spam / segurança**:
-   - Limite máximo de etapas por sequência (ex: 10)
-   - Intervalo mínimo entre etapas (ex: 5 min)
-   - Não disparar se o tenant estiver `inactive`
-   - Se a IA já respondeu o lead e ele respondeu de volta antes do 1º follow-up, cancela
-
-6. **Métricas no painel** — completas:
-   - Total de leads de tráfego identificados (por período + por keyword)
-   - Sequências em andamento / pausadas (lead respondeu) / completadas (4/4 enviadas sem resposta) / convertidas (lead respondeu após follow-up X)
-   - Taxa de resposta por etapa (qual mensagem mais converte)
-   - Tempo médio até a primeira resposta
-   - Funil visual: 100 leads → 60 responderam após etapa 1 → 25 após etapa 2 ...
-   - Drill-down por lead: ver a timeline completa (chegou às 14h, IA respondeu, etapa 1 enviada às 14h30, etapa 2 às 15h, lead respondeu às 15h05 → convertido)
+Para cada módulo, 3 estados: **oculto**, **somente-leitura**, **editável**. Padrão ao criar acesso: tudo editável menos `integrations` (somente-leitura, porque mexe em tokens sensíveis).
 
 ## Estrutura técnica
 
-### 1. Banco de dados (migration)
-
-**Nova tabela `follow_up_sequences`** (templates reutilizáveis):
-- `tenant_id`, `name`, `trigger_type` (`first_contact_traffic` por enquanto, expansível)
-- `trigger_config` jsonb: `{ keywords: string[], match_mode: "any"|"all"|"regex", catch_all: bool }`
-- `business_hours` jsonb: `{ enabled, start: "08:00", end: "21:00", timezone: "America/Sao_Paulo" }`
-- `enabled` bool
-
-**Nova tabela `follow_up_steps`**:
-- `sequence_id`, `step_order`, `delay_minutes` (do passo anterior, ou do gatilho se for o 1º), `message`
-
-**Estender `follow_ups`** (agendamentos individuais):
-- `sequence_id` uuid (nullable — mantém compat com follow-ups antigos)
-- `step_order` int
-- `matched_keyword` text (qual keyword disparou — vira métrica)
-- `cancelled_at` timestamptz, `cancel_reason` text (`lead_replied`, `tenant_inactive`, etc.)
-
-Manter `follow_ups` atual funcionando — apenas estender.
-
-### 2. Edge function `whatsapp-webhook`
-
-Ao processar uma mensagem de usuário:
-
 ```text
-SE é primeira interação do phone+tenant
-E existe sequence ativa do tipo "first_contact_traffic"
-E (catch_all OU mensagem casa keywords)
-ENTÃO:
-  - registra `matched_keyword` no log
-  - agenda APENAS a etapa 1 (próximo follow_up_at = agora + step1.delay,
-    respeitando business_hours)
-  - salva sequence_id + step_order=1 no follow_ups
-
-SE NÃO é primeira interação E existem follow_ups pending/sent dessa sequence
-ENTÃO:
-  - cancela todos os pending dessa sequence (cancelled_at, reason="lead_replied")
-  - marca os já enviados como "responded" (nova coluna de status ou usa confirmed)
+/                       → ADM (existente, protegido por role=admin)
+/app                    → Painel do cliente (protegido por role=client)
+  /app/overview
+  /app/conversations
+  /app/followups
+  /app/ai
+  /app/integrations
+  /app/company
+  /app/crm
+/login                  → login único; redireciona conforme role
 ```
 
-### 3. Edge function `process-followups`
+### Banco de dados (migration)
 
-Quando dispara uma etapa N:
-- Envia mensagem
-- Se existe etapa N+1 na sequence E lead ainda não respondeu → agenda N+1 com delay configurado
-- Se é a última etapa → marca sequência como `completed`
-- Tudo respeita business_hours
+- Novo enum `app_role` ganha o valor `client` (já existe `admin`).
+- Nova tabela `tenant_users(tenant_id, user_id, created_at)` — vínculo 1 usuário ↔ 1 empresa (UNIQUE em user_id).
+- Nova tabela `tenant_permissions(tenant_id, module, visibility)` onde `visibility ∈ ('hidden','read_only','editable')`. Linha ausente = `editable`.
+- Nova tabela `audit_logs(id, tenant_id, user_id, actor_role, action, entity, entity_id, before, after, created_at)`.
+- Função `get_user_tenant_id(_user_id uuid) returns uuid` (security definer) e `can_edit(_user_id, _tenant_id, _module text) returns boolean`.
+- RLS atualizada em `tenants`, `crm_leads`, `follow_ups`, `follow_up_sequences`, `chat_messages`, `agent_logs`, `conversation_state`: além de `has_role(admin)`, permitir `tenant_id = get_user_tenant_id(auth.uid())` para SELECT, e UPDATE só quando `can_edit(...)` for true.
 
-### 4. UI
+### Edge function `admin-create-client-user`
 
-**Aba "Cadências" no TenantForm** (CRUD de templates):
-- Card por cadência: nome, gatilho, status, qtd de etapas
-- Editor: gatilho + lista drag-and-drop de etapas (cada uma com `delay`, `mensagem`, preview)
-- Templates pré-prontos: "Tráfego pago — 4 etapas (padrão)", customizáveis
+Chamada pelo ADM no botão "Criar acesso". Usa `service_role` para:
+1. Criar usuário em `auth.users` com email informado e senha aleatória.
+2. Inserir `user_roles(role='client')` e `tenant_users(tenant_id, user_id)`.
+3. Inserir `tenant_permissions` padrão.
+4. Devolver email + senha temporária para o ADM copiar e enviar ao cliente.
 
-**Painel `/follow-ups` reformulado**:
-- Filtros: período, tenant, sequence, keyword
-- Cards de métricas: leads captados, sequências ativas/canceladas/completadas, taxa de resposta global, tempo médio até resposta
-- Funil por etapa (gráfico de barras decrescentes)
-- Tabela de leads: telefone, keyword, etapa atual, status, última atualização → clicar abre timeline
-- Modal timeline: linha do tempo com cada etapa enviada + resposta do lead
+### Frontend
+
+- `useAuth` passa a expor `role` (`admin` | `client`) e, se cliente, `tenantId` + `permissions` (mapa módulo→estado).
+- Novo `ClientLayout` (espelho simplificado do `AdminLayout`) usando logo/nome da empresa do tenant.
+- Novo guard `ClientRoute` e rotas `/app/*`.
+- Hook `useModulePermission(module)` retorna `{ visible, editable }`. Componentes de edição usam `disabled={!editable}` e escondem botão Salvar.
+- No ADM:
+  - Em `/tenants/:id`, nova aba **Acessos**: lista usuários vinculados, botão "Criar acesso do cliente" (modal mostra credenciais geradas uma única vez), botão "Resetar senha".
+  - Em `/tenants/:id`, nova aba **Permissões**: tabela 8 módulos × 3 estados (radio).
+  - Nova rota `/audit` no menu ADM.
+
+### Auditoria
+
+- Hook utilitário `logAudit(action, entity, entityId, before, after)` chamado nos handlers de save (frontend) e gatilhos PG nos updates de `tenants`, `follow_up_sequences`, `follow_up_steps`, `crm_leads` para capturar mudanças mesmo se vierem da IA.
+
+## Sugestões extras (recomendo incluir já)
+
+1. **Indicador de status do WhatsApp** no topo do painel do cliente (verde/vermelho), lendo o último ping do UAZAPI.
+2. **Resumo "Últimas 24h"** na Visão Geral do cliente: nº de leads novos, conversas ativas, follow-ups enviados, taxa de resposta — números que ele entende.
+3. **Botão "Pausar IA"** no painel do cliente (cria flag `agent_paused` no tenant; a webhook respeita). Útil para o cliente assumir manualmente.
+4. **Convite por link** como evolução futura do "criar manualmente": mesmo backend, só troca o passo final por envio de email com link de definição de senha.
+5. **Multi-empresa por usuário** preparado no schema (`tenant_users` é N:N) mesmo usando 1:1 hoje — evita migration futura.
 
 ## Entregáveis (ordem de implementação)
 
-1. Migration: `follow_up_sequences`, `follow_up_steps`, novas colunas em `follow_ups`
-2. Backfill: criar uma sequence default por tenant ativo (opcional, ou só ao usuário criar)
-3. Webhook: lógica de detecção de keyword + agendamento da etapa 1 + cancelamento ao receber resposta
-4. `process-followups`: lógica de encadeamento + business_hours
-5. UI Cadências (TenantForm)
-6. Painel Follow-ups reformulado (métricas + funil + timeline)
+1. Migration: enum, tabelas, funções, RLS, triggers de auditoria.
+2. Edge function `admin-create-client-user`.
+3. `useAuth` com role/tenant/permissions + `ClientRoute` + `ClientLayout`.
+4. Páginas `/app/*` reaproveitando componentes existentes com gating de permissão.
+5. ADM: abas **Acessos** e **Permissões** em `/tenants/:id` + página `/audit`.
+6. Indicador de status WhatsApp + botão "Pausar IA" + Visão Geral do cliente.
 
-## Decisões que preciso de você
-
-- **Business hours**: implemento (8h-21h default) ou pula por enquanto?
-- **Catch-all opcional** (todo lead novo entra na sequência) você quer? Se sim, fica como toggle por cadência.
-- **Múltiplas cadências por tenant** ou só uma de "primeiro contato" por enquanto? (recomendo permitir múltiplas desde já — custo é zero e abre futuro).
-- **Compatibilidade**: mantenho follow-ups antigos (`after_link_sent`, `after_no_reply`) funcionando ou migro tudo pro novo modelo de cadência?
+Confirma que posso seguir com este escopo?
