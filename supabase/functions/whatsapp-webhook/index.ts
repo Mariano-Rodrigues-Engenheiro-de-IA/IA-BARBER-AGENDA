@@ -5,6 +5,27 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
 };
 
+// ===== Business hours helper for follow-up sequences =====
+// If `at` falls outside [start,end] in given tz, push to next start within window.
+function adjustToBusinessHours(at: Date, start: string, end: string, timezone: string): Date {
+  try {
+    const [sh, sm] = start.split(":").map(Number);
+    const [eh, em] = end.split(":").map(Number);
+    const fmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: timezone });
+    const parts = fmt.formatToParts(at);
+    const hh = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+    const mm = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+    const cur = hh * 60 + mm;
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    if (cur >= startMin && cur < endMin) return at;
+    const diff = cur < startMin ? (startMin - cur) : ((24 * 60 - cur) + startMin);
+    return new Date(at.getTime() + diff * 60 * 1000);
+  } catch {
+    return at;
+  }
+}
+
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 const exactDigitsMatch = (a: unknown, b: unknown) => {
   const left = digitsOnly(a);
