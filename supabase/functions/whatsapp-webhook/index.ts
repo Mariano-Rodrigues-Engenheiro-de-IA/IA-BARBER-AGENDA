@@ -222,40 +222,50 @@ async function registerOneBelezaClient(
   tel: string,
   nome: string,
   logPrefix: string,
-) {
+  tenantId?: string,
+): Promise<{ res: Response; text: string; aliasUsed?: string }> {
   const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
-  const baseBody = {
-    celular: tel,
-    nome: nome || "Cliente",
+
+  const doRegister = async (celular: string, withEmail?: string) => {
+    const body: Record<string, unknown> = { celular, nome: nome || "Cliente" };
+    if (withEmail) body.email = withEmail;
+    console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(body));
+    const r = await fetch(regUrl, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const t = await r.text();
+    console.log(`${logPrefix} cadastrar_cliente response (${r.status}):`, t.slice(0, 500));
+    return { r, t };
   };
 
-  console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(baseBody));
-  let res = await fetch(regUrl, {
-    method: "POST",
-    headers: { ...authHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(baseBody),
-  });
-  let text = await res.text();
-  console.log(`${logPrefix} cadastrar_cliente response (${res.status}):`, text.slice(0, 500));
+  // 1. Tenta com telefone real
+  let { r: res, t: text } = await doRegister(tel);
 
-  if (!shouldRetryOneBelezaWithEmail(res.status, text)) {
-    return { res, text };
+  // 2. Se erro de email → retry com email gerado
+  if (shouldRetryOneBelezaWithEmail(res.status, text)) {
+    const fallbackEmail = buildOneBelezaGenericEmail(tel);
+    console.log(`${logPrefix} cadastrar_cliente retry with generated email: ${fallbackEmail}`);
+    ({ r: res, t: text } = await doRegister(tel, fallbackEmail));
   }
 
-  const fallbackEmail = buildOneBelezaGenericEmail(tel);
-  const retryBody = {
-    ...baseBody,
-    email: fallbackEmail,
-  };
+  // 3. Se erro de "telefone já em uso em outra conta" → tenta alias por tenant
+  if (tenantId && isOneBelezaPhoneInUseError(res.status, text)) {
+    try {
+      const alias = await getOrCreateOneBelezaAlias(tenantId, tel, nome);
+      console.log(`${logPrefix} cadastrar_cliente retry with alias phone: ${alias} (real=${tel})`);
+      const aliasEmail = buildOneBelezaGenericEmail(alias);
+      ({ r: res, t: text } = await doRegister(alias, aliasEmail));
+      if (shouldRetryOneBelezaWithEmail(res.status, text)) {
+        ({ r: res, t: text } = await doRegister(alias));
+      }
+      return { res, text, aliasUsed: alias };
+    } catch (e) {
+      console.error(`${logPrefix} cadastrar_cliente alias fallback error:`, (e as Error).message);
+    }
+  }
 
-  console.log(`${logPrefix} cadastrar_cliente retry with generated email: ${fallbackEmail}`);
-  res = await fetch(regUrl, {
-    method: "POST",
-    headers: { ...authHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(retryBody),
-  });
-  text = await res.text();
-  console.log(`${logPrefix} cadastrar_cliente retry response (${res.status}):`, text.slice(0, 500));
   return { res, text };
 }
 
