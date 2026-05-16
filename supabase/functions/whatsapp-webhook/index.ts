@@ -5775,9 +5775,12 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_cliente": {
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-        
-        const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`;
-        console.log(`[OneBeleza] buscar_cliente URL: ${url}`);
+
+        // Se já temos alias mapeado para este tenant + telefone real, usa o alias
+        const effectiveTel = await resolveOneBelezaClientPhone(tenant.id, tel);
+
+        const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${effectiveTel}`;
+        console.log(`[OneBeleza] buscar_cliente URL: ${url} (real=${tel}, effective=${effectiveTel})`);
         const res = await fetch(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_cliente response (${res.status}):`, text.slice(0, 500));
@@ -5787,14 +5790,27 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "cadastrar_cliente": {
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-        
-        const { res, text } = await registerOneBelezaClient(
+
+        const { res, text, aliasUsed } = await registerOneBelezaClient(
           authHeaders,
           tel,
           args.nome || "Cliente",
           "[OneBeleza]",
+          tenant.id,
         );
-        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 200), status: res.status }; }
+        if (aliasUsed) {
+          // Anexa info pra IA saber que o cadastro foi resolvido via alias e pode seguir
+          parsed = {
+            ...(typeof parsed === "object" && parsed !== null ? parsed : { raw: parsed }),
+            ok: res.ok || (res.status >= 200 && res.status < 300),
+            aliasUsed,
+            realPhone: tel,
+            info: "Cliente cadastrado com telefone alternativo (o número original já estava em outra conta). O sistema usará o alias automaticamente em todas as próximas chamadas. Prossiga normalmente.",
+          };
+        }
+        return parsed;
       }
 
       case "buscar_servicos": {
