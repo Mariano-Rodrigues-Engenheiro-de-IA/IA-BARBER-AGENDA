@@ -1,94 +1,103 @@
-# Plano: Painel do Cliente (multi-tenant) com permissões granulares
+# Fix: cadastro One Beleza quando número já está em outra conta
 
-## Visão geral
+## Problema (confirmado nos logs)
 
-Criar um segundo painel ("Painel do Cliente") onde cada cliente acessa apenas a própria empresa, com login e senha. Você (ADM) controla, por empresa, quais funcionalidades ficam visíveis e se são editáveis ou somente-leitura. Tudo o que o cliente fizer (e o que você fizer no ADM) gera log de auditoria.
+Na Barbearia Marquês Ceilândia (`556184897699`):
 
-## O que muda na experiência
+1. `buscar_cliente` com o telefone real → retorna vazio (cliente não existe nesta unidade)
+2. `cadastrar_cliente` com mesmo telefone → API responde:
+   > "O número de telefone já está associado a outra conta de usuário. Por favor, insira um número de telefone diferente."
+3. `agendar` → bloqueado por "Cliente não encontrado pelo telefone"
 
-**Para o ADM (você):** continua com tudo. Ganha:
-- Botão "Criar acesso do cliente" em cada empresa (gera email + senha temporária para compartilhar).
-- Aba "Permissões" dentro de cada empresa: ligar/desligar e marcar como somente-leitura cada módulo.
-- Aba "Auditoria" global: quem alterou o quê e quando.
+A IA fica em loop, tentando o mesmo número várias vezes (5 tentativas no log), sem nunca conseguir agendar.
 
-**Para o cliente:** painel simplificado com linguagem amigável e logo + nome da própria empresa no topo (white-label leve). Menus:
-- **Visão Geral** — métricas principais
-- **Conversas** (antes "Monitor IA")
-- **Follow-ups**
-- **Sua IA** (antes "Empresas") — dados, integrações, prompt e base de conhecimento, conforme liberado
-- **CRM** (kanban de leads)
+**Causa raiz:** a base da One Beleza é global — o telefone do cliente já está cadastrado sob outro estabelecimento/usuário, então tanto a busca quanto o cadastro falham neste tenant.
 
-Itens ocultados pelo ADM simplesmente não aparecem no menu nem nas rotas. Itens marcados como somente-leitura aparecem com campos desabilitados e botões de salvar escondidos.
+## Solução: telefone-alias por tenant (persistente)
 
-## Modelo de permissões
+Ao detectar o erro de telefone duplicado, geramos um **telefone-alias único por tenant** (ex.: `61900000001`, `61900000002`, ...), cadastramos com esse alias + nome real do cliente, e guardamos o mapeamento `(tenant_id, real_phone) → alias_phone` em uma nova tabela. Daí em diante, qualquer chamada da One Beleza para esse cliente usa o alias automaticamente.
 
-8 módulos controláveis por empresa:
-`overview`, `conversations`, `followups`, `crm`, `ai_prompt`, `ai_knowledge`, `integrations`, `company_data`.
+### Por que não usar só placeholder no momento?
 
-Para cada módulo, 3 estados: **oculto**, **somente-leitura**, **editável**. Padrão ao criar acesso: tudo editável menos `integrations` (somente-leitura, porque mexe em tokens sensíveis).
+Porque o endpoint `agendar` usa `?celular={tel}` para **atribuir o agendamento ao cliente** e também para resolver o `cliforcolsid`. Se cadastrarmos com alias mas voltarmos a buscar com o telefone real, a busca continua falhando. O alias precisa ser **lembrado e reutilizado** em todas as chamadas seguintes (busca + agendamento + busca de agendamentos do dia).
 
-## Estrutura técnica
+## Mudanças
+
+### 1. Nova tabela `onebeleza_client_aliases`
 
 ```text
-/                       → ADM (existente, protegido por role=admin)
-/app                    → Painel do cliente (protegido por role=client)
-  /app/overview
-  /app/conversations
-  /app/followups
-  /app/ai
-  /app/integrations
-  /app/company
-  /app/crm
-/login                  → login único; redireciona conforme role
+tenant_id      uuid       (FK indireta para tenants)
+real_phone     text       (telefone real do WhatsApp, só dígitos, sem 55)
+alias_phone    text       (telefone-alias usado na One Beleza)
+real_name      text       (nome real informado pelo cliente)
+created_at     timestamptz
+UNIQUE (tenant_id, real_phone)
+UNIQUE (tenant_id, alias_phone)
 ```
 
-### Banco de dados (migration)
+RLS: admins veem tudo, clients veem só do seu tenant, service insere/lê.
 
-- Novo enum `app_role` ganha o valor `client` (já existe `admin`).
-- Nova tabela `tenant_users(tenant_id, user_id, created_at)` — vínculo 1 usuário ↔ 1 empresa (UNIQUE em user_id).
-- Nova tabela `tenant_permissions(tenant_id, module, visibility)` onde `visibility ∈ ('hidden','read_only','editable')`. Linha ausente = `editable`.
-- Nova tabela `audit_logs(id, tenant_id, user_id, actor_role, action, entity, entity_id, before, after, created_at)`.
-- Função `get_user_tenant_id(_user_id uuid) returns uuid` (security definer) e `can_edit(_user_id, _tenant_id, _module text) returns boolean`.
-- RLS atualizada em `tenants`, `crm_leads`, `follow_ups`, `follow_up_sequences`, `chat_messages`, `agent_logs`, `conversation_state`: além de `has_role(admin)`, permitir `tenant_id = get_user_tenant_id(auth.uid())` para SELECT, e UPDATE só quando `can_edit(...)` for true.
+### 2. Função `getOrCreateOneBelezaAlias(tenant_id, real_phone)`
 
-### Edge function `admin-create-client-user`
+- Gera prefixo por tenant a partir do hash do `tenant.id` (3–4 dígitos estáveis), evitando colisão entre tenants.
+- Sequência: pega o maior `alias_phone` existente para esse tenant e incrementa (ex.: `619000000001` → `619000000002`).
+- Formato final: 11 dígitos brasileiros válidos para a API aceitar.
 
-Chamada pelo ADM no botão "Criar acesso". Usa `service_role` para:
-1. Criar usuário em `auth.users` com email informado e senha aleatória.
-2. Inserir `user_roles(role='client')` e `tenant_users(tenant_id, user_id)`.
-3. Inserir `tenant_permissions` padrão.
-4. Devolver email + senha temporária para o ADM copiar e enviar ao cliente.
+### 3. Lógica em `registerOneBelezaClient`
 
-### Frontend
+Fluxo atualizado:
 
-- `useAuth` passa a expor `role` (`admin` | `client`) e, se cliente, `tenantId` + `permissions` (mapa módulo→estado).
-- Novo `ClientLayout` (espelho simplificado do `AdminLayout`) usando logo/nome da empresa do tenant.
-- Novo guard `ClientRoute` e rotas `/app/*`.
-- Hook `useModulePermission(module)` retorna `{ visible, editable }`. Componentes de edição usam `disabled={!editable}` e escondem botão Salvar.
-- No ADM:
-  - Em `/tenants/:id`, nova aba **Acessos**: lista usuários vinculados, botão "Criar acesso do cliente" (modal mostra credenciais geradas uma única vez), botão "Resetar senha".
-  - Em `/tenants/:id`, nova aba **Permissões**: tabela 8 módulos × 3 estados (radio).
-  - Nova rota `/audit` no menu ADM.
+```text
+1. Tenta cadastro com telefone REAL + nome real
+2. Se 2xx → ok, retorna
+3. Se erro de "email em uso/obrigatório" → retry com email gerado (já existe)
+4. NOVO: se erro de "número já associado a outra conta" →
+   a. Gera/recupera alias para (tenant_id, real_phone)
+   b. Faz cadastro com alias_phone + nome real
+   c. Persiste mapping na tabela
+   d. Retorna { ok: true, aliasUsed: alias_phone, realPhone: real_phone }
+5. Se ainda falhar → retorna erro original
+```
 
-### Auditoria
+### 4. Resolver alias antes de chamadas da One Beleza
 
-- Hook utilitário `logAudit(action, entity, entityId, before, after)` chamado nos handlers de save (frontend) e gatilhos PG nos updates de `tenants`, `follow_up_sequences`, `follow_up_steps`, `crm_leads` para capturar mudanças mesmo se vierem da IA.
+Criar helper `resolveOneBelezaClientPhone(tenant_id, real_phone)` que retorna o alias se existir, senão o telefone real. Aplicar em:
 
-## Sugestões extras (recomendo incluir já)
+- `buscar_cliente` (case do `executeOneBelezaTool`)
+- `agendar` (linha ~5903 — `clienteTel`)
+- `buscar_agendamentos_dia`
+- `confirmar_agendamento` / `desmarcar_agendamento`
 
-1. **Indicador de status do WhatsApp** no topo do painel do cliente (verde/vermelho), lendo o último ping do UAZAPI.
-2. **Resumo "Últimas 24h"** na Visão Geral do cliente: nº de leads novos, conversas ativas, follow-ups enviados, taxa de resposta — números que ele entende.
-3. **Botão "Pausar IA"** no painel do cliente (cria flag `agent_paused` no tenant; a webhook respeita). Útil para o cliente assumir manualmente.
-4. **Convite por link** como evolução futura do "criar manualmente": mesmo backend, só troca o passo final por envio de email com link de definição de senha.
-5. **Multi-empresa por usuário** preparado no schema (`tenant_users` é N:N) mesmo usando 1:1 hoje — evita migration futura.
+Assim, mesmo em conversas futuras, o sistema lembra que aquele WhatsApp usa o alias X na One Beleza.
 
-## Entregáveis (ordem de implementação)
+### 5. Ordem de busca melhorada (bônus)
 
-1. Migration: enum, tabelas, funções, RLS, triggers de auditoria.
-2. Edge function `admin-create-client-user`.
-3. `useAuth` com role/tenant/permissions + `ClientRoute` + `ClientLayout`.
-4. Páginas `/app/*` reaproveitando componentes existentes com gating de permissão.
-5. ADM: abas **Acessos** e **Permissões** em `/tenants/:id` + página `/audit`.
-6. Indicador de status WhatsApp + botão "Pausar IA" + Visão Geral do cliente.
+Em `buscar_cliente`, antes de retornar "não encontrado":
+- Tentar com `55` + telefone, sem `55`, com/sem o `9` adicional (variações comuns BR), para reduzir falsos negativos.
 
-Confirma que posso seguir com este escopo?
+### 6. Prompt da IA
+
+Atualizar a seção One Beleza do system prompt para deixar explícito:
+- Se `cadastrar_cliente` retornar `{ ok: true, aliasUsed: ... }`, **prossiga normalmente com agendar** — o sistema cuida do mapeamento.
+- Não tentar repetir o cadastro com variações do telefone.
+
+### 7. Observabilidade
+
+- Log `[OneBeleza][alias] tenant=… real=… alias=… reason=phone_already_in_use`
+- Insert em `audit_logs` (entity=`onebeleza_alias`, action=`created`) para o ADM ver no painel de Auditoria.
+
+## Arquivos afetados
+
+- `supabase/migrations/<new>.sql` — tabela + RLS
+- `supabase/functions/whatsapp-webhook/index.ts`
+  - `registerOneBelezaClient` (linhas ~103–143): detectar duplicata + alias fallback
+  - `executeOneBelezaTool` cases `buscar_cliente`, `cadastrar_cliente`, `agendar`, `buscar_agendamentos_dia`, `confirmar_agendamento`, `desmarcar_agendamento`
+  - `buildSystemPromptOneBeleza`: instruir IA sobre o fluxo de alias
+
+## Alternativas consideradas
+
+- **Só placeholder sem mapping persistente** (sua sugestão original): mais simples, mas o `agendar` voltaria a quebrar pois ele busca cliforcolsid pelo telefone — precisaria também guardar o telefone usado. Por isso optei pela tabela.
+- **Pedir ao cliente outro telefone**: péssima UX e o cliente provavelmente não tem outro.
+- **Detectar e extrair clienteId da mensagem de erro**: a API não devolve o id no erro, só a mensagem genérica — inviável.
+
+Após aprovação, implemento migration + alterações no webhook e testo no log do tenant Marquês Ceilândia.

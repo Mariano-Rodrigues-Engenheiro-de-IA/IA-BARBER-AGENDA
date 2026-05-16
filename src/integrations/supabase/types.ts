@@ -381,6 +381,36 @@ export type Database = {
           },
         ]
       }
+      onebeleza_client_aliases: {
+        Row: {
+          alias_phone: string
+          created_at: string
+          id: string
+          real_name: string | null
+          real_phone: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          alias_phone: string
+          created_at?: string
+          id?: string
+          real_name?: string | null
+          real_phone: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          alias_phone?: string
+          created_at?: string
+          id?: string
+          real_name?: string | null
+          real_phone?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       tenant_permissions: {
         Row: {
           created_at: string
