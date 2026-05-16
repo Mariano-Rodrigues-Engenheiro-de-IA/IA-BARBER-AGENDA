@@ -6049,6 +6049,9 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           console.error(`[OneBeleza] agendar BLOCKED: empty client phone for booking`);
           return { error: "Telefone do cliente ausente; não é possível agendar.", blocked: true };
         }
+        // Se houver alias mapeado, usa o alias na API
+        const realClienteTel = clienteTel;
+        clienteTel = await resolveOneBelezaClientPhone(tenant.id, clienteTel);
 
         // Resolve cliente (cliforcolsid) by the CLIENT phone
         let cliforcolsid = "";
