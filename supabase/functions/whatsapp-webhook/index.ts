@@ -79,6 +79,123 @@ const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
 };
+
+// ===== One Beleza alias helpers (handle "phone already in use globally") =====
+const isOneBelezaPhoneInUseError = (status: number, responseText: string) => {
+  if (status >= 200 && status < 300) return false;
+  const normalized = normalizeUserFacingText(responseText);
+  // Mensagem oficial: "O número de telefone já está associado a outra conta de usuário..."
+  return (
+    (normalized.includes("numero de telefone") || normalized.includes("telefone") || normalized.includes("celular")) &&
+    (normalized.includes("ja esta associado") ||
+      normalized.includes("ja associado") ||
+      normalized.includes("outra conta") ||
+      normalized.includes("ja esta cadastrado") ||
+      normalized.includes("ja cadastrado") ||
+      normalized.includes("ja existe"))
+  );
+};
+
+function _serviceSupabase() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+}
+
+function _generateAliasPhone(tenantId: string, n: number) {
+  // 11 dígitos, começa com 9 (formato celular BR); 4 dígitos derivados do tenant + 6 sequenciais
+  const tHash = parseInt(tenantId.replace(/-/g, "").slice(0, 4), 16) % 10000;
+  return `9${String(tHash).padStart(4, "0")}${String(n).padStart(6, "0")}`;
+}
+
+async function getOrCreateOneBelezaAlias(
+  tenantId: string,
+  realPhone: string,
+  realName?: string,
+): Promise<string> {
+  const supabase = _serviceSupabase();
+  const realDigits = digitsOnly(realPhone);
+
+  // 1. Já existe?
+  const { data: existing } = await supabase
+    .from("onebeleza_client_aliases")
+    .select("alias_phone")
+    .eq("tenant_id", tenantId)
+    .eq("real_phone", realDigits)
+    .maybeSingle();
+  if (existing?.alias_phone) return existing.alias_phone;
+
+  // 2. Gera novo (com retry em colisão)
+  const { count } = await supabase
+    .from("onebeleza_client_aliases")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId);
+  let next = (count ?? 0) + 1;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const alias = _generateAliasPhone(tenantId, next + attempt);
+    const { data, error } = await supabase
+      .from("onebeleza_client_aliases")
+      .insert({
+        tenant_id: tenantId,
+        real_phone: realDigits,
+        alias_phone: alias,
+        real_name: realName || null,
+      })
+      .select("alias_phone")
+      .maybeSingle();
+    if (!error && data?.alias_phone) {
+      console.log(`[OneBeleza][alias] created tenant=${tenantId} real=${realDigits} alias=${alias}`);
+      // Best-effort audit log
+      try {
+        await supabase.from("audit_logs").insert({
+          tenant_id: tenantId,
+          actor_role: "service",
+          entity: "onebeleza_alias",
+          entity_id: alias,
+          action: "created",
+          after: { real_phone: realDigits, alias_phone: alias, real_name: realName || null },
+        });
+      } catch { /* ignore */ }
+      return alias;
+    }
+    // Caso de corrida: re-checa se já foi criado
+    const { data: again } = await supabase
+      .from("onebeleza_client_aliases")
+      .select("alias_phone")
+      .eq("tenant_id", tenantId)
+      .eq("real_phone", realDigits)
+      .maybeSingle();
+    if (again?.alias_phone) return again.alias_phone;
+  }
+  throw new Error("Falha ao gerar alias OneBeleza após múltiplas tentativas");
+}
+
+async function resolveOneBelezaClientPhone(
+  tenantId: string,
+  realPhone: string,
+): Promise<string> {
+  const realDigits = digitsOnly(realPhone);
+  if (!realDigits) return realDigits;
+  try {
+    const supabase = _serviceSupabase();
+    const { data } = await supabase
+      .from("onebeleza_client_aliases")
+      .select("alias_phone")
+      .eq("tenant_id", tenantId)
+      .eq("real_phone", realDigits)
+      .maybeSingle();
+    if (data?.alias_phone) {
+      console.log(`[OneBeleza][alias] resolved tenant=${tenantId} real=${realDigits} -> alias=${data.alias_phone}`);
+      return data.alias_phone;
+    }
+  } catch (e) {
+    console.error("[OneBeleza][alias] resolve error:", (e as Error).message);
+  }
+  return realDigits;
+}
+
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
   const normalized = normalizeUserFacingText(responseText);
@@ -105,40 +222,50 @@ async function registerOneBelezaClient(
   tel: string,
   nome: string,
   logPrefix: string,
-) {
+  tenantId?: string,
+): Promise<{ res: Response; text: string; aliasUsed?: string }> {
   const regUrl = "https://onetotemapi.azurewebsites.net/api/OLoginChatBot/CadastrarUsuario";
-  const baseBody = {
-    celular: tel,
-    nome: nome || "Cliente",
+
+  const doRegister = async (celular: string, withEmail?: string) => {
+    const body: Record<string, unknown> = { celular, nome: nome || "Cliente" };
+    if (withEmail) body.email = withEmail;
+    console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(body));
+    const r = await fetch(regUrl, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const t = await r.text();
+    console.log(`${logPrefix} cadastrar_cliente response (${r.status}):`, t.slice(0, 500));
+    return { r, t };
   };
 
-  console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(baseBody));
-  let res = await fetch(regUrl, {
-    method: "POST",
-    headers: { ...authHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(baseBody),
-  });
-  let text = await res.text();
-  console.log(`${logPrefix} cadastrar_cliente response (${res.status}):`, text.slice(0, 500));
+  // 1. Tenta com telefone real
+  let { r: res, t: text } = await doRegister(tel);
 
-  if (!shouldRetryOneBelezaWithEmail(res.status, text)) {
-    return { res, text };
+  // 2. Se erro de email → retry com email gerado
+  if (shouldRetryOneBelezaWithEmail(res.status, text)) {
+    const fallbackEmail = buildOneBelezaGenericEmail(tel);
+    console.log(`${logPrefix} cadastrar_cliente retry with generated email: ${fallbackEmail}`);
+    ({ r: res, t: text } = await doRegister(tel, fallbackEmail));
   }
 
-  const fallbackEmail = buildOneBelezaGenericEmail(tel);
-  const retryBody = {
-    ...baseBody,
-    email: fallbackEmail,
-  };
+  // 3. Se erro de "telefone já em uso em outra conta" → tenta alias por tenant
+  if (tenantId && isOneBelezaPhoneInUseError(res.status, text)) {
+    try {
+      const alias = await getOrCreateOneBelezaAlias(tenantId, tel, nome);
+      console.log(`${logPrefix} cadastrar_cliente retry with alias phone: ${alias} (real=${tel})`);
+      const aliasEmail = buildOneBelezaGenericEmail(alias);
+      ({ r: res, t: text } = await doRegister(alias, aliasEmail));
+      if (shouldRetryOneBelezaWithEmail(res.status, text)) {
+        ({ r: res, t: text } = await doRegister(alias));
+      }
+      return { res, text, aliasUsed: alias };
+    } catch (e) {
+      console.error(`${logPrefix} cadastrar_cliente alias fallback error:`, (e as Error).message);
+    }
+  }
 
-  console.log(`${logPrefix} cadastrar_cliente retry with generated email: ${fallbackEmail}`);
-  res = await fetch(regUrl, {
-    method: "POST",
-    headers: { ...authHeaders, "Content-Type": "application/json" },
-    body: JSON.stringify(retryBody),
-  });
-  text = await res.text();
-  console.log(`${logPrefix} cadastrar_cliente retry response (${res.status}):`, text.slice(0, 500));
   return { res, text };
 }
 
@@ -5648,9 +5775,12 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_cliente": {
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-        
-        const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${tel}`;
-        console.log(`[OneBeleza] buscar_cliente URL: ${url}`);
+
+        // Se já temos alias mapeado para este tenant + telefone real, usa o alias
+        const effectiveTel = await resolveOneBelezaClientPhone(tenant.id, tel);
+
+        const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${effectiveTel}`;
+        console.log(`[OneBeleza] buscar_cliente URL: ${url} (real=${tel}, effective=${effectiveTel})`);
         const res = await fetch(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_cliente response (${res.status}):`, text.slice(0, 500));
@@ -5660,14 +5790,27 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "cadastrar_cliente": {
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-        
-        const { res, text } = await registerOneBelezaClient(
+
+        const { res, text, aliasUsed } = await registerOneBelezaClient(
           authHeaders,
           tel,
           args.nome || "Cliente",
           "[OneBeleza]",
+          tenant.id,
         );
-        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 200), status: res.status }; }
+        if (aliasUsed) {
+          // Anexa info pra IA saber que o cadastro foi resolvido via alias e pode seguir
+          parsed = {
+            ...(typeof parsed === "object" && parsed !== null ? parsed : { raw: parsed }),
+            ok: res.ok || (res.status >= 200 && res.status < 300),
+            aliasUsed,
+            realPhone: tel,
+            info: "Cliente cadastrado com telefone alternativo (o número original já estava em outra conta). O sistema usará o alias automaticamente em todas as próximas chamadas. Prossiga normalmente.",
+          };
+        }
+        return parsed;
       }
 
       case "buscar_servicos": {
@@ -5906,6 +6049,9 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           console.error(`[OneBeleza] agendar BLOCKED: empty client phone for booking`);
           return { error: "Telefone do cliente ausente; não é possível agendar.", blocked: true };
         }
+        // Se houver alias mapeado, usa o alias na API
+        const realClienteTel = clienteTel;
+        clienteTel = await resolveOneBelezaClientPhone(tenant.id, clienteTel);
 
         // Resolve cliente (cliforcolsid) by the CLIENT phone
         let cliforcolsid = "";
