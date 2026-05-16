@@ -79,6 +79,123 @@ const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
 };
+
+// ===== One Beleza alias helpers (handle "phone already in use globally") =====
+const isOneBelezaPhoneInUseError = (status: number, responseText: string) => {
+  if (status >= 200 && status < 300) return false;
+  const normalized = normalizeUserFacingText(responseText);
+  // Mensagem oficial: "O número de telefone já está associado a outra conta de usuário..."
+  return (
+    (normalized.includes("numero de telefone") || normalized.includes("telefone") || normalized.includes("celular")) &&
+    (normalized.includes("ja esta associado") ||
+      normalized.includes("ja associado") ||
+      normalized.includes("outra conta") ||
+      normalized.includes("ja esta cadastrado") ||
+      normalized.includes("ja cadastrado") ||
+      normalized.includes("ja existe"))
+  );
+};
+
+function _serviceSupabase() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+}
+
+function _generateAliasPhone(tenantId: string, n: number) {
+  // 11 dígitos, começa com 9 (formato celular BR); 4 dígitos derivados do tenant + 6 sequenciais
+  const tHash = parseInt(tenantId.replace(/-/g, "").slice(0, 4), 16) % 10000;
+  return `9${String(tHash).padStart(4, "0")}${String(n).padStart(6, "0")}`;
+}
+
+async function getOrCreateOneBelezaAlias(
+  tenantId: string,
+  realPhone: string,
+  realName?: string,
+): Promise<string> {
+  const supabase = _serviceSupabase();
+  const realDigits = digitsOnly(realPhone);
+
+  // 1. Já existe?
+  const { data: existing } = await supabase
+    .from("onebeleza_client_aliases")
+    .select("alias_phone")
+    .eq("tenant_id", tenantId)
+    .eq("real_phone", realDigits)
+    .maybeSingle();
+  if (existing?.alias_phone) return existing.alias_phone;
+
+  // 2. Gera novo (com retry em colisão)
+  const { count } = await supabase
+    .from("onebeleza_client_aliases")
+    .select("id", { count: "exact", head: true })
+    .eq("tenant_id", tenantId);
+  let next = (count ?? 0) + 1;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const alias = _generateAliasPhone(tenantId, next + attempt);
+    const { data, error } = await supabase
+      .from("onebeleza_client_aliases")
+      .insert({
+        tenant_id: tenantId,
+        real_phone: realDigits,
+        alias_phone: alias,
+        real_name: realName || null,
+      })
+      .select("alias_phone")
+      .maybeSingle();
+    if (!error && data?.alias_phone) {
+      console.log(`[OneBeleza][alias] created tenant=${tenantId} real=${realDigits} alias=${alias}`);
+      // Best-effort audit log
+      try {
+        await supabase.from("audit_logs").insert({
+          tenant_id: tenantId,
+          actor_role: "service",
+          entity: "onebeleza_alias",
+          entity_id: alias,
+          action: "created",
+          after: { real_phone: realDigits, alias_phone: alias, real_name: realName || null },
+        });
+      } catch { /* ignore */ }
+      return alias;
+    }
+    // Caso de corrida: re-checa se já foi criado
+    const { data: again } = await supabase
+      .from("onebeleza_client_aliases")
+      .select("alias_phone")
+      .eq("tenant_id", tenantId)
+      .eq("real_phone", realDigits)
+      .maybeSingle();
+    if (again?.alias_phone) return again.alias_phone;
+  }
+  throw new Error("Falha ao gerar alias OneBeleza após múltiplas tentativas");
+}
+
+async function resolveOneBelezaClientPhone(
+  tenantId: string,
+  realPhone: string,
+): Promise<string> {
+  const realDigits = digitsOnly(realPhone);
+  if (!realDigits) return realDigits;
+  try {
+    const supabase = _serviceSupabase();
+    const { data } = await supabase
+      .from("onebeleza_client_aliases")
+      .select("alias_phone")
+      .eq("tenant_id", tenantId)
+      .eq("real_phone", realDigits)
+      .maybeSingle();
+    if (data?.alias_phone) {
+      console.log(`[OneBeleza][alias] resolved tenant=${tenantId} real=${realDigits} -> alias=${data.alias_phone}`);
+      return data.alias_phone;
+    }
+  } catch (e) {
+    console.error("[OneBeleza][alias] resolve error:", (e as Error).message);
+  }
+  return realDigits;
+}
+
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
   if (status >= 200 && status < 300) return false;
   const normalized = normalizeUserFacingText(responseText);
