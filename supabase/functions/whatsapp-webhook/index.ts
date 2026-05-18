@@ -260,7 +260,7 @@ async function registerOneBelezaClient(
     const body: Record<string, unknown> = { celular, nome: nome || "Cliente" };
     if (withEmail) body.email = withEmail;
     console.log(`${logPrefix} cadastrar_cliente URL: ${regUrl}`, JSON.stringify(body));
-    const r = await fetch(regUrl, {
+    const r = await fetchOneBelezaWithRetry(regUrl, {
       method: "POST",
       headers: { ...authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -5811,7 +5811,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
 
         const url = `${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${effectiveTel}`;
         console.log(`[OneBeleza] buscar_cliente URL: ${url} (real=${tel}, effective=${effectiveTel})`);
-        const res = await fetch(url, { headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_cliente response (${res.status}):`, text.slice(0, 500));
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
@@ -5846,7 +5846,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_servicos": {
         const url = `${baseUrl}/api/Servicos/RetornarGrupoServicos?celular=${celular}`;
         console.log(`[OneBeleza] buscar_servicos URL: ${url}`);
-        const res = await fetch(url, { headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_servicos response (${res.status}):`, text.slice(0, 1000));
 
@@ -5917,7 +5917,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
 
         const url = `${baseUrl}/api/Agendamento/HorariosTodosProfissionaisByDataServico?celular=${celular}&date=${date}&servicoId=${servicoId}`;
         console.log(`[OneBeleza] buscar_horarios_disponiveis URL: ${url}`);
-        const res = await fetch(url, { method: "POST", headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { method: "POST", headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_horarios_disponiveis response (${res.status}):`, text.slice(0, 1500));
         let parsed: any;
@@ -5962,7 +5962,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           let profNames: string[] = [];
           try {
             const profUrl = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${servicoId}`;
-            const profRes = await fetch(profUrl, { headers: authHeaders });
+            const profRes = await fetchOneBelezaWithRetry(profUrl, { headers: authHeaders });
             const profText = await profRes.text();
             const profParsed = JSON.parse(profText);
             if (Array.isArray(profParsed)) {
@@ -5999,7 +5999,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_barbeiros_por_servico": {
         const url = `${baseUrl}/api/Profissionais/PesquisarProfissionais?celular=${celular}&servicosId=${args.servicosId}`;
         console.log(`[OneBeleza] buscar_barbeiros URL: ${url}`);
-        const res = await fetch(url, { headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_barbeiros response (${res.status}):`, text.slice(0, 1000));
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
@@ -6008,7 +6008,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_datas_disponiveis": {
         const url = `${baseUrl}/api/Agendamento/RetornarDatasPorServico?celular=${celular}&servicosid=${args.servicosId}&profissionalid=${args.profissionalid}`;
         console.log(`[OneBeleza] buscar_datas URL: ${url}`);
-        const res = await fetch(url, { headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_datas response (${res.status}):`, text.slice(0, 1000));
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
@@ -6017,7 +6017,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_horarios": {
         const url = `${baseUrl}/api/Agendamento/HorariosPorProfissionaisByDataServico?celular=${celular}&date=${args.date}&servicoId=${args.servicoId}&ProfissionalId=${args.ProfissionalId}`;
         console.log(`[OneBeleza] buscar_horarios URL: ${url}`);
-        const res = await fetch(url, {
+        const res = await fetchOneBelezaWithRetry(url, {
           method: "POST",
           headers: authHeaders,
         });
@@ -6087,7 +6087,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         let cliforcolsid = "";
         let clienteNome = "";
         try {
-          const cliRes = await fetch(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${clienteTel}`, { headers: authHeaders });
+          const cliRes = await fetchOneBelezaWithRetry(`${baseUrl}/api/Clientes/GetClientePeloNumero?Celular=${clienteTel}`, { headers: authHeaders });
           const cliText = await cliRes.text();
           try {
             const cli = JSON.parse(cliText);
@@ -6133,7 +6133,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
 
         console.log(`[OneBeleza] agendar FINAL REQUEST → URL=${url} | clienteTel=${clienteTel} cliforcolsid=${cliforcolsid} nome="${clienteNome}" | dataAg=${aDataAg} servicoId=${aServicoId} profissionalId=${aProfissionalId} horarioInicio=${aHorarioInicio} horarioFim=${aHorarioFim} | ownerTel=${ownerTel}`);
 
-        const res = await fetch(url, {
+        const res = await fetchOneBelezaWithRetry(url, {
           method: "POST",
           headers: { "Authorization": bearerToken },
           body: formData,
@@ -6161,7 +6161,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "buscar_agendamentos_dia": {
         const url = `${baseUrl}/api/Agendamento/GetTodosAgendamentosDia?date=${args.date}`;
         console.log(`[OneBeleza] buscar_agendamentos_dia URL: ${url}`);
-        const res = await fetch(url, { headers: authHeaders });
+        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_agendamentos_dia response (${res.status}):`, text.slice(0, 1000));
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
@@ -6170,7 +6170,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "confirmar_agendamento": {
         const url = `${baseUrl}/api/Agendamento/ConfirmarAgendamento?agendasId=${args.agendasId}&celular=${celular}`;
         console.log(`[OneBeleza] confirmar_agendamento URL: ${url}`);
-        const res = await fetch(url, {
+        const res = await fetchOneBelezaWithRetry(url, {
           method: "POST",
           headers: authHeaders,
         });
@@ -6185,7 +6185,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       case "desmarcar_agendamento": {
         const url = `${baseUrl}/api/Agendamento/DesmarcarAgendamento?celular=${celular}&agendasId=${args.agendasId}`;
         console.log(`[OneBeleza] desmarcar_agendamento URL: ${url}`);
-        const res = await fetch(url, {
+        const res = await fetchOneBelezaWithRetry(url, {
           method: "DELETE",
           headers: authHeaders,
         });
