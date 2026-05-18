@@ -6447,7 +6447,14 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
   //    O domínio "api.frizzar.com.br" listado na doc ainda não tem DNS publicado (NXDOMAIN).
   // 3) fallback secundário (mantido por segurança) caso o override aponte para um host quebrado.
   const DEFAULT_URL = "https://homologacao.frizzar.com.br:8446/api/bot";
-  const overrideUrl = (tenant.frizzar_base_url || "").trim().replace(/\/+$/, "");
+  const normalizeBase = (raw: string): string => {
+    let v = (raw || "").trim().replace(/\/+$/, "");
+    if (!v) return "";
+    // adiciona https:// se não houver protocolo
+    if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
+    return v;
+  };
+  const overrideUrl = normalizeBase(tenant.frizzar_base_url || "");
   const primaryBase = overrideUrl || DEFAULT_URL;
   const fallbackBase = overrideUrl && overrideUrl !== DEFAULT_URL ? DEFAULT_URL : null;
 
