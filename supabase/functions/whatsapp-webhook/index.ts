@@ -194,6 +194,8 @@ async function resolveOneBelezaClientPhone(
     console.error("[OneBeleza][alias] resolve error:", (e as Error).message);
   }
   return realDigits;
+}
+
 async function fetchOneBelezaWithRetry(
   url: string,
   options?: RequestInit,
