@@ -194,6 +194,36 @@ async function resolveOneBelezaClientPhone(
     console.error("[OneBeleza][alias] resolve error:", (e as Error).message);
   }
   return realDigits;
+async function fetchOneBelezaWithRetry(
+  url: string,
+  options?: RequestInit,
+  maxRetries = 2,
+  retryDelayMs = 1000,
+): Promise<Response> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status >= 500 && res.status < 600) {
+        console.log(`[OneBeleza] HTTP ${res.status} on ${url}, retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
+        if (attempt < maxRetries - 1) {
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+          continue;
+        }
+      }
+      return res;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.log(`[OneBeleza] fetch error on ${url}: ${lastError.message}, retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
+      if (attempt < maxRetries - 1) {
+        await new Promise((r) => setTimeout(r, retryDelayMs));
+      }
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  return fetch(url, options);
 }
 
 const shouldRetryOneBelezaWithEmail = (status: number, responseText: string) => {
