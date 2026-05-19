@@ -3,7 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, MessageCircle } from "lucide-react";
 
 // Strip internal tags that should never be shown to end-user
@@ -19,7 +18,7 @@ export default function ClientConversations() {
   const { tenantId } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesViewportRef = useRef<HTMLDivElement>(null);
 
   const { data: contactsRaw } = useQuery({
     queryKey: ["client-contacts", tenantId],
@@ -80,7 +79,9 @@ export default function ClientConversations() {
   }, [contactsRaw, search]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
   }, [conv?.length, selected]);
 
   const fmtTime = (iso: string) => {
@@ -113,9 +114,9 @@ export default function ClientConversations() {
         <p className="text-muted-foreground">Histórico completo de mensagens</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[360px_1fr] gap-0 h-[78vh] rounded-xl overflow-hidden border border-border shadow-lg">
+      <div className="grid grid-cols-1 md:grid-cols-[360px_minmax(0,1fr)] gap-0 h-[78vh] min-h-0 rounded-xl overflow-hidden border border-border shadow-lg bg-card">
         {/* Sidebar — contact list (WhatsApp-style panel) */}
-        <div className="flex flex-col border-r border-border bg-[hsl(var(--wa-panel))]">
+        <div className="flex min-h-0 flex-col border-r border-border bg-[hsl(var(--wa-panel))]">
           <div className="p-3 border-b border-border">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -127,12 +128,12 @@ export default function ClientConversations() {
               />
             </div>
           </div>
-          <ScrollArea className="flex-1">
+          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {contacts.map((c) => (
               <button
                 key={c.phone}
                 onClick={() => setSelected(c.phone)}
-                className={`w-full text-left px-3 py-3 hover:bg-muted/50 transition-colors flex gap-3 items-center border-b border-border/30 ${
+                className={`flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
@@ -153,11 +154,11 @@ export default function ClientConversations() {
             {contacts.length === 0 && (
               <div className="p-6 text-center text-sm text-muted-foreground">Nenhuma conversa.</div>
             )}
-          </ScrollArea>
+          </div>
         </div>
 
         {/* Chat panel */}
-        <div className="flex flex-col bg-[hsl(var(--wa-chat-bg))] relative overflow-hidden">
+        <div className="relative flex min-h-0 flex-col overflow-hidden bg-[hsl(var(--wa-chat-bg))]">
           {!selected && (
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
               <MessageCircle className="w-16 h-16 opacity-30" />
@@ -175,7 +176,7 @@ export default function ClientConversations() {
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
               </div>
-              <ScrollArea className="flex-1 px-4 py-4">
+              <div ref={messagesViewportRef} className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
                 <div className="space-y-2 max-w-3xl mx-auto">
                   {grouped.map((g, gi) => (
                     <div key={gi} className="space-y-1.5">
@@ -210,9 +211,8 @@ export default function ClientConversations() {
                       })}
                     </div>
                   ))}
-                  <div ref={bottomRef} />
                 </div>
-              </ScrollArea>
+              </div>
             </>
           )}
         </div>
