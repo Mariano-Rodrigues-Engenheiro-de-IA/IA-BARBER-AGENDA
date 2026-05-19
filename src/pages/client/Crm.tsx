@@ -5,9 +5,9 @@ import { Navigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCrmBoards, useCreateBoard } from "@/hooks/useCrmLeads";
-import { Plus } from "lucide-react";
-import { toast } from "sonner";
+import { useCrmBoards } from "@/hooks/useCrmLeads";
+
+
 
 export default function ClientCrm() {
   const { tenantId } = useAuth();
