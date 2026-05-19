@@ -46,11 +46,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     enabled: !!tenantId,
     queryFn: async () => {
       const { data } = await supabase.from("tenants")
-        .select("id,name,agent_paused")
+        .select("id,name,agent_paused,logo_url")
         .eq("id", tenantId!).single();
-      return data;
+      return data as { id: string; name: string; agent_paused: boolean; logo_url: string | null } | null;
     },
   });
+
 
   const togglePause = async () => {
     if (!tenant) return;
