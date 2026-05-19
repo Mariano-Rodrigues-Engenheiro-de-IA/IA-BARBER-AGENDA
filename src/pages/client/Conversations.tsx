@@ -169,9 +169,8 @@ export default function ClientConversations() {
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
-                <div className="w-12 h-12 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold shrink-0 text-sm">
-                  {c.phone.slice(-2)}
-                </div>
+                <Avatar phone={c.phone} size={48} />
+
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline gap-2">
                     <span className="font-medium text-[15px] text-foreground truncate">{c.phone}</span>
