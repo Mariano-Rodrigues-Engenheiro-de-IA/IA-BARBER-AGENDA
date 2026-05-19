@@ -26,13 +26,13 @@ export default function ClientOverview() {
   const { tenantId } = useAuth();
   const [period, setPeriod] = useState<"7d" | "30d">("30d");
   const days = period === "7d" ? 7 : 30;
-  const since = useMemo(() => new Date(Date.now() - days * 86400000).toISOString(), [days]);
 
-  const sinceDay = new Date(Date.now() - 86400000).toISOString();
   const { data: topData } = useQuery({
     queryKey: ["client-overview-top", tenantId],
     enabled: !!tenantId,
+    refetchInterval: 30000,
     queryFn: async () => {
+      const sinceDay = new Date(Date.now() - 86400000).toISOString();
       const { count } = await supabase.from("follow_ups").select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId!).eq("status", "sent").gte("sent_at", sinceDay);
       return { sent: count ?? 0 };
@@ -40,39 +40,67 @@ export default function ClientOverview() {
   });
 
   // Period-based data for charts
-  const { data: messages, isLoading: loadingMsgs } = useQuery({
+  const { data: messages } = useQuery({
     queryKey: ["client-ov-msgs", tenantId, period],
     enabled: !!tenantId,
+    refetchInterval: 30000,
     queryFn: async () => {
-      const { data } = await supabase.from("chat_messages")
-        .select("phone_number, role, created_at")
-        .eq("tenant_id", tenantId!).gte("created_at", since)
-        .order("created_at");
-      return data ?? [];
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      // Paginate to bypass 1000-row default cap
+      const all: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase.from("chat_messages")
+          .select("phone_number, role, created_at")
+          .eq("tenant_id", tenantId!).gte("created_at", since)
+          .order("created_at", { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) break;
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
     },
   });
 
   const { data: agentLogs } = useQuery({
     queryKey: ["client-ov-logs", tenantId, period],
     enabled: !!tenantId,
+    refetchInterval: 30000,
     queryFn: async () => {
-      const { data } = await supabase.from("agent_logs")
-        .select("tool_calls, created_at")
-        .eq("tenant_id", tenantId!).gte("created_at", since);
-      return data ?? [];
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const all: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase.from("agent_logs")
+          .select("tool_calls, created_at")
+          .eq("tenant_id", tenantId!).gte("created_at", since)
+          .range(from, from + pageSize - 1);
+        if (error) break;
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
     },
   });
 
   const { data: followUps } = useQuery({
     queryKey: ["client-ov-fu", tenantId, period],
     enabled: !!tenantId,
+    refetchInterval: 30000,
     queryFn: async () => {
+      const since = new Date(Date.now() - days * 86400000).toISOString();
       const { data } = await supabase.from("follow_ups")
         .select("status, created_at, sent_at, confirmed_at")
         .eq("tenant_id", tenantId!).gte("created_at", since);
       return data ?? [];
     },
   });
+
 
   // Tangible AI cards
   const aiStats = useMemo(() => {

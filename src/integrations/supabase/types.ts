@@ -539,6 +539,7 @@ export type Database = {
           frizzar_token: string | null
           id: string
           kanban_columns: Json | null
+          logo_url: string | null
           name: string
           onebeleza_celular: string | null
           onebeleza_token: string | null
@@ -568,6 +569,7 @@ export type Database = {
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
+          logo_url?: string | null
           name: string
           onebeleza_celular?: string | null
           onebeleza_token?: string | null
@@ -597,6 +599,7 @@ export type Database = {
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
+          logo_url?: string | null
           name?: string
           onebeleza_celular?: string | null
           onebeleza_token?: string | null

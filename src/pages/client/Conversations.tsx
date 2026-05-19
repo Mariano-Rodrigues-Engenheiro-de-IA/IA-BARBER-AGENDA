@@ -14,6 +14,38 @@ function cleanContent(raw: string): string {
     .trim();
 }
 
+// Deterministic WhatsApp-style avatar (color + initials from phone)
+const AVATAR_COLORS = [
+  "#0088cc", "#25D366", "#075E54", "#128C7E", "#34B7F1",
+  "#7B68EE", "#FF6B6B", "#F39C12", "#16A085", "#9B59B6",
+  "#E74C3C", "#3498DB", "#1ABC9C", "#E67E22", "#8E44AD",
+];
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function avatarColor(phone: string): string {
+  return AVATAR_COLORS[hashStr(phone) % AVATAR_COLORS.length];
+}
+function avatarInitials(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length >= 4) return digits.slice(-4, -2);
+  return digits.slice(-2) || "??";
+}
+
+function Avatar({ phone, size = 48 }: { phone: string; size?: number }) {
+  return (
+    <div
+      className="rounded-full flex items-center justify-center text-white font-semibold shrink-0 select-none"
+      style={{ backgroundColor: avatarColor(phone), width: size, height: size, fontSize: size * 0.36 }}
+    >
+      {avatarInitials(phone)}
+    </div>
+  );
+}
+
+
 export default function ClientConversations() {
   const { tenantId } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
@@ -137,9 +169,8 @@ export default function ClientConversations() {
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
-                <div className="w-12 h-12 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold shrink-0 text-sm">
-                  {c.phone.slice(-2)}
-                </div>
+                <Avatar phone={c.phone} size={48} />
+
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline gap-2">
                     <span className="font-medium text-[15px] text-foreground truncate">{c.phone}</span>
@@ -168,9 +199,8 @@ export default function ClientConversations() {
           {selected && (
             <>
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold">
-                  {selected.slice(-2)}
-                </div>
+                <Avatar phone={selected} size={40} />
+
                 <div>
                   <div className="font-semibold text-[15px] text-foreground">{selected}</div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
