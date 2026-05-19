@@ -67,6 +67,36 @@ export type Database = {
           },
         ]
       }
+      ai_prompt_versions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          created_by_role: string | null
+          id: string
+          prompt: string
+          tenant_id: string
+          version: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          created_by_role?: string | null
+          id?: string
+          prompt: string
+          tenant_id: string
+          version: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          created_by_role?: string | null
+          id?: string
+          prompt?: string
+          tenant_id?: string
+          version?: number
+        }
+        Relationships: []
+      }
       audit_logs: {
         Row: {
           action: string
