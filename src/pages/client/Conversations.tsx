@@ -128,7 +128,7 @@ export default function ClientConversations() {
               />
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {contacts.map((c) => (
               <button
                 key={c.phone}
@@ -176,7 +176,7 @@ export default function ClientConversations() {
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
               </div>
-              <div ref={messagesViewportRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
+              <div ref={messagesViewportRef} className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
                 <div className="space-y-2 max-w-3xl mx-auto">
                   {grouped.map((g, gi) => (
                     <div key={gi} className="space-y-1.5">
