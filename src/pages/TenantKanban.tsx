@@ -321,7 +321,7 @@ export default function TenantKanbanPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <Button variant="ghost" size="icon" onClick={() => navigate(`/tenants/${id}/dashboard`)}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
@@ -329,12 +329,19 @@ export default function TenantKanbanPage() {
           <h2 className="text-2xl font-bold text-foreground">{tenant?.name}</h2>
           <p className="text-muted-foreground mt-1">CRM Kanban</p>
         </div>
+        <Select value={selectedBoardId ?? ""} onValueChange={setSelectedBoardId}>
+          <SelectTrigger className="w-[220px] ml-auto"><SelectValue placeholder="CRM" /></SelectTrigger>
+          <SelectContent>
+            {boards.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
         {uncategorizedLeads.length > 0 && (
-          <Badge variant="outline" className="ml-auto">
-            {uncategorizedLeads.length} leads sem coluna
+          <Badge variant="outline">
+            {uncategorizedLeads.length} sem coluna
           </Badge>
         )}
       </div>
+
 
       {loadingLeads ? (
         <div className="flex gap-4 overflow-x-auto pb-4">
