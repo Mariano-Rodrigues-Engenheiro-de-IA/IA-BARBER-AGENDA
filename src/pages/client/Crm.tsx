@@ -3,19 +3,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useCrmBoards, useCreateBoard } from "@/hooks/useCrmLeads";
-import { Plus } from "lucide-react";
-import { toast } from "sonner";
+import { useCrmBoards } from "@/hooks/useCrmLeads";
+
+
 
 export default function ClientCrm() {
   const { tenantId } = useAuth();
-  const { visible, editable } = useModulePermission("crm");
+  const { visible } = useModulePermission("crm");
   if (!visible) return <Navigate to="/app" replace />;
 
   const { data: boards = [] } = useCrmBoards(tenantId ?? undefined);
-  const createBoard = useCreateBoard();
   const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
   useEffect(() => { if (!selectedBoardId && boards.length) setSelectedBoardId(boards[0].id); }, [boards, selectedBoardId]);
 
@@ -41,17 +40,6 @@ export default function ClientCrm() {
     return arr.filter((c: any) => (c.type ?? "funnel") === "funnel").sort((a: any, b: any) => (a.order ?? 0) - (b.order ?? 0));
   }, [selectedBoard]);
 
-  const handleAddBoard = async () => {
-    if (!tenantId) return;
-    const name = prompt("Nome do novo CRM:");
-    if (!name?.trim()) return;
-    try {
-      const b = await createBoard.mutateAsync({ tenantId, name: name.trim(), order: boards.length });
-      setSelectedBoardId(b.id);
-      toast.success("CRM criado");
-    } catch (e: any) { toast.error(e.message); }
-  };
-
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between flex-wrap gap-3">
@@ -59,23 +47,24 @@ export default function ClientCrm() {
           <h1 className="text-2xl font-bold text-foreground">CRM</h1>
           <p className="text-muted-foreground">Leads organizados pelos seus funis</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={selectedBoardId ?? ""} onValueChange={setSelectedBoardId}>
-            <SelectTrigger className="w-[220px]"><SelectValue placeholder="Selecione um CRM" /></SelectTrigger>
-            <SelectContent>
-              {boards.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {editable && <Button onClick={handleAddBoard}><Plus className="w-4 h-4 mr-2" />Novo CRM</Button>}
-        </div>
+        {boards.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Select value={selectedBoardId ?? ""} onValueChange={setSelectedBoardId}>
+              <SelectTrigger className="w-[220px]"><SelectValue placeholder="Selecione um CRM" /></SelectTrigger>
+              <SelectContent>
+                {boards.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
 
       {boards.length === 0 && (
         <div className="glass-card p-8 text-center space-y-3">
-          <p className="text-muted-foreground">Nenhum CRM criado ainda.</p>
-          {editable && <Button onClick={handleAddBoard}><Plus className="w-4 h-4 mr-2" />Criar primeiro CRM</Button>}
+          <p className="text-muted-foreground">Nenhum CRM ativo. Peça ao administrador para criar um.</p>
         </div>
       )}
+
 
       {selectedBoard && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
