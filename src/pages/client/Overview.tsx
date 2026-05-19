@@ -102,19 +102,34 @@ export default function ClientOverview() {
   });
 
 
+  // Helper: is this tool_call a successful appointment creation?
+  const isSuccessfulBooking = (tc: any): string | null => {
+    if (!tc || tc.blocked) return null;
+    if (!["criar_agendamento", "agendar"].includes(tc.name)) return null;
+    const r = tc.result;
+    if (!r || typeof r !== "object") return null;
+    if (Array.isArray(r.Errors) && r.Errors.length > 0) return null;
+    if (r.deduplicated) return null;
+    if (r.error) return null;
+    const id = r.id ?? r.agendamento_id ?? r.appointment_id;
+    return id != null ? String(id) : null;
+  };
+
   // Tangible AI cards
   const aiStats = useMemo(() => {
-    let bookings = 0;
+    const bookingIds = new Set<string>();
     (agentLogs ?? []).forEach((l: any) => {
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
-        if (["criar_agendamento", "agendar"].includes(tc?.name) && !tc?.blocked) bookings++;
+        const id = isSuccessfulBooking(tc);
+        if (id) bookingIds.add(id);
       });
     });
     const aiMessages = (messages ?? []).filter((m: any) => m.role === "assistant").length;
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
-    return { bookings, aiMessages, uniqueClients };
+    return { bookings: bookingIds.size, aiMessages, uniqueClients };
   }, [agentLogs, messages]);
+
 
   // Activity chart
   const activityData = useMemo(() => {
