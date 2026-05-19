@@ -102,6 +102,7 @@ function AppRoutes() {
       <Route path="/app/followups" element={<ClientRoute><ClientFollowUps /></ClientRoute>} />
       <Route path="/app/crm" element={<ClientRoute><ClientCrm /></ClientRoute>} />
       <Route path="/app/ai" element={<ClientRoute><ClientAi /></ClientRoute>} />
+      <Route path="/app/connection" element={<ClientRoute><ClientConnection /></ClientRoute>} />
 
       <Route path="*" element={<NotFound />} />
     </Routes>
