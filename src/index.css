@@ -6,6 +6,7 @@
 
 @layer base {
   :root, .dark {
+    color-scheme: dark;
     --background: 222 47% 6%;
     --foreground: 210 40% 96%;
 
@@ -57,48 +58,51 @@
     --wa-bubble-in: 215 25% 18%;
     --wa-bubble-in-fg: 210 40% 96%;
     --wa-panel: 222 47% 9%;
+    --panel-shadow: 0 24px 48px -30px hsl(222 70% 2% / 0.5);
   }
 
   .light {
-    --background: 0 0% 100%;
-    --foreground: 222 47% 11%;
+    color-scheme: light;
+    --background: 210 33% 97%;
+    --foreground: 222 30% 16%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 222 30% 16%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 217 91% 50%;
+    --popover-foreground: 222 30% 16%;
+    --primary: 217 78% 47%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 160 84% 35%;
+    --secondary: 210 28% 93%;
+    --secondary-foreground: 222 26% 20%;
+    --muted: 210 24% 94%;
+    --muted-foreground: 215 18% 42%;
+    --accent: 160 62% 36%;
     --accent-foreground: 0 0% 100%;
-    --destructive: 0 84% 55%;
+    --destructive: 0 74% 54%;
     --destructive-foreground: 0 0% 100%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 217 91% 50%;
-    --sidebar-background: 210 40% 98%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-primary: 217 91% 50%;
+    --border: 214 25% 88%;
+    --input: 214 25% 88%;
+    --ring: 217 78% 47%;
+    --sidebar-background: 210 30% 95%;
+    --sidebar-foreground: 222 30% 16%;
+    --sidebar-primary: 217 78% 47%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 94%;
-    --sidebar-accent-foreground: 222 47% 11%;
-    --sidebar-border: 214 32% 91%;
-    --sidebar-ring: 217 91% 50%;
-    --success: 142 71% 38%;
+    --sidebar-accent: 210 25% 90%;
+    --sidebar-accent-foreground: 222 26% 20%;
+    --sidebar-border: 214 25% 86%;
+    --sidebar-ring: 217 78% 47%;
+    --success: 148 65% 34%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 38 92% 11%;
+    --warning: 38 88% 46%;
+    --warning-foreground: 32 90% 12%;
 
     /* WhatsApp Web light theme */
-    --wa-chat-bg: 39 30% 92%;
-    --wa-bubble-out: 142 49% 86%;
-    --wa-bubble-out-fg: 222 47% 11%;
+    --wa-chat-bg: 42 35% 91%;
+    --wa-bubble-out: 142 46% 84%;
+    --wa-bubble-out-fg: 222 30% 16%;
     --wa-bubble-in: 0 0% 100%;
-    --wa-bubble-in-fg: 222 47% 11%;
-    --wa-panel: 0 0% 100%;
+    --wa-bubble-in-fg: 222 30% 16%;
+    --wa-panel: 210 20% 99%;
+    --panel-shadow: 0 20px 42px -28px hsl(220 30% 28% / 0.18);
   }
 }
 
@@ -114,7 +118,8 @@
 
 @layer utilities {
   .glass-card {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50 rounded-xl;
+    @apply bg-card/90 backdrop-blur-xl border border-border/70 rounded-xl;
+    box-shadow: var(--panel-shadow);
   }
 
   .gradient-text {
