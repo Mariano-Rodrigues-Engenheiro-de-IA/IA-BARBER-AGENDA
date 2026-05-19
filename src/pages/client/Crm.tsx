@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Navigate } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/button";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCrmBoards } from "@/hooks/useCrmLeads";
 
