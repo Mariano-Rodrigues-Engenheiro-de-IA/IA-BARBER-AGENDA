@@ -74,13 +74,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     <>
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
-          <img src={logoZaylo} alt="Logo" className="w-10 h-10 rounded-xl object-contain" />
+          <img
+            src={tenant?.logo_url || logoZaylo}
+            alt="Logo"
+            className="w-10 h-10 rounded-xl object-contain bg-background"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).src = logoZaylo; }}
+          />
           <div className="min-w-0">
             <h1 className="font-bold text-foreground text-base leading-tight truncate">{tenant?.name ?? "Sua empresa"}</h1>
             <p className="text-xs text-muted-foreground">Painel do cliente</p>
           </div>
         </div>
       </div>
+
       <nav className="flex-1 p-4 space-y-1">
         {NAV.map((i) => <NavRow key={i.to} item={i} onClick={() => setMobileOpen(false)} />)}
       </nav>
