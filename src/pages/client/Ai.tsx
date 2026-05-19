@@ -44,7 +44,7 @@ export default function ClientAi() {
   if (!tenant) return <p className="text-muted-foreground">Carregando...</p>;
 
   const tabs = [
-    { v: "ai", label: "IA", show: ai.visible || kb.visible },
+    { v: "ai", label: "IA", show: ai.visible },
     { v: "company", label: "Sua empresa", show: company.visible },
     { v: "integ", label: "Integrações", show: integ.visible },
   ].filter((t) => t.show);
@@ -61,34 +61,22 @@ export default function ClientAi() {
           {tabs.map((t) => <TabsTrigger key={t.v} value={t.v}>{t.label}</TabsTrigger>)}
         </TabsList>
 
-        {(ai.visible || kb.visible) && (
+        {ai.visible && (
           <TabsContent value="ai" className="space-y-4">
-            {ai.visible && (
-              <div className="glass-card p-5 space-y-3">
-                <Label>Personalidade e instruções da IA</Label>
-                <Textarea rows={10} disabled={!ai.editable}
-                  value={form.agent_system_prompt ?? ""}
-                  onChange={(e) => setForm({ ...form, agent_system_prompt: e.target.value })} />
-                {ai.editable && (
-                  <Button onClick={() => save({ agent_system_prompt: form.agent_system_prompt }, "edit_ai_prompt")}>
-                    <Save className="w-4 h-4 mr-2" />Salvar
-                  </Button>
-                )}
-              </div>
-            )}
-            {kb.visible && (
-              <div className="glass-card p-5 space-y-3">
-                <Label>Base de conhecimento (informações que a IA usa para responder)</Label>
-                <Textarea rows={10} disabled={!kb.editable}
-                  value={form.agent_knowledge_base ?? ""}
-                  onChange={(e) => setForm({ ...form, agent_knowledge_base: e.target.value })} />
-                {kb.editable && (
-                  <Button onClick={() => save({ agent_knowledge_base: form.agent_knowledge_base }, "edit_ai_knowledge")}>
-                    <Save className="w-4 h-4 mr-2" />Salvar
-                  </Button>
-                )}
-              </div>
-            )}
+            <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 240px)" }}>
+              <Label>Personalidade e instruções da IA</Label>
+              <Textarea
+                disabled={!ai.editable}
+                className="flex-1 min-h-[500px] resize-none font-mono text-sm"
+                value={form.agent_system_prompt ?? ""}
+                onChange={(e) => setForm({ ...form, agent_system_prompt: e.target.value })}
+              />
+              {ai.editable && (
+                <Button className="w-fit" onClick={() => save({ agent_system_prompt: form.agent_system_prompt }, "edit_ai_prompt")}>
+                  <Save className="w-4 h-4 mr-2" />Salvar
+                </Button>
+              )}
+            </div>
           </TabsContent>
         )}
 
