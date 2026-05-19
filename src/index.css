@@ -5,7 +5,7 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
+  :root, .dark {
     --background: 222 47% 6%;
     --foreground: 210 40% 96%;
 
@@ -49,6 +49,56 @@
     --success-foreground: 160 84% 6%;
     --warning: 38 92% 50%;
     --warning-foreground: 38 92% 6%;
+
+    /* WhatsApp-like chat colors */
+    --wa-chat-bg: 210 20% 12%;
+    --wa-bubble-out: 142 47% 28%;
+    --wa-bubble-out-fg: 210 40% 98%;
+    --wa-bubble-in: 215 25% 18%;
+    --wa-bubble-in-fg: 210 40% 96%;
+    --wa-panel: 222 47% 9%;
+  }
+
+  .light {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 217 91% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 160 84% 35%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 217 91% 50%;
+    --sidebar-background: 210 40% 98%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-primary: 217 91% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 94%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 32% 91%;
+    --sidebar-ring: 217 91% 50%;
+    --success: 142 71% 38%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 38 92% 11%;
+
+    /* WhatsApp Web light theme */
+    --wa-chat-bg: 39 30% 92%;
+    --wa-bubble-out: 142 49% 86%;
+    --wa-bubble-out-fg: 222 47% 11%;
+    --wa-bubble-in: 0 0% 100%;
+    --wa-bubble-in-fg: 222 47% 11%;
+    --wa-panel: 0 0% 100%;
   }
 }
 

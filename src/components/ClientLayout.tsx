@@ -9,6 +9,7 @@ import { LayoutDashboard, MessageCircle, Clock, Settings, LogOut, Menu, Kanban, 
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import logoZaylo from "@/assets/logo-zaylo.png";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface NavItem { to: string; icon: any; label: string; module: AppModule }
 const NAV: NavItem[] = [
@@ -95,6 +96,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </Avatar>
           <p className="text-xs text-muted-foreground truncate flex-1">{user?.email}</p>
         </div>
+        <ThemeToggle />
         <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive" onClick={signOut}>
           <LogOut className="w-4 h-4" />Sair
         </Button>

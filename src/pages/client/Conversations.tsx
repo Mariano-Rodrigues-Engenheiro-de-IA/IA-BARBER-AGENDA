@@ -6,13 +6,21 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Search, MessageCircle } from "lucide-react";
 
+// Strip internal tags that should never be shown to end-user
+function cleanContent(raw: string): string {
+  if (!raw) return "";
+  return raw
+    .replace(/^\s*\[ATENDENTE HUMANO\]:\s*/i, "")
+    .replace(/\[ATENDENTE HUMANO\]:\s*/gi, "")
+    .trim();
+}
+
 export default function ClientConversations() {
   const { tenantId } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Fetch a wide window for contact list (latest activity per phone)
   const { data: contactsRaw } = useQuery({
     queryKey: ["client-contacts", tenantId],
     enabled: !!tenantId,
@@ -28,7 +36,6 @@ export default function ClientConversations() {
     refetchInterval: 15000,
   });
 
-  // Fetch ALL messages for the selected conversation (no 1000 cap)
   const { data: conv } = useQuery({
     queryKey: ["client-conv", tenantId, selected],
     enabled: !!tenantId && !!selected,
@@ -61,7 +68,7 @@ export default function ClientConversations() {
         m.set(x.phone_number, {
           phone: x.phone_number,
           last: x.created_at,
-          preview: (x.content ?? "").slice(0, 60),
+          preview: cleanContent(x.content ?? "").slice(0, 60),
           lastRole: x.role,
         });
       }
@@ -89,7 +96,6 @@ export default function ClientConversations() {
     return d.toLocaleDateString("pt-BR");
   };
 
-  // Group messages by day for separators
   const grouped = useMemo(() => {
     const out: { day: string; items: any[] }[] = [];
     (conv ?? []).forEach((m: any) => {
@@ -104,20 +110,20 @@ export default function ClientConversations() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Conversas</h1>
-        <p className="text-muted-foreground">Histórico completo de mensagens — IA, você e seu time</p>
+        <p className="text-muted-foreground">Histórico completo de mensagens</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[340px_1fr] gap-0 h-[78vh] rounded-xl overflow-hidden border border-border bg-card">
-        {/* Sidebar — contact list */}
-        <div className="flex flex-col border-r border-border bg-muted/20">
-          <div className="p-3 border-b border-border bg-muted/30">
+      <div className="grid grid-cols-1 md:grid-cols-[360px_1fr] gap-0 h-[78vh] rounded-xl overflow-hidden border border-border shadow-lg">
+        {/* Sidebar — contact list (WhatsApp-style panel) */}
+        <div className="flex flex-col border-r border-border bg-[hsl(var(--wa-panel))]">
+          <div className="p-3 border-b border-border">
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Buscar conversa..."
+                placeholder="Pesquisar ou começar nova conversa"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 bg-background"
+                className="pl-9 rounded-full bg-muted/40 border-transparent focus-visible:ring-1"
               />
             </div>
           </div>
@@ -126,21 +132,20 @@ export default function ClientConversations() {
               <button
                 key={c.phone}
                 onClick={() => setSelected(c.phone)}
-                className={`w-full text-left px-4 py-3 border-b border-border/50 hover:bg-muted/50 transition-colors flex gap-3 items-center ${
+                className={`w-full text-left px-3 py-3 hover:bg-muted/50 transition-colors flex gap-3 items-center border-b border-border/30 ${
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
-                <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold shrink-0">
+                <div className="w-12 h-12 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold shrink-0 text-sm">
                   {c.phone.slice(-2)}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline gap-2">
-                    <span className="font-medium text-sm text-foreground truncate">{c.phone}</span>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{fmtTime(c.last)}</span>
+                    <span className="font-medium text-[15px] text-foreground truncate">{c.phone}</span>
+                    <span className="text-[11px] text-muted-foreground shrink-0">{fmtTime(c.last)}</span>
                   </div>
-                  <div className="text-xs text-muted-foreground truncate">
-                    {c.lastRole === "assistant" ? "✓ " : ""}
-                    {c.preview}
+                  <div className="text-[13px] text-muted-foreground truncate">
+                    {c.preview || "—"}
                   </div>
                 </div>
               </button>
@@ -152,7 +157,7 @@ export default function ClientConversations() {
         </div>
 
         {/* Chat panel */}
-        <div className="flex flex-col bg-[hsl(var(--background))] relative overflow-hidden">
+        <div className="flex flex-col bg-[hsl(var(--wa-chat-bg))] relative overflow-hidden">
           {!selected && (
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
               <MessageCircle className="w-16 h-16 opacity-30" />
@@ -161,39 +166,40 @@ export default function ClientConversations() {
           )}
           {selected && (
             <>
-              <div className="px-4 py-3 border-b border-border bg-muted/30 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold">
+              <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold">
                   {selected.slice(-2)}
                 </div>
                 <div>
-                  <div className="font-semibold text-sm text-foreground">{selected}</div>
+                  <div className="font-semibold text-[15px] text-foreground">{selected}</div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
               </div>
               <ScrollArea className="flex-1 px-4 py-4">
-                <div className="space-y-3 max-w-3xl mx-auto">
+                <div className="space-y-2 max-w-3xl mx-auto">
                   {grouped.map((g, gi) => (
-                    <div key={gi} className="space-y-2">
-                      <div className="flex justify-center">
-                        <span className="text-[11px] px-3 py-1 rounded-full bg-muted text-muted-foreground">
+                    <div key={gi} className="space-y-1.5">
+                      <div className="flex justify-center my-3">
+                        <span className="text-[11px] px-3 py-1 rounded-md bg-[hsl(var(--wa-panel))] text-muted-foreground shadow-sm">
                           {g.day}
                         </span>
                       </div>
                       {g.items.map((m: any) => {
                         const isOut = m.role === "assistant";
+                        const text = cleanContent(m.content);
                         return (
                           <div key={m.id} className={`flex ${isOut ? "justify-end" : "justify-start"}`}>
                             <div
-                              className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm shadow-sm ${
+                              className={`max-w-[70%] rounded-lg px-2.5 py-1.5 text-sm shadow-sm relative ${
                                 isOut
-                                  ? "bg-primary text-primary-foreground rounded-tr-sm"
-                                  : "bg-card border border-border text-foreground rounded-tl-sm"
+                                  ? "bg-[hsl(var(--wa-bubble-out))] text-[hsl(var(--wa-bubble-out-fg))] rounded-tr-none"
+                                  : "bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))] rounded-tl-none"
                               }`}
                             >
-                              <div className="whitespace-pre-wrap break-words">{m.content}</div>
+                              <div className="whitespace-pre-wrap break-words pr-12">{text}</div>
                               <div
-                                className={`text-[10px] mt-1 text-right ${
-                                  isOut ? "text-primary-foreground/70" : "text-muted-foreground"
+                                className={`text-[10px] absolute bottom-1 right-2 ${
+                                  isOut ? "text-[hsl(var(--wa-bubble-out-fg))]/70" : "text-muted-foreground"
                                 }`}
                               >
                                 {fmtTime(m.created_at)}
