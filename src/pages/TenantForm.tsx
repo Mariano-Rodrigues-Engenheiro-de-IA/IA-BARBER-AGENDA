@@ -14,6 +14,8 @@ import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { SequencesEditor } from "@/components/SequencesEditor";
+import { KanbanBoardsManager } from "@/components/KanbanBoardsManager";
+
 
 function slugify(text: string) {
   return text
@@ -1309,7 +1311,7 @@ export default function TenantFormPage() {
             </TabsTrigger>
             <TabsTrigger value="sequences" className="flex items-center gap-1">
               <Sparkles className="w-3.5 h-3.5" />
-              Cadências
+              Follow-ups
             </TabsTrigger>
           </TabsList>
 
@@ -1720,97 +1722,22 @@ export default function TenantFormPage() {
           </TabsContent>
 
           <TabsContent value="kanban" className="space-y-4">
-            <div className="glass-card p-6 space-y-6">
-              <div>
-                <h3 className="font-semibold text-foreground flex items-center gap-2">
-                  <Kanban className="w-5 h-5 text-primary" />
-                  Colunas do Kanban CRM
-                </h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Configure as colunas (etiquetas) do quadro Kanban. Cada coluna corresponde a um ID de etiqueta do WhatsApp.
-                </p>
+            {id && id !== "new" ? (
+              <KanbanBoardsManager tenantId={id} />
+            ) : (
+              <div className="glass-card p-6 text-center text-muted-foreground">
+                Salve o estabelecimento primeiro para configurar os CRMs.
               </div>
-
-              {kanbanColumns.map((col, idx) => (
-                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border border-border bg-background/50">
-                  <div className="w-4 h-4 rounded-full shrink-0 border border-border" style={{ backgroundColor: col.color }} />
-                  <Input
-                    value={col.name}
-                    onChange={(e) => {
-                      const updated = [...kanbanColumns];
-                      updated[idx] = { ...updated[idx], name: e.target.value };
-                      setKanbanColumns(updated);
-                    }}
-                    placeholder="Nome da coluna"
-                    className="flex-1"
-                  />
-                  <Input
-                    value={col.label_id}
-                    onChange={(e) => {
-                      const updated = [...kanbanColumns];
-                      updated[idx] = { ...updated[idx], label_id: e.target.value };
-                      setKanbanColumns(updated);
-                    }}
-                    placeholder="Label ID"
-                    className="w-24"
-                  />
-                  <Select
-                    value={col.type || "funnel"}
-                    onValueChange={(val) => {
-                      const updated = [...kanbanColumns];
-                      updated[idx] = { ...updated[idx], type: val as "funnel" | "flag" };
-                      setKanbanColumns(updated);
-                    }}
-                  >
-                    <SelectTrigger className="w-28">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="funnel">Funil</SelectItem>
-                      <SelectItem value="flag">Flag</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    type="color"
-                    value={col.color}
-                    onChange={(e) => {
-                      const updated = [...kanbanColumns];
-                      updated[idx] = { ...updated[idx], color: e.target.value };
-                      setKanbanColumns(updated);
-                    }}
-                    className="w-12 h-9 p-1 cursor-pointer"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setKanbanColumns(kanbanColumns.filter((_, i) => i !== idx))}
-                  >
-                    <Trash2 className="w-4 h-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setKanbanColumns([...kanbanColumns, { label_id: "", name: "", color: "#3B82F6", order: kanbanColumns.length, type: "funnel" }])}
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Adicionar Coluna
-              </Button>
-              <p className="text-xs text-muted-foreground">
-                <strong>Funil:</strong> etapas do CRM (colunas no Kanban). <strong>Flag:</strong> marcações independentes que aparecem como badges nos cards (ex: IA OFF).
-              </p>
-            </div>
+            )}
           </TabsContent>
+
 
           <TabsContent value="sequences" className="space-y-4">
             {id && id !== "new" ? (
               <SequencesEditor tenantId={id} />
             ) : (
               <div className="glass-card p-6 text-center text-muted-foreground">
-                Salve o estabelecimento primeiro para configurar cadências.
+                Salve o estabelecimento primeiro para configurar follow-ups.
               </div>
             )}
           </TabsContent>

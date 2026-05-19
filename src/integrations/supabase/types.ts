@@ -174,6 +174,36 @@ export type Database = {
         }
         Relationships: []
       }
+      crm_boards: {
+        Row: {
+          columns: Json
+          created_at: string
+          id: string
+          name: string
+          order: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          columns?: Json
+          created_at?: string
+          id?: string
+          name: string
+          order?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          columns?: Json
+          created_at?: string
+          id?: string
+          name?: string
+          order?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       crm_lead_history: {
         Row: {
           changed_at: string
@@ -211,6 +241,7 @@ export type Database = {
       }
       crm_leads: {
         Row: {
+          board_id: string | null
           created_at: string
           flag_labels: string[]
           id: string
@@ -223,6 +254,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          board_id?: string | null
           created_at?: string
           flag_labels?: string[]
           id?: string
@@ -235,6 +267,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          board_id?: string | null
           created_at?: string
           flag_labels?: string[]
           id?: string

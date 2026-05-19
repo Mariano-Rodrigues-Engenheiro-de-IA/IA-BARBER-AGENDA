@@ -1,13 +1,15 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTenant } from "@/hooks/useTenants";
-import { useCrmLeads, useMoveLead, useToggleFlag, type KanbanColumn, type CrmLead } from "@/hooks/useCrmLeads";
+import { useCrmLeads, useMoveLead, useToggleFlag, useCrmBoards, type KanbanColumn, type CrmLead } from "@/hooks/useCrmLeads";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Phone, Clock, MessageSquare, GripVertical } from "lucide-react";
+
 import {
   DndContext,
   DragOverlay,
@@ -172,7 +174,12 @@ export default function TenantKanbanPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data: tenant, isLoading: loadingTenant } = useTenant(id);
-  const { data: leads, isLoading: loadingLeads } = useCrmLeads(id);
+  const { data: boards = [] } = useCrmBoards(id);
+  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
+  useEffect(() => { if (!selectedBoardId && boards.length) setSelectedBoardId(boards[0].id); }, [boards, selectedBoardId]);
+
+  const isFirstBoard = boards.length > 0 && boards[0].id === selectedBoardId;
+  const { data: leads, isLoading: loadingLeads } = useCrmLeads(id, selectedBoardId, isFirstBoard);
   const moveLead = useMoveLead();
   const toggleFlag = useToggleFlag();
   const [activeLead, setActiveLead] = useState<CrmLead | null>(null);
@@ -181,16 +188,17 @@ export default function TenantKanbanPage() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  // Get kanban columns from tenant config
+  const selectedBoard = boards.find((b) => b.id === selectedBoardId);
   const allColumns: KanbanColumn[] = useMemo(() => {
-    const raw = (tenant as any)?.kanban_columns;
+    const raw = selectedBoard?.columns;
     if (!Array.isArray(raw) || raw.length === 0) return [];
     return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  }, [tenant]);
+  }, [selectedBoard]);
 
   // Separate funnel columns from flag columns
   const columns = useMemo(() => allColumns.filter((c) => c.type !== "flag"), [allColumns]);
   const flagColumns = useMemo(() => allColumns.filter((c) => c.type === "flag"), [allColumns]);
+
 
   // Fetch last messages for all leads
   const phoneNumbers = useMemo(() => leads?.map((l) => l.phone_number) || [], [leads]);
@@ -287,7 +295,7 @@ export default function TenantKanbanPage() {
     return <div className="text-muted-foreground">Carregando...</div>;
   }
 
-  if (columns.length === 0) {
+  if (boards.length === 0) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-4">
@@ -296,25 +304,24 @@ export default function TenantKanbanPage() {
           </Button>
           <div>
             <h2 className="text-2xl font-bold text-foreground">{tenant?.name}</h2>
-            <p className="text-muted-foreground mt-1">CRM Kanban</p>
+            <p className="text-muted-foreground mt-1">CRM</p>
           </div>
         </div>
         <div className="glass-card p-8 text-center space-y-4">
-          <h3 className="text-lg font-semibold text-foreground">Kanban não configurado</h3>
+          <h3 className="text-lg font-semibold text-foreground">Nenhum CRM configurado</h3>
           <p className="text-muted-foreground">
-            Configure as colunas do Kanban nas configurações do tenant para começar a usar o CRM.
+            Crie um CRM nas configurações do tenant (aba Kanban) para começar.
           </p>
-          <Button onClick={() => navigate(`/tenants/${id}`)}>
-            Configurar Colunas
-          </Button>
+          <Button onClick={() => navigate(`/tenants/${id}`)}>Configurar CRMs</Button>
         </div>
       </div>
     );
   }
 
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <Button variant="ghost" size="icon" onClick={() => navigate(`/tenants/${id}/dashboard`)}>
           <ArrowLeft className="w-4 h-4" />
         </Button>
@@ -322,12 +329,19 @@ export default function TenantKanbanPage() {
           <h2 className="text-2xl font-bold text-foreground">{tenant?.name}</h2>
           <p className="text-muted-foreground mt-1">CRM Kanban</p>
         </div>
+        <Select value={selectedBoardId ?? ""} onValueChange={setSelectedBoardId}>
+          <SelectTrigger className="w-[220px] ml-auto"><SelectValue placeholder="CRM" /></SelectTrigger>
+          <SelectContent>
+            {boards.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
         {uncategorizedLeads.length > 0 && (
-          <Badge variant="outline" className="ml-auto">
-            {uncategorizedLeads.length} leads sem coluna
+          <Badge variant="outline">
+            {uncategorizedLeads.length} sem coluna
           </Badge>
         )}
       </div>
+
 
       {loadingLeads ? (
         <div className="flex gap-4 overflow-x-auto pb-4">
