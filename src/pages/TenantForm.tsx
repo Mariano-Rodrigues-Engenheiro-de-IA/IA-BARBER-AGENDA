@@ -1737,7 +1737,7 @@ export default function TenantFormPage() {
               <SequencesEditor tenantId={id} />
             ) : (
               <div className="glass-card p-6 text-center text-muted-foreground">
-                Salve o estabelecimento primeiro para configurar cadências.
+                Salve o estabelecimento primeiro para configurar follow-ups.
               </div>
             )}
           </TabsContent>
