@@ -175,18 +175,10 @@ export default function ClientOverview() {
 
       {/* Top 4 cards (24h) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Users} label="Novos leads (24h)" value={topData?.newLeads ?? "—"} />
-        <StatCard icon={MessageSquare} label="Conversas ativas (24h)" value={topData?.activePhones ?? "—"} />
         <StatCard icon={Send} label="Follow-ups enviados (24h)" value={topData?.sent ?? "—"} />
-        <StatCard icon={TrendingUp} label="Taxa de resposta (24h)" value={`${topData?.rate ?? 0}%`} />
-      </div>
-
-      {/* AI tangible cards (period) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-emerald-400" />
-        <StatCard icon={Link2} label={`Links enviados (${days}d)`} value={aiStats.links} color="text-yellow-500" />
-        <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-accent" />
-        <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-primary" />
+        <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
+        <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
+        <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
       </div>
 
       {/* Charts grid */}
@@ -206,7 +198,7 @@ export default function ClientOverview() {
         </div>
 
         <div className="glass-card p-5 space-y-3">
-          <h3 className="font-semibold text-foreground">Agendamentos e links por dia</h3>
+          <h3 className="font-semibold text-foreground">Agendamentos por dia</h3>
           <ChartContainer config={chartConfig} className="h-[260px] w-full">
             <BarChart data={toolDaily}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
@@ -214,7 +206,6 @@ export default function ClientOverview() {
               <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
               <ChartTooltip content={<ChartTooltipContent />} />
               <Bar dataKey="agendamentos" fill="hsl(160 70% 45%)" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="links" fill="hsl(45 95% 55%)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartContainer>
         </div>
