@@ -1249,7 +1249,7 @@ export default function TenantFormPage() {
       // Remove legacy follow_up key if present
       delete (agentSettings as any).follow_up;
 
-      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns };
+      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
 
       if (isEditing && id) {
         await updateTenant.mutateAsync({ id, ...payload } as any);
