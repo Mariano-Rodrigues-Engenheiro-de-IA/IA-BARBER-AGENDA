@@ -10,6 +10,7 @@ export interface CrmLead {
   label_name: string | null;
   notes: string | null;
   flag_labels: string[];
+  board_id: string | null;
   created_at: string;
   updated_at: string;
   last_message?: string;
@@ -32,16 +33,84 @@ export interface KanbanColumn {
   type?: "funnel" | "flag";
 }
 
-export function useCrmLeads(tenantId: string | undefined) {
+export interface CrmBoard {
+  id: string;
+  tenant_id: string;
+  name: string;
+  order: number;
+  columns: KanbanColumn[];
+  created_at: string;
+  updated_at: string;
+}
+
+export function useCrmBoards(tenantId: string | undefined) {
   return useQuery({
-    queryKey: ["crm-leads", tenantId],
+    queryKey: ["crm-boards", tenantId],
+    enabled: !!tenantId,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("crm_boards" as any)
+        .select("*")
+        .eq("tenant_id", tenantId!)
+        .order("order", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as unknown as CrmBoard[];
+    },
+  });
+}
+
+export function useCreateBoard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ tenantId, name, order }: { tenantId: string; name: string; order: number }) => {
+      const { data, error } = await supabase
+        .from("crm_boards" as any)
+        .insert({ tenant_id: tenantId, name, order, columns: [] })
+        .select()
+        .single();
+      if (error) throw error;
+      return data as unknown as CrmBoard;
+    },
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["crm-boards", v.tenantId] }),
+  });
+}
+
+export function useUpdateBoard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, tenantId, patch }: { id: string; tenantId: string; patch: Partial<Pick<CrmBoard, "name" | "order" | "columns">> }) => {
+      const { error } = await supabase.from("crm_boards" as any).update(patch).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["crm-boards", v.tenantId] }),
+  });
+}
+
+export function useDeleteBoard() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, tenantId }: { id: string; tenantId: string }) => {
+      const { error } = await supabase.from("crm_boards" as any).delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: ["crm-boards", v.tenantId] }),
+  });
+}
+
+export function useCrmLeads(tenantId: string | undefined, boardId?: string | null, includeUnassigned = false) {
+  return useQuery({
+    queryKey: ["crm-leads", tenantId, boardId ?? null, includeUnassigned],
     queryFn: async () => {
       if (!tenantId) return [];
-      const { data, error } = await supabase
+      let q = supabase
         .from("crm_leads")
         .select("*")
         .eq("tenant_id", tenantId)
         .order("updated_at", { ascending: false });
+      if (boardId) {
+        q = includeUnassigned ? q.or(`board_id.eq.${boardId},board_id.is.null`) : q.eq("board_id", boardId);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as CrmLead[];
     },
@@ -82,7 +151,6 @@ export function useMoveLead() {
       toLabelId: string;
       toLabelName?: string;
     }) => {
-      // Call edge function to move label in UAZAPI + update DB
       const { data, error } = await supabase.functions.invoke("move-crm-lead", {
         body: { leadId, tenantId, phoneNumber, toLabelId, toLabelName },
       });
@@ -134,5 +202,16 @@ export function useUpdateLeadNotes() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["crm-leads", variables.tenantId] });
     },
+  });
+}
+
+export function useAssignLeadBoard() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ leadId, boardId, tenantId }: { leadId: string; boardId: string; tenantId: string }) => {
+      const { error } = await supabase.from("crm_leads").update({ board_id: boardId }).eq("id", leadId);
+      if (error) throw error;
+    },
+    onSuccess: (_, v) => queryClient.invalidateQueries({ queryKey: ["crm-leads", v.tenantId] }),
   });
 }
