@@ -1116,12 +1116,11 @@ export default function TenantFormPage() {
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
   const [responseDelay, setResponseDelay] = useState(10);
   const [kanbanColumns, setKanbanColumns] = useState<{ label_id: string; name: string; color: string; order: number; type?: "funnel" | "flag" }[]>([]);
+  const [logoUrl, setLogoUrl] = useState<string>("");
+  const [uploadingLogo, setUploadingLogo] = useState(false);
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
-    phone: "",
-    email: "",
-    address: "",
     whatsapp_number: "",
     status: "active",
     api_provider: "trinks",
@@ -1145,9 +1144,6 @@ export default function TenantFormPage() {
       setForm({
         name: existing.name,
         slug: existing.slug,
-        phone: existing.phone ?? "",
-        email: existing.email ?? "",
-        address: existing.address ?? "",
         whatsapp_number: existing.whatsapp_number ?? "",
         status: existing.status,
         api_provider: (existing as any).api_provider ?? "trinks",
@@ -1165,6 +1161,8 @@ export default function TenantFormPage() {
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
       });
+      setLogoUrl((existing as any).logo_url ?? "");
+
       // Load custom tools from agent_settings
       const settings = (existing as any).agent_settings;
       if (settings && typeof settings === "object" && Array.isArray(settings.custom_tools)) {
