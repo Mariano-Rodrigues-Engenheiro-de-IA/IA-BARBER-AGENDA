@@ -46,13 +46,14 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
       .select("*, follow_up_steps(*)")
       .eq("tenant_id", tenantId)
       .order("created_at");
-    if (error) toast.error("Erro ao carregar cadências");
+    if (error) toast.error("Erro ao carregar follow-ups");
     setSequences((data || []).map((s: any) => ({
       ...s,
       follow_up_steps: (s.follow_up_steps || []).sort((a: Step, b: Step) => a.step_order - b.step_order),
     })));
     setLoading(false);
   };
+
 
   useEffect(() => { if (tenantId) load(); }, [tenantId]);
 
@@ -111,7 +112,7 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
 
   const save = async (i: number) => {
     const seq = sequences[i];
-    if (!seq.name.trim()) { toast.error("Dê um nome à cadência"); return; }
+    if (!seq.name.trim()) { toast.error("Dê um nome ao follow-up"); return; }
     if (!seq.follow_up_steps?.length) { toast.error("Adicione pelo menos uma etapa"); return; }
     if (seq.follow_up_steps.some((s) => !s.message.trim())) { toast.error("Preencha todas as mensagens"); return; }
 
@@ -145,7 +146,7 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
         }))
       );
       if (stepsErr) throw stepsErr;
-      toast.success("Cadência salva!");
+      toast.success("Follow-up salvo!");
       await load();
     } catch (e: any) {
       toast.error(e.message || "Erro ao salvar");
@@ -153,6 +154,18 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
       setSavingId(null);
     }
   };
+
+  const remove = async (i: number) => {
+    const seq = sequences[i];
+    if (!confirm(`Excluir follow-up "${seq.name}"?`)) return;
+    if (seq.id) {
+      const { error } = await supabase.from("follow_up_sequences").delete().eq("id", seq.id);
+      if (error) { toast.error("Erro ao excluir"); return; }
+    }
+    setSequences((prev) => prev.filter((_, idx) => idx !== i));
+    toast.success("Excluído");
+  };
+
 
   const remove = async (i: number) => {
     const seq = sequences[i];
@@ -171,17 +184,18 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" />Cadências de Follow-up</h3>
-          <p className="text-sm text-muted-foreground">Sequências de mensagens automáticas para leads de tráfego pago.</p>
+          <h3 className="text-lg font-semibold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" />Follow-ups personalizados</h3>
+          <p className="text-sm text-muted-foreground">Sequências de mensagens automáticas para leads.</p>
         </div>
-        <Button type="button" onClick={addSequence}><Plus className="w-4 h-4 mr-2" />Nova cadência</Button>
+        <Button type="button" onClick={addSequence}><Plus className="w-4 h-4 mr-2" />Novo follow-up</Button>
       </div>
 
       {sequences.length === 0 && (
         <div className="glass-card p-8 text-center text-muted-foreground">
-          Nenhuma cadência criada. Clique em "Nova cadência" para começar.
+          Nenhum follow-up criado. Clique em "Novo follow-up" para começar.
         </div>
       )}
+
 
       {sequences.map((seq, i) => (
         <div key={seq.id || i} className="glass-card p-5 space-y-4">
@@ -273,9 +287,10 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
           <div className="flex justify-end">
             <Button type="button" onClick={() => save(i)} disabled={savingId !== null}>
               {savingId === (seq.id || `new-${i}`) ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-              Salvar cadência
+              Salvar follow-up
             </Button>
           </div>
+
         </div>
       ))}
     </div>

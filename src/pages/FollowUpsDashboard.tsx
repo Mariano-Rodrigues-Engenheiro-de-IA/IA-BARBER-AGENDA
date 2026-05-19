@@ -3,10 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Clock, CheckCircle2, Send, XCircle, Building2, Sparkles, TrendingUp, Users, MessageCircle, Filter } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, Sparkles, TrendingUp, Users, MessageCircle, Filter } from "lucide-react";
+
 
 type FollowUp = {
   id: string;
