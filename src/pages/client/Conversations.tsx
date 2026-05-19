@@ -199,9 +199,8 @@ export default function ClientConversations() {
           {selected && (
             <>
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-[hsl(var(--wa-bubble-out))]/40 flex items-center justify-center text-foreground font-semibold">
-                  {selected.slice(-2)}
-                </div>
+                <Avatar phone={selected} size={40} />
+
                 <div>
                   <div className="font-semibold text-[15px] text-foreground">{selected}</div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
