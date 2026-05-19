@@ -14,6 +14,38 @@ function cleanContent(raw: string): string {
     .trim();
 }
 
+// Deterministic WhatsApp-style avatar (color + initials from phone)
+const AVATAR_COLORS = [
+  "#0088cc", "#25D366", "#075E54", "#128C7E", "#34B7F1",
+  "#7B68EE", "#FF6B6B", "#F39C12", "#16A085", "#9B59B6",
+  "#E74C3C", "#3498DB", "#1ABC9C", "#E67E22", "#8E44AD",
+];
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function avatarColor(phone: string): string {
+  return AVATAR_COLORS[hashStr(phone) % AVATAR_COLORS.length];
+}
+function avatarInitials(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length >= 4) return digits.slice(-4, -2);
+  return digits.slice(-2) || "??";
+}
+
+function Avatar({ phone, size = 48 }: { phone: string; size?: number }) {
+  return (
+    <div
+      className="rounded-full flex items-center justify-center text-white font-semibold shrink-0 select-none"
+      style={{ backgroundColor: avatarColor(phone), width: size, height: size, fontSize: size * 0.36 }}
+    >
+      {avatarInitials(phone)}
+    </div>
+  );
+}
+
+
 export default function ClientConversations() {
   const { tenantId } = useAuth();
   const [selected, setSelected] = useState<string | null>(null);
