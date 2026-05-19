@@ -185,7 +185,7 @@ export default function FollowUpsDashboard() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Follow-ups</h2>
-          <p className="text-muted-foreground mt-1">Métricas completas de cadências e follow-ups</p>
+          <p className="text-muted-foreground mt-1">Métricas dos seus follow-ups personalizados</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
@@ -204,9 +204,9 @@ export default function FollowUpsDashboard() {
             </SelectContent>
           </Select>
           <Select value={sequenceFilter} onValueChange={setSequenceFilter}>
-            <SelectTrigger className="w-[200px]"><SelectValue placeholder="Cadência" /></SelectTrigger>
+            <SelectTrigger className="w-[200px]"><SelectValue placeholder="Follow-up" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">Todas as cadências</SelectItem>
+              <SelectItem value="all">Todos os follow-ups</SelectItem>
               {sequences?.filter((s) => tenantFilter === "all" || s.tenant_id === tenantFilter).map((s) => (
                 <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
               ))}
@@ -215,128 +215,99 @@ export default function FollowUpsDashboard() {
         </div>
       </div>
 
-      <Tabs defaultValue="sequences">
-        <TabsList>
-          <TabsTrigger value="sequences" className="gap-1"><Sparkles className="w-3.5 h-3.5" />Cadências</TabsTrigger>
-          <TabsTrigger value="legacy" className="gap-1"><Send className="w-3.5 h-3.5" />Follow-ups simples</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="sequences" className="space-y-6 mt-6">
-          {/* KPI cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-            {[
-              { label: "Leads captados", value: seqMetrics.totalLeads, icon: Users, color: "text-primary" },
-              { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
-              { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
-              { label: "Convertidos", value: seqMetrics.converted, icon: CheckCircle2, color: "text-accent" },
-              { label: "Sem resposta", value: seqMetrics.completed, icon: XCircle, color: "text-destructive" },
-            ].map((s) => (
-              <div key={s.label} className="glass-card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{s.label}</span>
-                  <s.icon className={`w-5 h-5 ${s.color}`} />
-                </div>
-                {loadingFU ? <Skeleton className="h-9 w-16" /> : <p className="text-3xl font-bold text-foreground">{s.value}</p>}
+      <div className="space-y-6">
+        {/* KPI cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          {[
+            { label: "Leads captados", value: seqMetrics.totalLeads, icon: Users, color: "text-primary" },
+            { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
+            { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
+            { label: "Convertidos", value: seqMetrics.converted, icon: CheckCircle2, color: "text-accent" },
+            { label: "Sem resposta", value: seqMetrics.completed, icon: XCircle, color: "text-destructive" },
+          ].map((s) => (
+            <div key={s.label} className="glass-card p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{s.label}</span>
+                <s.icon className={`w-5 h-5 ${s.color}`} />
               </div>
-            ))}
-          </div>
+              {loadingFU ? <Skeleton className="h-9 w-16" /> : <p className="text-3xl font-bold text-foreground">{s.value}</p>}
+            </div>
+          ))}
+        </div>
 
-          {/* Funnel */}
-          {funnelData.length > 0 && (
-            <div className="glass-card p-5">
-              <h3 className="font-semibold mb-4 flex items-center gap-2"><TrendingUp className="w-4 h-4" />Funil por etapa</h3>
-              <div className="space-y-2">
-                {funnelData.map((f) => (
-                  <div key={f.step} className="flex items-center gap-3">
-                    <span className="text-sm w-16 text-muted-foreground">Etapa {f.step}</span>
-                    <div className="flex-1 bg-muted/30 rounded h-8 relative overflow-hidden">
-                      <div className="h-full bg-primary/30" style={{ width: `${(f.reached / maxReached) * 100}%` }} />
-                      <div className="absolute inset-0 flex items-center px-3 text-xs">
-                        <span className="font-medium">{f.reached} alcançaram</span>
-                        {f.responded > 0 && <span className="ml-3 text-accent">{f.responded} responderam após</span>}
-                      </div>
+        {/* Funnel */}
+        {funnelData.length > 0 && (
+          <div className="glass-card p-5">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><TrendingUp className="w-4 h-4" />Funil por etapa</h3>
+            <div className="space-y-2">
+              {funnelData.map((f) => (
+                <div key={f.step} className="flex items-center gap-3">
+                  <span className="text-sm w-16 text-muted-foreground">Etapa {f.step}</span>
+                  <div className="flex-1 bg-muted/30 rounded h-8 relative overflow-hidden">
+                    <div className="h-full bg-primary/30" style={{ width: `${(f.reached / maxReached) * 100}%` }} />
+                    <div className="absolute inset-0 flex items-center px-3 text-xs">
+                      <span className="font-medium">{f.reached} alcançaram</span>
+                      {f.responded > 0 && <span className="ml-3 text-accent">{f.responded} responderam após</span>}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* By keyword */}
-          {Object.keys(seqMetrics.byKeyword).length > 0 && (
-            <div className="glass-card p-5">
-              <h3 className="font-semibold mb-4 flex items-center gap-2"><Filter className="w-4 h-4" />Por palavra-chave</h3>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(seqMetrics.byKeyword).sort((a, b) => b[1] - a[1]).map(([kw, count]) => (
-                  <Badge key={kw} variant="outline" className="text-sm">{kw === "__catch_all__" ? "(catch-all)" : kw}: <strong className="ml-1">{count}</strong></Badge>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Leads table */}
-          <div className="glass-card overflow-hidden">
-            <div className="p-5 border-b border-border"><h3 className="font-semibold">Leads</h3></div>
-            {leadsTable.length === 0 ? (
-              <div className="p-12 text-center text-muted-foreground">
-                <Sparkles className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p>Nenhum lead em cadência no período</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border text-left">
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Telefone</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Projeto</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Cadência</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Palavra-chave</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase text-center">Etapa</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Status</th>
-                      <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Última ação</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {leadsTable.slice(0, 100).map((row, idx) => (
-                      <tr key={idx} className="border-b border-border/50 hover:bg-muted/30 cursor-pointer" onClick={() => setTimelinePhone({ tenantId: row.tenantId, phone: row.phone })}>
-                        <td className="p-4 text-sm font-mono">{row.phone}</td>
-                        <td className="p-4 text-sm">{row.tenantName}</td>
-                        <td className="p-4 text-sm">{row.sequenceName}</td>
-                        <td className="p-4 text-sm text-muted-foreground">{row.keyword === "__catch_all__" ? "(catch-all)" : row.keyword}</td>
-                        <td className="p-4 text-sm text-center">{row.currentStep}/{row.totalSteps}</td>
-                        <td className="p-4">{statusBadge(row.status)}</td>
-                        <td className="p-4 text-xs text-muted-foreground">{row.lastUpdate ? new Date(row.lastUpdate).toLocaleString("pt-BR") : "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="legacy" className="space-y-6 mt-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { label: "Enviados", value: stats.sent, icon: Send, color: "text-primary" },
-              { label: "Confirmados", value: stats.confirmed, icon: CheckCircle2, color: "text-accent" },
-              { label: "Pendentes", value: stats.pending, icon: Clock, color: "text-yellow-500" },
-              { label: "Expirados", value: stats.expired, icon: XCircle, color: "text-destructive" },
-            ].map((s) => (
-              <div key={s.label} className="glass-card p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{s.label}</span>
-                  <s.icon className={`w-5 h-5 ${s.color}`} />
                 </div>
-                {loadingFU ? <Skeleton className="h-9 w-16" /> : <p className="text-3xl font-bold">{s.value}</p>}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-          <div className="glass-card p-5 text-sm text-muted-foreground">
-            Inclui follow-ups dos modos antigos ("após link enviado", "após sem resposta") — total de {legacy.length} no filtro atual.
+        )}
+
+        {/* By keyword */}
+        {Object.keys(seqMetrics.byKeyword).length > 0 && (
+          <div className="glass-card p-5">
+            <h3 className="font-semibold mb-4 flex items-center gap-2"><Filter className="w-4 h-4" />Por palavra-chave</h3>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(seqMetrics.byKeyword).sort((a, b) => b[1] - a[1]).map(([kw, count]) => (
+                <Badge key={kw} variant="outline" className="text-sm">{kw === "__catch_all__" ? "(catch-all)" : kw}: <strong className="ml-1">{count}</strong></Badge>
+              ))}
+            </div>
           </div>
-        </TabsContent>
-      </Tabs>
+        )}
+
+        {/* Leads table */}
+        <div className="glass-card overflow-hidden">
+          <div className="p-5 border-b border-border"><h3 className="font-semibold">Leads</h3></div>
+          {leadsTable.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground">
+              <Sparkles className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p>Nenhum lead em follow-up no período</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Telefone</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Projeto</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Follow-up</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Palavra-chave</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase text-center">Etapa</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Status</th>
+                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Última ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leadsTable.slice(0, 100).map((row, idx) => (
+                    <tr key={idx} className="border-b border-border/50 hover:bg-muted/30 cursor-pointer" onClick={() => setTimelinePhone({ tenantId: row.tenantId, phone: row.phone })}>
+                      <td className="p-4 text-sm font-mono">{row.phone}</td>
+                      <td className="p-4 text-sm">{row.tenantName}</td>
+                      <td className="p-4 text-sm">{row.sequenceName}</td>
+                      <td className="p-4 text-sm text-muted-foreground">{row.keyword === "__catch_all__" ? "(catch-all)" : row.keyword}</td>
+                      <td className="p-4 text-sm text-center">{row.currentStep}/{row.totalSteps}</td>
+                      <td className="p-4">{statusBadge(row.status)}</td>
+                      <td className="p-4 text-xs text-muted-foreground">{row.lastUpdate ? new Date(row.lastUpdate).toLocaleString("pt-BR") : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
 
       <TimelineDialog
         info={timelinePhone}
@@ -347,6 +318,7 @@ export default function FollowUpsDashboard() {
     </div>
   );
 }
+
 
 function TimelineDialog({ info, onClose, followUps, seqMap }: {
   info: { tenantId: string; phone: string } | null;
