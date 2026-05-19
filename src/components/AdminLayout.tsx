@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoZaylo from "@/assets/logo-zaylo.png";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Visão Geral" },
@@ -82,6 +83,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </Avatar>
           <p className="text-xs text-muted-foreground truncate flex-1">{user?.email}</p>
         </div>
+        <ThemeToggle />
         <Button
           variant="ghost"
           size="sm"
