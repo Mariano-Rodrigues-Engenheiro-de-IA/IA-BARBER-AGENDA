@@ -2,9 +2,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Users, MessageSquare, Send, TrendingUp, CalendarCheck, Link2, Bot, UserCheck } from "lucide-react";
+import { Send, CalendarCheck, Bot, UserCheck } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -29,27 +28,14 @@ export default function ClientOverview() {
   const days = period === "7d" ? 7 : 30;
   const since = useMemo(() => new Date(Date.now() - days * 86400000).toISOString(), [days]);
 
-  // Top 4 cards (last 24h, kept as-is)
   const sinceDay = new Date(Date.now() - 86400000).toISOString();
   const { data: topData } = useQuery({
     queryKey: ["client-overview-top", tenantId],
     enabled: !!tenantId,
     queryFn: async () => {
-      const [leads, msgs, sent, all] = await Promise.all([
-        supabase.from("crm_leads").select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenantId!).gte("created_at", sinceDay),
-        supabase.from("chat_messages").select("phone_number")
-          .eq("tenant_id", tenantId!).gte("created_at", sinceDay),
-        supabase.from("follow_ups").select("id", { count: "exact", head: true })
-          .eq("tenant_id", tenantId!).eq("status", "sent").gte("sent_at", sinceDay),
-        supabase.from("follow_ups").select("status")
-          .eq("tenant_id", tenantId!).gte("created_at", sinceDay),
-      ]);
-      const activePhones = new Set((msgs.data ?? []).map((m: any) => m.phone_number)).size;
-      const total = (all.data ?? []).length;
-      const responded = (all.data ?? []).filter((f: any) => f.status === "confirmed").length;
-      const rate = total ? Math.round((responded / total) * 100) : 0;
-      return { newLeads: leads.count ?? 0, activePhones, sent: sent.count ?? 0, rate };
+      const { count } = await supabase.from("follow_ups").select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId!).eq("status", "sent").gte("sent_at", sinceDay);
+      return { sent: count ?? 0 };
     },
   });
 
@@ -90,17 +76,16 @@ export default function ClientOverview() {
 
   // Tangible AI cards
   const aiStats = useMemo(() => {
-    let bookings = 0, links = 0;
+    let bookings = 0;
     (agentLogs ?? []).forEach((l: any) => {
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
         if (["criar_agendamento", "agendar"].includes(tc?.name) && !tc?.blocked) bookings++;
-        if (tc?.name === "enviar_link_agendamento") links++;
       });
     });
     const aiMessages = (messages ?? []).filter((m: any) => m.role === "assistant").length;
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
-    return { bookings, links, aiMessages, uniqueClients };
+    return { bookings, aiMessages, uniqueClients };
   }, [agentLogs, messages]);
 
   // Activity chart
@@ -119,12 +104,11 @@ export default function ClientOverview() {
     return Object.values(map);
   }, [messages, days]);
 
-  // Bookings & links per day
   const toolDaily = useMemo(() => {
-    const map: Record<string, { date: string; agendamentos: number; links: number }> = {};
+    const map: Record<string, { date: string; agendamentos: number }> = {};
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      map[d] = { date: d.slice(5), agendamentos: 0, links: 0 };
+      map[d] = { date: d.slice(5), agendamentos: 0 };
     }
     (agentLogs ?? []).forEach((l: any) => {
       const k = l.created_at.slice(0, 10);
@@ -132,21 +116,10 @@ export default function ClientOverview() {
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
         if (["criar_agendamento", "agendar"].includes(tc?.name) && !tc?.blocked) map[k].agendamentos++;
-        if (tc?.name === "enviar_link_agendamento") map[k].links++;
       });
     });
     return Object.values(map);
   }, [agentLogs, days]);
-
-  // Hour distribution
-  const hourData = useMemo(() => {
-    const arr = Array.from({ length: 24 }, (_, h) => ({ hora: `${h}h`, mensagens: 0 }));
-    (messages ?? []).forEach((m: any) => {
-      const h = new Date(m.created_at).getHours();
-      arr[h].mensagens++;
-    });
-    return arr;
-  }, [messages]);
 
   // Top 5 clients (full phone number)
   const topClients = useMemo(() => {
@@ -180,7 +153,6 @@ export default function ClientOverview() {
     cliente: { label: "Cliente", color: "hsl(var(--primary))" },
     ia: { label: "IA", color: "hsl(160 70% 45%)" },
     agendamentos: { label: "Agendamentos", color: "hsl(160 70% 45%)" },
-    links: { label: "Links", color: "hsl(45 95% 55%)" },
     mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
     valor: { label: "Total", color: "hsl(var(--primary))" },
   };
