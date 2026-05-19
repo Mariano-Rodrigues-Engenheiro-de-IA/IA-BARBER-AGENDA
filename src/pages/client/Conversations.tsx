@@ -230,7 +230,7 @@ export default function ClientConversations() {
           {selected && (
             <>
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
-                <Avatar phone={selected} size={40} />
+                <ContactAvatar phone={selected} size={40} />
 
                 <div>
                   <div className="font-semibold text-[15px] text-foreground">{selected}</div>
