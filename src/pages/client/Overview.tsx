@@ -148,21 +148,26 @@ export default function ClientOverview() {
   }, [messages, days]);
 
   const toolDaily = useMemo(() => {
-    const map: Record<string, { date: string; agendamentos: number }> = {};
+    const map: Record<string, { date: string; agendamentos: number; ids: Set<string> }> = {};
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      map[d] = { date: d.slice(5), agendamentos: 0 };
+      map[d] = { date: d.slice(5), agendamentos: 0, ids: new Set() };
     }
     (agentLogs ?? []).forEach((l: any) => {
       const k = l.created_at.slice(0, 10);
       if (!map[k]) return;
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
-        if (["criar_agendamento", "agendar"].includes(tc?.name) && !tc?.blocked) map[k].agendamentos++;
+        const id = isSuccessfulBooking(tc);
+        if (id && !map[k].ids.has(id)) {
+          map[k].ids.add(id);
+          map[k].agendamentos++;
+        }
       });
     });
-    return Object.values(map);
+    return Object.values(map).map(({ date, agendamentos }) => ({ date, agendamentos }));
   }, [agentLogs, days]);
+
 
   // Top 5 clients (full phone number)
   const topClients = useMemo(() => {
