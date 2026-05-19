@@ -200,7 +200,7 @@ export default function ClientConversations() {
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
-                <Avatar phone={c.phone} size={48} />
+                <ContactAvatar phone={c.phone} size={48} />
 
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline gap-2">
