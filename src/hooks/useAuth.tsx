@@ -6,7 +6,8 @@ export type Role = "admin" | "client" | null;
 export type ModuleVisibility = "hidden" | "read_only" | "editable";
 export type AppModule =
   | "overview" | "conversations" | "followups" | "crm"
-  | "ai_prompt" | "ai_knowledge" | "integrations" | "company_data";
+  | "ai_prompt" | "ai_knowledge" | "integrations" | "company_data"
+  | "connection";
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 
