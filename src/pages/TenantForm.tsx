@@ -1315,49 +1315,72 @@ export default function TenantFormPage() {
 
           <TabsContent value="general" className="space-y-4">
             <div className="glass-card p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nome do Estabelecimento</Label>
-                  <Input
-                    id="name"
-                    value={form.name}
-                    onChange={(e) => handleChange("name", e.target.value)}
-                    placeholder="Salão Exemplo"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="slug">Slug</Label>
-                  <Input
-                    id="slug"
-                    value={form.slug}
-                    onChange={(e) => handleChange("slug", e.target.value)}
-                    placeholder="salao-exemplo"
-                    required
-                  />
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="name">Nome do Estabelecimento</Label>
+                <Input
+                  id="name"
+                  value={form.name}
+                  onChange={(e) => handleChange("name", e.target.value)}
+                  placeholder="Salão Exemplo"
+                  required
+                />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">E-mail</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={form.email as string}
-                    onChange={(e) => handleChange("email", e.target.value)}
-                    placeholder="contato@salao.com"
-                  />
+
+              <div className="space-y-2">
+                <Label>Logo da empresa</Label>
+                <div className="flex items-center gap-4">
+                  <div className="w-20 h-20 rounded-xl border border-border bg-muted/30 flex items-center justify-center overflow-hidden shrink-0">
+                    {logoUrl ? (
+                      <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Sem logo</span>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <label className="flex items-center justify-center gap-2 p-3 border-2 border-dashed border-border rounded-md cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors">
+                      {uploadingLogo ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : (
+                        <Upload className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <span className="text-sm text-muted-foreground">
+                        {uploadingLogo ? "Enviando..." : logoUrl ? "Trocar logo" : "Enviar arquivo (PNG, JPG, SVG)"}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingLogo}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setUploadingLogo(true);
+                          try {
+                            const ext = file.name.split(".").pop();
+                            const path = `${id || "new"}/logo/${Date.now()}.${ext}`;
+                            const { error } = await supabase.storage.from("tenant-media").upload(path, file, { upsert: true });
+                            if (error) throw error;
+                            const { data: urlData } = supabase.storage.from("tenant-media").getPublicUrl(path);
+                            setLogoUrl(urlData.publicUrl);
+                            toast.success("Logo enviado!");
+                          } catch (err: any) {
+                            toast.error("Erro ao enviar logo: " + err.message);
+                          } finally {
+                            setUploadingLogo(false);
+                          }
+                        }}
+                      />
+                    </label>
+                    {logoUrl && (
+                      <button type="button" onClick={() => setLogoUrl("")} className="text-xs text-muted-foreground hover:text-destructive">
+                        Remover logo
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Telefone</Label>
-                  <Input
-                    id="phone"
-                    value={form.phone as string}
-                    onChange={(e) => handleChange("phone", e.target.value)}
-                    placeholder="(11) 99999-9999"
-                  />
-                </div>
+                <p className="text-xs text-muted-foreground">Aparece no topo do painel do cliente.</p>
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="whatsapp_number">Número WhatsApp (do estabelecimento)</Label>
                 <Input
@@ -1370,15 +1393,7 @@ export default function TenantFormPage() {
                   Número que recebe mensagens dos clientes. Usado para identificar o tenant.
                 </p>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="address">Endereço</Label>
-                <Input
-                  id="address"
-                  value={form.address as string}
-                  onChange={(e) => handleChange("address", e.target.value)}
-                  placeholder="Rua Exemplo, 123 - São Paulo, SP"
-                />
-              </div>
+
               <div className="space-y-2 max-w-xs">
                 <Label>Status</Label>
                 <Select
@@ -1397,6 +1412,7 @@ export default function TenantFormPage() {
               </div>
             </div>
           </TabsContent>
+
 
           <TabsContent value="whatsapp" className="space-y-4">
             <div className="glass-card p-6 space-y-4">
