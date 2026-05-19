@@ -167,16 +167,6 @@ export function SequencesEditor({ tenantId }: { tenantId: string }) {
   };
 
 
-  const remove = async (i: number) => {
-    const seq = sequences[i];
-    if (!confirm(`Excluir cadência "${seq.name}"?`)) return;
-    if (seq.id) {
-      const { error } = await supabase.from("follow_up_sequences").delete().eq("id", seq.id);
-      if (error) { toast.error("Erro ao excluir"); return; }
-    }
-    setSequences((prev) => prev.filter((_, idx) => idx !== i));
-    toast.success("Excluída");
-  };
 
   if (loading) return <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" />Carregando...</div>;
 
