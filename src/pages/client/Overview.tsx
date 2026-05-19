@@ -148,25 +148,15 @@ export default function ClientOverview() {
     return arr;
   }, [messages]);
 
-  // Top 5 clients
+  // Top 5 clients (full phone number)
   const topClients = useMemo(() => {
     const counts: Record<string, number> = {};
     (messages ?? []).forEach((m: any) => { counts[m.phone_number] = (counts[m.phone_number] || 0) + 1; });
     return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5)
-      .map(([phone, count]) => ({ phone: phone.slice(-6), mensagens: count }));
+      .map(([phone, count]) => ({ phone, mensagens: count }));
   }, [messages]);
 
-  // Funnel
-  const funnel = useMemo(() => {
-    const conversas = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
-    const confirmedFU = (followUps ?? []).filter((f: any) => f.status === "confirmed").length;
-    return [
-      { etapa: "Conversas", valor: conversas },
-      { etapa: "Links", valor: aiStats.links },
-      { etapa: "Agendamentos", valor: aiStats.bookings },
-      { etapa: "Follow-ups OK", valor: confirmedFU },
-    ];
-  }, [messages, aiStats, followUps]);
+  // (Funnel chart removed)
 
   // Follow-up status pie
   const fuStatus = useMemo(() => {
@@ -257,31 +247,7 @@ export default function ClientOverview() {
           </ChartContainer>
         </div>
 
-        <div className="glass-card p-5 space-y-3">
-          <h3 className="font-semibold text-foreground">Funil de conversão</h3>
-          <ChartContainer config={chartConfig} className="h-[260px] w-full">
-            <BarChart data={funnel} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-              <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-              <YAxis type="category" dataKey="etapa" width={110} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="valor" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ChartContainer>
-        </div>
-
-        <div className="glass-card p-5 space-y-3">
-          <h3 className="font-semibold text-foreground">Mensagens por hora</h3>
-          <ChartContainer config={chartConfig} className="h-[260px] w-full">
-            <BarChart data={hourData}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-              <XAxis dataKey="hora" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 10 }} interval={2} />
-              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Bar dataKey="mensagens" fill="hsl(280 70% 60%)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ChartContainer>
-        </div>
+        {/* Funil de conversão e Mensagens por hora removidos */}
 
         <div className="glass-card p-5 space-y-3">
           <h3 className="font-semibold text-foreground">Top 5 clientes mais ativos</h3>
@@ -292,7 +258,7 @@ export default function ClientOverview() {
               <BarChart data={topClients} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
                 <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-                <YAxis type="category" dataKey="phone" width={70} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+                <YAxis type="category" dataKey="phone" width={120} tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Bar dataKey="mensagens" fill="hsl(200 80% 55%)" radius={[0, 4, 4, 0]} />
               </BarChart>
