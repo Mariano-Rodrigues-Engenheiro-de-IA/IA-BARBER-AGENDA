@@ -19,15 +19,60 @@ function avatarInitials(phone: string): string {
   return digits.slice(-2) || "??";
 }
 
-function Avatar({ phone, size = 48 }: { phone: string; size?: number }) {
+function Avatar({ phone, size = 48, image }: { phone: string; size?: number; image?: string | null }) {
+  const [errored, setErrored] = useState(false);
+  const showImg = image && !errored;
   return (
     <div
-      className="rounded-full flex items-center justify-center font-semibold shrink-0 select-none bg-primary text-primary-foreground"
+      className="rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 select-none bg-primary text-primary-foreground"
       style={{ width: size, height: size, fontSize: size * 0.36 }}
     >
-      {avatarInitials(phone)}
+      {showImg ? (
+        <img
+          src={image!}
+          alt=""
+          className="w-full h-full object-cover"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        avatarInitials(phone)
+      )}
     </div>
   );
+}
+
+// Hook: fetch profile image for a single phone via edge function, cached
+const imageCache = new Map<string, string | null>();
+function useProfileImage(phone: string | null) {
+  const { tenantId } = useAuth();
+  const { data } = useQuery({
+    queryKey: ["wa-pic", tenantId, phone],
+    enabled: !!tenantId && !!phone,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    queryFn: async () => {
+      if (!phone) return null;
+      if (imageCache.has(phone)) return imageCache.get(phone) ?? null;
+      const { data, error } = await supabase.functions.invoke("whatsapp-instance", {
+        body: { action: "profile-image", number: phone },
+      });
+      if (error) {
+        imageCache.set(phone, null);
+        return null;
+      }
+      const img = (data as any)?.image ?? null;
+      imageCache.set(phone, img);
+      return img;
+    },
+  });
+  return data ?? null;
+}
+
+function ContactAvatar({ phone, size }: { phone: string; size?: number }) {
+  const img = useProfileImage(phone);
+  return <Avatar phone={phone} size={size} image={img} />;
 }
 
 
@@ -155,7 +200,7 @@ export default function ClientConversations() {
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
-                <Avatar phone={c.phone} size={48} />
+                <ContactAvatar phone={c.phone} size={48} />
 
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-baseline gap-2">
@@ -185,7 +230,7 @@ export default function ClientConversations() {
           {selected && (
             <>
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
-                <Avatar phone={selected} size={40} />
+                <ContactAvatar phone={selected} size={40} />
 
                 <div>
                   <div className="font-semibold text-[15px] text-foreground">{selected}</div>
