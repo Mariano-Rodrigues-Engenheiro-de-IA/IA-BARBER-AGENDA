@@ -1805,7 +1805,9 @@ interface AgentSessionState {
   selectedDate: string | null;
   executedToolNames: string[];
   explicitClientName: string | null;
+  nameRejectionCount?: number;
 }
+
 
 // ===================== PERSISTENT STATE =====================
 
