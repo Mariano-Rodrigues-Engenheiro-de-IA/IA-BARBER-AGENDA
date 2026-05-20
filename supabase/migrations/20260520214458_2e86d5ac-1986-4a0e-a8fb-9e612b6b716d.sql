@@ -1,0 +1,2 @@
+ALTER TABLE public.onebeleza_client_aliases ADD COLUMN IF NOT EXISTS burned_at timestamptz;
+CREATE INDEX IF NOT EXISTS idx_onebeleza_aliases_active ON public.onebeleza_client_aliases (tenant_id, real_phone) WHERE burned_at IS NULL;
