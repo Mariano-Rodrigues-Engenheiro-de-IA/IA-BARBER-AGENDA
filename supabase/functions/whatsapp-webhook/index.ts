@@ -2451,7 +2451,7 @@ function reconcileOneBelezaSchedulingArgs(
       corrected: wasAutoFilled,
     };
   }
-  }
+
 
   const startOnlyMatch = validSlotOptions.find((slot) => slot.horarioInicio === horarioInicio);
   if (!startOnlyMatch) {
