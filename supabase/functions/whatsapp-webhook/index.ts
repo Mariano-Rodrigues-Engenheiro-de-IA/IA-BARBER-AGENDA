@@ -2412,7 +2412,9 @@ function reconcileOneBelezaSchedulingArgs(
     return true;
   });
 
-  const validSlotOptions = validSlotOptionsForDate.filter((slot) => slot.profissionalId === profissionalId);
+  const validSlotOptions = validSlotOptionsForDate.filter((slot) => slot.profissionalId === profissionalIdResolved);
+
+  const wasAutoFilled = !profissionalId && !!profissionalIdResolved;
 
   if (validSlotOptions.length === 0 && horarioInicio) {
     const uniqueStartMatchAcrossProfessionals = validSlotOptionsForDate.filter((slot) => {
