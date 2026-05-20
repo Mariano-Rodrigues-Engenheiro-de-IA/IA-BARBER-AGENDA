@@ -7,7 +7,7 @@ export type ModuleVisibility = "hidden" | "read_only" | "editable";
 export type AppModule =
   | "overview" | "conversations" | "followups" | "crm"
   | "ai_prompt" | "ai_knowledge" | "integrations" | "company_data"
-  | "connection";
+  | "connection" | "tools";
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 
