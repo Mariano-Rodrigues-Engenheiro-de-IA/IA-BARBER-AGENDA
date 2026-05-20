@@ -83,7 +83,7 @@ function FollowUpsSection({
     } else {
       const def = FIXED_FOLLOWUPS.find((d) => d.type === type)!;
       onChange([...followUps, {
-        id: generateToolId(),
+        id: (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2,10)),
         name: def.name,
         type: def.type,
         delay_minutes: def.defaultDelay,
@@ -332,7 +332,7 @@ export default function TenantFormPage() {
           const legacy = settings.follow_up;
           if (legacy.enabled !== false || legacy.message) {
             setFollowUps([{
-              id: generateToolId(),
+              id: (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2,10)),
               name: "Após envio de link",
               type: "after_link_sent" as const,
               delay_minutes: legacy.delay_minutes || 30,
