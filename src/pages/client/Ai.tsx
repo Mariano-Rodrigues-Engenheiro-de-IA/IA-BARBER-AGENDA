@@ -49,9 +49,35 @@ export default function ClientAi() {
   });
 
   const [form, setForm] = useState<any>({});
+  const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [viewVersion, setViewVersion] = useState<any>(null);
-  useEffect(() => { if (tenant) setForm(tenant); }, [tenant]);
+  useEffect(() => {
+    if (tenant) {
+      setForm(tenant);
+      const s = (tenant as any).agent_settings;
+      if (s && typeof s === "object" && Array.isArray(s.custom_tools)) {
+        setCustomTools(s.custom_tools);
+      } else {
+        setCustomTools([]);
+      }
+    }
+  }, [tenant]);
+
+  const saveTools = async (next: CustomTool[]) => {
+    setCustomTools(next);
+    if (!tenantId) return;
+    const currentSettings = (tenant as any)?.agent_settings ?? {};
+    const agentSettings = { ...currentSettings, custom_tools: next };
+    const { error } = await supabase.from("tenants").update({ agent_settings: agentSettings } as any).eq("id", tenantId);
+    if (error) return toast.error(error.message);
+    await supabase.from("audit_logs").insert({
+      tenant_id: tenantId, user_id: user?.id, actor_role: "client",
+      action: "edit_custom_tools", entity: "tenants", entity_id: tenantId,
+      after: { custom_tools: next },
+    });
+    refetch();
+  };
 
   const save = async (fields: Record<string, any>, action: string) => {
     if (!tenantId) return;
