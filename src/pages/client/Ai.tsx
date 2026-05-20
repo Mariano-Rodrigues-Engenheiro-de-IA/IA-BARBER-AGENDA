@@ -24,6 +24,7 @@ export default function ClientAi() {
   const ai = useModulePermission("ai_prompt");
   const integ = useModulePermission("integrations");
   const company = useModulePermission("company_data");
+  const toolsPerm = useModulePermission("tools");
 
   const { data: tenant, refetch } = useQuery({
     queryKey: ["client-ai-tenant", tenantId],
