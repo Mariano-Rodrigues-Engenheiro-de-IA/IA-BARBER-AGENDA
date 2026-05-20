@@ -1,106 +1,71 @@
-# Melhorias no Painel do Cliente
+## Contexto (Barbearia Marquez Ceilândia — One Beleza)
 
-Três blocos de mudanças no painel do cliente (e ajustes correspondentes no admin), sem mexer em integrações ou backend de IA.
-
----
-
-## 1. Múltiplos CRMs (boards)
-
-Hoje cada tenant tem **um único Kanban** definido em `tenants.kanban_columns` (jsonb). Vou permitir **vários CRMs por tenant** (ex.: Tráfego Pago, Assinatura, Contratação — nomes definidos pelo cliente).
-
-**Modelo de dados**
-- Nova tabela `crm_boards`: `id`, `tenant_id`, `name`, `order`, `columns jsonb` (mesmo formato atual: `[{label_id, name, color, order, type}]`), `created_at`, `updated_at`. RLS: admin tudo; cliente lê/edita os do próprio tenant (respeitando `can_edit_module('crm')`).
-- Nova coluna `crm_leads.board_id uuid` (nullable). Leads existentes ficam num board "Principal" migrado automaticamente a partir de `tenants.kanban_columns`.
-- Mantemos `tenants.kanban_columns` por compatibilidade, mas o app passa a ler de `crm_boards`.
-
-**UI Admin (`TenantForm` → aba Kanban)**
-- Lista de boards com botões "+ Novo CRM", renomear, excluir, reordenar.
-- Ao selecionar um board, edita as colunas dele (funnel/flag) com o editor atual.
-
-**UI Cliente (`/app/crm`)**
-- Seletor de board no topo (tabs ou dropdown).
-- Botão "+ Novo CRM" se tiver permissão `editable`.
-- Kanban renderiza colunas do board selecionado; leads filtrados por `board_id`.
-
-**Tela Admin `TenantKanban`**
-- Mesmo seletor de board.
-
-**Edge function `move-crm-lead`**: continua igual (opera por phone + label). Sem mudança.
+Investiguei os logs do telefone `5588921714278` (01:00–01:25 de 20/05) e o código atual de `whatsapp-webhook`. Achei as causas exatas das duas situações que você relatou. Tudo abaixo é específico para o provider **One Beleza** — não toca Trinks, Bemp, Frizzar nem none.
 
 ---
 
-## 2. Follow-ups: remover "simples", renomear "Cadências" → "Follow-ups"
+## Situação 1 — "telefone já associado a outra conta" em loop
 
-Hoje convivem dois fluxos: follow-up simples (linha em `follow_ups` criada quando IA envia link) e cadências personalizadas (`follow_up_sequences` + `follow_up_steps`).
+### O que está acontecendo
 
-**Mudanças**
-- **Manter** `follow_up_sequences`/`follow_up_steps` (lógica que já roda em `process-followups`).
-- **Remover da UI** toda a seção "Follow-up simples" / configuração de delay padrão / mensagem default. A tabela `follow_ups` continua existindo (é onde os jobs ficam enfileirados), só some da interface como item separado.
-- Renomear em **todas as telas** "Cadência/Cadências" → "Follow-up/Follow-ups personalizados":
-  - Cliente: `src/pages/client/FollowUps.tsx`
-  - Admin: `src/pages/FollowUpsDashboard.tsx`, `SequencesEditor.tsx`, navegação/sidebar.
-- Cliente vê só "Follow-ups" no menu (sem "Cadências" nem "Follow-up simples").
+O sistema de alias automático (`onebeleza_client_aliases`) já existe — então sua intuição de manter o cadastro automático já está implementada, mas ele tem 3 bugs concretos que travam o fluxo:
 
-Sem mudança em edge functions nem em `process-followups`.
+1. **Falso sucesso.** Na 1ª tentativa, a API One Beleza respondeu com HTTP 2xx mas corpo `"Erro ao realizar login com o cadastro"`. O código (`registerOneBelezaClient`) considerou `ok: true` porque olhou só o status, salvou o alias `95470000003` na tabela e seguiu. Mas a conta nunca foi de fato criada.
+2. **Alias reutilizado eternamente.** A partir daí, todo retry chama `cadastrar_cliente` → real falha com "já associado" → tenta o **mesmo** alias `95470000003` → também falha com "já associado" (porque algum cadastro fantasma ficou amarrado a ele) → devolve `ok: false`. Nunca tenta gerar um próximo alias.
+3. **`buscar_cliente` confirma o vazio mas o ciclo recomeça.** Em cada rodada `buscar_cliente` retorna "Nenhum cliente encontrado" (via alias), a IA reage chamando `cadastrar_cliente`, que volta a falhar igual — e a barbearia perde o agendamento.
 
----
+### Minha recomendação (responde sua pergunta)
 
-## 3. Visão Geral do cliente — gráficos de análise
+**Mantenha o mesmo número do cliente como tentativa principal, e o alias automático como fallback.** Pedir um telefone alternativo ao cliente cria fricção que faz a maioria desistir — o alias resolve sem o cliente nem perceber. O que precisa é corrigir os bugs.
 
-Reaproveitar `src/pages/client/Overview.tsx`. Manter os 4 cards atuais no topo e adicionar abaixo uma grade de gráficos (Recharts, já instalado). Período selecionável (7/30 dias) igual ao dashboard admin.
+### O que vou fazer
 
-**Cards extras (linha 2, métricas tangíveis de uso da IA)**
-- Agendamentos criados pela IA (conta `tool_calls` com `name in ('criar_agendamento','agendar')` e `!blocked` em `agent_logs`)
-- Links de agendamento enviados (`tool_calls.name = 'enviar_link_agendamento'`)
-- Mensagens enviadas pela IA (`chat_messages` role=assistant)
-- Clientes únicos atendidos (distinct phone_number em `chat_messages`)
+Em `supabase/functions/whatsapp-webhook/index.ts` (escopo restrito ao provider One Beleza):
 
-**Gráficos (linha 3+, coloridos, glass-card)**
-1. **Atividade diária** — Area chart empilhado: mensagens do cliente vs respostas da IA por dia.
-2. **Agendamentos & Links por dia** — Bar chart agrupado (verde = agendamentos, amarelo = links).
-3. **Funil de conversão** — Bar chart horizontal: Conversas → Links enviados → Agendamentos → Follow-ups confirmados.
-4. **Distribuição por horário** — Bar chart 0–23h mostrando picos de atendimento (heatmap visual de horas).
-5. **Top 5 clientes mais ativos** — Bar chart horizontal com nº de mensagens por phone_number.
-6. **Status de follow-ups** — Donut/Pie: pending / sent / confirmed / cancelled.
+- **Validar sucesso real, não só HTTP status.** Em `registerOneBelezaClient`, tratar como falha qualquer resposta cujo corpo contenha mensagens como "Erro ao realizar login", "erro ao cadastrar", "falha", ou cujo JSON não traga `codigo`/`clienteId`/`id`. Adicionar helper `isOneBelezaRegistrationSuccess(text)`.
+- **Rotação de alias.** Quando o alias atual também devolver "telefone já associado" (ou falso-sucesso), marcar a linha em `onebeleza_client_aliases` como queimada (nova coluna `burned_at timestamptz`) e gerar o próximo alias automaticamente, até 5 tentativas dentro da mesma chamada. `resolveOneBelezaClientPhone` e `getOrCreateOneBelezaAlias` passam a ignorar aliases queimados.
+- **Verificar antes de recadastrar.** Após gerar um novo alias e cadastrar com sucesso, fazer um `GetClientePeloNumero` com o alias para confirmar que existe de fato antes de retornar `ok: true`. Se não existir, queimar e seguir para o próximo.
+- **Log + audit.** Cada queima e cada novo alias gera linha em `audit_logs` com `action: "onebeleza_alias_burned"` / `"onebeleza_alias_rotated"` para você acompanhar.
 
-Tudo derivado de `chat_messages`, `agent_logs`, `follow_ups` que o cliente já pode ler via RLS.
+Resultado: a IA cadastra com sucesso de forma transparente mesmo que o telefone já esteja "preso" em outra conta global.
 
 ---
 
-## Detalhes técnicos
+## Situação 2 — `agendar` sem `profissionalId`
 
-**Migrations (schema)**
-```sql
-create table public.crm_boards (
-  id uuid primary key default gen_random_uuid(),
-  tenant_id uuid not null,
-  name text not null,
-  "order" int not null default 0,
-  columns jsonb not null default '[]'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-alter table public.crm_boards enable row level security;
--- policies: admin ALL; cliente SELECT (tenant_id = get_user_tenant_id(auth.uid()));
--- cliente ALL when can_edit_module(auth.uid(), tenant_id, 'crm').
+### O que está acontecendo
 
-alter table public.crm_leads add column board_id uuid;
--- data migration: para cada tenant com kanban_columns não-vazio,
--- criar 1 board "Principal" com essas colunas e setar board_id em todos os leads existentes.
-```
+O validador `buildOneBelezaSchedulingValidationResult` já bloqueia agendar sem `profissionalId` válido. O problema real é o **caminho** que a IA usa quando o cliente diz "qualquer barbeiro" ou quando ela pula etapas:
 
-**Arquivos a mexer**
-- `src/pages/client/Crm.tsx` — seletor de board + criar board
-- `src/pages/TenantKanban.tsx` — seletor de board
-- `src/pages/TenantForm.tsx` — editor de boards (aba Kanban)
-- `src/hooks/useCrmLeads.ts` — filtrar por board_id, hooks `useCrmBoards`, `useCreateBoard`
-- `src/pages/client/FollowUps.tsx` — remover seção simples, renomear
-- `src/pages/FollowUpsDashboard.tsx` + `SequencesEditor.tsx` — renomear
-- `src/components/ClientLayout.tsx` / `AdminLayout.tsx` — labels do menu
-- `src/pages/client/Overview.tsx` — novos cards + gráficos
+- `buscar_horarios` já retorna `profissionalId` em cada `disponibilidades[]` (você está certo — não precisaria nem chamar `buscar_barbeiros_por_servico`).
+- Quando a IA escolhe um horário, hoje ela é obrigada a passar `profissionalId` explícito. Se esquecer, é bloqueada — mas o bloqueio não conserta automaticamente, devolve erro e a IA às vezes inventa um ID.
 
-Sem mudanças em: edge functions, integrações, RLS de tabelas existentes (só `crm_leads.board_id` é nullable, então legado funciona), prompt da IA.
+### O que vou fazer (só One Beleza)
+
+1. **Auto-preenchimento de `profissionalId` a partir do slot.** Em `reconcileOneBelezaSchedulingArgs`, quando `profissionalId` estiver ausente mas existir **exatamente um** slot em `oneBelezaSlotOptions` que combine `servicoId` + `data` + `horarioInicio`, preencher `profissionalId` automaticamente com o do slot. Se houver mais de um (ex.: 2 barbeiros livres no mesmo horário), escolher o primeiro retornado por `buscar_horarios` (= "qualquer barbeiro"). Loga a correção em `tool_calls.correctionReason`.
+2. **Hidratação forçada antes de agendar.** Se a IA chamar `agendar` sem ter chamado `buscar_horarios` na sessão, `hydrateOneBelezaSessionStateFromProvider` já existe — garantir que ele rode **antes** do validador e popule `oneBelezaProfessionalOptions` e `oneBelezaSlotOptions` a partir do endpoint consolidado.
+3. **Regras explícitas no prompt base One Beleza** (`buildSystemPrompt` para provider onebeleza):
+   - "Quando o cliente disser 'qualquer barbeiro', 'tanto faz' ou similar, escolha o primeiro `profissionalId` retornado por `buscar_horarios` para o horário escolhido. NUNCA agende sem `profissionalId`."
+   - "Você NÃO precisa chamar `buscar_barbeiros_por_servico` se já tiver chamado `buscar_horarios` — os `profissionalId` já vêm nas disponibilidades. Use-os."
+   - "É proibido inventar `profissionalId`. Use SEMPRE o ID exato retornado pela ferramenta na mesma interação."
+4. **Mensagem de erro mais didática.** Quando ainda assim bloquear, devolver à IA a lista de `{profissionalId, profissionalNome, horarioInicio, horarioFim}` válidos, em vez do texto genérico, para ela auto-corrigir na próxima rodada.
 
 ---
 
-Confirma que posso seguir com tudo? Se quiser cortar/ajustar alguma parte (ex.: pular algum gráfico, manter `follow_ups` simples visível só pro admin etc.), me diz.
+## Escopo e impacto
+
+- Apenas o provider **One Beleza** (`api_provider = 'onebeleza'`). Trinks, Bemp, Frizzar e none ficam intactos.
+- Aplica-se automaticamente a todos os tenants atuais e futuros da One Beleza.
+- Requer 1 migração: adicionar coluna `burned_at timestamptz` em `onebeleza_client_aliases`.
+
+## Arquivos / mudanças
+
+- `supabase/migrations/...` — adiciona `burned_at` em `onebeleza_client_aliases`.
+- `supabase/functions/whatsapp-webhook/index.ts`:
+  - `isOneBelezaRegistrationSuccess` (novo helper)
+  - `registerOneBelezaClient` (rotação de alias + validação de sucesso real + verificação pós-cadastro)
+  - `getOrCreateOneBelezaAlias` / `resolveOneBelezaClientPhone` (respeitar `burned_at`)
+  - `reconcileOneBelezaSchedulingArgs` (auto-fill de `profissionalId` a partir do slot)
+  - Bloco `agendar` em `executeOneBelezaTool` (garantir hidratação prévia)
+  - `buildSystemPrompt` para One Beleza (3 regras novas)
+  - `buildOneBelezaSchedulingValidationResult` (mensagem com lista de opções válidas)

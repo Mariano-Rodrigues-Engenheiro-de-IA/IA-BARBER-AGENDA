@@ -447,6 +447,7 @@ export type Database = {
       onebeleza_client_aliases: {
         Row: {
           alias_phone: string
+          burned_at: string | null
           created_at: string
           id: string
           real_name: string | null
@@ -456,6 +457,7 @@ export type Database = {
         }
         Insert: {
           alias_phone: string
+          burned_at?: string | null
           created_at?: string
           id?: string
           real_name?: string | null
@@ -465,6 +467,7 @@ export type Database = {
         }
         Update: {
           alias_phone?: string
+          burned_at?: string | null
           created_at?: string
           id?: string
           real_name?: string | null
