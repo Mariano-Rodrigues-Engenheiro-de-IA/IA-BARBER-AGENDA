@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Save, History } from "lucide-react";
+import { Save, History, Wrench } from "lucide-react";
+import { CustomToolsTab, type CustomTool } from "@/components/CustomToolsTab";
 
 export default function ClientAi() {
   const { tenantId, user } = useAuth();
