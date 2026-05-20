@@ -2374,13 +2374,37 @@ function reconcileOneBelezaSchedulingArgs(
     ...(horarioFim ? { horarioFim } : {}),
   };
 
-  if (!servicoId || !profissionalId || !dataNumero || !horarioInicio) {
+  // AUTO-FILL profissionalId quando ausente: se temos slots no estado da sessão
+  // que combinam servicoId + data + horarioInicio, escolhemos o profissional do
+  // primeiro slot compatível (= "qualquer barbeiro" se vários).
+  let effectiveProfissionalId = profissionalId;
+  if (!effectiveProfissionalId && servicoId && dataNumero && horarioInicio) {
+    const candidateSlots = sessionState.oneBelezaSlotOptions.filter((slot) => {
+      if (slot.servicoId !== servicoId) return false;
+      if (slot.date !== dataNumero) return false;
+      if (slot.horarioInicio !== horarioInicio) return false;
+      if (horarioFim && slot.horarioFim !== horarioFim) return false;
+      return true;
+    });
+    if (candidateSlots.length > 0) {
+      effectiveProfissionalId = candidateSlots[0].profissionalId;
+      normalizedArgs.profissionalId = String(effectiveProfissionalId);
+      console.log(
+        `[OneBeleza] reconcile auto-filled profissionalId=${effectiveProfissionalId} from slot match (servico=${servicoId}, data=${dataNumero}, inicio=${horarioInicio}, candidates=${candidateSlots.length})`,
+      );
+    }
+  }
+
+  if (!servicoId || !effectiveProfissionalId || !dataNumero || !horarioInicio) {
     return {
       args: normalizedArgs,
       adjusted: JSON.stringify(normalizedArgs) !== JSON.stringify(parsedArgs),
-      corrected: false,
+      corrected: !!effectiveProfissionalId && effectiveProfissionalId !== profissionalId,
     };
   }
+
+  // Reatribui para que o restante do código use o valor efetivo
+  const profissionalIdResolved = effectiveProfissionalId;
 
   const validSlotOptionsForDate = sessionState.oneBelezaSlotOptions.filter((slot) => {
     if (slot.servicoId !== servicoId) return false;
