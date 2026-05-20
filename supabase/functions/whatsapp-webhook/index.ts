@@ -3039,58 +3039,7 @@ async function callAIAgent(
     messages,
     max_completion_tokens: 4096,
   };
-      if (toolCall.function.name === "cadastrar_cliente") {
-        const explicit = sessionState.explicitClientName;
-        // Re-valida no momento do cadastro: mesmo que tenha sido populado em turno anterior,
-        // se não passa em looksLikeRealName agora (ex: transcrição de áudio que vazou),
-        // bloqueia e força a IA a re-perguntar.
-        const forcedName = isUsableClientName(explicit) ? sanitizeClientName(explicit) : "";
-        // Também checa o nome que a própria IA tentou passar — pode ser uma frase inteira
-        // ("Aumenta no valor acima de se incluir a barba") que a IA achou que era nome.
-        const argNome = typeof parsedArgs?.nome === "string" ? parsedArgs.nome : "";
-        const argNomeOk = isUsableClientName(argNome);
 
-        if (forcedName) {
-          if (parsedArgs?.nome !== forcedName) {
-            parsedArgs = { ...parsedArgs, nome: forcedName };
-            correctionReason = `nome corrigido para o nome validado da conversa: ${forcedName}`;
-            toolCallToExecute = {
-              ...toolCall,
-              function: {
-                ...toolCall.function,
-                arguments: JSON.stringify(parsedArgs),
-              },
-            };
-          }
-        } else if (argNomeOk) {
-          // explicitClientName não existe mas o arg que a IA passou parece nome válido — aceita.
-          parsedArgs = { ...parsedArgs, nome: sanitizeClientName(argNome) };
-          sessionState.explicitClientName = parsedArgs.nome;
-          toolCallToExecute = {
-            ...toolCall,
-            function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
-          };
-        } else {
-          // Bloqueia: nem explicitClientName, nem o arg passado parecem nome real.
-          console.log(`[CadastrarCliente] BLOCKED — sem nome válido. explicit="${explicit || ""}" arg="${argNome}" argsRecebidos:`, toolCall.function.arguments);
-          // Sinaliza no estado quantas vezes já bloqueamos por nome inválido nesta conversa
-          sessionState.nameRejectionCount = (sessionState.nameRejectionCount || 0) + 1;
-          const blockedResult = {
-            error: "NOME_NAO_COLETADO",
-            message: "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente: 'Pra finalizar o cadastro, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana. Se a resposta do cliente for uma frase longa ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática.",
-            blocked: true,
-            attemptsSoFar: sessionState.nameRejectionCount,
-          };
-          messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            name: toolCall.function.name,
-            content: JSON.stringify(blockedResult),
-          });
-          executedToolsThisSession.add(toolCall.function.name);
-          continue;
-        }
-      }
 
 
   // Provider "none" uses custom tools (labels, send_combo, send_text, etc.) which the AI may
