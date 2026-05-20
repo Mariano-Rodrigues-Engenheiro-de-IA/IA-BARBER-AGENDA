@@ -16,13 +16,15 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Save, History } from "lucide-react";
+import { Save, History, Wrench } from "lucide-react";
+import { CustomToolsTab, type CustomTool } from "@/components/CustomToolsTab";
 
 export default function ClientAi() {
   const { tenantId, user } = useAuth();
   const ai = useModulePermission("ai_prompt");
   const integ = useModulePermission("integrations");
   const company = useModulePermission("company_data");
+  const toolsPerm = useModulePermission("tools");
 
   const { data: tenant, refetch } = useQuery({
     queryKey: ["client-ai-tenant", tenantId],
@@ -47,9 +49,35 @@ export default function ClientAi() {
   });
 
   const [form, setForm] = useState<any>({});
+  const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [viewVersion, setViewVersion] = useState<any>(null);
-  useEffect(() => { if (tenant) setForm(tenant); }, [tenant]);
+  useEffect(() => {
+    if (tenant) {
+      setForm(tenant);
+      const s = (tenant as any).agent_settings;
+      if (s && typeof s === "object" && Array.isArray(s.custom_tools)) {
+        setCustomTools(s.custom_tools);
+      } else {
+        setCustomTools([]);
+      }
+    }
+  }, [tenant]);
+
+  const saveTools = async (next: CustomTool[]) => {
+    setCustomTools(next);
+    if (!tenantId) return;
+    const currentSettings = (tenant as any)?.agent_settings ?? {};
+    const agentSettings = { ...currentSettings, custom_tools: next };
+    const { error } = await supabase.from("tenants").update({ agent_settings: agentSettings } as any).eq("id", tenantId);
+    if (error) return toast.error(error.message);
+    await supabase.from("audit_logs").insert({
+      tenant_id: tenantId, user_id: user?.id, actor_role: "client",
+      action: "edit_custom_tools", entity: "tenants", entity_id: tenantId,
+      after: { custom_tools: next } as any,
+    } as any);
+    refetch();
+  };
 
   const save = async (fields: Record<string, any>, action: string) => {
     if (!tenantId) return;
@@ -99,6 +127,7 @@ export default function ClientAi() {
 
   const tabs = [
     { v: "ai", label: "IA", show: ai.visible },
+    { v: "tools", label: "Ferramentas", show: toolsPerm.visible },
     { v: "company", label: "Sua empresa", show: company.visible },
     { v: "integ", label: "Integrações", show: integ.visible },
   ].filter((t) => t.show);
@@ -179,6 +208,37 @@ export default function ClientAi() {
             </div>
           </TabsContent>
         )}
+
+        {toolsPerm.visible && (
+          <TabsContent value="tools" className="space-y-4">
+            {toolsPerm.editable ? (
+              <CustomToolsTab tools={customTools} onChange={saveTools} tenantId={tenantId ?? undefined} />
+            ) : (
+              <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Wrench className="w-5 h-5 text-primary" />
+                  <h3 className="font-semibold text-foreground">Ferramentas Customizadas</h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Somente leitura — peça ao administrador para alterar.
+                </p>
+                {customTools.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Nenhuma ferramenta cadastrada.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {customTools.map((t) => (
+                      <div key={t.id} className="p-3 rounded-lg border border-border bg-background/50">
+                        <div className="font-medium text-sm">{t.display_name}</div>
+                        <div className="text-xs text-muted-foreground">{t.enabled ? "Ativo" : "Inativo"}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </TabsContent>
+        )}
+
 
         {company.visible && (
           <TabsContent value="company" className="space-y-4">
