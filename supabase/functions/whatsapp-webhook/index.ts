@@ -3061,11 +3061,19 @@ async function callAIAgent(
 
       if (toolCall.function.name === "cadastrar_cliente") {
         const explicit = sessionState.explicitClientName;
-        if (isUsableClientName(explicit)) {
-          const forcedName = sanitizeClientName(explicit);
+        // Re-valida no momento do cadastro: mesmo que tenha sido populado em turno anterior,
+        // se não passa em looksLikeRealName agora (ex: transcrição de áudio que vazou),
+        // bloqueia e força a IA a re-perguntar.
+        const forcedName = isUsableClientName(explicit) ? sanitizeClientName(explicit) : "";
+        // Também checa o nome que a própria IA tentou passar — pode ser uma frase inteira
+        // ("Aumenta no valor acima de se incluir a barba") que a IA achou que era nome.
+        const argNome = typeof parsedArgs?.nome === "string" ? parsedArgs.nome : "";
+        const argNomeOk = isUsableClientName(argNome);
+
+        if (forcedName) {
           if (parsedArgs?.nome !== forcedName) {
             parsedArgs = { ...parsedArgs, nome: forcedName };
-            correctionReason = `nome corrigido para o nome informado pelo cliente na conversa: ${forcedName}`;
+            correctionReason = `nome corrigido para o nome validado da conversa: ${forcedName}`;
             toolCallToExecute = {
               ...toolCall,
               function: {
@@ -3074,13 +3082,24 @@ async function callAIAgent(
               },
             };
           }
+        } else if (argNomeOk) {
+          // explicitClientName não existe mas o arg que a IA passou parece nome válido — aceita.
+          const cleaned = sanitizeClientName(argNome);
+          parsedArgs = { ...parsedArgs, nome: cleaned };
+          sessionState.explicitClientName = cleaned;
+          toolCallToExecute = {
+            ...toolCall,
+            function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+          };
         } else {
-          // Block: AI tried to register before collecting the real name from the conversation.
-          console.log(`[CadastrarCliente] BLOCKED — explicitClientName ausente. AI tentou cadastrar sem coletar nome. argsRecebidos:`, toolCall.function.arguments);
+          // Bloqueia: nem explicitClientName, nem o arg passado parecem nome real.
+          console.log(`[CadastrarCliente] BLOCKED — sem nome válido. explicit="${explicit || ""}" arg="${argNome}" argsRecebidos:`, toolCall.function.arguments);
+          sessionState.nameRejectionCount = (sessionState.nameRejectionCount || 0) + 1;
           const blockedResult = {
             error: "NOME_NAO_COLETADO",
-            message: "Você ainda não perguntou o nome do cliente nesta conversa. NÃO chame cadastrar_cliente agora. Primeiro pergunte ao cliente: 'Qual é o seu nome completo?' e aguarde a resposta. Só depois que o cliente informar o nome real você pode chamar cadastrar_cliente. NUNCA use 'Cliente', o pushName do WhatsApp, ou qualquer placeholder.",
+            message: "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente: 'Pra finalizar o cadastro, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana. Se a resposta do cliente for uma frase longa ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática.",
             blocked: true,
+            attemptsSoFar: sessionState.nameRejectionCount,
           };
           messages.push({
             role: "tool",
@@ -3092,6 +3111,7 @@ async function callAIAgent(
           continue;
         }
       }
+
 
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
 
