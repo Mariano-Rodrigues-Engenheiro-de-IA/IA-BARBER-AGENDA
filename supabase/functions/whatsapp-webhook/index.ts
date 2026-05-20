@@ -42,39 +42,90 @@ const sanitizeClientName = (value: unknown) => String(value ?? "")
   .replace(/[^\p{L}\s\-']/gu, "")
   .replace(/\s+/g, " ")
   .trim();
-const isUsableClientName = (value: unknown) => {
+
+// Palavras/marcadores que indicam fala (não nome). Se o "nome" contém qualquer um destes,
+// é quase certo que veio de uma transcrição de áudio ou frase solta, não um nome real.
+const NON_NAME_STOPWORDS = new Set([
+  // saudações e respostas curtas
+  "oi","ola","alo","bom","dia","boa","tarde","noite","sim","nao","ok","okay","blz","beleza",
+  "valeu","obrigado","obrigada","tchau","ate","logo",
+  // pronomes/conectores comuns em fala
+  "eu","voce","vc","tu","ele","ela","nos","a","o","um","uma","com","sem","de","do","da","dos","das",
+  "pra","para","por","em","no","na","nos","nas","que","quem","onde","como","quando","quanto",
+  "isso","aquilo","esse","essa","aqui","ali","la","ai","mas","tambem","tb","entao","entao","ne","tipo",
+  "ta","tah","uhum","aham","hum","hmm",
+  // verbos típicos de pedido / agendamento
+  "quero","queria","gostaria","posso","pode","preciso","tem","temos","ter","ir","vou","vai","vamos",
+  "agendar","agenda","agendamento","marcar","marca","marcado","desmarcar","cancelar","cancela",
+  "confirmar","confirma","reagendar","mudar","trocar","ver","saber","aumenta","aumentar","incluir",
+  "fazer","faz","fica","ficou","esta","estah","sao","ser",
+  // serviços / produtos típicos
+  "corte","barba","bigode","cabelo","cabelinho","sobrancelha","pezinho","platinado","luzes","tintura",
+  "hidratacao","escova","progressiva","botox","relaxamento","servico","servicos","valor","valores",
+  "preco","precos","quanto","custa","custo","combo",
+  // tempo / agenda
+  "hoje","amanha","ontem","agora","depois","antes","cedo","tarde","manha","manhã","horario","horarios",
+  "hora","horas","minuto","minutos","dia","dias","semana","mes","mes","ano",
+  "segunda","terca","quarta","quinta","sexta","sabado","domingo",
+  "feira","feriado",
+  // placeholders
+  "cliente","fulano","ciclano","beltrano","teste","testando",
+]);
+
+const NAME_CONNECTORS = new Set(["de","da","do","das","dos","e","del","della","di"]);
+
+// Heurística forte: o texto realmente parece um nome próprio.
+// - 2 a 4 palavras
+// - cada palavra com 2+ letras
+// - só letras (sem dígitos)
+// - nenhuma palavra na lista de stopwords (exceto conectores tipo "de", "da")
+// - comprimento total razoável
+const looksLikeRealName = (value: unknown): boolean => {
   const cleaned = sanitizeClientName(value);
-  const normalized = normalizeUserFacingText(cleaned);
-  if (!cleaned || cleaned.length < 2 || cleaned.length > 70) return false;
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 60) return false;
   if (/\d/.test(cleaned)) return false;
-  return ![
-    "cliente",
-    "primeira vez",
-    "primeira",
-    "oi",
-    "ola",
-    "olá",
-    "bom dia",
-    "boa tarde",
-    "boa noite",
-    "sim",
-    "nao",
-    "não",
-  ].includes(normalized);
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 4) return false;
+  for (const p of parts) {
+    if (p.length < 2) return false;
+    if (!/^[\p{L}'\-]+$/u.test(p)) return false;
+  }
+  const normalizedParts = parts.map((p) => normalizeUserFacingText(p));
+  // Pelo menos a 1ª e a última palavra precisam NÃO estar nos stopwords nem ser conector.
+  const first = normalizedParts[0];
+  const last = normalizedParts[normalizedParts.length - 1];
+  if (NON_NAME_STOPWORDS.has(first) || NAME_CONNECTORS.has(first)) return false;
+  if (NON_NAME_STOPWORDS.has(last) || NAME_CONNECTORS.has(last)) return false;
+  // Nenhuma palavra pode ser stopword "forte" (verbos, serviços, tempo).
+  for (const np of normalizedParts) {
+    if (NON_NAME_STOPWORDS.has(np)) return false;
+  }
+  return true;
 };
+
+const isUsableClientName = (value: unknown) => looksLikeRealName(value);
+
 const extractExplicitClientName = (userMessage: unknown, previousAssistantMessage?: unknown) => {
   const rawMessage = String(userMessage ?? "").trim();
   if (!rawMessage) return null;
 
   const normalizedAssistant = normalizeUserFacingText(previousAssistantMessage);
-  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) seu nome|me passa seu nome|me diga seu nome|pode me passar seu nome|seu nome)/.test(normalizedAssistant);
+  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) (?:o )?(?:seu )?nome|me passa (?:o )?(?:seu )?nome|me diga (?:o )?(?:seu )?nome|pode me (?:passar|dizer) (?:o )?(?:seu )?nome|seu nome (?:e )?sobrenome|nome e sobrenome)/.test(normalizedAssistant);
   const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
+
+  // Sem gatilho explícito: não tente extrair nome (evita pegar transcrição de áudio aleatória).
   if (!assistantAskedForName && !introMatch) return null;
 
-  const candidate = introMatch?.[1] || rawMessage;
+  const candidate = (introMatch?.[1] || rawMessage)
+    // remove pontuação final e conectores comuns no fim
+    .replace(/[\.,!?;:]+$/g, "")
+    .trim();
+
   const cleaned = sanitizeClientName(candidate);
-  return isUsableClientName(cleaned) ? cleaned : null;
+  // Só aceita se realmente parecer um nome (2-4 palavras, sem verbos/serviços/tempo).
+  return looksLikeRealName(cleaned) ? cleaned : null;
 };
+
 const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
