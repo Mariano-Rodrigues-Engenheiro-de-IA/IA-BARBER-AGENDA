@@ -2527,9 +2527,17 @@ function buildOneBelezaSchedulingValidationResult(
     validProfessionalOptions.length > 0 &&
     (!profissionalId || !validProfessionalOptions.some((option) => option.profissionalId === profissionalId))
   ) {
+    // Mensagem mais didática: lista nomes + IDs reais e dica de auto-fill quando há horário
+    const optsForPrompt = validProfessionalOptions.map((o) => ({
+      profissionalId: o.profissionalId,
+      nome: o.nomeProfissional,
+    }));
+    const hint = horarioInicio
+      ? ` Se o cliente disse "qualquer barbeiro", escolha o primeiro profissionalId da lista que tenha esse horário disponível e chame agendar novamente com esse profissionalId.`
+      : ` Pergunte ao cliente qual desses profissionais ele prefere, ou se "qualquer barbeiro", use o primeiro da lista.`;
     return {
-      error: `profissionalId ${profissionalId ?? "(ausente)"} inválido para o serviço ${servicoId}. Use APENAS um profissionalId real retornado por buscar_barbeiros_por_servico nesta interação.`,
-      validProfessionalOptions,
+      error: `profissionalId ${profissionalId ?? "(ausente)"} inválido para o serviço ${servicoId}. Use APENAS um dos profissionalId reais listados.${hint}`,
+      validProfessionalOptions: optsForPrompt,
       blocked: true,
     };
   }
