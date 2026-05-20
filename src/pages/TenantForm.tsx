@@ -1689,22 +1689,6 @@ export default function TenantFormPage() {
                   placeholder="Instruções adicionais para o agente: tom de voz, regras do estabelecimento, horários, profissionais, serviços especiais, etc."
                 />
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="knowledge">Base de Conhecimento</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {(form.agent_knowledge_base as string)?.length || 0} caracteres
-                  </span>
-                </div>
-                <Textarea
-                  id="knowledge"
-                  rows={12}
-                  className="font-mono text-sm min-h-[200px]"
-                  value={form.agent_knowledge_base as string}
-                  onChange={(e) => handleChange("agent_knowledge_base", e.target.value)}
-                  placeholder="Informações sobre serviços, preços, horários de funcionamento, políticas do estabelecimento..."
-                />
-              </div>
               <div className="space-y-3 pt-4 border-t border-border">
                 <div className="flex items-center justify-between">
                   <div>
