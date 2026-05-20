@@ -2448,8 +2448,9 @@ function reconcileOneBelezaSchedulingArgs(
     return {
       args: exactArgs,
       adjusted: JSON.stringify(exactArgs) !== JSON.stringify(parsedArgs),
-      corrected: false,
+      corrected: wasAutoFilled,
     };
+  }
   }
 
   const startOnlyMatch = validSlotOptions.find((slot) => slot.horarioInicio === horarioInicio);
