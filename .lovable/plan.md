@@ -1,71 +1,82 @@
-## Contexto (Barbearia Marquez Ceilândia — One Beleza)
+## Contexto — o que está acontecendo
 
-Investiguei os logs do telefone `5588921714278` (01:00–01:25 de 20/05) e o código atual de `whatsapp-webhook`. Achei as causas exatas das duas situações que você relatou. Tudo abaixo é específico para o provider **One Beleza** — não toca Trinks, Bemp, Frizzar nem none.
+Consultei os últimos cadastros (`onebeleza_client_aliases`) e confirmei o que você viu na agenda:
 
----
+| Data | Nome salvo | Telefone |
+|---|---|---|
+| 20/05 01:02 | "Aumenta no valor acima de se incluir a barba né Isso" | 5588921714278 |
+| 19/05 13:11 | "Richard Mateus Bento de Sousa" ✅ | 6182032806 |
+| 19/05 12:35 | "tem no sabado as h Guilherme de Melo" | 6181456255 |
 
-## Situação 1 — "telefone já associado a outra conta" em loop
+Dois de três cadastros pegaram a **transcrição inteira do áudio do cliente** como se fosse o nome. Confere exatamente sua suspeita.
 
-### O que está acontecendo
+### Por que está acontecendo
 
-O sistema de alias automático (`onebeleza_client_aliases`) já existe — então sua intuição de manter o cadastro automático já está implementada, mas ele tem 3 bugs concretos que travam o fluxo:
+No `whatsapp-webhook/index.ts`:
 
-1. **Falso sucesso.** Na 1ª tentativa, a API One Beleza respondeu com HTTP 2xx mas corpo `"Erro ao realizar login com o cadastro"`. O código (`registerOneBelezaClient`) considerou `ok: true` porque olhou só o status, salvou o alias `95470000003` na tabela e seguiu. Mas a conta nunca foi de fato criada.
-2. **Alias reutilizado eternamente.** A partir daí, todo retry chama `cadastrar_cliente` → real falha com "já associado" → tenta o **mesmo** alias `95470000003` → também falha com "já associado" (porque algum cadastro fantasma ficou amarrado a ele) → devolve `ok: false`. Nunca tenta gerar um próximo alias.
-3. **`buscar_cliente` confirma o vazio mas o ciclo recomeça.** Em cada rodada `buscar_cliente` retorna "Nenhum cliente encontrado" (via alias), a IA reage chamando `cadastrar_cliente`, que volta a falhar igual — e a barbearia perde o agendamento.
+1. `extractExplicitClientName` (linha 65) aceita **a mensagem inteira** como nome sempre que a IA tiver perguntado "qual é seu nome" em **qualquer** turno recente. Não valida se o texto parece um nome (frase com verbo, muitas palavras, etc.).
+2. `isUsableClientName` (linha 45) só rejeita se tiver dígito ou estiver numa lista pequena de saudações. "Aumenta no valor acima de se incluir a barba né Isso" passa porque só tem letras e espaços.
+3. `sanitizeClientName` remove pontuação e acentos mas mantém a frase toda — vira o `nome` salvo.
+4. O prompt instrui a IA a pedir **"nome completo"** (você quer só nome e sobrenome).
+5. Quando o áudio vem como transcrição longa, a IA chama `cadastrar_cliente` na sequência usando essa transcrição.
 
-### Minha recomendação (responde sua pergunta)
+## Escopo
 
-**Mantenha o mesmo número do cliente como tentativa principal, e o alias automático como fallback.** Pedir um telefone alternativo ao cliente cria fricção que faz a maioria desistir — o alias resolve sem o cliente nem perceber. O que precisa é corrigir os bugs.
+Apenas provider **One Beleza** (Trinks, Bemp, Frizzar, none intactos). Aplica para todos os tenants atuais e futuros.
 
-### O que vou fazer
+## Mudanças (em `supabase/functions/whatsapp-webhook/index.ts`)
 
-Em `supabase/functions/whatsapp-webhook/index.ts` (escopo restrito ao provider One Beleza):
+### 1. Validador de nome muito mais rigoroso (`isUsableClientName` + novo `looksLikeRealName`)
 
-- **Validar sucesso real, não só HTTP status.** Em `registerOneBelezaClient`, tratar como falha qualquer resposta cujo corpo contenha mensagens como "Erro ao realizar login", "erro ao cadastrar", "falha", ou cujo JSON não traga `codigo`/`clienteId`/`id`. Adicionar helper `isOneBelezaRegistrationSuccess(text)`.
-- **Rotação de alias.** Quando o alias atual também devolver "telefone já associado" (ou falso-sucesso), marcar a linha em `onebeleza_client_aliases` como queimada (nova coluna `burned_at timestamptz`) e gerar o próximo alias automaticamente, até 5 tentativas dentro da mesma chamada. `resolveOneBelezaClientPhone` e `getOrCreateOneBelezaAlias` passam a ignorar aliases queimados.
-- **Verificar antes de recadastrar.** Após gerar um novo alias e cadastrar com sucesso, fazer um `GetClientePeloNumero` com o alias para confirmar que existe de fato antes de retornar `ok: true`. Se não existir, queimar e seguir para o próximo.
-- **Log + audit.** Cada queima e cada novo alias gera linha em `audit_logs` com `action: "onebeleza_alias_burned"` / `"onebeleza_alias_rotated"` para você acompanhar.
+Um texto só é aceito como nome se passar em TODOS:
+- 2 a 4 palavras (nome + sobrenome, no máximo 4 partes).
+- Cada palavra com 2+ letras, só letras (acentos OK), sem dígitos.
+- Comprimento total entre 4 e 60 chars.
+- Não contém verbos/palavras típicas de fala ("quero", "tem", "incluir", "agendar", "marcar", "barba", "corte", "horario", "valor", "sabado", "domingo", dias da semana, "preço", "quanto", "manhã", "tarde", "noite", "agora", "depois", "antes", lista de ~40 stopwords).
+- Não contém "né", "tipo", "tá", "uhum", "aham" (marcadores de fala).
+- Cada palavra começa com letra maiúscula OU é convertível (vamos title-case automaticamente se passar nos outros critérios).
 
-Resultado: a IA cadastra com sucesso de forma transparente mesmo que o telefone já esteja "preso" em outra conta global.
+### 2. Extração mais conservadora (`extractExplicitClientName`)
 
----
+- Só aceita a mensagem inteira como candidato a nome quando:
+  - A **última** mensagem do assistente (não qualquer mensagem passada) pediu nome, OU
+  - A mensagem tem o padrão explícito "meu nome é …" / "me chamo …" / "sou o/a …".
+- Sempre extrai só os tokens à direita do conector e roda `looksLikeRealName`.
+- Se falhar, retorna `null` → não popula `explicitClientName`.
 
-## Situação 2 — `agendar` sem `profissionalId`
+### 3. Re-validação no momento do `cadastrar_cliente` (bloco em `~3040`)
 
-### O que está acontecendo
+- Antes de chamar a API, roda `looksLikeRealName(forcedName)` mesmo já estando em `sessionState.explicitClientName`. Se falhar (caso o nome tenha sido populado por engano em turno anterior), zera e devolve à IA o bloqueio "NOME_NAO_COLETADO" com instrução: "Pergunte de novo: 'Qual seu nome e sobrenome?' Aguarde texto claro com 2 a 4 palavras, só letras."
+- Adiciona linha em `audit_logs` com `action: "onebeleza_name_rejected"` e `before: { raw, reason }` para você acompanhar.
 
-O validador `buildOneBelezaSchedulingValidationResult` já bloqueia agendar sem `profissionalId` válido. O problema real é o **caminho** que a IA usa quando o cliente diz "qualquer barbeiro" ou quando ela pula etapas:
+### 4. Prompt — pedir "nome e sobrenome" (não "nome completo")
 
-- `buscar_horarios` já retorna `profissionalId` em cada `disponibilidades[]` (você está certo — não precisaria nem chamar `buscar_barbeiros_por_servico`).
-- Quando a IA escolhe um horário, hoje ela é obrigada a passar `profissionalId` explícito. Se esquecer, é bloqueada — mas o bloqueio não conserta automaticamente, devolve erro e a IA às vezes inventa um ID.
+Em `buildSystemPrompt` para provider `onebeleza`, e na mensagem de bloqueio (linha 3060), trocar todas as ocorrências:
+- "Qual é o seu nome completo?" → "Qual seu nome e sobrenome?"
+- Adicionar regra: "Peça SOMENTE nome e sobrenome (2 palavras). Não peça nome completo, não peça CPF, não peça e-mail."
+- Adicionar regra: "Se a resposta do cliente parecer uma frase (mais de 4 palavras, contém verbos, fala sobre horário/serviço/preço), NÃO use como nome. Responda algo como 'Desculpe, não peguei seu nome. Pode me dizer só o nome e sobrenome?' e aguarde."
+- Adicionar regra: "Se a mensagem do cliente foi um áudio transcrito, tenha dobro de cuidado: confirme antes de cadastrar quando o texto parecer fala solta."
 
-### O que vou fazer (só One Beleza)
+### 5. Fluxo de cadastro mais redondo (prompt + estado)
 
-1. **Auto-preenchimento de `profissionalId` a partir do slot.** Em `reconcileOneBelezaSchedulingArgs`, quando `profissionalId` estiver ausente mas existir **exatamente um** slot em `oneBelezaSlotOptions` que combine `servicoId` + `data` + `horarioInicio`, preencher `profissionalId` automaticamente com o do slot. Se houver mais de um (ex.: 2 barbeiros livres no mesmo horário), escolher o primeiro retornado por `buscar_horarios` (= "qualquer barbeiro"). Loga a correção em `tool_calls.correctionReason`.
-2. **Hidratação forçada antes de agendar.** Se a IA chamar `agendar` sem ter chamado `buscar_horarios` na sessão, `hydrateOneBelezaSessionStateFromProvider` já existe — garantir que ele rode **antes** do validador e popule `oneBelezaProfessionalOptions` e `oneBelezaSlotOptions` a partir do endpoint consolidado.
-3. **Regras explícitas no prompt base One Beleza** (`buildSystemPrompt` para provider onebeleza):
-   - "Quando o cliente disser 'qualquer barbeiro', 'tanto faz' ou similar, escolha o primeiro `profissionalId` retornado por `buscar_horarios` para o horário escolhido. NUNCA agende sem `profissionalId`."
-   - "Você NÃO precisa chamar `buscar_barbeiros_por_servico` se já tiver chamado `buscar_horarios` — os `profissionalId` já vêm nas disponibilidades. Use-os."
-   - "É proibido inventar `profissionalId`. Use SEMPRE o ID exato retornado pela ferramenta na mesma interação."
-4. **Mensagem de erro mais didática.** Quando ainda assim bloquear, devolver à IA a lista de `{profissionalId, profissionalNome, horarioInicio, horarioFim}` válidos, em vez do texto genérico, para ela auto-corrigir na próxima rodada.
+Reforçar no prompt One Beleza a sequência fixa:
+1. `buscar_cliente` por telefone — SEMPRE primeira ação quando o cliente quer agendar.
+2. Se existir → seguir para `buscar_servicos`. NUNCA chame `cadastrar_cliente`.
+3. Se não existir → pergunte "Qual seu nome e sobrenome?" e AGUARDE.
+4. Quando o cliente responder com algo que pareça nome (validador passa) → `cadastrar_cliente`.
+5. Se a resposta não parecer nome → re-pergunte uma vez. Após 2 tentativas falhas, escale para humano (se a tool existir) ou prossiga assumindo "Cliente WhatsApp" só como último recurso (continua bloqueado pelo validador — vai forçar a IA a insistir).
 
----
+## Arquivos
 
-## Escopo e impacto
+- `supabase/functions/whatsapp-webhook/index.ts` — alterações em `sanitizeClientName`, `isUsableClientName`, novo `looksLikeRealName`, `extractExplicitClientName`, bloco `cadastrar_cliente` em `executeOneBelezaTool` / dispatcher (linha ~3040), e `buildSystemPrompt` para One Beleza.
 
-- Apenas o provider **One Beleza** (`api_provider = 'onebeleza'`). Trinks, Bemp, Frizzar e none ficam intactos.
-- Aplica-se automaticamente a todos os tenants atuais e futuros da One Beleza.
-- Requer 1 migração: adicionar coluna `burned_at timestamptz` em `onebeleza_client_aliases`.
+Sem migrações, sem novos secrets.
 
-## Arquivos / mudanças
+## Resultado esperado
 
-- `supabase/migrations/...` — adiciona `burned_at` em `onebeleza_client_aliases`.
-- `supabase/functions/whatsapp-webhook/index.ts`:
-  - `isOneBelezaRegistrationSuccess` (novo helper)
-  - `registerOneBelezaClient` (rotação de alias + validação de sucesso real + verificação pós-cadastro)
-  - `getOrCreateOneBelezaAlias` / `resolveOneBelezaClientPhone` (respeitar `burned_at`)
-  - `reconcileOneBelezaSchedulingArgs` (auto-fill de `profissionalId` a partir do slot)
-  - Bloco `agendar` em `executeOneBelezaTool` (garantir hidratação prévia)
-  - `buildSystemPrompt` para One Beleza (3 regras novas)
-  - `buildOneBelezaSchedulingValidationResult` (mensagem com lista de opções válidas)
+- "Aumenta no valor acima de se incluir a barba né Isso" → rejeitado, IA re-pergunta.
+- "tem no sabado as h Guilherme de Melo" → rejeitado (tem "tem", "sabado", muitas palavras), IA re-pergunta.
+- "Guilherme de Melo" → aceito.
+- "Richard Mateus" → aceito.
+- "Meu nome é João Silva" → extrai "João Silva", aceito.
+- "João" sozinho → rejeitado (precisa sobrenome), IA pede sobrenome.
