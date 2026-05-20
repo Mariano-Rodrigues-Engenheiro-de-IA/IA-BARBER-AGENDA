@@ -5106,6 +5106,15 @@ Use o fluxo de 6 passos. Cada ferramenta DEVE ser executada em sequência.
 ❌ PROIBIDO escolher o barbeiro sozinho quando há mais de um disponível e o cliente não opinou.
 ✅ CADA ID SÓ EXISTE APÓS A FERRAMENTA QUE O RETORNA SER EXECUTADA.
 
+🚨 REGRAS ABSOLUTAS DE profissionalId (NUNCA QUEBRE):
+- NUNCA chame `agendar` sem um `profissionalId` REAL retornado por `buscar_horarios_disponiveis` (campo `disponibilidades[].profissionalId`) NESTA conversa.
+- Os `profissionalId` já vêm DENTRO do retorno de `buscar_horarios_disponiveis`. Você NÃO precisa de outra ferramenta para descobri-los.
+- Se o cliente disser "qualquer barbeiro", "tanto faz", "o que tiver primeiro" ou similar → escolha o PRIMEIRO `profissionalId` retornado em `disponibilidades[]` que tenha o horário que o cliente escolheu, e use ESSE id em `agendar`.
+- É PROIBIDO INVENTAR `profissionalId`. IDs pequenos (1, 2, 3, 10, 99) são SEMPRE inválidos.
+- Se o sistema bloquear `agendar` por `profissionalId` ausente/inválido, leia a lista `validProfessionalOptions` retornada no erro e chame `agendar` de novo usando um id REAL dessa lista.
+
+
+
 ### PASSO 0 — BUSCAR CLIENTE (silencioso, sempre primeiro)
 Execute buscar_cliente silenciosamente.
 - Cliente encontrado → prossiga
