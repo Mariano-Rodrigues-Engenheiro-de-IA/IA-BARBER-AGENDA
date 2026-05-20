@@ -74,8 +74,8 @@ export default function ClientAi() {
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId, user_id: user?.id, actor_role: "client",
       action: "edit_custom_tools", entity: "tenants", entity_id: tenantId,
-      after: { custom_tools: next },
-    });
+      after: { custom_tools: next } as any,
+    } as any);
     refetch();
   };
 
