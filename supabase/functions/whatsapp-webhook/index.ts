@@ -611,9 +611,14 @@ Deno.serve(async (req) => {
 
               const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
               const incoming = normalize(messageContent);
-              const isEchoOfAI = (recentAssistant || []).some(
-                (m: any) => m.content && normalize(m.content) === incoming
-              );
+              const isEchoOfAI = incoming.length > 0 && (recentAssistant || []).some((m: any) => {
+                if (!m.content) return false;
+                const stored = normalize(m.content).replace(/^\[atendente humano\]:\s*/i, "");
+                if (!stored) return false;
+                // Exact match OR incoming is a chunk of the stored AI reply (the AI splits
+                // long replies into multiple WhatsApp messages, so each echo is a substring).
+                return stored === incoming || stored.includes(incoming) || incoming.includes(stored);
+              });
 
               if (isEchoOfAI) {
                 // Just tag the existing AI message with the message_id (so future dedup works) and skip insert
