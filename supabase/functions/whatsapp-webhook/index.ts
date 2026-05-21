@@ -1060,11 +1060,7 @@ Deno.serve(async (req) => {
         const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
 
         // Read live WhatsApp state from payload
-        const waLabelsRaw: any[] = Array.isArray(payload.chat?.wa_label) ? payload.chat.wa_label : [];
-        const waLabelIds = waLabelsRaw.map((l: any) => {
-          const raw = String(l ?? "");
-          return raw.includes(":") ? raw.split(":").pop()! : raw;
-        });
+        const waLabelIds = extractWhatsAppLabelIds(payload);
         const waHasIaOff = iaOffLabelIds.length > 0 && waLabelIds.some((id: string) => iaOffLabelIds.includes(id));
 
         console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
@@ -1111,6 +1107,24 @@ Deno.serve(async (req) => {
 
         if (dbHasIaOff && !waHasIaOff) {
           console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — releasing AI`);
+        }
+
+        const configuredFunnelIds = kanbanCols
+          .filter((c: any) => c.type !== "flag")
+          .map((c: any) => String(c.label_id));
+
+        if (configuredFunnelIds.length > 0) {
+          const syncResult = await syncLeadLabelsFromWhatsApp({
+            supabase,
+            tenant,
+            phoneNumber,
+            waLabelIds,
+            logContext: "MessageLabelSync",
+            skipIfRecentlyUpdatedMs: 10_000,
+            uazapiUrl: tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            uazapiToken: tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          });
+          console.log(`[MessageLabelSync] status=${syncResult.status} labels=${JSON.stringify(syncResult.waLabelIds)}`);
         }
       }
 
