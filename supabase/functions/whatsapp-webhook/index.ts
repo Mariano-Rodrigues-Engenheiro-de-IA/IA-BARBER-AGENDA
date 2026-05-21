@@ -46,6 +46,220 @@ async function loadTenantKanbanColumns(supabase: any, tenantId: string, legacyCo
   }
   return (Array.isArray(legacyCols) ? legacyCols : []).map((c: any) => ({ ...c, board_id: null }));
 }
+
+function normalizeWhatsAppLabelId(value: any): string | null {
+  if (value == null) return null;
+
+  if (typeof value === "object") {
+    return normalizeWhatsAppLabelId(
+      value.label_id ?? value.labelId ?? value.id ?? value.value ?? value.tag_id ?? value.tagId ?? value.raw ?? null,
+    );
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (raw.includes(":")) return raw.split(":").pop()?.trim() || null;
+  return raw;
+}
+
+function extractWhatsAppLabelIds(source: any): string[] {
+  const labelSources = [
+    source?.wa_label,
+    source?.lead_tags,
+    source?.labels,
+    source?.chat?.wa_label,
+    source?.chat?.lead_tags,
+    source?.chat?.labels,
+    source?.data?.wa_label,
+    source?.data?.lead_tags,
+    source?.data?.labels,
+    source?.data?.chat?.wa_label,
+    source?.data?.chat?.lead_tags,
+    source?.data?.chat?.labels,
+  ];
+
+  return [...new Set(
+    labelSources
+      .flatMap((entry: any) => Array.isArray(entry) ? entry : typeof entry === "string" && entry.trim() ? entry.split(",") : [])
+      .map((entry: any) => normalizeWhatsAppLabelId(entry))
+      .filter((entry: string | null): entry is string => Boolean(entry))
+  )];
+}
+
+function pickDesiredFunnelLabel(waLabelIds: string[], kanbanCols: any[], currentFunnelLabel: string | null): string | null {
+  const funnelLabels = waLabelIds.filter((labelId) => {
+    const col = kanbanCols.find((candidate: any) => String(candidate.label_id) === labelId);
+    return col && col.type !== "flag";
+  });
+
+  if (!funnelLabels.length) return null;
+
+  const changedCandidate = funnelLabels.filter((labelId) => labelId !== currentFunnelLabel).at(-1);
+  return changedCandidate || funnelLabels.at(-1) || null;
+}
+
+type SyncLeadLabelsFromWhatsAppArgs = {
+  supabase: any;
+  tenant: any;
+  phoneNumber: string;
+  waLabelIds?: string[];
+  logContext: string;
+  skipIfRecentlyUpdatedMs?: number;
+  uazapiUrl?: string | null;
+  uazapiToken?: string | null;
+};
+
+type SyncLeadLabelsFromWhatsAppResult = {
+  status: string;
+  waLabelIds: string[];
+  kanbanCols: any[];
+  currentFlags: string[];
+  effectiveFlags: string[];
+  currentFunnelLabel: string | null;
+  effectiveFunnelLabel: string | null;
+  funnelChanged: boolean;
+  flagsChanged: boolean;
+};
+
+async function syncLeadLabelsFromWhatsApp({
+  supabase,
+  tenant,
+  phoneNumber,
+  waLabelIds = [],
+  logContext,
+  skipIfRecentlyUpdatedMs = 10_000,
+  uazapiUrl,
+  uazapiToken,
+}: SyncLeadLabelsFromWhatsAppArgs): Promise<SyncLeadLabelsFromWhatsAppResult> {
+  const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
+  const configuredLabelIds = kanbanCols.map((c: any) => String(c.label_id));
+  let effectiveWaLabelIds = [...new Set(waLabelIds.map((labelId) => String(labelId)))];
+
+  if (!effectiveWaLabelIds.length && configuredLabelIds.length && uazapiUrl && uazapiToken) {
+    try {
+      const { payload: chatDetails } = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
+      const liveLabels = extractWhatsAppLabelIds(chatDetails);
+      if (liveLabels.length) {
+        effectiveWaLabelIds = liveLabels;
+        console.log(`[${logContext}] Labels loaded from /chat/details: ${JSON.stringify(effectiveWaLabelIds)}`);
+      }
+    } catch (error) {
+      console.error(`[${logContext}] Failed to load labels from /chat/details:`, error);
+    }
+  }
+
+  const unknownIds = effectiveWaLabelIds.filter((labelId) => !configuredLabelIds.includes(labelId));
+  if (unknownIds.length) {
+    console.log(`[${logContext}] WhatsApp labels not configured in any board, ignoring: ${JSON.stringify(unknownIds)}`);
+  }
+
+  const { data: existingLead } = await supabase
+    .from("crm_leads")
+    .select("id, label_id, flag_labels, updated_at")
+    .eq("tenant_id", tenant.id)
+    .eq("phone_number", phoneNumber)
+    .maybeSingle();
+
+  const currentFunnelLabel = existingLead?.label_id && existingLead.label_id !== "__none__"
+    ? String(existingLead.label_id)
+    : null;
+  const currentFlags: string[] = existingLead?.flag_labels || [];
+
+  if (skipIfRecentlyUpdatedMs > 0 && existingLead?.updated_at) {
+    const ageMs = Date.now() - new Date(existingLead.updated_at).getTime();
+    if (ageMs < skipIfRecentlyUpdatedMs) {
+      console.log(`[${logContext}] Skipping ${phoneNumber} — lead updated ${ageMs}ms ago (anti-loop)`);
+      return {
+        status: "anti_loop_skip",
+        waLabelIds: effectiveWaLabelIds,
+        kanbanCols,
+        currentFlags,
+        effectiveFlags: currentFlags,
+        currentFunnelLabel,
+        effectiveFunnelLabel: currentFunnelLabel,
+        funnelChanged: false,
+        flagsChanged: false,
+      };
+    }
+  }
+
+  const newFlags = [...new Set(effectiveWaLabelIds.filter((labelId) => {
+    const col = kanbanCols.find((candidate: any) => String(candidate.label_id) === labelId);
+    return col?.type === "flag";
+  }))];
+  const newFunnelLabel = pickDesiredFunnelLabel(effectiveWaLabelIds, kanbanCols, currentFunnelLabel);
+  const funnelChanged = newFunnelLabel !== currentFunnelLabel;
+  const flagsChanged = JSON.stringify([...newFlags].sort()) !== JSON.stringify([...currentFlags].sort());
+
+  if (!funnelChanged && !flagsChanged && existingLead) {
+    console.log(`[${logContext}] No changes for ${phoneNumber}`);
+    return {
+      status: "no_changes",
+      waLabelIds: effectiveWaLabelIds,
+      kanbanCols,
+      currentFlags,
+      effectiveFlags: currentFlags,
+      currentFunnelLabel,
+      effectiveFunnelLabel: currentFunnelLabel,
+      funnelChanged,
+      flagsChanged,
+    };
+  }
+
+  if (existingLead || newFunnelLabel || newFlags.length > 0) {
+    const funnelCol = newFunnelLabel
+      ? kanbanCols.find((candidate: any) => String(candidate.label_id) === newFunnelLabel)
+      : null;
+    const updateData: any = { updated_at: new Date().toISOString() };
+
+    if (funnelChanged) {
+      updateData.label_id = newFunnelLabel || "__none__";
+      updateData.label_name = funnelCol?.name || null;
+      updateData.board_id = funnelCol?.board_id ?? null;
+    }
+    if (flagsChanged) {
+      updateData.flag_labels = newFlags;
+    }
+
+    if (existingLead) {
+      await supabase.from("crm_leads").update(updateData).eq("id", existingLead.id);
+    } else {
+      await supabase.from("crm_leads").insert({
+        tenant_id: tenant.id,
+        phone_number: phoneNumber,
+        label_id: newFunnelLabel || "__none__",
+        label_name: funnelCol?.name || null,
+        flag_labels: newFlags,
+        board_id: funnelCol?.board_id ?? null,
+        updated_at: updateData.updated_at,
+      });
+    }
+
+    if (funnelChanged && newFunnelLabel && existingLead?.id) {
+      await supabase.from("crm_lead_history").insert({
+        lead_id: existingLead.id,
+        from_label: currentFunnelLabel,
+        to_label: newFunnelLabel,
+        changed_by: "whatsapp",
+      });
+    }
+
+    console.log(`[${logContext}] Updated ${phoneNumber}: funnel=${newFunnelLabel ?? "__none__"}, flags=${JSON.stringify(newFlags)}`);
+  }
+
+  return {
+    status: existingLead || newFunnelLabel || newFlags.length > 0 ? "label_synced" : "no_changes",
+    waLabelIds: effectiveWaLabelIds,
+    kanbanCols,
+    currentFlags,
+    effectiveFlags: newFlags,
+    currentFunnelLabel,
+    effectiveFunnelLabel: newFunnelLabel,
+    funnelChanged,
+    flagsChanged,
+  };
+}
+
 const exactDigitsMatch = (a: unknown, b: unknown) => {
   const left = digitsOnly(a);
   const right = digitsOnly(b);
@@ -846,11 +1060,7 @@ Deno.serve(async (req) => {
         const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
 
         // Read live WhatsApp state from payload
-        const waLabelsRaw: any[] = Array.isArray(payload.chat?.wa_label) ? payload.chat.wa_label : [];
-        const waLabelIds = waLabelsRaw.map((l: any) => {
-          const raw = String(l ?? "");
-          return raw.includes(":") ? raw.split(":").pop()! : raw;
-        });
+        const waLabelIds = extractWhatsAppLabelIds(payload);
         const waHasIaOff = iaOffLabelIds.length > 0 && waLabelIds.some((id: string) => iaOffLabelIds.includes(id));
 
         console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
@@ -897,6 +1107,24 @@ Deno.serve(async (req) => {
 
         if (dbHasIaOff && !waHasIaOff) {
           console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — releasing AI`);
+        }
+
+        const configuredFunnelIds = kanbanCols
+          .filter((c: any) => c.type !== "flag")
+          .map((c: any) => String(c.label_id));
+
+        if (configuredFunnelIds.length > 0) {
+          const syncResult = await syncLeadLabelsFromWhatsApp({
+            supabase,
+            tenant,
+            phoneNumber,
+            waLabelIds,
+            logContext: "MessageLabelSync",
+            skipIfRecentlyUpdatedMs: 10_000,
+            uazapiUrl: tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            uazapiToken: tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          });
+          console.log(`[MessageLabelSync] status=${syncResult.status} labels=${JSON.stringify(syncResult.waLabelIds)}`);
         }
       }
 
@@ -1607,7 +1835,11 @@ Deno.serve(async (req) => {
       const chatPhone = String(chat?.phone || chat?.id || "").replace(/\D/g, "").replace(/@.*/, "");
       
       console.log(`[LabelSync] Event: ${event}, owner: ${ownerDigits}, chatPhone: ${chatPhone}`);
-      console.log(`[LabelSync] wa_label:`, JSON.stringify(chat?.wa_label || []));
+      console.log(`[LabelSync] wa_label/raw labels:`, JSON.stringify({
+        wa_label: chat?.wa_label || payload?.wa_label || payload?.data?.wa_label || [],
+        lead_tags: chat?.lead_tags || payload?.lead_tags || payload?.data?.lead_tags || [],
+        labels: chat?.labels || payload?.labels || payload?.data?.labels || [],
+      }));
 
       if (!chatPhone) {
         return new Response(JSON.stringify({ status: "no_phone" }), {
@@ -1618,7 +1850,7 @@ Deno.serve(async (req) => {
       // Find tenant — PRIORITY: check which tenant has a crm_lead for this phone number
       const { data: allTenants } = await supabase
         .from("tenants")
-        .select("id, name, whatsapp_number, kanban_columns")
+        .select("id, name, whatsapp_number, kanban_columns, uazapi_url, uazapi_token")
         .eq("status", "active");
 
       let syncTenant: any = null;
@@ -1652,113 +1884,23 @@ Deno.serve(async (req) => {
       
       console.log(`[LabelSync] Tenant matched: ${syncTenant.name} (${syncTenant.id})`);
 
-      // Parse wa_label from UAZAPI - format can be ["labelId"] or ["name:labelId"]
-      const waLabels: string[] = (Array.isArray(chat?.wa_label) ? chat.wa_label : []).map((l: any) => {
-        const raw = String(l ?? "");
-        // Extract label ID (after ":" if present, otherwise the raw value)
-        return raw.includes(":") ? raw.split(":").pop()! : raw;
+      const syncResult = await syncLeadLabelsFromWhatsApp({
+        supabase,
+        tenant: syncTenant,
+        phoneNumber: chatPhone,
+        waLabelIds: extractWhatsAppLabelIds({ chat, data: payload?.data, payload }),
+        logContext: "LabelSync",
+        skipIfRecentlyUpdatedMs: 10_000,
+        uazapiUrl: syncTenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+        uazapiToken: syncTenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
       });
 
-      console.log(`[LabelSync] Parsed label IDs from WhatsApp: ${JSON.stringify(waLabels)} for ${chatPhone} in tenant ${syncTenant.name}`);
-
-      const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, syncTenant.id, syncTenant.kanban_columns);
-      const configuredLabelIds = kanbanCols.map((c: any) => String(c.label_id));
-      console.log(`[LabelSync] configuredLabelIds (${kanbanCols.length} cols): ${JSON.stringify(configuredLabelIds)}`);
-      const unknownIds = waLabels.filter((id: string) => !configuredLabelIds.includes(id));
-      if (unknownIds.length) console.log(`[LabelSync] WhatsApp labels not configured in any board, ignoring: ${JSON.stringify(unknownIds)}`);
-
-      // Get current CRM lead
-      const { data: existingLead } = await supabase
-        .from("crm_leads")
-        .select("id, label_id, flag_labels, updated_at")
-        .eq("tenant_id", syncTenant.id)
-        .eq("phone_number", chatPhone)
-        .maybeSingle();
-
-      // Anti-feedback-loop: if lead was updated in the last 10 seconds, skip
-      // This prevents our own label changes (from panel/move-crm-lead) from being overwritten
-      if (existingLead?.updated_at) {
-        const lastUpdate = new Date(existingLead.updated_at).getTime();
-        const now = Date.now();
-        if (now - lastUpdate < 10000) {
-          console.log(`[LabelSync] Skipping ${chatPhone} — lead updated ${now - lastUpdate}ms ago (anti-loop)`);
-          return new Response(JSON.stringify({ status: "anti_loop_skip" }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-      }
-
-      const currentFunnelLabel = existingLead?.label_id || null;
-      const currentFlags: string[] = existingLead?.flag_labels || [];
-
-      // Separate WhatsApp labels into funnel and flags based on kanban_columns config
-      let newFunnelLabel: string | null = null;
-      const newFlags: string[] = [];
-
-      for (const labelId of waLabels) {
-        if (!configuredLabelIds.includes(labelId)) continue; // Unknown label, ignore
-        const col = kanbanCols.find((c: any) => String(c.label_id) === labelId);
-        if (col?.type === "flag") {
-          newFlags.push(labelId);
-        } else {
-          // Funnel: take the last one (most recent)
-          newFunnelLabel = labelId;
-        }
-      }
-
-      // Determine changes
-      const funnelChanged = newFunnelLabel !== null && newFunnelLabel !== currentFunnelLabel;
-      const flagsChanged = JSON.stringify([...newFlags].sort()) !== JSON.stringify([...currentFlags].sort());
-
-      if (!funnelChanged && !flagsChanged && existingLead) {
-        console.log(`[LabelSync] No changes for ${chatPhone}`);
-        return new Response(JSON.stringify({ status: "no_changes" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // Build update
-      const updateData: any = { updated_at: new Date().toISOString() };
-      if (funnelChanged && newFunnelLabel) {
-        const col = kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel);
-        updateData.label_id = newFunnelLabel;
-        updateData.label_name = col?.name || null;
-        if (col?.board_id) updateData.board_id = col.board_id;
-      }
-      if (flagsChanged) {
-        updateData.flag_labels = newFlags;
-      }
-
-      if (existingLead) {
-        await supabase.from("crm_leads").update(updateData).eq("id", existingLead.id);
-      } else if (newFunnelLabel || newFlags.length > 0) {
-        const funnelCol = newFunnelLabel ? kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel) : null;
-        await supabase.from("crm_leads").insert({
-          tenant_id: syncTenant.id,
-          phone_number: chatPhone,
-          label_id: newFunnelLabel || "__none__",
-          label_name: funnelCol?.name || null,
-          flag_labels: newFlags,
-          board_id: funnelCol?.board_id ?? null,
-        });
-      }
-
-      // Record history for funnel changes
-      if (funnelChanged && newFunnelLabel) {
-        const leadId = existingLead?.id;
-        if (leadId) {
-          await supabase.from("crm_lead_history").insert({
-            lead_id: leadId,
-            from_label: currentFunnelLabel,
-            to_label: newFunnelLabel,
-            changed_by: "whatsapp",
-          });
-        }
-      }
-
-      console.log(`[LabelSync] Updated ${chatPhone}: funnel=${funnelChanged ? newFunnelLabel : "(unchanged)"}, flags=${flagsChanged ? JSON.stringify(newFlags) : "(unchanged)"}`);
-
-      return new Response(JSON.stringify({ status: "label_synced", funnelChanged, flagsChanged }), {
+      return new Response(JSON.stringify({
+        status: syncResult.status,
+        funnelChanged: syncResult.funnelChanged,
+        flagsChanged: syncResult.flagsChanged,
+        labels: syncResult.waLabelIds,
+      }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
