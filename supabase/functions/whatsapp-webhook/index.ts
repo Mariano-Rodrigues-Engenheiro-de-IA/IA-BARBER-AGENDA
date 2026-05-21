@@ -1082,9 +1082,17 @@ Deno.serve(async (req) => {
         const iaOffLabelIds = kanbanCols
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
-        const allConfiguredFlagIds = kanbanCols
-          .filter((c: any) => c.type === "flag")
-          .map((c: any) => String(c.label_id));
+
+        // Fallback: if no IA OFF flag column is configured, resolve the label ID
+        // from the WhatsApp account itself (any label literally named "IA OFF").
+        if (iaOffLabelIds.length === 0) {
+          const fallbackIds = await resolveIaOffLabelIdsFromUazapi(
+            tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          );
+          for (const id of fallbackIds) if (!iaOffLabelIds.includes(id)) iaOffLabelIds.push(id);
+          if (fallbackIds.length) console.log(`[IA OFF Check] Fallback resolved IA OFF label IDs from UAZAPI: ${JSON.stringify(fallbackIds)}`);
+        }
 
         // Read DB state
         const { data: leadData } = await supabase
