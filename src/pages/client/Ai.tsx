@@ -64,6 +64,21 @@ export default function ClientAi() {
     }
   }, [tenant]);
 
+  // Realtime: refresh when tenant row changes (admin edits propagate live)
+  useEffect(() => {
+    if (!tenantId) return;
+    const channel = supabase
+      .channel(`tenant-${tenantId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "tenants", filter: `id=eq.${tenantId}` },
+        () => { refetch(); },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [tenantId, refetch]);
+
+
   const saveTools = async (next: CustomTool[]) => {
     setCustomTools(next);
     if (!tenantId) return;
