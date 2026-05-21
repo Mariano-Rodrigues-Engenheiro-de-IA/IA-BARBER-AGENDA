@@ -3555,6 +3555,34 @@ async function callAIAgent(
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
         }
 
+        // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
+        if (provider === "onebeleza") {
+          if (toolCall.function.name === "buscar_cliente") {
+            // resultado vazio / notFound → entramos no fluxo de cadastro pendente
+            const r: any = toolResult;
+            const isEmpty = !r
+              || r?.notFound === true
+              || r?.status === 404
+              || (typeof r === "object" && !r?.codigo && !r?.id && !r?.clienteId
+                  && !(Array.isArray(r?.data) && r.data.length > 0)
+                  && !(Array.isArray(r) && r.length > 0));
+            if (isEmpty) {
+              sessionState.awaitingNameForRegistration = true;
+              console.log(`[OneBeleza] buscar_cliente vazio → awaitingNameForRegistration=true`);
+            } else {
+              sessionState.awaitingNameForRegistration = false;
+            }
+          } else if (toolCall.function.name === "cadastrar_cliente") {
+            // sucesso → limpa flag
+            const r: any = toolResult;
+            const ok = r && !r?.error && !r?.blocked && (r?.codigo || r?.id || r?.clienteId || r?.ok === true || r?.success === true || r?.aliasUsed);
+            if (ok) {
+              sessionState.awaitingNameForRegistration = false;
+            }
+          }
+        }
+
+
         // Track successful scheduling per service (allow other services to be booked next)
         const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
         if (scheduleSucceeded) {
