@@ -28,6 +28,44 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
 
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
+// In-memory cache of UAZAPI label name → id resolution, keyed by uazapi base URL + token.
+// Resets on cold start; refreshed every 5 minutes.
+const _uazLabelsCache = new Map<string, { fetchedAt: number; labels: Array<{ id: string; name: string }> }>();
+
+async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promise<Array<{ id: string; name: string }>> {
+  const cacheKey = `${uazapiUrl}::${uazapiToken}`;
+  const cached = _uazLabelsCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.labels;
+
+  // UAZAPI: GET /labels (with token header) returns the full label list for the instance.
+  const endpoints = [`${uazapiUrl.replace(/\/+$/, "")}/labels`, `${uazapiUrl.replace(/\/+$/, "")}/chat/labels`];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, { method: "GET", headers: { "token": uazapiToken, "Accept": "application/json" } });
+      if (!res.ok) continue;
+      const data = await res.json().catch(() => null);
+      const raw = Array.isArray(data) ? data : (Array.isArray(data?.labels) ? data.labels : (Array.isArray(data?.data) ? data.data : []));
+      if (!raw.length) continue;
+      const labels = raw.map((l: any) => ({
+        id: String(l.id ?? l.label_id ?? l.labelId ?? l.value ?? ""),
+        name: String(l.name ?? l.label ?? l.title ?? ""),
+      })).filter((l: any) => l.id);
+      _uazLabelsCache.set(cacheKey, { fetchedAt: Date.now(), labels });
+      console.log(`[UazLabels] Fetched ${labels.length} labels from ${url}`);
+      return labels;
+    } catch (e) {
+      console.error(`[UazLabels] fetch ${url} failed:`, e);
+    }
+  }
+  return [];
+}
+
+async function resolveIaOffLabelIdsFromUazapi(uazapiUrl: string | null | undefined, uazapiToken: string | null | undefined): Promise<string[]> {
+  if (!uazapiUrl || !uazapiToken) return [];
+  const labels = await fetchUazapiLabels(uazapiUrl, uazapiToken);
+  return labels.filter((l) => /ia\s*off/i.test(l.name)).map((l) => l.id);
+}
+
 // Load all kanban columns for a tenant: union from crm_boards (multi-board model),
 // falling back to legacy tenants.kanban_columns when no boards exist.
 // Each returned column carries its source board_id (null for legacy).
@@ -1044,9 +1082,23 @@ Deno.serve(async (req) => {
         const iaOffLabelIds = kanbanCols
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
+
+        // Fallback: if no IA OFF flag column is configured, resolve the label ID
+        // from the WhatsApp account itself (any label literally named "IA OFF").
+        if (iaOffLabelIds.length === 0) {
+          const fallbackIds = await resolveIaOffLabelIdsFromUazapi(
+            tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          );
+          for (const id of fallbackIds) if (!iaOffLabelIds.includes(id)) iaOffLabelIds.push(id);
+          if (fallbackIds.length) console.log(`[IA OFF Check] Fallback resolved IA OFF label IDs from UAZAPI: ${JSON.stringify(fallbackIds)}`);
+        }
+
         const allConfiguredFlagIds = kanbanCols
           .filter((c: any) => c.type === "flag")
           .map((c: any) => String(c.label_id));
+
+
 
         // Read DB state
         const { data: leadData } = await supabase
@@ -1396,6 +1448,15 @@ Deno.serve(async (req) => {
         const iaOffLabelIds2 = kanbanCols2
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
+
+        // Fallback: resolve from UAZAPI labels list if not configured as flag column.
+        if (iaOffLabelIds2.length === 0) {
+          const fb = await resolveIaOffLabelIdsFromUazapi(
+            tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          );
+          for (const id of fb) if (!iaOffLabelIds2.includes(id)) iaOffLabelIds2.push(id);
+        }
 
         if (iaOffLabelIds2.length > 0) {
           let iaOffNow = false;
