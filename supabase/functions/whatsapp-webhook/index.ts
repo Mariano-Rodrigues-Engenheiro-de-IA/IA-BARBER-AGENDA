@@ -1833,6 +1833,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedDate: null,
     executedToolNames: [],
     explicitClientName: null,
+    awaitingNameForRegistration: false,
   };
 
   try {
