@@ -3282,6 +3282,20 @@ async function callAIAgent(
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 
+  if (provider === "zaylo") {
+    const normalizedUserMessage = normalizeUserFacingText(userMessage || "");
+    const zayloIntentDetected = /(agend|agenda|marcar|marcação|marcacao|hor[áa]rio|horario|dispon[ií]vel|disponibilidade|pre[çc]o|valor|quanto custa|servi[çc]o|procedimento|profissional|especialista|esteticista|limpeza|botox|drenagem|depila)/i.test(normalizedUserMessage);
+    const alreadyLoadedZayloCatalog = (sessionState.zayloBarberOptions?.length || 0) > 0 || (sessionState.zayloServiceOptions?.length || 0) > 0;
+    const lastAssistantWasForcedZayloCatalogPrompt = /\[ZAYLO_TOOL_ENFORCER\]/.test(previousAssistantMessage || "");
+
+    if (zayloIntentDetected && !alreadyLoadedZayloCatalog && !lastAssistantWasForcedZayloCatalogPrompt) {
+      messages.push({
+        role: "assistant",
+        content: "[ZAYLO_TOOL_ENFORCER] Intenção de agenda/preço/serviço detectada. Antes de responder ao cliente, chame obrigatoriamente a ferramenta obter_info agora. Não faça perguntas antes disso.",
+      });
+    }
+  }
+
   // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
   const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
