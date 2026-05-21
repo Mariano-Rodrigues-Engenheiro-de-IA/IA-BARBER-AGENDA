@@ -5300,6 +5300,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     providerPrompt = buildFrizzarPromptSection(tenant);
   } else if (provider === "bemp") {
     providerPrompt = buildBempPromptSection(tenant);
+  } else if (provider === "zaylo") {
+    providerPrompt = buildZayloPromptSection(tenant);
   } else if (provider === "none") {
     providerPrompt = buildNonePromptSection(tenant);
   }
