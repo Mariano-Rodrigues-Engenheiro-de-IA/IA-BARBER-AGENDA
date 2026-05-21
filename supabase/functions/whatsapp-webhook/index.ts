@@ -1094,6 +1094,12 @@ Deno.serve(async (req) => {
           if (fallbackIds.length) console.log(`[IA OFF Check] Fallback resolved IA OFF label IDs from UAZAPI: ${JSON.stringify(fallbackIds)}`);
         }
 
+        const allConfiguredFlagIds = kanbanCols
+          .filter((c: any) => c.type === "flag")
+          .map((c: any) => String(c.label_id));
+
+
+
         // Read DB state
         const { data: leadData } = await supabase
           .from("crm_leads")
