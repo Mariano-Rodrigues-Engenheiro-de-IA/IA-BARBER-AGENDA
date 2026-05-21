@@ -5,9 +5,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Plus, Copy, Check } from "lucide-react";
+import { ArrowLeft, Plus, Copy, Check, Trash2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { AppModule, ModuleVisibility } from "@/hooks/useAuth";
 
 const MODULES: { key: AppModule; label: string }[] = [
@@ -17,8 +21,10 @@ const MODULES: { key: AppModule; label: string }[] = [
   { key: "crm", label: "CRM" },
   { key: "ai_prompt", label: "Prompt da IA" },
   { key: "ai_knowledge", label: "Base de conhecimento" },
+  { key: "tools", label: "Ferramentas da IA" },
   { key: "integrations", label: "Integrações (tokens)" },
   { key: "company_data", label: "Dados da empresa" },
+  { key: "connection", label: "Conexão WhatsApp" },
 ];
 
 const VISIBILITIES: { v: ModuleVisibility; label: string; color: string }[] = [
@@ -27,14 +33,22 @@ const VISIBILITIES: { v: ModuleVisibility; label: string; color: string }[] = [
   { v: "editable", label: "Editável", color: "bg-emerald-500/10 text-emerald-600" },
 ];
 
+type TenantUserRow = { user_id: string; created_at: string; email: string | null };
+
 export default function TenantAccessPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [showCreate, setShowCreate] = useState(false);
   const [email, setEmail] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
   const [creating, setCreating] = useState(false);
   const [credentials, setCredentials] = useState<{ email: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pwUser, setPwUser] = useState<TenantUserRow | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [savingPw, setSavingPw] = useState(false);
+  const [deleteUser, setDeleteUser] = useState<TenantUserRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const { data: tenant } = useQuery({
     queryKey: ["tenant-access", id],
@@ -45,7 +59,13 @@ export default function TenantAccessPage() {
   const { data: users, refetch: refetchUsers } = useQuery({
     queryKey: ["tenant-users", id],
     enabled: !!id,
-    queryFn: async () => (await supabase.from("tenant_users").select("user_id,created_at").eq("tenant_id", id!)).data ?? [],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("admin-manage-client-user", {
+        body: { action: "list", tenant_id: id },
+      });
+      if (error) throw error;
+      return ((data as any)?.users ?? []) as TenantUserRow[];
+    },
   });
 
   const { data: perms, refetch: refetchPerms } = useQuery({
@@ -66,21 +86,62 @@ export default function TenantAccessPage() {
 
   const handleCreate = async () => {
     if (!email) return toast.error("Informe um email");
+    if (createPassword && createPassword.length < 6) return toast.error("Senha deve ter pelo menos 6 caracteres");
     setCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke("admin-create-client-user", {
-        body: { tenant_id: id, email },
+        body: { tenant_id: id, email, password: createPassword || undefined },
       });
       if (error) throw error;
       if ((data as any).error) throw new Error((data as any).error);
       setCredentials({ email: (data as any).email, password: (data as any).password });
       setShowCreate(false);
       setEmail("");
+      setCreatePassword("");
       refetchUsers();
     } catch (e: any) {
       toast.error(e.message ?? String(e));
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleSetPassword = async () => {
+    if (!pwUser) return;
+    if (!newPassword || newPassword.length < 6) return toast.error("Senha deve ter pelo menos 6 caracteres");
+    setSavingPw(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-manage-client-user", {
+        body: { action: "set_password", tenant_id: id, user_id: pwUser.user_id, password: newPassword },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Senha atualizada");
+      setPwUser(null);
+      setNewPassword("");
+    } catch (e: any) {
+      toast.error(e.message ?? String(e));
+    } finally {
+      setSavingPw(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteUser) return;
+    setDeleting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-manage-client-user", {
+        body: { action: "delete", tenant_id: id, user_id: deleteUser.user_id },
+      });
+      if (error) throw error;
+      if ((data as any)?.error) throw new Error((data as any).error);
+      toast.success("Acesso excluído");
+      setDeleteUser(null);
+      refetchUsers();
+    } catch (e: any) {
+      toast.error(e.message ?? String(e));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -110,10 +171,20 @@ export default function TenantAccessPage() {
         </div>
         {users && users.length > 0 ? (
           <ul className="space-y-2">
-            {users.map((u: any) => (
-              <li key={u.user_id} className="text-sm text-muted-foreground bg-muted/30 rounded p-3">
-                <span className="font-mono">{u.user_id}</span>
-                <span className="ml-2">— vinculado em {new Date(u.created_at).toLocaleDateString()}</span>
+            {users.map((u) => (
+              <li key={u.user_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-muted/30 rounded p-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-foreground truncate">{u.email ?? "(email não encontrado)"}</div>
+                  <div className="text-xs text-muted-foreground">Vinculado em {new Date(u.created_at).toLocaleDateString()}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { setPwUser(u); setNewPassword(""); }}>
+                    <KeyRound className="w-3.5 h-3.5 mr-1" />Definir senha
+                  </Button>
+                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteUser(u)}>
+                    <Trash2 className="w-3.5 h-3.5 mr-1" />Excluir
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -151,7 +222,9 @@ export default function TenantAccessPage() {
           <div className="space-y-3">
             <Label>Email do cliente</Label>
             <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cliente@exemplo.com" />
-            <p className="text-xs text-muted-foreground">Uma senha temporária será gerada e exibida em seguida.</p>
+            <Label>Senha (opcional)</Label>
+            <Input type="text" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Deixe em branco para gerar automaticamente" />
+            <p className="text-xs text-muted-foreground">Se deixar em branco, uma senha temporária será gerada.</p>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setShowCreate(false)}>Cancelar</Button>
@@ -178,6 +251,40 @@ export default function TenantAccessPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!pwUser} onOpenChange={(o) => !o && setPwUser(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Definir nova senha</DialogTitle>
+            <DialogDescription>{pwUser?.email}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>Nova senha</Label>
+            <Input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPwUser(null)}>Cancelar</Button>
+            <Button onClick={handleSetPassword} disabled={savingPw}>{savingPw ? "Salvando..." : "Salvar senha"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteUser} onOpenChange={(o) => !o && setDeleteUser(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir acesso?</AlertDialogTitle>
+            <AlertDialogDescription>
+              O usuário <strong>{deleteUser?.email}</strong> será removido permanentemente e não conseguirá mais entrar no painel.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleting ? "Excluindo..." : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
