@@ -161,8 +161,41 @@ export default function ClientConversations() {
   };
 
   const grouped = useMemo(() => {
+    const all = (conv ?? []) as any[];
+    // ---- Defensive dedup: hide [ATENDENTE HUMANO] messages that are just an
+    // echo of an AI reply sent moments earlier (the webhook used to store both
+    // the original AI message and the fromMe echo as separate rows).
+    const ECHO_WINDOW_MS = 90_000;
+    const normalize = (s: string) =>
+      (s || "")
+        .replace(/^\s*\[atendente humano\]:\s*/i, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
+    const recentAi: { t: number; text: string }[] = [];
+    const visible = all.filter((m: any) => {
+      const t = +new Date(m.created_at);
+      const raw = m.content || "";
+      const isHumanTagged = /^\s*\[ATENDENTE HUMANO\]:/i.test(raw);
+      const norm = normalize(raw);
+      if (m.role === "assistant" && isHumanTagged && norm) {
+        const isEcho = recentAi.some(
+          (r) =>
+            Math.abs(t - r.t) <= ECHO_WINDOW_MS &&
+            (r.text === norm || r.text.includes(norm) || norm.includes(r.text)),
+        );
+        if (isEcho) return false;
+      }
+      if (m.role === "assistant" && !isHumanTagged && norm) {
+        recentAi.push({ t, text: norm });
+        // keep list small
+        if (recentAi.length > 20) recentAi.shift();
+      }
+      return true;
+    });
+
     const out: { day: string; items: any[] }[] = [];
-    (conv ?? []).forEach((m: any) => {
+    visible.forEach((m: any) => {
       const day = fmtDay(m.created_at);
       if (!out.length || out[out.length - 1].day !== day) out.push({ day, items: [] });
       out[out.length - 1].items.push(m);
