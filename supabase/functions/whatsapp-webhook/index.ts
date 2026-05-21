@@ -825,7 +825,7 @@ Deno.serve(async (req) => {
       // Also reconciles all other configured flag labels (full bidirectional sync),
       // since UAZAPI does not emit chats.update events on this account.
       {
-        const kanbanCols: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
 
         const iaOffLabelIds = kanbanCols
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
