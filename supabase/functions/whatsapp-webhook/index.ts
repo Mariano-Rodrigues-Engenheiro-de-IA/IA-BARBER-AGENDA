@@ -1850,7 +1850,7 @@ Deno.serve(async (req) => {
       // Find tenant — PRIORITY: check which tenant has a crm_lead for this phone number
       const { data: allTenants } = await supabase
         .from("tenants")
-        .select("id, name, whatsapp_number, kanban_columns")
+        .select("id, name, whatsapp_number, kanban_columns, uazapi_url, uazapi_token")
         .eq("status", "active");
 
       let syncTenant: any = null;
