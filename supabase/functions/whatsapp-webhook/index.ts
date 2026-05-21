@@ -4278,6 +4278,8 @@ async function executeToolForProvider(provider: string, tenant: any, toolCall: a
       return executeFrizzarTool(tenant, toolCall, phoneNumber);
     case "bemp":
       return executeBempTool(tenant, toolCall, phoneNumber);
+    case "zaylo":
+      return executeZayloTool(tenant, toolCall, phoneNumber);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
