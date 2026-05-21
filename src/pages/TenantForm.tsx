@@ -636,6 +636,7 @@ export default function TenantFormPage() {
                     <SelectItem value="onebeleza">One Beleza</SelectItem>
                     <SelectItem value="frizzar">Frizzar</SelectItem>
                     <SelectItem value="bemp">Bemp</SelectItem>
+                    <SelectItem value="zaylo">Zaylo</SelectItem>
                     <SelectItem value="none">Nenhum (link direto)</SelectItem>
                   </SelectContent>
                 </Select>
