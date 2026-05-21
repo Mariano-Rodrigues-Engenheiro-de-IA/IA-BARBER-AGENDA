@@ -620,10 +620,12 @@ export function CustomToolsTab({
   tools,
   onChange,
   tenantId,
+  readOnly = false,
 }: {
   tools: CustomTool[];
   onChange: (tools: CustomTool[]) => void;
   tenantId?: string;
+  readOnly?: boolean;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
