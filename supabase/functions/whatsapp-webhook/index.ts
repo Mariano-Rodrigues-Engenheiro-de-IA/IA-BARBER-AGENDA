@@ -1164,7 +1164,7 @@ Deno.serve(async (req) => {
       // The owner may apply IA OFF label DURING the 10s debounce window.
       // We re-check the flag from DB AND from UAZAPI live (chat/details) before processing.
       try {
-        const kanbanCols2: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        const kanbanCols2: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
         const iaOffLabelIds2 = kanbanCols2
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
