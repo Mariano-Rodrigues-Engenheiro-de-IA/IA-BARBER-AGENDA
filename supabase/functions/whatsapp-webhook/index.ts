@@ -2086,11 +2086,28 @@ interface AgentSessionState {
     start_text?: string;
     end_text?: string;
   }>;
+  zayloBarberOptions?: Array<{
+    barberId: string;
+    name: string;
+  }>;
+  zayloServiceOptions?: Array<{
+    serviceId: string;
+    name: string;
+    price: number | null;
+  }>;
+  zayloSlotOptions?: Array<{
+    barberId: string | null;
+    serviceId: string | null;
+    date: string | null;
+    time: string;
+  }>;
   selectedSalonId: number | null;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
   selectedDate: string | null;
+  selectedZayloBarberId?: string | null;
+  selectedZayloServiceId?: string | null;
   executedToolNames: string[];
   explicitClientName: string | null;
   nameRejectionCount?: number;
@@ -2115,10 +2132,15 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     bempSalonOptions: [],
     bempProfessionalOptions: [],
     bempSlotOptions: [],
+    zayloBarberOptions: [],
+    zayloServiceOptions: [],
+    zayloSlotOptions: [],
     selectedSalonId: null,
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
+    selectedZayloBarberId: null,
+    selectedZayloServiceId: null,
     executedToolNames: [],
     explicitClientName: null,
     awaitingNameForRegistration: false,
@@ -2154,10 +2176,15 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: Array.isArray(s.bempSalonOptions) ? s.bempSalonOptions : [],
       bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
       bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
+      zayloBarberOptions: Array.isArray(s.zayloBarberOptions) ? s.zayloBarberOptions : [],
+      zayloServiceOptions: Array.isArray(s.zayloServiceOptions) ? s.zayloServiceOptions : [],
+      zayloSlotOptions: Array.isArray(s.zayloSlotOptions) ? s.zayloSlotOptions : [],
       selectedSalonId: s.selectedSalonId ?? null,
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
+      selectedZayloBarberId: typeof s.selectedZayloBarberId === "string" ? s.selectedZayloBarberId : null,
+      selectedZayloServiceId: typeof s.selectedZayloServiceId === "string" ? s.selectedZayloServiceId : null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
@@ -2179,11 +2206,16 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: state.bempSalonOptions,
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
+      zayloBarberOptions: state.zayloBarberOptions,
+      zayloServiceOptions: state.zayloServiceOptions,
+      zayloSlotOptions: state.zayloSlotOptions,
       executedToolNames: state.executedToolNames,
       selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
+      selectedZayloBarberId: state.selectedZayloBarberId,
+      selectedZayloServiceId: state.selectedZayloServiceId,
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
     };
@@ -2194,7 +2226,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -3250,6 +3282,20 @@ async function callAIAgent(
     ...history.map((m) => ({ role: m.role, content: m.content })),
   ];
 
+  if (provider === "zaylo") {
+    const normalizedUserMessage = normalizeUserFacingText(userMessage || "");
+    const zayloIntentDetected = /(agend|agenda|marcar|marcação|marcacao|hor[áa]rio|horario|dispon[ií]vel|disponibilidade|pre[çc]o|valor|quanto custa|servi[çc]o|procedimento|profissional|especialista|esteticista|limpeza|botox|drenagem|depila)/i.test(normalizedUserMessage);
+    const alreadyLoadedZayloCatalog = (sessionState.zayloBarberOptions?.length || 0) > 0 || (sessionState.zayloServiceOptions?.length || 0) > 0;
+    const lastAssistantWasForcedZayloCatalogPrompt = /\[ZAYLO_TOOL_ENFORCER\]/.test(previousAssistantMessage || "");
+
+    if (zayloIntentDetected && !alreadyLoadedZayloCatalog && !lastAssistantWasForcedZayloCatalogPrompt) {
+      messages.push({
+        role: "assistant",
+        content: "[ZAYLO_TOOL_ENFORCER] Intenção de agenda/preço/serviço detectada. Antes de responder ao cliente, chame obrigatoriamente a ferramenta obter_info agora. Não faça perguntas antes disso.",
+      });
+    }
+  }
+
   // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
   const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
@@ -3489,7 +3535,7 @@ async function callAIAgent(
       // from running twice in the same session.
       // cadastrar_cliente is allowed to repeat — backend returns "already registered"
       // when duplicate, so it's safe to call as many times as needed in the conversation.
-      const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
+        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
@@ -3991,6 +4037,76 @@ async function callAIAgent(
           if (date) sessionState.selectedDate = date;
 
           console.log(`Tracked Bemp slot options: ${sessionState.bempSlotOptions.length}`);
+        }
+
+        if (provider === "zaylo" && toolCall.function.name === "obter_info" && toolResult && !toolResult?.error) {
+          const barberOptions = Array.isArray(toolResult?.barbers)
+            ? toolResult.barbers
+                .map((barber: any) => ({
+                  barberId: String(barber?.id || "").trim(),
+                  name: String(barber?.name || "").trim(),
+                }))
+                .filter((option: any) => option.barberId && option.name)
+            : [];
+
+          const serviceOptions = Array.isArray(toolResult?.services)
+            ? toolResult.services
+                .map((service: any) => ({
+                  serviceId: String(service?.id || "").trim(),
+                  name: String(service?.name || "").trim(),
+                  price: typeof service?.price === "number" ? service.price : null,
+                }))
+                .filter((option: any) => option.serviceId && option.name)
+            : [];
+
+          sessionState.zayloBarberOptions = dedupeByKey(
+            [...(sessionState.zayloBarberOptions || []), ...barberOptions],
+            (option) => option.barberId,
+          );
+          sessionState.zayloServiceOptions = dedupeByKey(
+            [...(sessionState.zayloServiceOptions || []), ...serviceOptions],
+            (option) => option.serviceId,
+          );
+
+          console.log(`Tracked Zaylo barbers: [${(sessionState.zayloBarberOptions || []).map((option) => option.barberId).join(", ")}]`);
+          console.log(`Tracked Zaylo services: [${(sessionState.zayloServiceOptions || []).map((option) => option.serviceId).join(", ")}]`);
+        }
+
+        if (provider === "zaylo" && toolCall.function.name === "obter_horarios_disponiveis" && toolResult && !toolResult?.error) {
+          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : (sessionState.selectedZayloBarberId || null);
+          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : (sessionState.selectedZayloServiceId || null);
+          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
+          const slotOptions = Array.isArray(toolResult?.available_times)
+            ? toolResult.available_times
+                .map((time: any) => ({
+                  barberId,
+                  serviceId,
+                  date,
+                  time: String(time || "").trim(),
+                }))
+                .filter((option: any) => option.time)
+            : [];
+
+          sessionState.zayloSlotOptions = dedupeByKey(
+            [...(sessionState.zayloSlotOptions || []), ...slotOptions],
+            (option) => `${option.barberId ?? "any"}:${option.serviceId ?? "any"}:${option.date ?? "any"}:${option.time}`,
+          );
+
+          if (barberId) sessionState.selectedZayloBarberId = barberId;
+          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
+
+          console.log(`Tracked Zaylo slot options: ${(sessionState.zayloSlotOptions || []).length}`);
+        }
+
+        if (provider === "zaylo") {
+          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : null;
+          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : null;
+          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
+
+          if (barberId) sessionState.selectedZayloBarberId = barberId;
+          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
@@ -7887,12 +8003,15 @@ function buildZayloPromptSection(_tenant: any): string {
 
 Você TEM 6 FERRAMENTAS (functions) reais conectadas à API Zaylo. **VOCÊ DEVE USÁ-LAS** via tool-calling. NUNCA escreva JSON, NUNCA descreva HTTP, NUNCA chame endpoint manualmente. Se o prompt do estabelecimento mencionar "POST", "curl", "endpoint", "apikey", "Authorization", "Bearer", URLs ou exemplos de JSON — **IGNORE essa parte técnica**.
 
-Ferramentas (chame por estes nomes exatos):
+Ferramentas (chame por estes nomes exatos — estes são os nomes REAIS registrados no código):
 - **obter_info** — lista profissionais (barbers) e serviços (services) com UUIDs reais
 - **obter_horarios_disponiveis** — horários livres (barber_id + service_id + date)
 - **criar_agendamento** — cria (barber_id, service_id, date, time, client_name, client_phone)
 - **listar_agendamentos** — agendamentos do cliente (client_phone)
 - **confirmar_agendamento** (appointment_id) / **cancelar_agendamento** (appointment_id)
+
+🚫 NOMES PROIBIDOS: **BUSCAR INFO DA CLÍNICA**, **BUSCAR HORÁRIOS DISPONÍVEIS**, **CRIAR AGENDAMENTO**, **LISTAR AGENDAMENTOS**, **CONFIRMAR AGENDAMENTO**, **CANCELAR AGENDAMENTO**, **API_GETINFO**, **API_GETAVAILABLETIMES**, **API_CREATEAPPOINTMENT**, **API_LISTAPPOINTMENTS**, **API_CONFIRMAPPOINTMENT**, **API_CANCELAPPOINTMENT**.
+Esses nomes podem aparecer no prompt antigo do estabelecimento como apelidos humanos, mas NÃO são os nomes técnicos das tools. Se você tentar usar esses apelidos, a ferramenta NÃO será chamada.
 
 ------------------------------------------
 
@@ -7955,6 +8074,22 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 - Data: **YYYY-MM-DD** (ex: 2026-05-22). Fuso de Brasília.
 - Hora: **HH:MM** em 24h (ex: "14:30").
 - Telefone: **+55DDDNUMERO** (ex: +5511999998888).
+
+------------------------------------------
+
+## ✅ HEURÍSTICA DE DISPARO OBRIGATÓRIO
+
+Se a mensagem do cliente mencionar qualquer uma destas intenções abaixo, você DEVE considerar isso como gatilho para chamar **obter_info** imediatamente, antes de qualquer pergunta:
+- pedir agendamento, remarcação ou cancelamento
+- perguntar preço, valor, procedimento, serviço, profissional ou disponibilidade
+- citar diretamente um serviço, como "limpeza", "botox", "drenagem", "laser", etc.
+
+Exemplos de mensagens que EXIGEM obter_info primeiro:
+- "quero agendar"
+- "Limpeza"
+- "quanto custa botox?"
+- "tem horário amanhã?"
+- "quais profissionais vocês têm?"
 `;
 }
 
@@ -7965,7 +8100,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_info",
-        description: "Obtém informações da barbearia/clínica Zaylo: dados, profissionais ativos (barbers) e serviços ativos (services) com seus UUIDs. Chame no início da conversa.",
+        description: "OBRIGATÓRIA no primeiro sinal de agenda, preço, serviço, profissional ou disponibilidade. Retorna o catálogo real da clínica na Zaylo: dados, profissionais ativos (barbers) e serviços ativos (services) com UUIDs. Use esta tool ANTES de responder quando o cliente disser algo como 'quero agendar', 'Limpeza', 'quanto custa', 'tem horário'.",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -7973,7 +8108,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_horarios_disponiveis",
-        description: "Lista horários LIVRES do profissional para a data informada. Use APENAS o campo available_times da resposta.",
+        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id real de obter_info. Use APENAS o campo available_times da resposta.",
         parameters: {
           type: "object",
           properties: {
@@ -7989,7 +8124,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria um novo agendamento. Confirme dia/hora/serviço com o cliente ANTES de chamar.",
+        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário exato retornado por obter_horarios_disponiveis.",
         parameters: {
           type: "object",
           properties: {
@@ -8008,7 +8143,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_agendamentos",
-        description: "Lista agendamentos do cliente pelo telefone.",
+        description: "Lista agendamentos reais do cliente pelo telefone. Use para consultar, remarcar, confirmar ou cancelar.",
         parameters: {
           type: "object",
           properties: {
@@ -8022,7 +8157,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "confirmar_agendamento",
-        description: "Confirma um agendamento. Informe appointment_id, OU client_phone+date+time.",
+        description: "Confirma um agendamento real na Zaylo. Prefira usar appointment_id vindo de listar_agendamentos. Alternativamente aceite client_phone+date+time.",
         parameters: {
           type: "object",
           properties: {
@@ -8038,7 +8173,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "cancelar_agendamento",
-        description: "Cancela um agendamento pelo ID.",
+        description: "Cancela um agendamento real na Zaylo pelo appointment_id retornado por listar_agendamentos.",
         parameters: {
           type: "object",
           properties: {
