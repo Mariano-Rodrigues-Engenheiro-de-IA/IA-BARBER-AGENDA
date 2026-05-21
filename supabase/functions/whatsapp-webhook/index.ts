@@ -1872,6 +1872,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedDate: s.selectedDate ?? null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
+      awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
     };
   } catch {
     return defaultState;
