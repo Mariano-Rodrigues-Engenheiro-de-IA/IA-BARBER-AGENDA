@@ -1897,6 +1897,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
       explicitClientName: state.explicitClientName,
+      awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
     };
 
     await supabase
