@@ -3535,7 +3535,7 @@ async function callAIAgent(
       // from running twice in the same session.
       // cadastrar_cliente is allowed to repeat — backend returns "already registered"
       // when duplicate, so it's safe to call as many times as needed in the conversation.
-      const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
+        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
@@ -4037,6 +4037,76 @@ async function callAIAgent(
           if (date) sessionState.selectedDate = date;
 
           console.log(`Tracked Bemp slot options: ${sessionState.bempSlotOptions.length}`);
+        }
+
+        if (provider === "zaylo" && toolCall.function.name === "obter_info" && toolResult && !toolResult?.error) {
+          const barberOptions = Array.isArray(toolResult?.barbers)
+            ? toolResult.barbers
+                .map((barber: any) => ({
+                  barberId: String(barber?.id || "").trim(),
+                  name: String(barber?.name || "").trim(),
+                }))
+                .filter((option: any) => option.barberId && option.name)
+            : [];
+
+          const serviceOptions = Array.isArray(toolResult?.services)
+            ? toolResult.services
+                .map((service: any) => ({
+                  serviceId: String(service?.id || "").trim(),
+                  name: String(service?.name || "").trim(),
+                  price: typeof service?.price === "number" ? service.price : null,
+                }))
+                .filter((option: any) => option.serviceId && option.name)
+            : [];
+
+          sessionState.zayloBarberOptions = dedupeByKey(
+            [...(sessionState.zayloBarberOptions || []), ...barberOptions],
+            (option) => option.barberId,
+          );
+          sessionState.zayloServiceOptions = dedupeByKey(
+            [...(sessionState.zayloServiceOptions || []), ...serviceOptions],
+            (option) => option.serviceId,
+          );
+
+          console.log(`Tracked Zaylo barbers: [${(sessionState.zayloBarberOptions || []).map((option) => option.barberId).join(", ")}]`);
+          console.log(`Tracked Zaylo services: [${(sessionState.zayloServiceOptions || []).map((option) => option.serviceId).join(", ")}]`);
+        }
+
+        if (provider === "zaylo" && toolCall.function.name === "obter_horarios_disponiveis" && toolResult && !toolResult?.error) {
+          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : (sessionState.selectedZayloBarberId || null);
+          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : (sessionState.selectedZayloServiceId || null);
+          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
+          const slotOptions = Array.isArray(toolResult?.available_times)
+            ? toolResult.available_times
+                .map((time: any) => ({
+                  barberId,
+                  serviceId,
+                  date,
+                  time: String(time || "").trim(),
+                }))
+                .filter((option: any) => option.time)
+            : [];
+
+          sessionState.zayloSlotOptions = dedupeByKey(
+            [...(sessionState.zayloSlotOptions || []), ...slotOptions],
+            (option) => `${option.barberId ?? "any"}:${option.serviceId ?? "any"}:${option.date ?? "any"}:${option.time}`,
+          );
+
+          if (barberId) sessionState.selectedZayloBarberId = barberId;
+          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
+
+          console.log(`Tracked Zaylo slot options: ${(sessionState.zayloSlotOptions || []).length}`);
+        }
+
+        if (provider === "zaylo") {
+          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : null;
+          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : null;
+          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
+
+          if (barberId) sessionState.selectedZayloBarberId = barberId;
+          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
         }
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
