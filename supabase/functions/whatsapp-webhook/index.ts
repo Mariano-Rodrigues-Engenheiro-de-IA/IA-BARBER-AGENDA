@@ -27,6 +27,25 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
 }
 
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
+
+// Load all kanban columns for a tenant: union from crm_boards (multi-board model),
+// falling back to legacy tenants.kanban_columns when no boards exist.
+// Each returned column carries its source board_id (null for legacy).
+async function loadTenantKanbanColumns(supabase: any, tenantId: string, legacyCols: any): Promise<any[]> {
+  try {
+    const { data: boards } = await supabase
+      .from("crm_boards")
+      .select("id, columns")
+      .eq("tenant_id", tenantId);
+    const fromBoards = (boards ?? []).flatMap((b: any) =>
+      (Array.isArray(b.columns) ? b.columns : []).map((c: any) => ({ ...c, board_id: b.id }))
+    );
+    if (fromBoards.length) return fromBoards;
+  } catch (e) {
+    console.error("[loadTenantKanbanColumns] crm_boards error:", e);
+  }
+  return (Array.isArray(legacyCols) ? legacyCols : []).map((c: any) => ({ ...c, board_id: null }));
+}
 const exactDigitsMatch = (a: unknown, b: unknown) => {
   const left = digitsOnly(a);
   const right = digitsOnly(b);
