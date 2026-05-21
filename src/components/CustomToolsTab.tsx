@@ -866,8 +866,8 @@ export function CustomToolsTab({
             </div>
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button type="button" onClick={handleSave}>Salvar</Button>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{readOnly ? "Fechar" : "Cancelar"}</Button>
+            {!readOnly && <Button type="button" onClick={handleSave}>Salvar</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
