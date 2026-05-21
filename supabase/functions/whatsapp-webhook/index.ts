@@ -8100,7 +8100,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_info",
-        description: "Obtém informações da barbearia/clínica Zaylo: dados, profissionais ativos (barbers) e serviços ativos (services) com seus UUIDs. Chame no início da conversa.",
+        description: "OBRIGATÓRIA no primeiro sinal de agenda, preço, serviço, profissional ou disponibilidade. Retorna o catálogo real da clínica na Zaylo: dados, profissionais ativos (barbers) e serviços ativos (services) com UUIDs. Use esta tool ANTES de responder quando o cliente disser algo como 'quero agendar', 'Limpeza', 'quanto custa', 'tem horário'.",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -8108,7 +8108,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_horarios_disponiveis",
-        description: "Lista horários LIVRES do profissional para a data informada. Use APENAS o campo available_times da resposta.",
+        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id real de obter_info. Use APENAS o campo available_times da resposta.",
         parameters: {
           type: "object",
           properties: {
@@ -8124,7 +8124,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria um novo agendamento. Confirme dia/hora/serviço com o cliente ANTES de chamar.",
+        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário exato retornado por obter_horarios_disponiveis.",
         parameters: {
           type: "object",
           properties: {
@@ -8143,7 +8143,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_agendamentos",
-        description: "Lista agendamentos do cliente pelo telefone.",
+        description: "Lista agendamentos reais do cliente pelo telefone. Use para consultar, remarcar, confirmar ou cancelar.",
         parameters: {
           type: "object",
           properties: {
@@ -8157,7 +8157,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "confirmar_agendamento",
-        description: "Confirma um agendamento. Informe appointment_id, OU client_phone+date+time.",
+        description: "Confirma um agendamento real na Zaylo. Prefira usar appointment_id vindo de listar_agendamentos. Alternativamente aceite client_phone+date+time.",
         parameters: {
           type: "object",
           properties: {
@@ -8173,7 +8173,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "cancelar_agendamento",
-        description: "Cancela um agendamento pelo ID.",
+        description: "Cancela um agendamento real na Zaylo pelo appointment_id retornado por listar_agendamentos.",
         parameters: {
           type: "object",
           properties: {
