@@ -1449,6 +1449,15 @@ Deno.serve(async (req) => {
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
 
+        // Fallback: resolve from UAZAPI labels list if not configured as flag column.
+        if (iaOffLabelIds2.length === 0) {
+          const fb = await resolveIaOffLabelIdsFromUazapi(
+            tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+            tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+          );
+          for (const id of fb) if (!iaOffLabelIds2.includes(id)) iaOffLabelIds2.push(id);
+        }
+
         if (iaOffLabelIds2.length > 0) {
           let iaOffNow = false;
 
