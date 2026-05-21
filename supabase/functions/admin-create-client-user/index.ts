@@ -99,6 +99,8 @@ Deno.serve(async (req) => {
       { module: "ai_knowledge", visibility: "editable" },
       { module: "integrations", visibility: "read_only" },
       { module: "company_data", visibility: "editable" },
+      { module: "tools", visibility: "editable" },
+      { module: "connection", visibility: "editable" },
     ].map((m) => ({ tenant_id, ...m }));
     await admin.from("tenant_permissions").upsert(modules, { onConflict: "tenant_id,module" });
 
