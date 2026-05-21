@@ -5319,7 +5319,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     customToolsSection = `\n\n------------------------------------------\n\n## 🔧 FERRAMENTAS CUSTOMIZADAS\n\nVocê tem acesso às seguintes ferramentas extras. Use conforme as instruções:\n\n${toolInstructions}\n\n⚠️ Quando usar uma ferramenta customizada, a mensagem/mídia será enviada DIRETAMENTE ao cliente. Após executar, confirme ao cliente que enviou (ex: "Enviei a localização!" ou "Mandei a chave PIX!"). NÃO repita o conteúdo da ferramenta na mensagem de texto.`;
   }
 
-  return basePrompt + "\n\n" + providerPrompt + customToolsSection + customSection;
+  // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
+  return basePrompt + "\n\n" + customSection + knowledgeSection + customToolsSection + "\n\n" + providerPrompt;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================
