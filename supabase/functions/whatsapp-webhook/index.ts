@@ -3045,9 +3045,14 @@ async function callAIAgent(
     model: modelUsed,
     messages,
     max_completion_tokens: 4096,
-  };
 
-
+  if (modelUsed.includes("gpt-5")) {
+    requestBody.reasoning_effort = "low";
+  }
+  if (tools && tools.length > 0) {
+    requestBody.tools = tools;
+    requestBody.tool_choice = "auto";
+  }
 
   // Provider "none" uses custom tools (labels, send_combo, send_text, etc.) which the AI may
   // chain multiple times (e.g. update funnel label → send images → update label again → reply).
@@ -3056,7 +3061,23 @@ async function callAIAgent(
   // For trinks/onebeleza we keep up to 8 rounds for the multi-step scheduling flow.
   const maxRounds = provider === "none" ? 6 : 8;
 
+  const initialBodyStr = JSON.stringify(requestBody);
+  console.log(`AI request (initial): ${messages.length} msgs, body size: ${initialBodyStr.length} chars`);
+  let response = await fetchAIWithRetry(initialBodyStr, "initial");
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("AI gateway error (initial):", response.status, errText);
+    logErrors.push(`AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`);
+    await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+    return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+  }
+  let result: any = await response.json();
+  let assistantMessage: any = result.choices?.[0]?.message;
+  let rounds = 0;
+  const executedToolsThisSession: Set<string> = new Set<string>(sessionState.executedToolNames || []);
+
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
+
     rounds++;
     messages.push(assistantMessage);
 
