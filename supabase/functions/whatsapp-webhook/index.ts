@@ -6143,10 +6143,34 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
 
+        // 🛡️ Defesa em profundidade: NUNCA chamar a API da One Beleza com nome inválido.
+        // Mesmo que a barreira upstream (dispatcher) tenha sido contornada por uma
+        // versão antiga em cache ou por outro caminho, aqui o cadastro é bloqueado.
+        const candidateName = String(args?.nome || "").trim();
+        if (!looksLikeRealName(candidateName)) {
+          console.log(`[OneBeleza] cadastrar_cliente BLOCKED — nome inválido recebido: "${candidateName.slice(0, 100)}"`);
+          try {
+            const supabaseSvc = _serviceSupabase();
+            await supabaseSvc.from("audit_logs").insert({
+              tenant_id: tenant.id,
+              actor_role: "service",
+              entity: "onebeleza_cadastrar_cliente",
+              entity_id: phoneNumber || tel,
+              action: "onebeleza_register_blocked_api_guard",
+              before: { arg_nome: candidateName.slice(0, 200), reason: "looks_not_like_name" },
+            });
+          } catch { /* ignore */ }
+          return {
+            error: "NOME_INVALIDO",
+            blocked: true,
+            message: "Cadastro recusado pelo sistema: o nome informado não parece um nome real (precisa ter 2 a 4 palavras, só letras, sem verbos/saudações/serviços). NÃO chame cadastrar_cliente de novo com a mesma string. Responda APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem do cliente.",
+          };
+        }
+
         const { res, text, aliasUsed } = await registerOneBelezaClient(
           authHeaders,
           tel,
-          args.nome || "Cliente",
+          candidateName,
           "[OneBeleza]",
           tenant.id,
         );
@@ -6164,6 +6188,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         return parsed;
       }
+
 
       case "buscar_servicos": {
         const url = `${baseUrl}/api/Servicos/RetornarGrupoServicos?celular=${celular}`;
