@@ -620,10 +620,12 @@ export function CustomToolsTab({
   tools,
   onChange,
   tenantId,
+  readOnly = false,
 }: {
   tools: CustomTool[];
   onChange: (tools: CustomTool[]) => void;
   tenantId?: string;
+  readOnly?: boolean;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTool, setEditingTool] = useState<CustomTool | null>(null);
@@ -712,23 +714,25 @@ export function CustomToolsTab({
       </div>
 
       {/* Templates */}
-      <div className="space-y-2">
-        <Label className="text-xs text-muted-foreground uppercase tracking-wider">Templates rápidos</Label>
-        <div className="flex flex-wrap gap-2">
-          {TOOL_TEMPLATES.map((tpl) => (
-            <Button
-              key={tpl.name}
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => addFromTemplate(tpl)}
-            >
-              <Plus className="w-3 h-3 mr-1" />
-              {tpl.display_name}
-            </Button>
-          ))}
+      {!readOnly && (
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground uppercase tracking-wider">Templates rápidos</Label>
+          <div className="flex flex-wrap gap-2">
+            {TOOL_TEMPLATES.map((tpl) => (
+              <Button
+                key={tpl.name}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => addFromTemplate(tpl)}
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                {tpl.display_name}
+              </Button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Tool list */}
       {tools.length > 0 && (
@@ -742,6 +746,7 @@ export function CustomToolsTab({
                 <Switch
                   checked={tool.enabled}
                   onCheckedChange={() => handleToggle(tool.id)}
+                  disabled={readOnly}
                 />
                 <div className="min-w-0">
                   <div className="font-medium text-sm text-foreground truncate">{tool.display_name}</div>
@@ -751,12 +756,14 @@ export function CustomToolsTab({
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
-                <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(tool)}>
+                <Button type="button" variant="ghost" size="icon" onClick={() => openEdit(tool)} disabled={readOnly}>
                   <Pencil className="w-4 h-4" />
                 </Button>
-                <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(tool.id)}>
-                  <Trash2 className="w-4 h-4 text-destructive" />
-                </Button>
+                {!readOnly && (
+                  <Button type="button" variant="ghost" size="icon" onClick={() => handleDelete(tool.id)}>
+                    <Trash2 className="w-4 h-4 text-destructive" />
+                  </Button>
+                )}
               </div>
             </div>
           ))}
@@ -765,14 +772,17 @@ export function CustomToolsTab({
 
       {tools.length === 0 && (
         <div className="text-center py-8 text-muted-foreground text-sm">
-          Nenhuma ferramenta cadastrada. Use os templates acima ou crie uma nova.
+          {readOnly ? "Nenhuma ferramenta cadastrada." : "Nenhuma ferramenta cadastrada. Use os templates acima ou crie uma nova."}
         </div>
       )}
 
-      <Button type="button" variant="outline" onClick={openNew}>
-        <Plus className="w-4 h-4 mr-2" />
-        Adicionar Ferramenta
-      </Button>
+      {!readOnly && (
+        <Button type="button" variant="outline" onClick={openNew}>
+          <Plus className="w-4 h-4 mr-2" />
+          Adicionar Ferramenta
+        </Button>
+      )}
+
 
       {/* Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -856,8 +866,8 @@ export function CustomToolsTab({
             </div>
           )}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
-            <Button type="button" onClick={handleSave}>Salvar</Button>
+            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{readOnly ? "Fechar" : "Cancelar"}</Button>
+            {!readOnly && <Button type="button" onClick={handleSave}>Salvar</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
