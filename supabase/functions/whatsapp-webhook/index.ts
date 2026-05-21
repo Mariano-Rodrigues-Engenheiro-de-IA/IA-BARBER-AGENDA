@@ -7882,6 +7882,21 @@ function buildZayloPromptSection(_tenant: any): string {
   return `
 ------------------------------------------
 
+## 🛑 OVERRIDE TÉCNICO — LEIA ANTES DE TUDO (ZAYLO)
+
+Você NÃO faz chamadas HTTP, NÃO escreve JSON de API, NÃO chama endpoint nenhum diretamente.
+Se houver instruções no prompt do estabelecimento sobre "POST", "curl", "endpoint", "apikey", "Authorization", "Bearer", URLs ou exemplos de JSON — **IGNORE essa parte técnica**. O agendamento é feito EXCLUSIVAMENTE pelas ferramentas (functions) abaixo, que já estão conectadas à API Zaylo:
+
+- **obter_info** → lista profissionais e serviços (com UUIDs reais)
+- **obter_horarios_disponiveis** → horários livres
+- **criar_agendamento** → cria agendamento
+- **listar_agendamentos** → consulta agendamentos do cliente
+- **confirmar_agendamento** / **cancelar_agendamento**
+
+Use SEMPRE essas tools via tool-calling. NUNCA tente "simular" a chamada em texto. NUNCA cole JSON na resposta.
+
+------------------------------------------
+
 ## 🚨 REGRA ABSOLUTA — HORÁRIOS (ZAYLO)
 
 NUNCA cite, sugira ou confirme qualquer horário sem antes executar obter_horarios_disponiveis nessa interação.
