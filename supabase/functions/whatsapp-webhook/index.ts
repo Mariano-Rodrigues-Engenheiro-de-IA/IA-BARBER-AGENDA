@@ -1806,6 +1806,10 @@ interface AgentSessionState {
   executedToolNames: string[];
   explicitClientName: string | null;
   nameRejectionCount?: number;
+  // OneBeleza: vira true depois de buscar_cliente retornar "não encontrado".
+  // Só permitimos cadastrar_cliente quando este flag está true E a última mensagem
+  // do cliente contém um nome válido (i.e. ele respondeu à pergunta de nome).
+  awaitingNameForRegistration?: boolean;
 }
 
 
