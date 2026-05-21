@@ -2206,11 +2206,16 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: state.bempSalonOptions,
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
+      zayloBarberOptions: state.zayloBarberOptions,
+      zayloServiceOptions: state.zayloServiceOptions,
+      zayloSlotOptions: state.zayloSlotOptions,
       executedToolNames: state.executedToolNames,
       selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
+      selectedZayloBarberId: state.selectedZayloBarberId,
+      selectedZayloServiceId: state.selectedZayloServiceId,
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
     };
@@ -2221,7 +2226,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
