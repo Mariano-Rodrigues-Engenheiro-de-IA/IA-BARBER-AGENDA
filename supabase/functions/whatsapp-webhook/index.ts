@@ -3045,6 +3045,9 @@ async function callAIAgent(
     model: modelUsed,
     messages,
     max_completion_tokens: 4096,
+  };
+
+
 
   if (modelUsed.includes("gpt-5")) {
     requestBody.reasoning_effort = "low";
