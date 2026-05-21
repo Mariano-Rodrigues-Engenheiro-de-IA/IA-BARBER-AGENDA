@@ -1464,15 +1464,10 @@ Deno.serve(async (req) => {
         console.error("[Sequence] trigger error:", e);
       }
 
-      // Persist assistant message immediately so history stays consistent
-      await supabase.from("chat_messages").insert({
-        tenant_id: tenant.id,
-        phone_number: phoneNumber,
-        role: "assistant",
-        content: aiResponse,
-      });
-
       // ===== SPLIT RESPONSE: Send each paragraph as a separate message =====
+      // Persist each part AFTER sending using the message_id returned by UAZAPI.
+      // This way, when the fromMe echo arrives, the dedup-by-message_id check
+      // catches it and we never store it again as [ATENDENTE HUMANO].
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
@@ -1485,6 +1480,7 @@ Deno.serve(async (req) => {
         const part = messageParts[i].trim();
         if (!part) continue;
 
+        let sentMessageId: string | null = null;
         try {
           const sendResult = await fetch(`${uazapiUrl}/send/text`, {
             method: "POST",
@@ -1495,8 +1491,10 @@ Deno.serve(async (req) => {
             },
             body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
           });
-          const sendData = await sendResult.json();
+          const sendData = await sendResult.json().catch(() => ({} as any));
           console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
+          // Extract message_id from UAZAPI response so the fromMe echo dedup works
+          sentMessageId = (sendData?.id || sendData?.messageId || sendData?.key?.id || null) as string | null;
           if (i === 0) {
             tFirstSend = Date.now();
             if (!sendResult.ok) {
@@ -1509,6 +1507,20 @@ Deno.serve(async (req) => {
             firstSendError = `UAZAPI fetch error: ${e?.message || String(e)}`;
           }
           console.error(`UAZAPI send error part ${i + 1}:`, e?.message || e);
+        }
+
+        // Persist the part with the real message_id (so the fromMe echo gets deduped)
+        try {
+          await supabase.from("chat_messages").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            role: "assistant",
+            content: part,
+            message_id: sentMessageId,
+            processed: true,
+          });
+        } catch (persistErr: any) {
+          console.error(`Failed to persist assistant part ${i + 1}:`, persistErr?.message || persistErr);
         }
       }
 
