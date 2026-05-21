@@ -800,6 +800,60 @@ export default function TenantFormPage() {
                 </div>
               )}
 
+              {provider === "zaylo" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais Zaylo</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="zaylo_barbershop_id">ID da Barbearia (barbershop_id)</Label>
+                    <Input
+                      id="zaylo_barbershop_id"
+                      value={(form as any).zaylo_barbershop_id || ""}
+                      onChange={(e) => handleChange("zaylo_barbershop_id" as any, e.target.value)}
+                      placeholder="UUID da clínica/barbearia no Zaylo"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Encontrado no painel Zaylo → Configurações → Link público (UUID na URL).
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="zaylo_base_url">URL base da API (opcional)</Label>
+                    <Input
+                      id="zaylo_base_url"
+                      value={(form as any).zaylo_base_url || ""}
+                      onChange={(e) => handleChange("zaylo_base_url" as any, e.target.value)}
+                      placeholder="Deixe em branco para usar o padrão"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Padrão: <code>https://fimdhqjzdyktzdijfoub.supabase.co/functions/v1/n8n-appointments</code>
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="zaylo_publishable_key">Publishable Key (opcional)</Label>
+                    <div className="relative">
+                      <Input
+                        id="zaylo_publishable_key"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).zaylo_publishable_key || ""}
+                        onChange={(e) => handleChange("zaylo_publishable_key" as any, e.target.value)}
+                        placeholder="anon/publishable key do projeto Zaylo"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Enviada como header <code>apikey</code> + <code>Authorization: Bearer</code>. Em branco usa a key padrão da documentação.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+
               {provider === "none" && (
                 <div className="space-y-4 pt-4 border-t border-border">
                   <h4 className="text-sm font-medium text-foreground">Link no Prompt da IA</h4>
