@@ -66,7 +66,12 @@ Deno.serve(async (req) => {
         return json({ error: "Senha deve ter pelo menos 6 caracteres" }, 400);
       }
       const { error: updErr } = await admin.auth.admin.updateUserById(user_id, { password });
-      if (updErr) return json({ error: updErr.message }, 400);
+      if (updErr) {
+        const msg = /weak|pwned|known to be/i.test(updErr.message)
+          ? "Senha muito fraca ou já vazada em outros sites. Escolha uma senha mais forte (use letras, números e símbolos)."
+          : updErr.message;
+        return json({ error: msg }, 400);
+      }
       await admin.from("audit_logs").insert({
         tenant_id: tenant_id ?? null, user_id: userData.user.id, actor_role: "admin",
         action: "set_client_user_password", entity: "auth.users", entity_id: user_id,
