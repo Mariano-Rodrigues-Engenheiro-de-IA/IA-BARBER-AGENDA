@@ -1720,9 +1720,10 @@ Deno.serve(async (req) => {
       // Build update
       const updateData: any = { updated_at: new Date().toISOString() };
       if (funnelChanged && newFunnelLabel) {
-        updateData.label_id = newFunnelLabel;
         const col = kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel);
+        updateData.label_id = newFunnelLabel;
         updateData.label_name = col?.name || null;
+        if (col?.board_id) updateData.board_id = col.board_id;
       }
       if (flagsChanged) {
         updateData.flag_labels = newFlags;
