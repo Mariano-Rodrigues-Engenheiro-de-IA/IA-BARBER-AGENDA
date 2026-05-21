@@ -27,6 +27,25 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
 }
 
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
+
+// Load all kanban columns for a tenant: union from crm_boards (multi-board model),
+// falling back to legacy tenants.kanban_columns when no boards exist.
+// Each returned column carries its source board_id (null for legacy).
+async function loadTenantKanbanColumns(supabase: any, tenantId: string, legacyCols: any): Promise<any[]> {
+  try {
+    const { data: boards } = await supabase
+      .from("crm_boards")
+      .select("id, columns")
+      .eq("tenant_id", tenantId);
+    const fromBoards = (boards ?? []).flatMap((b: any) =>
+      (Array.isArray(b.columns) ? b.columns : []).map((c: any) => ({ ...c, board_id: b.id }))
+    );
+    if (fromBoards.length) return fromBoards;
+  } catch (e) {
+    console.error("[loadTenantKanbanColumns] crm_boards error:", e);
+  }
+  return (Array.isArray(legacyCols) ? legacyCols : []).map((c: any) => ({ ...c, board_id: null }));
+}
 const exactDigitsMatch = (a: unknown, b: unknown) => {
   const left = digitsOnly(a);
   const right = digitsOnly(b);
@@ -806,7 +825,7 @@ Deno.serve(async (req) => {
       // Also reconciles all other configured flag labels (full bidirectional sync),
       // since UAZAPI does not emit chats.update events on this account.
       {
-        const kanbanCols: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
 
         const iaOffLabelIds = kanbanCols
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
@@ -1145,7 +1164,7 @@ Deno.serve(async (req) => {
       // The owner may apply IA OFF label DURING the 10s debounce window.
       // We re-check the flag from DB AND from UAZAPI live (chat/details) before processing.
       try {
-        const kanbanCols2: any[] = Array.isArray(tenant.kanban_columns) ? tenant.kanban_columns : [];
+        const kanbanCols2: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
         const iaOffLabelIds2 = kanbanCols2
           .filter((c: any) => c.type === "flag" && /ia\s*off/i.test(c.name || ""))
           .map((c: any) => String(c.label_id));
@@ -1642,8 +1661,11 @@ Deno.serve(async (req) => {
 
       console.log(`[LabelSync] Parsed label IDs from WhatsApp: ${JSON.stringify(waLabels)} for ${chatPhone} in tenant ${syncTenant.name}`);
 
-      const kanbanCols: any[] = Array.isArray(syncTenant.kanban_columns) ? syncTenant.kanban_columns : [];
+      const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, syncTenant.id, syncTenant.kanban_columns);
       const configuredLabelIds = kanbanCols.map((c: any) => String(c.label_id));
+      console.log(`[LabelSync] configuredLabelIds (${kanbanCols.length} cols): ${JSON.stringify(configuredLabelIds)}`);
+      const unknownIds = waLabels.filter((id: string) => !configuredLabelIds.includes(id));
+      if (unknownIds.length) console.log(`[LabelSync] WhatsApp labels not configured in any board, ignoring: ${JSON.stringify(unknownIds)}`);
 
       // Get current CRM lead
       const { data: existingLead } = await supabase
@@ -1698,9 +1720,10 @@ Deno.serve(async (req) => {
       // Build update
       const updateData: any = { updated_at: new Date().toISOString() };
       if (funnelChanged && newFunnelLabel) {
-        updateData.label_id = newFunnelLabel;
         const col = kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel);
+        updateData.label_id = newFunnelLabel;
         updateData.label_name = col?.name || null;
+        if (col?.board_id) updateData.board_id = col.board_id;
       }
       if (flagsChanged) {
         updateData.flag_labels = newFlags;
@@ -1709,12 +1732,14 @@ Deno.serve(async (req) => {
       if (existingLead) {
         await supabase.from("crm_leads").update(updateData).eq("id", existingLead.id);
       } else if (newFunnelLabel || newFlags.length > 0) {
+        const funnelCol = newFunnelLabel ? kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel) : null;
         await supabase.from("crm_leads").insert({
           tenant_id: syncTenant.id,
           phone_number: chatPhone,
           label_id: newFunnelLabel || "__none__",
-          label_name: newFunnelLabel ? (kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel)?.name || null) : null,
+          label_name: funnelCol?.name || null,
           flag_labels: newFlags,
+          board_id: funnelCol?.board_id ?? null,
         });
       }
 
