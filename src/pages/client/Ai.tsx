@@ -211,33 +211,15 @@ export default function ClientAi() {
 
         {toolsPerm.visible && (
           <TabsContent value="tools" className="space-y-4">
-            {toolsPerm.editable ? (
-              <CustomToolsTab tools={customTools} onChange={saveTools} tenantId={tenantId ?? undefined} />
-            ) : (
-              <div className="glass-card p-5 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Wrench className="w-5 h-5 text-primary" />
-                  <h3 className="font-semibold text-foreground">Ferramentas Customizadas</h3>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Somente leitura — peça ao administrador para alterar.
-                </p>
-                {customTools.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Nenhuma ferramenta cadastrada.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {customTools.map((t) => (
-                      <div key={t.id} className="p-3 rounded-lg border border-border bg-background/50">
-                        <div className="font-medium text-sm">{t.display_name}</div>
-                        <div className="text-xs text-muted-foreground">{t.enabled ? "Ativo" : "Inativo"}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            <CustomToolsTab
+              tools={customTools}
+              onChange={toolsPerm.editable ? saveTools : () => {}}
+              tenantId={tenantId ?? undefined}
+              readOnly={!toolsPerm.editable}
+            />
           </TabsContent>
         )}
+
 
 
         {company.visible && (
