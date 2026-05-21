@@ -1661,8 +1661,11 @@ Deno.serve(async (req) => {
 
       console.log(`[LabelSync] Parsed label IDs from WhatsApp: ${JSON.stringify(waLabels)} for ${chatPhone} in tenant ${syncTenant.name}`);
 
-      const kanbanCols: any[] = Array.isArray(syncTenant.kanban_columns) ? syncTenant.kanban_columns : [];
+      const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, syncTenant.id, syncTenant.kanban_columns);
       const configuredLabelIds = kanbanCols.map((c: any) => String(c.label_id));
+      console.log(`[LabelSync] configuredLabelIds (${kanbanCols.length} cols): ${JSON.stringify(configuredLabelIds)}`);
+      const unknownIds = waLabels.filter((id: string) => !configuredLabelIds.includes(id));
+      if (unknownIds.length) console.log(`[LabelSync] WhatsApp labels not configured in any board, ignoring: ${JSON.stringify(unknownIds)}`);
 
       // Get current CRM lead
       const { data: existingLead } = await supabase
