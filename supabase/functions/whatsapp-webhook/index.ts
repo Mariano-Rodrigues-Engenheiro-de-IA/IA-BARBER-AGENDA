@@ -2086,11 +2086,28 @@ interface AgentSessionState {
     start_text?: string;
     end_text?: string;
   }>;
+  zayloBarberOptions?: Array<{
+    barberId: string;
+    name: string;
+  }>;
+  zayloServiceOptions?: Array<{
+    serviceId: string;
+    name: string;
+    price: number | null;
+  }>;
+  zayloSlotOptions?: Array<{
+    barberId: string | null;
+    serviceId: string | null;
+    date: string | null;
+    time: string;
+  }>;
   selectedSalonId: number | null;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
   selectedDate: string | null;
+  selectedZayloBarberId?: string | null;
+  selectedZayloServiceId?: string | null;
   executedToolNames: string[];
   explicitClientName: string | null;
   nameRejectionCount?: number;
@@ -2115,10 +2132,15 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     bempSalonOptions: [],
     bempProfessionalOptions: [],
     bempSlotOptions: [],
+    zayloBarberOptions: [],
+    zayloServiceOptions: [],
+    zayloSlotOptions: [],
     selectedSalonId: null,
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
+    selectedZayloBarberId: null,
+    selectedZayloServiceId: null,
     executedToolNames: [],
     explicitClientName: null,
     awaitingNameForRegistration: false,
@@ -2154,10 +2176,15 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: Array.isArray(s.bempSalonOptions) ? s.bempSalonOptions : [],
       bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
       bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
+      zayloBarberOptions: Array.isArray(s.zayloBarberOptions) ? s.zayloBarberOptions : [],
+      zayloServiceOptions: Array.isArray(s.zayloServiceOptions) ? s.zayloServiceOptions : [],
+      zayloSlotOptions: Array.isArray(s.zayloSlotOptions) ? s.zayloSlotOptions : [],
       selectedSalonId: s.selectedSalonId ?? null,
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
+      selectedZayloBarberId: typeof s.selectedZayloBarberId === "string" ? s.selectedZayloBarberId : null,
+      selectedZayloServiceId: typeof s.selectedZayloServiceId === "string" ? s.selectedZayloServiceId : null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
