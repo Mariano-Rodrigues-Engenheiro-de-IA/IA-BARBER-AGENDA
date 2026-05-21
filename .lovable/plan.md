@@ -1,72 +1,79 @@
-## Objetivo
-Eliminar a duplicação das mensagens da IA no painel de conversas do cliente.
+## Problema
 
-## Diagnóstico confirmado
-Encontrei evidência clara de que a duplicação nasce no webhook, não só na tela.
+Quando o dono da barbearia adiciona uma etiqueta no contato direto pelo WhatsApp, o lead **não** se move para a etapa correta do funil no CRM do painel.
 
-Caso recente do tenant `2b65801b-580b-4bc6-8527-fcd70524da2b`:
-- Às `13:53:25`, a IA gravou uma resposta única no histórico: `Entendo, faz sentido... Me conta...`
-- Em seguida, o envio foi dividido em `2` partes para o WhatsApp.
-- Às `13:53:28` e `13:53:30`, o webhook recebeu os eventos `fromMe` dessas partes e gravou ambas como `assistant` com prefixo `[ATENDENTE HUMANO]: ...`
-- Resultado: o painel mostra a resposta original da IA + os ecos do próprio envio, como se fossem mensagens extras.
+## Causa raiz
 
-Isso explica por que:
-- a mensagem do cliente não duplica;
-- a duplicação aparece só na resposta da IA;
-- no painel surgem mensagens com prefixo `[ATENDENTE HUMANO]` logo após a resposta real.
+O webhook `whatsapp-webhook` (handler `chats.update` / `chat_labels`, linhas ~1583-1739) lê a configuração de colunas do funil do campo **legado** `tenants.kanban_columns`. Porém o sistema já foi migrado para múltiplos quadros na tabela **`crm_boards`** (cada board tem seu próprio `columns: jsonb`).
 
-## Plano de correção
+Verificação no banco confirma o problema. Quase todos os tenants ativos têm `tenants.kanban_columns = []` mas possuem boards configurados em `crm_boards`. Exemplos:
 
-### 1. Corrigir a origem no webhook
-Arquivo principal:
-- `supabase/functions/whatsapp-webhook/index.ts`
+- BAREBARIA DO REGIS → 0 colunas legadas, 1 board novo
+- BARBEARIA MARQUEZ Asa Sul → 0 colunas legadas, 0 boards (sem CRM)
+- BENDITA BARBER → 0 colunas legadas, 1 board
 
-Vou ajustar a lógica de saída da IA para que o sistema trate como histórico apenas o que realmente foi enviado ao WhatsApp, evitando que o eco `fromMe` seja interpretado como mensagem manual do atendente.
+Consequência no código:
+```
+const kanbanCols = syncTenant.kanban_columns; // = []
+const configuredLabelIds = [];               // vazio
+for (labelId of waLabels) {
+  if (!configuredLabelIds.includes(labelId)) continue; // ← TUDO ignorado
+}
+```
+→ Nenhum label do WhatsApp é reconhecido → funil nunca muda → log `[LabelSync] No changes`.
 
-Implementação:
-- parar de gravar antecipadamente a resposta completa da IA como uma única linha em `chat_messages`;
-- passar a gravar cada parte efetivamente enviada pela IA de forma controlada;
-- usar o retorno do envio para associar `message_id` às mensagens da IA sempre que disponível;
-- reforçar o filtro do ramo `fromMe` para ignorar qualquer mensagem que corresponda a partes recém-enviadas pela própria IA, em vez de tratá-la como `[ATENDENTE HUMANO]`.
+A IA funciona porque ela usa `move-crm-lead` que escreve direto no `crm_leads` (não depende dessa config para classificar).
 
-Resultado esperado:
-- mensagens automáticas da IA continuam aparecendo no histórico;
-- ecos do WhatsApp não viram novas mensagens no banco;
-- mensagens manuais reais do atendente continuam sendo registradas normalmente.
+## Correção
 
-### 2. Blindar o painel do cliente
-Arquivo principal:
-- `src/pages/client/Conversations.tsx`
+Em `supabase/functions/whatsapp-webhook/index.ts`, no handler de `chats.update`:
 
-Mesmo corrigindo a origem, ainda existem registros já duplicados no banco. Então vou adicionar uma deduplicação defensiva na montagem da conversa.
-
-Implementação:
-- filtrar mensagens `assistant` com prefixo `[ATENDENTE HUMANO]:` quando elas forem eco da resposta anterior da IA;
-- considerar proximidade de tempo + conteúdo equivalente/contido para não esconder mensagens humanas reais diferentes;
-- manter a exibição limpa sem alterar o restante do layout.
-
-Resultado esperado:
-- o painel deixa de mostrar as duplicações já existentes;
-- novas duplicações também deixam de aparecer.
-
-### 3. Validar com o caso real que está falhando
-Vou validar usando o mesmo padrão que apareceu nos logs:
-- resposta única da IA dividida em 2 partes;
-- chegada de eventos `fromMe` logo depois;
-- conferência de que só aparecem as mensagens corretas na conversa.
+1. **Trocar a fonte da config de colunas:** ler de `crm_boards` (todos os boards do tenant), unir todas as `columns`, em vez de `tenants.kanban_columns`.
+2. **Manter fallback** para `tenants.kanban_columns` caso o tenant ainda use o modelo legado (alguns têm valor).
+3. **Capturar `board_id`** ao identificar o funil: ao classificar `labelId` como funnel, lembrar de qual board ele veio para que, ao **inserir** novo lead, `board_id` seja preenchido (hoje cai como `null` e leads ficam fora dos boards no painel cliente).
+4. **Mesmo ajuste no bloco de IA OFF / flags** (linhas ~802-870 e ~1145-1195) que também lê `kanban_columns` — fazer leitura unificada uma única vez no início do request, reutilizar.
+5. **Logs**: adicionar log explícito quando um `labelId` vem do WhatsApp mas não está em nenhuma coluna configurada, para facilitar diagnóstico futuro.
 
 ## Detalhes técnicos
-- Não pretendo mexer no banco para essa correção.
-- A correção deve ficar concentrada em:
-  - `supabase/functions/whatsapp-webhook/index.ts`
-  - `src/pages/client/Conversations.tsx`
-- O foco será separar corretamente:
-  - mensagem automática da IA;
-  - mensagem manual do atendente;
-  - eco técnico do provedor de WhatsApp.
 
-## Critério de sucesso
-A conversa do cliente deve exibir apenas uma sequência lógica de mensagens:
-- cliente fala;
-- IA responde uma vez;
-- sem blocos extras com `[ATENDENTE HUMANO]` duplicando o que a IA acabou de mandar.
+Helper a ser adicionado no topo do handler:
+
+```ts
+async function loadTenantKanbanColumns(supabase, tenantId, legacyCols) {
+  const { data: boards } = await supabase
+    .from("crm_boards")
+    .select("id, columns")
+    .eq("tenant_id", tenantId);
+  const fromBoards = (boards ?? []).flatMap(b =>
+    (Array.isArray(b.columns) ? b.columns : []).map(c => ({ ...c, board_id: b.id }))
+  );
+  if (fromBoards.length) return fromBoards;
+  // fallback legacy
+  return (Array.isArray(legacyCols) ? legacyCols : []).map(c => ({ ...c, board_id: null }));
+}
+```
+
+E no insert de novo lead (linha ~1712):
+```ts
+const funnelCol = newFunnelLabel ? kanbanCols.find(c => String(c.label_id) === newFunnelLabel) : null;
+await supabase.from("crm_leads").insert({
+  ...,
+  board_id: funnelCol?.board_id ?? null,
+});
+```
+
+## Validação
+
+1. Aplicar uma etiqueta de funil direto no WhatsApp para um contato de teste no tenant **BAREBARIA DO REGIS**.
+2. Conferir nos logs do `whatsapp-webhook`:
+   - `[LabelSync] Parsed label IDs from WhatsApp: [...]` deve conter o ID.
+   - Linha nova de log `[LabelSync] configuredLabelIds: [...]` deve mostrar o ID configurado.
+   - Resultado deve ser `label_synced` com `funnelChanged: true`.
+3. Conferir no painel cliente → CRM → o lead aparece na coluna correta sem refresh manual (após poll/refetch).
+4. Aplicar uma etiqueta de **flag** (ex: IA OFF) e confirmar que entra em `flag_labels`, não em `label_id`.
+
+## Escopo fora desta correção
+
+- Não mexer na lógica de envio de mensagens nem na deduplicação da IA.
+- Não alterar `move-crm-lead` (sentido painel → WhatsApp já funciona).
+- Não migrar dados em `tenants.kanban_columns` (fica como fallback).
