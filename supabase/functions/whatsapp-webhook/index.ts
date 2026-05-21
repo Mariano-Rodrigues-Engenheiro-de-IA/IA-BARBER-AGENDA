@@ -1806,6 +1806,10 @@ interface AgentSessionState {
   executedToolNames: string[];
   explicitClientName: string | null;
   nameRejectionCount?: number;
+  // OneBeleza: vira true depois de buscar_cliente retornar "não encontrado".
+  // Só permitimos cadastrar_cliente quando este flag está true E a última mensagem
+  // do cliente contém um nome válido (i.e. ele respondeu à pergunta de nome).
+  awaitingNameForRegistration?: boolean;
 }
 
 
@@ -1829,6 +1833,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedDate: null,
     executedToolNames: [],
     explicitClientName: null,
+    awaitingNameForRegistration: false,
   };
 
   try {
@@ -1867,6 +1872,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedDate: s.selectedDate ?? null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
+      awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
     };
   } catch {
     return defaultState;
@@ -1891,6 +1897,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
       explicitClientName: state.explicitClientName,
+      awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
     };
 
     await supabase
@@ -3061,14 +3068,44 @@ async function callAIAgent(
 
       if (toolCall.function.name === "cadastrar_cliente") {
         const explicit = sessionState.explicitClientName;
-        // Re-valida no momento do cadastro: mesmo que tenha sido populado em turno anterior,
-        // se não passa em looksLikeRealName agora (ex: transcrição de áudio que vazou),
-        // bloqueia e força a IA a re-perguntar.
         const forcedName = isUsableClientName(explicit) ? sanitizeClientName(explicit) : "";
-        // Também checa o nome que a própria IA tentou passar — pode ser uma frase inteira
-        // ("Aumenta no valor acima de se incluir a barba") que a IA achou que era nome.
         const argNome = typeof parsedArgs?.nome === "string" ? parsedArgs.nome : "";
         const argNomeOk = isUsableClientName(argNome);
+
+        // Trava extra (One Beleza): a IA SÓ pode cadastrar quando a última mensagem
+        // do cliente claramente é uma resposta com nome (ou seja, depois que perguntamos).
+        // Isso impede o cenário "cliente manda 'Bom dia, está precisando de produtos?'
+        // e a IA já cadastra com essa frase no mesmo turno".
+        const userMsgLooksLikeName = looksLikeRealName(userMessage);
+        const hasNamePrefix = /(?:meu nome|me chamo|sou o\b|sou a\b|pode me chamar)/i.test(String(userMessage || ""));
+        const userJustSentName = userMsgLooksLikeName || hasNamePrefix;
+        const blockedByFlow = provider === "onebeleza"
+          && !sessionState.awaitingNameForRegistration
+          && !userJustSentName
+          && !forcedName;
+
+        if (blockedByFlow) {
+          console.log(`[CadastrarCliente] BLOCKED by flow — provider=${provider} awaitingFlag=${sessionState.awaitingNameForRegistration} userMsg="${String(userMessage || "").slice(0, 80)}" arg="${argNome}"`);
+          sessionState.nameRejectionCount = (sessionState.nameRejectionCount || 0) + 1;
+          try {
+            await supabase.from("audit_logs").insert({
+              tenant_id: tenant.id,
+              actor_role: "service",
+              entity: "onebeleza_cadastrar_cliente",
+              entity_id: phoneNumber,
+              action: "onebeleza_register_blocked_flow",
+              before: { user_message: String(userMessage || "").slice(0, 200), arg_nome: argNome, awaiting_flag: !!sessionState.awaitingNameForRegistration },
+            });
+          } catch { /* ignore */ }
+          const blockedResult = {
+            error: "FLUXO_INVALIDO",
+            message: "NÃO chame cadastrar_cliente agora. Primeiro execute buscar_cliente. Se não existir, responda APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem do cliente. NÃO use a mensagem atual do cliente como nome (ela é uma saudação, pergunta ou pedido — não um nome).",
+            blocked: true,
+          };
+          messages.push({ role: "tool", tool_call_id: toolCall.id, name: toolCall.function.name, content: JSON.stringify(blockedResult) });
+          executedToolsThisSession.add(toolCall.function.name);
+          continue;
+        }
 
         if (forcedName) {
           if (parsedArgs?.nome !== forcedName) {
@@ -3082,8 +3119,8 @@ async function callAIAgent(
               },
             };
           }
-        } else if (argNomeOk) {
-          // explicitClientName não existe mas o arg que a IA passou parece nome válido — aceita.
+        } else if (argNomeOk && userJustSentName) {
+          // Só aceita o nome que a IA passou se o cliente acabou de mandar algo que parece nome.
           const cleaned = sanitizeClientName(argNome);
           parsedArgs = { ...parsedArgs, nome: cleaned };
           sessionState.explicitClientName = cleaned;
@@ -3092,12 +3129,21 @@ async function callAIAgent(
             function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
           };
         } else {
-          // Bloqueia: nem explicitClientName, nem o arg passado parecem nome real.
-          console.log(`[CadastrarCliente] BLOCKED — sem nome válido. explicit="${explicit || ""}" arg="${argNome}" argsRecebidos:`, toolCall.function.arguments);
+          console.log(`[CadastrarCliente] BLOCKED — sem nome válido. explicit="${explicit || ""}" arg="${argNome}" userMsg="${String(userMessage || "").slice(0, 80)}" argNomeOk=${argNomeOk} userJustSentName=${userJustSentName}`);
           sessionState.nameRejectionCount = (sessionState.nameRejectionCount || 0) + 1;
+          try {
+            await supabase.from("audit_logs").insert({
+              tenant_id: tenant.id,
+              actor_role: "service",
+              entity: "onebeleza_cadastrar_cliente",
+              entity_id: phoneNumber,
+              action: "onebeleza_register_blocked_name",
+              before: { user_message: String(userMessage || "").slice(0, 200), arg_nome: argNome, reason: "looks_not_like_name" },
+            });
+          } catch { /* ignore */ }
           const blockedResult = {
             error: "NOME_NAO_COLETADO",
-            message: "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente: 'Pra finalizar o cadastro, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana. Se a resposta do cliente for uma frase longa ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática.",
+            message: "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana, saudações ('bom dia'). Se a resposta do cliente for uma frase longa, saudação, pergunta ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática.",
             blocked: true,
             attemptsSoFar: sessionState.nameRejectionCount,
           };
@@ -3111,6 +3157,7 @@ async function callAIAgent(
           continue;
         }
       }
+
 
 
       console.log(`Tool call: ${toolCall.function.name}`, toolCall.function.arguments);
@@ -3507,6 +3554,34 @@ async function callAIAgent(
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
         }
+
+        // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
+        if (provider === "onebeleza") {
+          if (toolCall.function.name === "buscar_cliente") {
+            // resultado vazio / notFound → entramos no fluxo de cadastro pendente
+            const r: any = toolResult;
+            const isEmpty = !r
+              || r?.notFound === true
+              || r?.status === 404
+              || (typeof r === "object" && !r?.codigo && !r?.id && !r?.clienteId
+                  && !(Array.isArray(r?.data) && r.data.length > 0)
+                  && !(Array.isArray(r) && r.length > 0));
+            if (isEmpty) {
+              sessionState.awaitingNameForRegistration = true;
+              console.log(`[OneBeleza] buscar_cliente vazio → awaitingNameForRegistration=true`);
+            } else {
+              sessionState.awaitingNameForRegistration = false;
+            }
+          } else if (toolCall.function.name === "cadastrar_cliente") {
+            // sucesso → limpa flag
+            const r: any = toolResult;
+            const ok = r && !r?.error && !r?.blocked && (r?.codigo || r?.id || r?.clienteId || r?.ok === true || r?.success === true || r?.aliasUsed);
+            if (ok) {
+              sessionState.awaitingNameForRegistration = false;
+            }
+          }
+        }
+
 
         // Track successful scheduling per service (allow other services to be booked next)
         const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
@@ -6096,10 +6171,34 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         let tel = (phoneNumber || "").replace(/\D/g, "");
         if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
 
+        // 🛡️ Defesa em profundidade: NUNCA chamar a API da One Beleza com nome inválido.
+        // Mesmo que a barreira upstream (dispatcher) tenha sido contornada por uma
+        // versão antiga em cache ou por outro caminho, aqui o cadastro é bloqueado.
+        const candidateName = String(args?.nome || "").trim();
+        if (!looksLikeRealName(candidateName)) {
+          console.log(`[OneBeleza] cadastrar_cliente BLOCKED — nome inválido recebido: "${candidateName.slice(0, 100)}"`);
+          try {
+            const supabaseSvc = _serviceSupabase();
+            await supabaseSvc.from("audit_logs").insert({
+              tenant_id: tenant.id,
+              actor_role: "service",
+              entity: "onebeleza_cadastrar_cliente",
+              entity_id: phoneNumber || tel,
+              action: "onebeleza_register_blocked_api_guard",
+              before: { arg_nome: candidateName.slice(0, 200), reason: "looks_not_like_name" },
+            });
+          } catch { /* ignore */ }
+          return {
+            error: "NOME_INVALIDO",
+            blocked: true,
+            message: "Cadastro recusado pelo sistema: o nome informado não parece um nome real (precisa ter 2 a 4 palavras, só letras, sem verbos/saudações/serviços). NÃO chame cadastrar_cliente de novo com a mesma string. Responda APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem do cliente.",
+          };
+        }
+
         const { res, text, aliasUsed } = await registerOneBelezaClient(
           authHeaders,
           tel,
-          args.nome || "Cliente",
+          candidateName,
           "[OneBeleza]",
           tenant.id,
         );
@@ -6117,6 +6216,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         return parsed;
       }
+
 
       case "buscar_servicos": {
         const url = `${baseUrl}/api/Servicos/RetornarGrupoServicos?celular=${celular}`;
