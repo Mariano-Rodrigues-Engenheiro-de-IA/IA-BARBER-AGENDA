@@ -1,6 +1,6 @@
 ---
 name: AI Agent WhatsApp
-description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, None) + custom tools + follow-up system + persistent state
+description: AI agent via WhatsApp using UAZAPI + Lovable AI + multi-provider tool-calling (Trinks, One Beleza, Frizzar, Bemp, Zaylo, None) + custom tools + follow-up system + persistent state
 type: feature
 ---
 - WhatsApp integration via UAZAPI (subdomain: zyloia)
@@ -43,6 +43,14 @@ type: feature
 ## None Provider
 - No scheduling tools, just enviar_link_agendamento
 - Uses tenant.booking_link to send scheduling URL
+
+## Zaylo Provider (API ZAYLO — n8n-appointments)
+- 6 tools: obter_info, obter_horarios_disponiveis, criar_agendamento, listar_agendamentos, confirmar_agendamento, cancelar_agendamento
+- Single POST endpoint with `action` dispatcher (default: https://fimdhqjzdyktzdijfoub.supabase.co/functions/v1/n8n-appointments)
+- Per-tenant: zaylo_barbershop_id (required), zaylo_base_url (optional), zaylo_publishable_key (optional, falls back to default anon)
+- Headers: `apikey` + `Authorization: Bearer <publishable_key>`
+- Date YYYY-MM-DD, time HH:MM (Brasília), phone +55DDDNUMERO
+- Action map: obter_info→getInfo, obter_horarios_disponiveis→getAvailableTimes, criar_agendamento→createAppointment, listar_agendamentos→listAppointments, confirmar_agendamento→confirmAppointment, cancelar_agendamento→cancelAppointment
 
 ## Follow-up System (Two Fixed Triggers, All Providers)
 - Table: follow_ups (tenant_id, phone_number, status, follow_up_at, follow_up_message)
