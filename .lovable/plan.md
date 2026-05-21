@@ -1,79 +1,49 @@
-## Problema
+## Objetivo
+Fazer o lead cair no funil correto quando a etiqueta for adicionada direto no WhatsApp.
 
-Quando o dono da barbearia adiciona uma etiqueta no contato direto pelo WhatsApp, o lead **não** se move para a etapa correta do funil no CRM do painel.
+## O que os logs mostram
+- O webhook está ativo e recebendo a atualização de etiqueta.
+- No caso testado, o webhook recebeu a etiqueta `10` para o contato `556999234914`.
+- Para o tenant `BAREBARIA DO REGIS`, o CRM configurado no banco usa as etiquetas `24`, `25`, `26` e `27`.
+- O lead continua salvo com `label_id = "__none__"`, então o painel não tem como exibi-lo em nenhuma coluna.
+- A etiqueta `10` existe, mas está cadastrada em outro tenant (`BENDITA BARBER`), o que indica divergência entre a etiqueta aplicada no WhatsApp e a configuração do CRM desse cliente.
 
-## Causa raiz
+## Plano
+1. Corrigir a identificação do tenant no bloco de sync de etiquetas.
+   - Hoje ele prioriza tenant por lead existente e ainda usa um critério legado baseado em `tenants.kanban_columns`.
+   - Vou ajustar para priorizar o tenant pelo número dono da instância (`owner/whatsapp_number`) e validar boards reais em `crm_boards`, evitando associação errada quando o mesmo telefone aparece em mais de um tenant.
 
-O webhook `whatsapp-webhook` (handler `chats.update` / `chat_labels`, linhas ~1583-1739) lê a configuração de colunas do funil do campo **legado** `tenants.kanban_columns`. Porém o sistema já foi migrado para múltiplos quadros na tabela **`crm_boards`** (cada board tem seu próprio `columns: jsonb`).
+2. Remover o critério legado incorreto do label sync.
+   - O código ainda tenta preferir tenants com `tenants.kanban_columns.length > 0`, mas esse projeto já usa `crm_boards`.
+   - Vou trocar essa preferência por verificação real de colunas em `crm_boards`.
 
-Verificação no banco confirma o problema. Quase todos os tenants ativos têm `tenants.kanban_columns = []` mas possuem boards configurados em `crm_boards`. Exemplos:
+3. Tornar o diagnóstico explícito no webhook.
+   - Adicionar logs com:
+     - tenant escolhido,
+     - IDs de etiquetas configuradas no CRM escolhido,
+     - origem do match do tenant,
+     - motivo do ignore quando a etiqueta do WhatsApp não pertence ao funil configurado.
+   - Isso evita novo ciclo cego de tentativa e erro.
 
-- BAREBARIA DO REGIS → 0 colunas legadas, 1 board novo
-- BARBEARIA MARQUEZ Asa Sul → 0 colunas legadas, 0 boards (sem CRM)
-- BENDITA BARBER → 0 colunas legadas, 1 board
+4. Proteger contra etiqueta válida em tenant errado.
+   - Se a etiqueta recebida existir em outro tenant, o log vai apontar isso claramente.
+   - Se necessário, vou bloquear o match por lead antigo quando ele conflitar com o owner da instância.
 
-Consequência no código:
-```
-const kanbanCols = syncTenant.kanban_columns; // = []
-const configuredLabelIds = [];               // vazio
-for (labelId of waLabels) {
-  if (!configuredLabelIds.includes(labelId)) continue; // ← TUDO ignorado
-}
-```
-→ Nenhum label do WhatsApp é reconhecido → funil nunca muda → log `[LabelSync] No changes`.
-
-A IA funciona porque ela usa `move-crm-lead` que escreve direto no `crm_leads` (não depende dessa config para classificar).
-
-## Correção
-
-Em `supabase/functions/whatsapp-webhook/index.ts`, no handler de `chats.update`:
-
-1. **Trocar a fonte da config de colunas:** ler de `crm_boards` (todos os boards do tenant), unir todas as `columns`, em vez de `tenants.kanban_columns`.
-2. **Manter fallback** para `tenants.kanban_columns` caso o tenant ainda use o modelo legado (alguns têm valor).
-3. **Capturar `board_id`** ao identificar o funil: ao classificar `labelId` como funnel, lembrar de qual board ele veio para que, ao **inserir** novo lead, `board_id` seja preenchido (hoje cai como `null` e leads ficam fora dos boards no painel cliente).
-4. **Mesmo ajuste no bloco de IA OFF / flags** (linhas ~802-870 e ~1145-1195) que também lê `kanban_columns` — fazer leitura unificada uma única vez no início do request, reutilizar.
-5. **Logs**: adicionar log explícito quando um `labelId` vem do WhatsApp mas não está em nenhuma coluna configurada, para facilitar diagnóstico futuro.
+5. Validar após ajuste.
+   - Conferir logs novos do `whatsapp-webhook`.
+   - Confirmar que uma etiqueta aplicada no WhatsApp para esse tenant vira `label_id` correto em `crm_leads` e passa a aparecer na coluna do painel.
 
 ## Detalhes técnicos
-
-Helper a ser adicionado no topo do handler:
-
-```ts
-async function loadTenantKanbanColumns(supabase, tenantId, legacyCols) {
-  const { data: boards } = await supabase
-    .from("crm_boards")
-    .select("id, columns")
-    .eq("tenant_id", tenantId);
-  const fromBoards = (boards ?? []).flatMap(b =>
-    (Array.isArray(b.columns) ? b.columns : []).map(c => ({ ...c, board_id: b.id }))
-  );
-  if (fromBoards.length) return fromBoards;
-  // fallback legacy
-  return (Array.isArray(legacyCols) ? legacyCols : []).map(c => ({ ...c, board_id: null }));
-}
+- Arquivo principal: `supabase/functions/whatsapp-webhook/index.ts`
+- Ponto crítico atual:
+```text
+Etiqueta recebida: 10
+Etiquetas do board do tenant testado: 24, 25, 26, 27
+Resultado: webhook ignora a etiqueta e o lead fica com __none__
 ```
+- A causa mais provável agora não é o painel, e sim:
+  - etiqueta errada aplicada no WhatsApp para esse tenant, e/ou
+  - tenant sendo resolvido de forma errada no webhook em cenários com telefone repetido entre tenants.
 
-E no insert de novo lead (linha ~1712):
-```ts
-const funnelCol = newFunnelLabel ? kanbanCols.find(c => String(c.label_id) === newFunnelLabel) : null;
-await supabase.from("crm_leads").insert({
-  ...,
-  board_id: funnelCol?.board_id ?? null,
-});
-```
-
-## Validação
-
-1. Aplicar uma etiqueta de funil direto no WhatsApp para um contato de teste no tenant **BAREBARIA DO REGIS**.
-2. Conferir nos logs do `whatsapp-webhook`:
-   - `[LabelSync] Parsed label IDs from WhatsApp: [...]` deve conter o ID.
-   - Linha nova de log `[LabelSync] configuredLabelIds: [...]` deve mostrar o ID configurado.
-   - Resultado deve ser `label_synced` com `funnelChanged: true`.
-3. Conferir no painel cliente → CRM → o lead aparece na coluna correta sem refresh manual (após poll/refetch).
-4. Aplicar uma etiqueta de **flag** (ex: IA OFF) e confirmar que entra em `flag_labels`, não em `label_id`.
-
-## Escopo fora desta correção
-
-- Não mexer na lógica de envio de mensagens nem na deduplicação da IA.
-- Não alterar `move-crm-lead` (sentido painel → WhatsApp já funciona).
-- Não migrar dados em `tenants.kanban_columns` (fica como fallback).
+## Resultado esperado
+Depois do ajuste, o webhook deve sempre resolver o tenant correto, comparar contra os boards corretos e mover o lead para a etapa certa quando a etiqueta do WhatsApp corresponder ao funil configurado.

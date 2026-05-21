@@ -1847,48 +1847,91 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Find tenant — PRIORITY: check which tenant has a crm_lead for this phone number
+      // Find tenant — PRIORITY: owner of the WhatsApp instance > board containing the label > existing lead
       const { data: allTenants } = await supabase
         .from("tenants")
         .select("id, name, whatsapp_number, kanban_columns, uazapi_url, uazapi_token")
         .eq("status", "active");
 
+      const waLabelIds = extractWhatsAppLabelIds({ chat, data: payload?.data, payload });
       let syncTenant: any = null;
+      let matchReason = "none";
 
-      // 1) Best match: find tenant that already has a CRM lead for this phone
-      const { data: existingLeadTenants } = await supabase
-        .from("crm_leads")
-        .select("tenant_id")
-        .eq("phone_number", chatPhone);
-      
-      if (existingLeadTenants?.length && allTenants) {
-        const leadTenantIds = new Set(existingLeadTenants.map((l: any) => l.tenant_id));
-        // Prefer tenant that has kanban configured
-        syncTenant = allTenants.find((t: any) => leadTenantIds.has(t.id) && Array.isArray(t.kanban_columns) && t.kanban_columns.length > 0);
-        if (!syncTenant) syncTenant = allTenants.find((t: any) => leadTenantIds.has(t.id));
-      }
-
-      // 2) Match by owner number
-      if (!syncTenant && ownerDigits && allTenants) {
+      // 1) PRIMARY: match by the WhatsApp instance owner number
+      if (ownerDigits && allTenants) {
         syncTenant = allTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
           return exactDigitsMatch(ownerDigits, t.whatsapp_number);
         });
+        if (syncTenant) matchReason = "owner_number";
+      }
+
+      // 2) FALLBACK: a tenant whose board contains one of the received label IDs
+      if (!syncTenant && waLabelIds.length && allTenants) {
+        const { data: boardsWithLabel } = await supabase
+          .from("crm_boards")
+          .select("tenant_id, columns")
+          .in("tenant_id", allTenants.map((t: any) => t.id));
+        const tenantWithLabel = (boardsWithLabel ?? []).find((b: any) => {
+          const cols = Array.isArray(b.columns) ? b.columns : [];
+          return cols.some((c: any) => waLabelIds.includes(String(c.label_id)));
+        });
+        if (tenantWithLabel) {
+          syncTenant = allTenants.find((t: any) => t.id === tenantWithLabel.tenant_id);
+          if (syncTenant) matchReason = "board_label_match";
+        }
+      }
+
+      // 3) LAST RESORT: tenant that already has a lead for this phone
+      if (!syncTenant) {
+        const { data: existingLeadTenants } = await supabase
+          .from("crm_leads")
+          .select("tenant_id")
+          .eq("phone_number", chatPhone);
+        if (existingLeadTenants?.length && allTenants) {
+          const leadTenantIds = new Set(existingLeadTenants.map((l: any) => l.tenant_id));
+          syncTenant = allTenants.find((t: any) => leadTenantIds.has(t.id));
+          if (syncTenant) matchReason = "existing_lead";
+        }
       }
 
       if (!syncTenant) {
+        console.log(`[LabelSync] No tenant matched. owner=${ownerDigits}, chatPhone=${chatPhone}, labels=${JSON.stringify(waLabelIds)}`);
         return new Response(JSON.stringify({ status: "no_tenant" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      
-      console.log(`[LabelSync] Tenant matched: ${syncTenant.name} (${syncTenant.id})`);
+
+      console.log(`[LabelSync] Tenant matched: ${syncTenant.name} (${syncTenant.id}) via ${matchReason}`);
+
+      // Diagnostic: list configured columns and detect cross-tenant label conflicts
+      const diagCols = await loadTenantKanbanColumns(supabase, syncTenant.id, syncTenant.kanban_columns);
+      console.log(`[LabelSync] Configured columns for ${syncTenant.name}: ${JSON.stringify(diagCols.map((c: any) => ({ id: String(c.label_id), name: c.name, type: c.type ?? "funnel", board_id: c.board_id })))}`);
+      const unknown = waLabelIds.filter((l) => !diagCols.some((c: any) => String(c.label_id) === l));
+      if (unknown.length) {
+        const { data: otherBoards } = await supabase
+          .from("crm_boards")
+          .select("tenant_id, name, columns, tenants:tenant_id(name)");
+        const conflicts: any[] = [];
+        for (const b of otherBoards ?? []) {
+          if ((b as any).tenant_id === syncTenant.id) continue;
+          const cols = Array.isArray((b as any).columns) ? (b as any).columns : [];
+          for (const c of cols) {
+            if (unknown.includes(String(c.label_id))) {
+              conflicts.push({ label_id: String(c.label_id), in_tenant: (b as any).tenants?.name ?? (b as any).tenant_id, board: (b as any).name, column: c.name });
+            }
+          }
+        }
+        if (conflicts.length) {
+          console.log(`[LabelSync] WARNING: labels ${JSON.stringify(unknown)} are NOT configured for ${syncTenant.name}, but exist in other tenants: ${JSON.stringify(conflicts)} — etiqueta aplicada no WhatsApp não pertence ao funil deste cliente`);
+        }
+      }
 
       const syncResult = await syncLeadLabelsFromWhatsApp({
         supabase,
         tenant: syncTenant,
         phoneNumber: chatPhone,
-        waLabelIds: extractWhatsAppLabelIds({ chat, data: payload?.data, payload }),
+        waLabelIds,
         logContext: "LabelSync",
         skipIfRecentlyUpdatedMs: 10_000,
         uazapiUrl: syncTenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
