@@ -4206,6 +4206,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     case "bemp":
       providerTools = buildBempTools(tenant);
       break;
+    case "zaylo":
+      providerTools = buildZayloTools(tenant);
+      break;
     case "none":
       providerTools = buildNoneTools(tenant);
       break;
