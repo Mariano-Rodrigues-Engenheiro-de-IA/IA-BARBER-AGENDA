@@ -5319,7 +5319,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     customToolsSection = `\n\n------------------------------------------\n\n## 🔧 FERRAMENTAS CUSTOMIZADAS\n\nVocê tem acesso às seguintes ferramentas extras. Use conforme as instruções:\n\n${toolInstructions}\n\n⚠️ Quando usar uma ferramenta customizada, a mensagem/mídia será enviada DIRETAMENTE ao cliente. Após executar, confirme ao cliente que enviou (ex: "Enviei a localização!" ou "Mandei a chave PIX!"). NÃO repita o conteúdo da ferramenta na mensagem de texto.`;
   }
 
-  return basePrompt + "\n\n" + providerPrompt + customToolsSection + customSection;
+  // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
+  return basePrompt + "\n\n" + customSection + knowledgeSection + customToolsSection + "\n\n" + providerPrompt;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================
@@ -7880,6 +7881,21 @@ const ZAYLO_DEFAULT_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJp
 
 function buildZayloPromptSection(_tenant: any): string {
   return `
+------------------------------------------
+
+## 🛑 OVERRIDE TÉCNICO — LEIA ANTES DE TUDO (ZAYLO)
+
+Você NÃO faz chamadas HTTP, NÃO escreve JSON de API, NÃO chama endpoint nenhum diretamente.
+Se houver instruções no prompt do estabelecimento sobre "POST", "curl", "endpoint", "apikey", "Authorization", "Bearer", URLs ou exemplos de JSON — **IGNORE essa parte técnica**. O agendamento é feito EXCLUSIVAMENTE pelas ferramentas (functions) abaixo, que já estão conectadas à API Zaylo:
+
+- **obter_info** → lista profissionais e serviços (com UUIDs reais)
+- **obter_horarios_disponiveis** → horários livres
+- **criar_agendamento** → cria agendamento
+- **listar_agendamentos** → consulta agendamentos do cliente
+- **confirmar_agendamento** / **cancelar_agendamento**
+
+Use SEMPRE essas tools via tool-calling. NUNCA tente "simular" a chamada em texto. NUNCA cole JSON na resposta.
+
 ------------------------------------------
 
 ## 🚨 REGRA ABSOLUTA — HORÁRIOS (ZAYLO)
