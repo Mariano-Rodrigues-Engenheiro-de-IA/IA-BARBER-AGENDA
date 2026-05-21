@@ -1731,12 +1731,14 @@ Deno.serve(async (req) => {
       if (existingLead) {
         await supabase.from("crm_leads").update(updateData).eq("id", existingLead.id);
       } else if (newFunnelLabel || newFlags.length > 0) {
+        const funnelCol = newFunnelLabel ? kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel) : null;
         await supabase.from("crm_leads").insert({
           tenant_id: syncTenant.id,
           phone_number: chatPhone,
           label_id: newFunnelLabel || "__none__",
-          label_name: newFunnelLabel ? (kanbanCols.find((c: any) => String(c.label_id) === newFunnelLabel)?.name || null) : null,
+          label_name: funnelCol?.name || null,
           flag_labels: newFlags,
+          board_id: funnelCol?.board_id ?? null,
         });
       }
 
