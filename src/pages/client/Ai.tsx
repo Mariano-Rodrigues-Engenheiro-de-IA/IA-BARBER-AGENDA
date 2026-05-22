@@ -110,10 +110,6 @@ export default function ClientAi() {
 
   const handleSavePrompt = async () => {
     if (!tenantId) return;
-    if (!changeSummary.trim()) {
-      toast.error("Descreva um resumo das alterações");
-      return;
-    }
     const prompt = form.agent_system_prompt ?? "";
     const nextVersion = (versions?.[0]?.version ?? 0) + 1;
 
