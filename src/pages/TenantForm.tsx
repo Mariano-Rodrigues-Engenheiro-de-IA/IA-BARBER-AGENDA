@@ -405,13 +405,56 @@ export default function TenantFormPage() {
     });
   };
 
+  const doSave = async (changeSummary?: string) => {
+    try {
+      const currentSettings = (existing as any)?.agent_settings ?? {};
+      const agentSettings = {
+        ...(typeof currentSettings === "object" ? currentSettings : {}),
+        custom_tools: customTools,
+        follow_ups: followUps,
+        response_delay: responseDelay,
+      };
+      delete (agentSettings as any).follow_up;
+
+      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
+
+      let savedId = id;
+      if (isEditing && id) {
+        await updateTenant.mutateAsync({ id, ...payload } as any);
+        toast.success("Empresa atualizada!");
+      } else {
+        const created: any = await createTenant.mutateAsync(payload as any);
+        savedId = created?.id ?? savedId;
+        toast.success("Empresa criada!");
+      }
+
+      // Register a new prompt version when prompt changed (mirrors client panel)
+      const promptChanged = (form.agent_system_prompt ?? "") !== (existing?.agent_system_prompt ?? "");
+      if (savedId && promptChanged && (form.agent_system_prompt ?? "").length > 0) {
+        const nextVersion = (versions?.[0]?.version ?? 0) + 1;
+        const { error: vErr } = await supabase.from("ai_prompt_versions").insert({
+          tenant_id: savedId,
+          version: nextVersion,
+          prompt: form.agent_system_prompt ?? "",
+          created_by: user?.id,
+          created_by_role: "admin",
+          change_summary: changeSummary?.trim() || null,
+        } as any);
+        if (vErr) toast.error("Empresa salva, mas não foi possível registrar a versão: " + vErr.message);
+      }
+
+      navigate("/tenants");
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao salvar empresa");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.slug.trim()) {
       toast.error("Nome e slug são obrigatórios");
       return;
     }
-    // Validate: no duplicate internal names in custom tools
     const enabledTools = customTools.filter((t) => t.enabled !== false);
     const nameCounts = new Map<string, string[]>();
     for (const t of enabledTools) {
@@ -429,30 +472,15 @@ export default function TenantFormPage() {
       toast.error(`Nomes internos de ferramentas duplicados — cada ferramenta precisa de um nome único. ${msg}`);
       return;
     }
-    try {
-      // Merge custom_tools into agent_settings
-      const currentSettings = (existing as any)?.agent_settings ?? {};
-      const agentSettings = {
-        ...(typeof currentSettings === "object" ? currentSettings : {}),
-        custom_tools: customTools,
-        follow_ups: followUps,
-        response_delay: responseDelay,
-      };
-      // Remove legacy follow_up key if present
-      delete (agentSettings as any).follow_up;
 
-      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
+    const promptChanged = isEditing && (form.agent_system_prompt ?? "") !== (existing?.agent_system_prompt ?? "");
+    if (promptChanged) {
+      setPromptSummary("");
+      setPromptSummaryOpen(true);
+      return;
+    }
+    await doSave();
 
-      if (isEditing && id) {
-        await updateTenant.mutateAsync({ id, ...payload } as any);
-        toast.success("Empresa atualizada!");
-      } else {
-        await createTenant.mutateAsync(payload as any);
-        toast.success("Empresa criada!");
-      }
-      navigate("/tenants");
-    } catch (error: any) {
-      toast.error(error.message || "Erro ao salvar empresa");
     }
   };
 
