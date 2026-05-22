@@ -105,7 +105,7 @@ export default function FollowUpsDashboard() {
 
     const totalLeads = journeys.size;
     let active = 0, completed = 0, replied = 0, converted = 0;
-    let messagesSent = 0;
+    let messagesSent = 0, convertedMessages = 0, unansweredMessages = 0;
     const byKeyword: Record<string, number> = {};
     const stepReached: Record<number, number> = {};
     const stepResponded: Record<number, number> = {};
@@ -115,7 +115,10 @@ export default function FollowUpsDashboard() {
       const maxStep = Math.max(...sorted.map((s) => s.step_order || 0));
       stepReached[maxStep] = (stepReached[maxStep] || 0) + 1;
 
-      messagesSent += sorted.filter((s) => s.sent_at).length;
+      const sentRows = sorted.filter((s) => s.sent_at);
+      messagesSent += sentRows.length;
+      convertedMessages += sentRows.filter((s) => s.status === "confirmed").length;
+      unansweredMessages += sentRows.filter((s) => s.status === "sent").length;
 
       const hasPending = sorted.some((s) => s.status === "pending");
       const hasReplied = sorted.some((s) => s.cancel_reason === "lead_replied");
@@ -135,7 +138,20 @@ export default function FollowUpsDashboard() {
       byKeyword[kw] = (byKeyword[kw] || 0) + 1;
     }
 
-    return { totalLeads, active, completed, replied, converted, messagesSent, byKeyword, stepReached, stepResponded, journeys };
+    return {
+      totalLeads,
+      active,
+      completed,
+      replied,
+      converted,
+      messagesSent,
+      convertedMessages,
+      unansweredMessages,
+      byKeyword,
+      stepReached,
+      stepResponded,
+      journeys,
+    };
   }, [seqRows]);
 
   const leadsTable = useMemo(() => {
@@ -221,8 +237,8 @@ export default function FollowUpsDashboard() {
             { label: "Mensagens enviadas", value: seqMetrics.messagesSent, icon: MessageCircle, color: "text-primary" },
             { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
             { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
-            { label: "Convertidos", value: seqMetrics.converted, icon: CheckCircle2, color: "text-accent" },
-            { label: "Sem resposta", value: seqMetrics.completed, icon: XCircle, color: "text-destructive" },
+            { label: "Convertidos", value: seqMetrics.convertedMessages, icon: CheckCircle2, color: "text-accent" },
+            { label: "Sem resposta", value: seqMetrics.unansweredMessages, icon: XCircle, color: "text-destructive" },
           ].map((s) => (
             <div key={s.label} className="glass-card p-5 space-y-3">
               <div className="flex items-center justify-between">
