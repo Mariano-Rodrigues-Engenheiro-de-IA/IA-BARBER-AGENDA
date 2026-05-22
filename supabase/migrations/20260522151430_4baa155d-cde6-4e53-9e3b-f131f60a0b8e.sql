@@ -1,0 +1,1 @@
+ALTER TABLE public.ai_prompt_versions ADD COLUMN IF NOT EXISTS change_summary text;

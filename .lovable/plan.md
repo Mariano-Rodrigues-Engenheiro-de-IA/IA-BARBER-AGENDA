@@ -1,49 +1,67 @@
-## Objetivo
-Fazer o lead cair no funil correto quando a etiqueta for adicionada direto no WhatsApp.
+# Melhorias no painel do cliente
 
-## O que os logs mostram
-- O webhook está ativo e recebendo a atualização de etiqueta.
-- No caso testado, o webhook recebeu a etiqueta `10` para o contato `556999234914`.
-- Para o tenant `BAREBARIA DO REGIS`, o CRM configurado no banco usa as etiquetas `24`, `25`, `26` e `27`.
-- O lead continua salvo com `label_id = "__none__"`, então o painel não tem como exibi-lo em nenhuma coluna.
-- A etiqueta `10` existe, mas está cadastrada em outro tenant (`BENDITA BARBER`), o que indica divergência entre a etiqueta aplicada no WhatsApp e a configuração do CRM desse cliente.
+## 1. Visão Geral — filtro de período funcional (7/14/30 dias)
 
-## Plano
-1. Corrigir a identificação do tenant no bloco de sync de etiquetas.
-   - Hoje ele prioriza tenant por lead existente e ainda usa um critério legado baseado em `tenants.kanban_columns`.
-   - Vou ajustar para priorizar o tenant pelo número dono da instância (`owner/whatsapp_number`) e validar boards reais em `crm_boards`, evitando associação errada quando o mesmo telefone aparece em mais de um tenant.
+**Arquivo:** `src/pages/client/Overview.tsx`
 
-2. Remover o critério legado incorreto do label sync.
-   - O código ainda tenta preferir tenants com `tenants.kanban_columns.length > 0`, mas esse projeto já usa `crm_boards`.
-   - Vou trocar essa preferência por verificação real de colunas em `crm_boards`.
+- Trocar `useState<"7d" | "30d">` por `"7d" | "14d" | "30d"` (default 30d).
+- Adicionar opção "Últimos 14 dias" no `<Select>`.
+- Calcular `days` com base nos 3 valores.
+- **Bug atual:** os 4 cards do topo já dependem de `aiStats` (que vem de `messages` + `agentLogs` filtrados por período) — então já mudam. **Exceto** o primeiro card "Follow-ups enviados (24h)" que está fixo em 24h. Ajustar esse card para usar o período selecionado também (label dinâmica `Follow-ups enviados (${days}d)`), consultando `follow_ups` filtrado por `sent_at >= since`. Remover query `topData` separada.
+- Garantir responsividade (grid já é `sm:grid-cols-2 lg:grid-cols-4`, manter).
 
-3. Tornar o diagnóstico explícito no webhook.
-   - Adicionar logs com:
-     - tenant escolhido,
-     - IDs de etiquetas configuradas no CRM escolhido,
-     - origem do match do tenant,
-     - motivo do ignore quando a etiqueta do WhatsApp não pertence ao funil configurado.
-   - Isso evita novo ciclo cego de tentativa e erro.
+## 2. Follow-ups — filtros e i18n
 
-4. Proteger contra etiqueta válida em tenant errado.
-   - Se a etiqueta recebida existir em outro tenant, o log vai apontar isso claramente.
-   - Se necessário, vou bloquear o match por lead antigo quando ele conflitar com o owner da instância.
+**Arquivo:** `src/pages/FollowUpsDashboard.tsx` (usado por `src/pages/client/FollowUps.tsx`)
 
-5. Validar após ajuste.
-   - Conferir logs novos do `whatsapp-webhook`.
-   - Confirmar que uma etiqueta aplicada no WhatsApp para esse tenant vira `label_id` correto em `crm_leads` e passa a aparecer na coluna do painel.
+- **Remover filtro "Projeto"** (`tenantFilter` + `<Select>` de tenants + query `tenants-list`). Como RLS já restringe ao tenant do cliente, esse filtro é desnecessário.
+- **Período:** trocar opções para `7d | 14d | 30d | all` (manter "Todos"). O filtro já funciona via `gte("created_at", since)` — apenas adicionar 14d.
+- **Traduzir termos em inglês:**
+  - "Timeline — {phone}" → "Linha do tempo — {phone}"
+  - Status badges no timeline (`sent/confirmed/pending/...`) já vêm em inglês — mapear para PT-BR: Enviado / Confirmado / Pendente / Cancelado / Expirado.
+  - `(catch-all)` → `(qualquer mensagem)`.
+  - Varrer o arquivo procurando outras strings em inglês visíveis.
+
+## 3. Logo do cliente no avatar do sidebar
+
+**Arquivo:** `src/components/ClientLayout.tsx`
+
+- O sidebar já tem `tenant.logo_url` no topo. Replicar no avatar inferior (próximo ao e-mail): trocar `<Avatar><AvatarFallback>{initials}</AvatarFallback></Avatar>` por `<Avatar><AvatarImage src={tenant?.logo_url} /><AvatarFallback>{initials}</AvatarFallback></Avatar>`. Manter fallback nas iniciais quando não houver logo.
+
+## 4. Versões de prompt — restore + resumo + espelhamento admin/cliente
+
+### 4a. Schema (migration)
+
+Adicionar coluna `change_summary text` em `ai_prompt_versions`.
+
+### 4b. Painel do cliente — `src/pages/client/Ai.tsx`
+
+- No diálogo "Salvar prompt", adicionar campo `<Textarea>` "Resumo das alterações" (obrigatório, ex: "Ajustei o tom da saudação"). Enviar `change_summary` no INSERT.
+- Na lista de versões, exibir o `change_summary` (em vez de `prompt.slice(...)` apenas) como descrição principal.
+- No diálogo "Visualizar versão" (`viewVersion`), substituir o botão atual "Carregar esta versão no editor" por **"Restaurar esta versão"**, que abre `<AlertDialog>` de confirmação com texto: "Tem certeza que deseja restaurar a versão vN? A IA passará a usar imediatamente as instruções desta versão (uma nova versão será criada como cópia da vN)." Ao confirmar: update em `tenants.agent_system_prompt` + insert em `ai_prompt_versions` (nova versão, `change_summary` = "Restaurado da versão vN").
+
+### 4c. Painel do ADM — `src/pages/TenantForm.tsx`
+
+Hoje o admin altera `agent_system_prompt` mas **não** cria versão. Para espelhar:
+
+- Detectar mudança em `agent_system_prompt` no submit; se mudou, abrir o mesmo AlertDialog com campo "Resumo das alterações" antes de salvar.
+- Após salvar tenant, inserir nova versão em `ai_prompt_versions` (com `created_by_role: "admin"`, `change_summary`).
+- Adicionar bloco "Versões" reutilizando o mesmo UI (lista + visualizar + restaurar) — extrair em componente `PromptVersionsDialog` compartilhado em `src/components/PromptVersionsDialog.tsx` para usar tanto em `client/Ai.tsx` quanto em `TenantForm.tsx`.
+- Como ambos painéis leem da mesma tabela `ai_prompt_versions` filtrada por `tenant_id`, o espelhamento é automático. O realtime já existe em `client/Ai.tsx` para `tenants`; adicionar também subscription em `ai_prompt_versions` para refletir novas versões instantaneamente. Adicionar realtime equivalente no admin.
+
+### 4d. Espelhamento geral admin↔cliente
+
+Verificar que todos os campos editáveis no `TenantForm` (admin) são os mesmos que o cliente edita em `client/Ai.tsx` (prompt, dados da empresa, integrações, ferramentas). Como ambos escrevem no mesmo registro `tenants`, já espelham. Garantir que o realtime no `client/Ai.tsx` cobre todas as abas (já cobre — usa UPDATE genérico na linha do tenant).
 
 ## Detalhes técnicos
-- Arquivo principal: `supabase/functions/whatsapp-webhook/index.ts`
-- Ponto crítico atual:
-```text
-Etiqueta recebida: 10
-Etiquetas do board do tenant testado: 24, 25, 26, 27
-Resultado: webhook ignora a etiqueta e o lead fica com __none__
-```
-- A causa mais provável agora não é o painel, e sim:
-  - etiqueta errada aplicada no WhatsApp para esse tenant, e/ou
-  - tenant sendo resolvido de forma errada no webhook em cenários com telefone repetido entre tenants.
 
-## Resultado esperado
-Depois do ajuste, o webhook deve sempre resolver o tenant correto, comparar contra os boards corretos e mover o lead para a etapa certa quando a etiqueta do WhatsApp corresponder ao funil configurado.
+- Migration SQL: `ALTER TABLE public.ai_prompt_versions ADD COLUMN change_summary text;`
+- Componente novo: `src/components/PromptVersionsDialog.tsx` — props: `{ tenantId, currentVersion, versions, canEdit, onRestored }`. Encapsula listagem, visualização e restore com confirmação.
+- Realtime em ambos painéis: subscription extra em `ai_prompt_versions` filtrada por `tenant_id`.
+- `i18n` é manual (sem lib) — strings hardcoded em PT-BR.
+- Sem novas dependências.
+
+## Fora do escopo
+
+- Não mexer no fluxo do agente WhatsApp.
+- Não criar tradução automática de UI inteira — só os termos visíveis ao cliente reportados.

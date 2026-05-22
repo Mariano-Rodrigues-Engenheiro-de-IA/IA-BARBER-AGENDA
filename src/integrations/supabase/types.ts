@@ -69,6 +69,7 @@ export type Database = {
       }
       ai_prompt_versions: {
         Row: {
+          change_summary: string | null
           created_at: string
           created_by: string | null
           created_by_role: string | null
@@ -78,6 +79,7 @@ export type Database = {
           version: number
         }
         Insert: {
+          change_summary?: string | null
           created_at?: string
           created_by?: string | null
           created_by_role?: string | null
@@ -87,6 +89,7 @@ export type Database = {
           version: number
         }
         Update: {
+          change_summary?: string | null
           created_at?: string
           created_by?: string | null
           created_by_role?: string | null

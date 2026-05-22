@@ -22,22 +22,12 @@ function StatCard({ icon: Icon, label, value, color = "text-primary" }: any) {
   );
 }
 
+type Period = "7d" | "14d" | "30d";
+
 export default function ClientOverview() {
   const { tenantId } = useAuth();
-  const [period, setPeriod] = useState<"7d" | "30d">("30d");
-  const days = period === "7d" ? 7 : 30;
-
-  const { data: topData } = useQuery({
-    queryKey: ["client-overview-top", tenantId],
-    enabled: !!tenantId,
-    refetchInterval: 30000,
-    queryFn: async () => {
-      const sinceDay = new Date(Date.now() - 86400000).toISOString();
-      const { count } = await supabase.from("follow_ups").select("id", { count: "exact", head: true })
-        .eq("tenant_id", tenantId!).eq("status", "sent").gte("sent_at", sinceDay);
-      return { sent: count ?? 0 };
-    },
-  });
+  const [period, setPeriod] = useState<Period>("30d");
+  const days = period === "7d" ? 7 : period === "14d" ? 14 : 30;
 
   // Period-based data for charts
   const { data: messages } = useQuery({
@@ -46,7 +36,6 @@ export default function ClientOverview() {
     refetchInterval: 30000,
     queryFn: async () => {
       const since = new Date(Date.now() - days * 86400000).toISOString();
-      // Paginate to bypass 1000-row default cap
       const all: any[] = [];
       let from = 0;
       const pageSize = 1000;
@@ -101,6 +90,21 @@ export default function ClientOverview() {
     },
   });
 
+  // Follow-ups sent within the selected period (uses sent_at)
+  const { data: followUpsSent } = useQuery({
+    queryKey: ["client-ov-fu-sent", tenantId, period],
+    enabled: !!tenantId,
+    refetchInterval: 30000,
+    queryFn: async () => {
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const { count } = await supabase.from("follow_ups")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId!)
+        .eq("status", "sent")
+        .gte("sent_at", since);
+      return count ?? 0;
+    },
+  });
 
   // Helper: is this tool_call a successful appointment creation?
   const isSuccessfulBooking = (tc: any): string | null => {
@@ -129,7 +133,6 @@ export default function ClientOverview() {
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
     return { bookings: bookingIds.size, aiMessages, uniqueClients };
   }, [agentLogs, messages]);
-
 
   // Activity chart
   const activityData = useMemo(() => {
@@ -168,8 +171,6 @@ export default function ClientOverview() {
     return Object.values(map).map(({ date, agendamentos }) => ({ date, agendamentos }));
   }, [agentLogs, days]);
 
-
-  // Top 5 clients (full phone number)
   const topClients = useMemo(() => {
     const counts: Record<string, number> = {};
     (messages ?? []).forEach((m: any) => { counts[m.phone_number] = (counts[m.phone_number] || 0) + 1; });
@@ -177,9 +178,6 @@ export default function ClientOverview() {
       .map(([phone, count]) => ({ phone, mensagens: count }));
   }, [messages]);
 
-  // (Funnel chart removed)
-
-  // Follow-up status pie
   const fuStatus = useMemo(() => {
     const counts: Record<string, number> = {};
     (followUps ?? []).forEach((f: any) => { counts[f.status] = (counts[f.status] || 0) + 1; });
@@ -210,20 +208,21 @@ export default function ClientOverview() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Visão Geral</h1>
-          <p className="text-muted-foreground">Resumo das últimas 24 horas + análises do período</p>
+          <p className="text-muted-foreground">Análises do período selecionado</p>
         </div>
-        <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
-          <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+        <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
+          <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="7d">Últimos 7 dias</SelectItem>
+            <SelectItem value="14d">Últimos 14 dias</SelectItem>
             <SelectItem value="30d">Últimos 30 dias</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {/* Top 4 cards (24h) */}
+      {/* Top 4 cards (período) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Send} label="Follow-ups enviados (24h)" value={topData?.sent ?? "—"} />
+        <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
         <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
         <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
@@ -257,8 +256,6 @@ export default function ClientOverview() {
             </BarChart>
           </ChartContainer>
         </div>
-
-        {/* Funil de conversão e Mensagens por hora removidos */}
 
         <div className="glass-card p-5 space-y-3">
           <h3 className="font-semibold text-foreground">Top 5 clientes mais ativos</h3>

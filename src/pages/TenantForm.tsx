@@ -9,12 +9,19 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from "@tanstack/react-query";
 import { SequencesEditor } from "@/components/SequencesEditor";
 import { KanbanBoardsManager } from "@/components/KanbanBoardsManager";
+import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
+import { useAuth } from "@/hooks/useAuth";
 
 
 function slugify(text: string) {
@@ -260,6 +267,7 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
+  const { user } = useAuth();
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
@@ -267,6 +275,35 @@ export default function TenantFormPage() {
   const [kanbanColumns, setKanbanColumns] = useState<{ label_id: string; name: string; color: string; order: number; type?: "funnel" | "flag" }[]>([]);
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [promptSummaryOpen, setPromptSummaryOpen] = useState(false);
+  const [promptSummary, setPromptSummary] = useState("");
+
+  const { data: versions, refetch: refetchVersions } = useQuery({
+    queryKey: ["admin-ai-prompt-versions", id],
+    enabled: !!id && id !== "new",
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("ai_prompt_versions")
+        .select("id,version,prompt,created_at,created_by_role,change_summary")
+        .eq("tenant_id", id!)
+        .order("version", { ascending: false });
+      return (data ?? []) as PromptVersion[];
+    },
+  });
+
+  useEffect(() => {
+    if (!id || id === "new") return;
+    const channel = supabase
+      .channel(`admin-tenant-${id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ai_prompt_versions", filter: `tenant_id=eq.${id}` },
+        () => { refetchVersions(); },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [id, refetchVersions]);
+
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
@@ -368,13 +405,56 @@ export default function TenantFormPage() {
     });
   };
 
+  const doSave = async (changeSummary?: string) => {
+    try {
+      const currentSettings = (existing as any)?.agent_settings ?? {};
+      const agentSettings = {
+        ...(typeof currentSettings === "object" ? currentSettings : {}),
+        custom_tools: customTools,
+        follow_ups: followUps,
+        response_delay: responseDelay,
+      };
+      delete (agentSettings as any).follow_up;
+
+      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
+
+      let savedId = id;
+      if (isEditing && id) {
+        await updateTenant.mutateAsync({ id, ...payload } as any);
+        toast.success("Empresa atualizada!");
+      } else {
+        const created: any = await createTenant.mutateAsync(payload as any);
+        savedId = created?.id ?? savedId;
+        toast.success("Empresa criada!");
+      }
+
+      // Register a new prompt version when prompt changed (mirrors client panel)
+      const promptChanged = (form.agent_system_prompt ?? "") !== (existing?.agent_system_prompt ?? "");
+      if (savedId && promptChanged && (form.agent_system_prompt ?? "").length > 0) {
+        const nextVersion = (versions?.[0]?.version ?? 0) + 1;
+        const { error: vErr } = await supabase.from("ai_prompt_versions").insert({
+          tenant_id: savedId,
+          version: nextVersion,
+          prompt: form.agent_system_prompt ?? "",
+          created_by: user?.id,
+          created_by_role: "admin",
+          change_summary: changeSummary?.trim() || null,
+        } as any);
+        if (vErr) toast.error("Empresa salva, mas não foi possível registrar a versão: " + vErr.message);
+      }
+
+      navigate("/tenants");
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao salvar empresa");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim() || !form.slug.trim()) {
       toast.error("Nome e slug são obrigatórios");
       return;
     }
-    // Validate: no duplicate internal names in custom tools
     const enabledTools = customTools.filter((t) => t.enabled !== false);
     const nameCounts = new Map<string, string[]>();
     for (const t of enabledTools) {
@@ -392,31 +472,14 @@ export default function TenantFormPage() {
       toast.error(`Nomes internos de ferramentas duplicados — cada ferramenta precisa de um nome único. ${msg}`);
       return;
     }
-    try {
-      // Merge custom_tools into agent_settings
-      const currentSettings = (existing as any)?.agent_settings ?? {};
-      const agentSettings = {
-        ...(typeof currentSettings === "object" ? currentSettings : {}),
-        custom_tools: customTools,
-        follow_ups: followUps,
-        response_delay: responseDelay,
-      };
-      // Remove legacy follow_up key if present
-      delete (agentSettings as any).follow_up;
 
-      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
-
-      if (isEditing && id) {
-        await updateTenant.mutateAsync({ id, ...payload } as any);
-        toast.success("Empresa atualizada!");
-      } else {
-        await createTenant.mutateAsync(payload as any);
-        toast.success("Empresa criada!");
-      }
-      navigate("/tenants");
-    } catch (error: any) {
-      toast.error(error.message || "Erro ao salvar empresa");
+    const promptChanged = isEditing && (form.agent_system_prompt ?? "") !== (existing?.agent_system_prompt ?? "");
+    if (promptChanged) {
+      setPromptSummary("");
+      setPromptSummaryOpen(true);
+      return;
     }
+    await doSave();
   };
 
   const isSaving = createTenant.isPending || updateTenant.isPending;
@@ -884,11 +947,29 @@ export default function TenantFormPage() {
                 Personalize o comportamento do agente de IA para este estabelecimento. O prompt abaixo é anexado às instruções base do agente.
               </p>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
                   <Label htmlFor="prompt">Prompt do Sistema</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {(form.agent_system_prompt as string)?.length || 0} caracteres
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isEditing && id && (versions?.[0]?.version ?? 0) > 0 && (
+                      <span className="text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
+                        Versão atual: v{versions?.[0]?.version}
+                      </span>
+                    )}
+                    {isEditing && id && (
+                      <PromptVersionsDialog
+                        tenantId={id}
+                        versions={versions ?? []}
+                        currentVersion={versions?.[0]?.version ?? 0}
+                        canRestore={true}
+                        actorRole="admin"
+                        userId={user?.id}
+                        onRestored={() => { refetchVersions(); }}
+                      />
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {(form.agent_system_prompt as string)?.length || 0} caracteres
+                    </span>
+                  </div>
                 </div>
                 <Textarea
                   id="prompt"
@@ -961,6 +1042,42 @@ export default function TenantFormPage() {
           </Button>
         </div>
       </form>
+
+      <AlertDialog open={promptSummaryOpen} onOpenChange={(o) => { setPromptSummaryOpen(o); if (!o) setPromptSummary(""); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você alterou o prompt do sistema. Uma nova versão (v{(versions?.[0]?.version ?? 0) + 1}) será
+              criada e o cliente verá a alteração imediatamente. Descreva o que mudou nesta versão.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="admin-change-summary">Resumo das alterações</Label>
+            <Textarea
+              id="admin-change-summary"
+              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              value={promptSummary}
+              onChange={(e) => setPromptSummary(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!promptSummary.trim()) { toast.error("Descreva um resumo das alterações"); return; }
+                const s = promptSummary.trim();
+                setPromptSummaryOpen(false);
+                setPromptSummary("");
+                await doSave(s);
+              }}
+            >
+              Confirmar e salvar v{(versions?.[0]?.version ?? 0) + 1}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
