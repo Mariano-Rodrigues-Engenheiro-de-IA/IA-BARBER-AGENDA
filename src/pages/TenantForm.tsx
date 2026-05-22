@@ -828,14 +828,14 @@ export default function TenantFormPage() {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="zaylo_publishable_key">Publishable Key (opcional)</Label>
+                    <Label htmlFor="zaylo_publishable_key">API Key <span className="text-destructive">*</span></Label>
                     <div className="relative">
                       <Input
                         id="zaylo_publishable_key"
                         type={showApiKey ? "text" : "password"}
                         value={(form as any).zaylo_publishable_key || ""}
                         onChange={(e) => handleChange("zaylo_publishable_key" as any, e.target.value)}
-                        placeholder="anon/publishable key do projeto Zaylo"
+                        placeholder="AGENDAMENTOS_API_KEY da clínica (ex: sk_live_...)"
                         className="pr-10"
                       />
                       <button
@@ -847,7 +847,7 @@ export default function TenantFormPage() {
                       </button>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Enviada como header <code>apikey</code> + <code>Authorization: Bearer</code>. Em branco usa a key padrão da documentação.
+                      Obrigatória. Enviada no header <code>x-api-key</code>. Solicite ao painel Zaylo da clínica.
                     </p>
                   </div>
                 </div>
