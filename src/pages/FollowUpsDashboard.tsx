@@ -56,7 +56,13 @@ export default function FollowUpsDashboard() {
       if (period !== "all") {
         const days = period === "7d" ? 7 : period === "14d" ? 14 : 30;
         const since = new Date(Date.now() - days * 86400000).toISOString();
-        query = query.gte("created_at", since);
+        query = query.or([
+          `created_at.gte.${since}`,
+          `follow_up_at.gte.${since}`,
+          `sent_at.gte.${since}`,
+          `confirmed_at.gte.${since}`,
+          `cancelled_at.gte.${since}`,
+        ].join(","));
       }
       const { data, error } = await query;
       if (error) throw error;
