@@ -125,7 +125,6 @@ export function PromptVersionsDialog({
               )}
               {versions.map((v) => {
                 const isCurrent = v.version === currentVersion;
-                const author = v.created_by_role === "admin" ? "ADM" : "Cliente";
                 return (
                   <button
                     key={v.id}
@@ -140,9 +139,6 @@ export function PromptVersionsDialog({
                             atual
                           </span>
                         )}
-                        <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          {author}
-                        </span>
                       </div>
                       <span className="text-xs text-muted-foreground shrink-0">
                         {new Date(v.created_at).toLocaleString("pt-BR")}
