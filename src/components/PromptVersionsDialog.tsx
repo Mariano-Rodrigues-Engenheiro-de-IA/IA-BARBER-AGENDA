@@ -41,6 +41,31 @@ export function PromptVersionsDialog({
   const [viewVersion, setViewVersion] = useState<PromptVersion | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<PromptVersion | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [editingSummaryId, setEditingSummaryId] = useState<string | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [savingSummary, setSavingSummary] = useState(false);
+
+  useEffect(() => {
+    if (viewVersion) setSummaryDraft(viewVersion.change_summary ?? "");
+  }, [viewVersion]);
+
+  const saveSummary = async (v: PromptVersion) => {
+    setSavingSummary(true);
+    try {
+      const { error } = await supabase
+        .from("ai_prompt_versions")
+        .update({ change_summary: summaryDraft.trim() || null } as any)
+        .eq("id", v.id);
+      if (error) throw error;
+      toast.success("Resumo atualizado");
+      setEditingSummaryId(null);
+      onRestored?.();
+    } catch (e: any) {
+      toast.error(e.message ?? "Falha ao salvar resumo");
+    } finally {
+      setSavingSummary(false);
+    }
+  };
 
   const handleRestore = async () => {
     if (!confirmRestore || !tenantId) return;
