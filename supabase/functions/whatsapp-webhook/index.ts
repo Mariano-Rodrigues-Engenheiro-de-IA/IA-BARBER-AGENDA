@@ -8063,9 +8063,9 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 
 ## 🔶 CONFIRMAÇÃO / CANCELAMENTO
 
-- **listar_agendamentos** com client_phone (+55…) → retorna a lista do cliente.
-- **confirmar_agendamento** com appointment_id (ou telefone+data+hora) quando cliente disser "sim".
-- **cancelar_agendamento** com appointment_id quando cliente pedir.
+- **listar_agendamentos** com client_phone (+55…) → retorna \`items[]\` com cada agendamento e seu \`id\`.
+- **confirmar_agendamento** com appointment_id quando cliente disser "sim".
+- **cancelar_agendamento** com appointment_id (e motivo opcional) quando cliente pedir.
 
 ------------------------------------------
 
