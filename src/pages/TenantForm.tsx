@@ -480,8 +480,6 @@ export default function TenantFormPage() {
       return;
     }
     await doSave();
-
-    }
   };
 
   const isSaving = createTenant.isPending || updateTenant.isPending;
