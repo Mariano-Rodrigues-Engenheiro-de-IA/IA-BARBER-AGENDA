@@ -947,11 +947,29 @@ export default function TenantFormPage() {
                 Personalize o comportamento do agente de IA para este estabelecimento. O prompt abaixo é anexado às instruções base do agente.
               </p>
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
                   <Label htmlFor="prompt">Prompt do Sistema</Label>
-                  <span className="text-xs text-muted-foreground">
-                    {(form.agent_system_prompt as string)?.length || 0} caracteres
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {isEditing && id && (versions?.[0]?.version ?? 0) > 0 && (
+                      <span className="text-xs px-2 py-1 rounded-md bg-muted text-muted-foreground">
+                        Versão atual: v{versions?.[0]?.version}
+                      </span>
+                    )}
+                    {isEditing && id && (
+                      <PromptVersionsDialog
+                        tenantId={id}
+                        versions={versions ?? []}
+                        currentVersion={versions?.[0]?.version ?? 0}
+                        canRestore={true}
+                        actorRole="admin"
+                        userId={user?.id}
+                        onRestored={() => { refetchVersions(); }}
+                      />
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {(form.agent_system_prompt as string)?.length || 0} caracteres
+                    </span>
+                  </div>
                 </div>
                 <Textarea
                   id="prompt"
