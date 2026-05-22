@@ -52,13 +52,19 @@ export function PromptVersionsDialog({
   const saveSummary = async (v: PromptVersion) => {
     setSavingSummary(true);
     try {
-      const { error } = await supabase
+      const newSummary = summaryDraft.trim() || null;
+      const { data, error } = await supabase
         .from("ai_prompt_versions")
-        .update({ change_summary: summaryDraft.trim() || null } as any)
-        .eq("id", v.id);
+        .update({ change_summary: newSummary } as any)
+        .eq("id", v.id)
+        .select("id, change_summary");
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error("Sem permissão para editar o resumo desta versão.");
+      }
       toast.success("Resumo atualizado");
       setEditingSummaryId(null);
+      setViewVersion({ ...v, change_summary: newSummary });
       onRestored?.();
     } catch (e: any) {
       toast.error(e.message ?? "Falha ao salvar resumo");
