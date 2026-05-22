@@ -215,9 +215,10 @@ export default function FollowUpsDashboard() {
       </div>
 
       <div className="space-y-6">
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           {[
             { label: "Leads captados", value: seqMetrics.totalLeads, icon: Users, color: "text-primary" },
+            { label: "Mensagens enviadas", value: seqMetrics.messagesSent, icon: MessageCircle, color: "text-primary" },
             { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
             { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
             { label: "Convertidos", value: seqMetrics.converted, icon: CheckCircle2, color: "text-accent" },
