@@ -267,6 +267,7 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
+  const { user } = useAuth();
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
@@ -274,6 +275,35 @@ export default function TenantFormPage() {
   const [kanbanColumns, setKanbanColumns] = useState<{ label_id: string; name: string; color: string; order: number; type?: "funnel" | "flag" }[]>([]);
   const [logoUrl, setLogoUrl] = useState<string>("");
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [promptSummaryOpen, setPromptSummaryOpen] = useState(false);
+  const [promptSummary, setPromptSummary] = useState("");
+
+  const { data: versions, refetch: refetchVersions } = useQuery({
+    queryKey: ["admin-ai-prompt-versions", id],
+    enabled: !!id && id !== "new",
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("ai_prompt_versions")
+        .select("id,version,prompt,created_at,created_by_role,change_summary")
+        .eq("tenant_id", id!)
+        .order("version", { ascending: false });
+      return (data ?? []) as PromptVersion[];
+    },
+  });
+
+  useEffect(() => {
+    if (!id || id === "new") return;
+    const channel = supabase
+      .channel(`admin-tenant-${id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ai_prompt_versions", filter: `tenant_id=eq.${id}` },
+        () => { refetchVersions(); },
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [id, refetchVersions]);
+
   const [form, setForm] = useState<TenantInsert>({
     name: "",
     slug: "",
