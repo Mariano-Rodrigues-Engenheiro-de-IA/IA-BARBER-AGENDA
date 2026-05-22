@@ -8050,22 +8050,22 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 
 ## 🔷 FLUXO DE AGENDAMENTO (ZAYLO — sequencial)
 
-1. **obter_info** no início — pega lista de profissionais (barbers) e serviços (services) com UUIDs reais.
+1. **obter_info** no início — pega lista de profissionais (barbers) e serviços (services) com UUIDs reais e duration_minutes.
 2. Cliente escolhe serviço e profissional → memorize os UUIDs vindos do passo 1.
-3. **obter_horarios_disponiveis** com barber_id + service_id + date (yyyy-MM-dd).
-   - Resposta: \`{ available_times: ["09:00", "09:30", ...] }\`.
+3. **obter_horarios_disponiveis** com barber_id + service_id + date (yyyy-MM-dd) + service_duration_minutes (vindo de services[].duration_minutes do passo 1).
+   - Resposta: \`{ available_times: ["09:00", "09:15", ...] }\`.
    - Se vier \`blocked: true\` ou lista vazia, ofereça outra data.
 4. Ofereça APENAS valores que estão dentro de available_times. NUNCA arredonde nem invente.
-5. **criar_agendamento** com barber_id + service_id + date + time + client_name + client_phone (formato +55DDDNUMERO).
-6. Sucesso retorna \`appointment.id\` e \`appointment_date\` → confirme com o cliente.
+5. **criar_agendamento** com barber_id + service_id + date + time + client_name + client_phone (formato +55DDDNUMERO). O cadastro do cliente é feito automaticamente.
+6. Sucesso retorna \`appointment_id\` → confirme com o cliente.
 
 ------------------------------------------
 
 ## 🔶 CONFIRMAÇÃO / CANCELAMENTO
 
-- **listar_agendamentos** com client_phone (+55…) → retorna a lista do cliente.
-- **confirmar_agendamento** com appointment_id (ou telefone+data+hora) quando cliente disser "sim".
-- **cancelar_agendamento** com appointment_id quando cliente pedir.
+- **listar_agendamentos** com client_phone (+55…) → retorna \`items[]\` com cada agendamento e seu \`id\`.
+- **confirmar_agendamento** com appointment_id quando cliente disser "sim".
+- **cancelar_agendamento** com appointment_id (e motivo opcional) quando cliente pedir.
 
 ------------------------------------------
 
@@ -8108,15 +8108,16 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_horarios_disponiveis",
-        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id real de obter_info. Use APENAS o campo available_times da resposta.",
+        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id e service_id reais vindos de obter_info. Use APENAS os valores do campo available_times da resposta.",
         parameters: {
           type: "object",
           properties: {
-            barber_id: { type: "string", description: "UUID do profissional (de obter_info)" },
-            service_id: { type: "string", description: "UUID do serviço (de obter_info)" },
-            date: { type: "string", description: "Data YYYY-MM-DD" },
+            barber_id: { type: "string", description: "UUID do profissional (de obter_info → barbers[].id)" },
+            service_id: { type: "string", description: "UUID do serviço (de obter_info → services[].id)" },
+            date: { type: "string", description: "Data YYYY-MM-DD (fuso de Brasília)" },
+            service_duration_minutes: { type: "number", description: "Duração do serviço em minutos (de obter_info → services[].duration_minutes). Passe sempre que souber." },
           },
-          required: ["barber_id", "date"],
+          required: ["barber_id", "service_id", "date"],
         },
       },
     },
@@ -8124,7 +8125,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário exato retornado por obter_horarios_disponiveis.",
+        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário EXATO retornado por obter_horarios_disponiveis. O sistema cria/identifica o cliente automaticamente pelo client_phone+client_name.",
         parameters: {
           type: "object",
           properties: {
@@ -8134,6 +8135,7 @@ function buildZayloTools(tenant: any) {
             time: { type: "string", description: "HH:MM (exato de available_times)" },
             client_name: { type: "string" },
             client_phone: { type: "string", description: "Telefone com DDI (ex: +5511999998888)" },
+            observacoes: { type: "string", description: "Observações opcionais para a clínica" },
           },
           required: ["barber_id", "service_id", "date", "time", "client_name", "client_phone"],
         },
@@ -8157,15 +8159,13 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "confirmar_agendamento",
-        description: "Confirma um agendamento real na Zaylo. Prefira usar appointment_id vindo de listar_agendamentos. Alternativamente aceite client_phone+date+time.",
+        description: "Confirma um agendamento real na Zaylo. Use o appointment_id retornado por listar_agendamentos ou por criar_agendamento.",
         parameters: {
           type: "object",
           properties: {
             appointment_id: { type: "string" },
-            client_phone: { type: "string" },
-            date: { type: "string", description: "YYYY-MM-DD" },
-            time: { type: "string", description: "HH:MM" },
           },
+          required: ["appointment_id"],
         },
       },
     },
@@ -8178,6 +8178,7 @@ function buildZayloTools(tenant: any) {
           type: "object",
           properties: {
             appointment_id: { type: "string" },
+            motivo: { type: "string", description: "Motivo do cancelamento (opcional)" },
           },
           required: ["appointment_id"],
         },
@@ -8195,13 +8196,15 @@ async function executeZayloTool(tenant: any, toolCall: any, phoneNumber?: string
   if (!barbershopId) return { error: "Zaylo barbershop_id não configurado para este estabelecimento." };
 
   const baseUrl = ((tenant.zaylo_base_url || "").trim().replace(/\/+$/, "")) || ZAYLO_DEFAULT_BASE_URL;
-  const publishableKey = (tenant.zaylo_publishable_key || "").trim() || ZAYLO_DEFAULT_PUBLISHABLE_KEY;
+  const apiKey = (tenant.zaylo_publishable_key || "").trim() || ZAYLO_DEFAULT_PUBLISHABLE_KEY;
 
+  // v2: header é x-api-key (mantém apikey/Authorization para retrocompat com servidores antigos)
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "apikey": publishableKey,
-    "Authorization": `Bearer ${publishableKey}`,
+    "x-api-key": apiKey,
+    "apikey": apiKey,
+    "Authorization": `Bearer ${apiKey}`,
   };
 
   const normalizePhone = (raw: string): string => {
@@ -8212,61 +8215,178 @@ async function executeZayloTool(tenant: any, toolCall: any, phoneNumber?: string
     return tel;
   };
 
-  const actionMap: Record<string, string> = {
-    obter_info: "getInfo",
-    obter_horarios_disponiveis: "getAvailableTimes",
-    criar_agendamento: "createAppointment",
-    listar_agendamentos: "listAppointments",
-    confirmar_agendamento: "confirmAppointment",
-    cancelar_agendamento: "cancelAppointment",
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const toIsoBrasilia = (date: string, time: string): string => {
+    // date: YYYY-MM-DD, time: HH:MM → "YYYY-MM-DDTHH:MM:00-03:00"
+    const d = (date || "").trim();
+    const t = (time || "").trim();
+    if (!d || !t) return "";
+    const [h, m] = t.split(":");
+    return `${d}T${pad2(Number(h))}:${pad2(Number(m))}:00-03:00`;
   };
 
-  const action = actionMap[funcName];
-  if (!action) return { error: `Ferramenta Zaylo desconhecida: ${funcName}` };
-
-  const body: Record<string, any> = { action, barbershop_id: barbershopId };
-
-  switch (funcName) {
-    case "obter_horarios_disponiveis":
-      body.barber_id = args.barber_id;
-      if (args.service_id) body.service_id = args.service_id;
-      body.date = args.date;
-      break;
-    case "criar_agendamento":
-      body.barber_id = args.barber_id;
-      body.service_id = args.service_id;
-      body.date = args.date;
-      body.time = args.time;
-      body.client_name = args.client_name;
-      body.client_phone = normalizePhone(args.client_phone || phoneNumber || "");
-      break;
-    case "listar_agendamentos":
-      body.client_phone = normalizePhone(args.client_phone || phoneNumber || "");
-      break;
-    case "confirmar_agendamento":
-      if (args.appointment_id) body.appointment_id = args.appointment_id;
-      if (args.client_phone) body.client_phone = normalizePhone(args.client_phone);
-      if (args.date) body.date = args.date;
-      if (args.time) body.time = args.time;
-      break;
-    case "cancelar_agendamento":
-      body.appointment_id = args.appointment_id;
-      break;
-  }
-
-  try {
-    console.log(`[Zaylo] -> POST ${baseUrl} action=${action}`);
+  const callZaylo = async (payload: Record<string, any>): Promise<any> => {
+    console.log(`[Zaylo v2] -> POST ${baseUrl} action=${payload.action}`);
     const res = await fetch(baseUrl, {
       method: "POST",
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     const text = await res.text();
-    console.log(`[Zaylo] ${action} response (${res.status}):`, text.slice(0, 600));
-    try {
-      return JSON.parse(text);
-    } catch {
-      return { error: `Status ${res.status}`, raw: text.slice(0, 300) };
+    console.log(`[Zaylo v2] ${payload.action} (${res.status}):`, text.slice(0, 600));
+    let parsed: any = null;
+    try { parsed = JSON.parse(text); } catch { /* keep null */ }
+    if (!res.ok) {
+      return { error: parsed?.title || `Status ${res.status}`, status: res.status, detail: parsed?.detail || text.slice(0, 300) };
+    }
+    return parsed ?? { raw: text.slice(0, 300) };
+  };
+
+  // Helper: resolve clienteId via upsertClientByPhone (cria se necessário)
+  const resolveClienteId = async (phone: string, name?: string): Promise<{ clienteId: string | null; error?: any }> => {
+    const tel = normalizePhone(phone);
+    if (!tel) return { clienteId: null, error: { error: "Telefone do cliente ausente." } };
+    // Se temos nome, upsert direto
+    if (name && name.trim()) {
+      const r = await callZaylo({
+        action: "upsertClientByPhone",
+        barbershop_id: barbershopId,
+        telefone: tel.replace(/^\+/, ""),
+        nome: name.trim(),
+      });
+      if (r?.error) return { clienteId: null, error: r };
+      return { clienteId: r?.id || null };
+    }
+    // Sem nome: tenta achar via listClients
+    const r = await callZaylo({
+      action: "listClients",
+      barbershop_id: barbershopId,
+      search: tel.replace(/^\+/, ""),
+      page: 1,
+      pageSize: 1,
+    });
+    if (r?.error) return { clienteId: null, error: r };
+    const id = r?.items?.[0]?.id || null;
+    return { clienteId: id };
+  };
+
+  try {
+    switch (funcName) {
+      case "obter_info": {
+        // v2: getInfo só retorna dados da empresa. Buscamos em paralelo profissionais e serviços
+        // e montamos o shape esperado { establishment, barbers, services }.
+        const [est, profs, servs] = await Promise.all([
+          callZaylo({ action: "getInfo", barbershop_id: barbershopId }),
+          callZaylo({ action: "listProfessionals", barbershop_id: barbershopId }),
+          callZaylo({ action: "listServices", barbershop_id: barbershopId }),
+        ]);
+        const firstErr = [est, profs, servs].find((r) => r?.error);
+        if (firstErr) return firstErr;
+        return {
+          establishment: est,
+          barbers: Array.isArray(profs?.items)
+            ? profs.items.map((p: any) => ({ id: p.id, name: p.name, specialty: p.specialty }))
+            : [],
+          services: Array.isArray(servs?.items)
+            ? servs.items.map((s: any) => ({
+                id: s.id,
+                name: s.name,
+                description: s.description,
+                price: s.price,
+                duration_minutes: s.duration_minutes,
+              }))
+            : [],
+        };
+      }
+
+      case "obter_horarios_disponiveis": {
+        // v2: listProfessionalsWithAgenda (alias getAvailableTimes)
+        const duration = Number(args.service_duration_minutes) > 0 ? Number(args.service_duration_minutes) : 30;
+        const payload: Record<string, any> = {
+          action: "listProfessionalsWithAgenda",
+          barbershop_id: barbershopId,
+          data: args.date,
+          servicoDuracao: duration,
+          professionalId: args.barber_id,
+        };
+        if (args.service_id) payload.servicoId = args.service_id;
+        const r = await callZaylo(payload);
+        if (r?.error) return r;
+        // Achata: pega slots do profissional solicitado (ou o primeiro)
+        const profs = Array.isArray(r?.profissionais) ? r.profissionais : [];
+        const target = profs.find((p: any) => p?.id === args.barber_id) || profs[0];
+        const slots = Array.isArray(target?.slots) ? target.slots : [];
+        return {
+          date: r?.data || args.date,
+          barber_id: target?.id || args.barber_id,
+          blocked: !!target?.blocked,
+          available_times: slots.map((s: any) => s?.time).filter(Boolean),
+        };
+      }
+
+      case "criar_agendamento": {
+        const phone = normalizePhone(args.client_phone || phoneNumber || "");
+        const { clienteId, error: cliErr } = await resolveClienteId(phone, args.client_name);
+        if (cliErr) return cliErr;
+        if (!clienteId) return { error: "Não foi possível identificar/criar o cliente." };
+        const iso = toIsoBrasilia(args.date, args.time);
+        if (!iso) return { error: "Data/hora inválidas para criar agendamento." };
+        const r = await callZaylo({
+          action: "createAppointment",
+          barbershop_id: barbershopId,
+          clienteId,
+          dataHoraInicio: iso,
+          profissionalId: args.barber_id,
+          observacoes: args.observacoes,
+          confirmado: true,
+          source: "whatsapp",
+          servicos: [{ servicoId: args.service_id, profissionalId: args.barber_id }],
+        });
+        if (r?.error) return r;
+        return {
+          ok: true,
+          appointment_id: r?.id,
+          appointment_date: iso,
+          barber_id: args.barber_id,
+          service_id: args.service_id,
+        };
+      }
+
+      case "listar_agendamentos": {
+        const phone = normalizePhone(args.client_phone || phoneNumber || "");
+        const { clienteId, error: cliErr } = await resolveClienteId(phone);
+        if (cliErr) return cliErr;
+        if (!clienteId) return { items: [], total: 0, note: "Cliente ainda não cadastrado." };
+        const r = await callZaylo({
+          action: "listAppointments",
+          barbershop_id: barbershopId,
+          clienteId,
+          page: 1,
+          pageSize: 20,
+        });
+        if (r?.error) return r;
+        return r;
+      }
+
+      case "confirmar_agendamento": {
+        if (!args.appointment_id) return { error: "appointment_id é obrigatório." };
+        return await callZaylo({
+          action: "confirmAppointment",
+          appointment_id: args.appointment_id,
+        });
+      }
+
+      case "cancelar_agendamento": {
+        if (!args.appointment_id) return { error: "appointment_id é obrigatório." };
+        return await callZaylo({
+          action: "cancelAppointment",
+          appointment_id: args.appointment_id,
+          motivo: args.motivo || "Cancelado via WhatsApp",
+        });
+      }
+
+      default:
+        return { error: `Ferramenta Zaylo desconhecida: ${funcName}` };
     }
   } catch (error) {
     console.error(`[Zaylo] tool error (${funcName}):`, error);
