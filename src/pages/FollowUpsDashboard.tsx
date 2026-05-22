@@ -105,6 +105,7 @@ export default function FollowUpsDashboard() {
 
     const totalLeads = journeys.size;
     let active = 0, completed = 0, replied = 0, converted = 0;
+    let messagesSent = 0;
     const byKeyword: Record<string, number> = {};
     const stepReached: Record<number, number> = {};
     const stepResponded: Record<number, number> = {};
@@ -113,6 +114,8 @@ export default function FollowUpsDashboard() {
       const sorted = items.sort((a, b) => (a.step_order || 0) - (b.step_order || 0));
       const maxStep = Math.max(...sorted.map((s) => s.step_order || 0));
       stepReached[maxStep] = (stepReached[maxStep] || 0) + 1;
+
+      messagesSent += sorted.filter((s) => s.sent_at).length;
 
       const hasPending = sorted.some((s) => s.status === "pending");
       const hasReplied = sorted.some((s) => s.cancel_reason === "lead_replied");
@@ -132,7 +135,7 @@ export default function FollowUpsDashboard() {
       byKeyword[kw] = (byKeyword[kw] || 0) + 1;
     }
 
-    return { totalLeads, active, completed, replied, converted, byKeyword, stepReached, stepResponded, journeys };
+    return { totalLeads, active, completed, replied, converted, messagesSent, byKeyword, stepReached, stepResponded, journeys };
   }, [seqRows]);
 
   const leadsTable = useMemo(() => {
@@ -212,9 +215,10 @@ export default function FollowUpsDashboard() {
       </div>
 
       <div className="space-y-6">
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           {[
             { label: "Leads captados", value: seqMetrics.totalLeads, icon: Users, color: "text-primary" },
+            { label: "Mensagens enviadas", value: seqMetrics.messagesSent, icon: MessageCircle, color: "text-primary" },
             { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
             { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
             { label: "Convertidos", value: seqMetrics.converted, icon: CheckCircle2, color: "text-accent" },

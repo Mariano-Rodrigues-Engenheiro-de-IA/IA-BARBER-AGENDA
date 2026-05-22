@@ -110,10 +110,6 @@ export default function ClientAi() {
 
   const handleSavePrompt = async () => {
     if (!tenantId) return;
-    if (!changeSummary.trim()) {
-      toast.error("Descreva um resumo das alterações");
-      return;
-    }
     const prompt = form.agent_system_prompt ?? "";
     const nextVersion = (versions?.[0]?.version ?? 0) + 1;
 
@@ -129,7 +125,7 @@ export default function ClientAi() {
       prompt,
       created_by: user?.id,
       created_by_role: "client",
-      change_summary: changeSummary.trim(),
+      change_summary: changeSummary.trim() || null,
     } as any);
     if (vErr) toast.error("Salvo, mas não foi possível registrar a versão: " + vErr.message);
 
@@ -281,12 +277,12 @@ export default function ClientAi() {
             <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
               Uma nova versão (v{currentVersion + 1}) será criada e a IA passará a responder
-              com essas instruções imediatamente. Descreva o que mudou nesta versão para
-              consultar depois no histórico.
+              com essas instruções imediatamente. Descreva (opcional) o que mudou nesta versão
+              para consultar depois no histórico.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="change-summary">Resumo das alterações</Label>
+            <Label htmlFor="change-summary">Resumo das alterações (opcional)</Label>
             <Textarea
               id="change-summary"
               placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
@@ -297,7 +293,7 @@ export default function ClientAi() {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</AlertDialogAction>
+            <Button onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
