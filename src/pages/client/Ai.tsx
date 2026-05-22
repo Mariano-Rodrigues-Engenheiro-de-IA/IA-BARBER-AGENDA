@@ -125,7 +125,7 @@ export default function ClientAi() {
       prompt,
       created_by: user?.id,
       created_by_role: "client",
-      change_summary: changeSummary.trim(),
+      change_summary: changeSummary.trim() || null,
     } as any);
     if (vErr) toast.error("Salvo, mas não foi possível registrar a versão: " + vErr.message);
 
