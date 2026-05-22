@@ -33,6 +33,41 @@ Deno.serve(async (req) => {
   );
 
   try {
+    // ===== PASS 1: detect post-send conversions =====
+    // Para cada follow-up "sent" recente, se o cliente respondeu DEPOIS do envio,
+    // marca como "confirmed" (= Convertido / Resgatado).
+    let postSendConversions = 0;
+    try {
+      const sinceSent = new Date(Date.now() - 30 * 86400000).toISOString();
+      const { data: sentFollowUps } = await supabase
+        .from("follow_ups")
+        .select("id, tenant_id, phone_number, sent_at")
+        .eq("status", "sent")
+        .gte("sent_at", sinceSent)
+        .limit(500);
+
+      for (const f of sentFollowUps ?? []) {
+        if (!f.sent_at) continue;
+        const { data: replies } = await supabase
+          .from("chat_messages")
+          .select("id")
+          .eq("tenant_id", f.tenant_id)
+          .eq("phone_number", f.phone_number)
+          .eq("role", "user")
+          .gt("created_at", f.sent_at)
+          .limit(1);
+        if (replies && replies.length > 0) {
+          await supabase.from("follow_ups").update({
+            status: "confirmed",
+            confirmed_at: new Date().toISOString(),
+          }).eq("id", f.id);
+          postSendConversions++;
+        }
+      }
+    } catch (e) {
+      console.error("post-send conversion scan failed:", e);
+    }
+
     const { data: pendingFollowUps, error: fetchError } = await supabase
       .from("follow_ups")
       .select("*, tenants(*)")
@@ -49,12 +84,12 @@ Deno.serve(async (req) => {
     }
 
     if (!pendingFollowUps?.length) {
-      return new Response(JSON.stringify({ status: "no_pending", count: 0 }), {
+      return new Response(JSON.stringify({ status: "no_pending", count: 0, postSendConversions }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    console.log(`Processing ${pendingFollowUps.length} pending follow-ups`);
+    console.log(`Processing ${pendingFollowUps.length} pending follow-ups (post-send conversions: ${postSendConversions})`);
 
     let sent = 0, errors = 0, skipped = 0, chained = 0;
 

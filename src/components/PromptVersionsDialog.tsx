@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
@@ -6,7 +6,8 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { History, RotateCcw } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { History, RotateCcw, Pencil, Save, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -40,6 +41,31 @@ export function PromptVersionsDialog({
   const [viewVersion, setViewVersion] = useState<PromptVersion | null>(null);
   const [confirmRestore, setConfirmRestore] = useState<PromptVersion | null>(null);
   const [restoring, setRestoring] = useState(false);
+  const [editingSummaryId, setEditingSummaryId] = useState<string | null>(null);
+  const [summaryDraft, setSummaryDraft] = useState("");
+  const [savingSummary, setSavingSummary] = useState(false);
+
+  useEffect(() => {
+    if (viewVersion) setSummaryDraft(viewVersion.change_summary ?? "");
+  }, [viewVersion]);
+
+  const saveSummary = async (v: PromptVersion) => {
+    setSavingSummary(true);
+    try {
+      const { error } = await supabase
+        .from("ai_prompt_versions")
+        .update({ change_summary: summaryDraft.trim() || null } as any)
+        .eq("id", v.id);
+      if (error) throw error;
+      toast.success("Resumo atualizado");
+      setEditingSummaryId(null);
+      onRestored?.();
+    } catch (e: any) {
+      toast.error(e.message ?? "Falha ao salvar resumo");
+    } finally {
+      setSavingSummary(false);
+    }
+  };
 
   const handleRestore = async () => {
     if (!confirmRestore || !tenantId) return;
@@ -99,7 +125,6 @@ export function PromptVersionsDialog({
               )}
               {versions.map((v) => {
                 const isCurrent = v.version === currentVersion;
-                const author = v.created_by_role === "admin" ? "ADM" : "Cliente";
                 return (
                   <button
                     key={v.id}
@@ -114,9 +139,6 @@ export function PromptVersionsDialog({
                             atual
                           </span>
                         )}
-                        <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          {author}
-                        </span>
                       </div>
                       <span className="text-xs text-muted-foreground shrink-0">
                         {new Date(v.created_at).toLocaleString("pt-BR")}
@@ -145,10 +167,38 @@ export function PromptVersionsDialog({
               {viewVersion && new Date(viewVersion.created_at).toLocaleString("pt-BR")}
             </DialogTitle>
           </DialogHeader>
-          {viewVersion?.change_summary && (
-            <div className="text-sm rounded-md border border-border bg-muted/40 p-3">
-              <span className="text-muted-foreground text-xs uppercase font-medium">Resumo</span>
-              <p className="mt-1">{viewVersion.change_summary}</p>
+          {viewVersion && (
+            <div className="text-sm rounded-md border border-border bg-muted/40 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs uppercase font-medium">Resumo</span>
+                {canRestore && editingSummaryId !== viewVersion.id && (
+                  <Button size="sm" variant="ghost" onClick={() => { setEditingSummaryId(viewVersion.id); setSummaryDraft(viewVersion.change_summary ?? ""); }}>
+                    <Pencil className="w-3.5 h-3.5 mr-1" />{viewVersion.change_summary ? "Editar" : "Adicionar"}
+                  </Button>
+                )}
+              </div>
+              {editingSummaryId === viewVersion.id ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={summaryDraft}
+                    onChange={(e) => setSummaryDraft(e.target.value)}
+                    rows={3}
+                    placeholder="Descreva o que mudou nesta versão"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button size="sm" variant="ghost" disabled={savingSummary} onClick={() => setEditingSummaryId(null)}>
+                      <X className="w-3.5 h-3.5 mr-1" />Cancelar
+                    </Button>
+                    <Button size="sm" disabled={savingSummary} onClick={() => saveSummary(viewVersion)}>
+                      <Save className="w-3.5 h-3.5 mr-1" />{savingSummary ? "Salvando..." : "Salvar resumo"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm">
+                  {viewVersion.change_summary || <span className="italic text-muted-foreground">(sem resumo)</span>}
+                </p>
+              )}
             </div>
           )}
           <ScrollArea className="h-[55vh]">

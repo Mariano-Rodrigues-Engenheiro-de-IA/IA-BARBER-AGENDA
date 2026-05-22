@@ -146,8 +146,8 @@ export default function FollowUpsDashboard() {
       const hasPending = sorted.some((s) => s.status === "pending");
       let status = "Em andamento";
       if (hasConfirmed) status = "Convertido";
-      else if (hasReplied) status = "Respondeu";
-      else if (!hasPending) status = "Concluída sem resposta";
+      else if (hasReplied) status = "Respondeu antes";
+      else if (!hasPending) status = "Concluiu sem resposta";
 
       rows.push({
         tenantId, phone, sequenceId,
@@ -166,9 +166,9 @@ export default function FollowUpsDashboard() {
   const statusBadge = (status: string) => {
     const map: Record<string, string> = {
       "Convertido": "bg-accent/20 text-accent",
-      "Respondeu": "bg-primary/20 text-primary",
+      "Respondeu antes": "bg-primary/20 text-primary",
       "Em andamento": "bg-yellow-500/20 text-yellow-500",
-      "Concluída sem resposta": "bg-destructive/20 text-destructive",
+      "Concluiu sem resposta": "bg-destructive/20 text-destructive",
     };
     return <span className={`px-2 py-1 rounded text-xs font-medium ${map[status] || "bg-muted text-muted-foreground"}`}>{status}</span>;
   };
