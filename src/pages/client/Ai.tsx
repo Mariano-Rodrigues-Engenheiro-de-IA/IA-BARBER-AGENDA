@@ -281,12 +281,12 @@ export default function ClientAi() {
             <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
               Uma nova versão (v{currentVersion + 1}) será criada e a IA passará a responder
-              com essas instruções imediatamente. Descreva o que mudou nesta versão para
-              consultar depois no histórico.
+              com essas instruções imediatamente. Descreva (opcional) o que mudou nesta versão
+              para consultar depois no histórico.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="change-summary">Resumo das alterações</Label>
+            <Label htmlFor="change-summary">Resumo das alterações (opcional)</Label>
             <Textarea
               id="change-summary"
               placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
@@ -297,7 +297,7 @@ export default function ClientAi() {
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</AlertDialogAction>
+            <Button onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
