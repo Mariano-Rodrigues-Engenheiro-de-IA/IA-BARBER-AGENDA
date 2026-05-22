@@ -167,10 +167,38 @@ export function PromptVersionsDialog({
               {viewVersion && new Date(viewVersion.created_at).toLocaleString("pt-BR")}
             </DialogTitle>
           </DialogHeader>
-          {viewVersion?.change_summary && (
-            <div className="text-sm rounded-md border border-border bg-muted/40 p-3">
-              <span className="text-muted-foreground text-xs uppercase font-medium">Resumo</span>
-              <p className="mt-1">{viewVersion.change_summary}</p>
+          {viewVersion && (
+            <div className="text-sm rounded-md border border-border bg-muted/40 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs uppercase font-medium">Resumo</span>
+                {canRestore && editingSummaryId !== viewVersion.id && (
+                  <Button size="sm" variant="ghost" onClick={() => { setEditingSummaryId(viewVersion.id); setSummaryDraft(viewVersion.change_summary ?? ""); }}>
+                    <Pencil className="w-3.5 h-3.5 mr-1" />{viewVersion.change_summary ? "Editar" : "Adicionar"}
+                  </Button>
+                )}
+              </div>
+              {editingSummaryId === viewVersion.id ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={summaryDraft}
+                    onChange={(e) => setSummaryDraft(e.target.value)}
+                    rows={3}
+                    placeholder="Descreva o que mudou nesta versão"
+                  />
+                  <div className="flex gap-2 justify-end">
+                    <Button size="sm" variant="ghost" disabled={savingSummary} onClick={() => setEditingSummaryId(null)}>
+                      <X className="w-3.5 h-3.5 mr-1" />Cancelar
+                    </Button>
+                    <Button size="sm" disabled={savingSummary} onClick={() => saveSummary(viewVersion)}>
+                      <Save className="w-3.5 h-3.5 mr-1" />{savingSummary ? "Salvando..." : "Salvar resumo"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm">
+                  {viewVersion.change_summary || <span className="italic text-muted-foreground">(sem resumo)</span>}
+                </p>
+              )}
             </div>
           )}
           <ScrollArea className="h-[55vh]">
