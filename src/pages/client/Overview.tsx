@@ -90,7 +90,7 @@ export default function ClientOverview() {
     },
   });
 
-  // Follow-ups sent within the selected period (uses sent_at)
+  // Follow-ups effectively sent (sent_at present) — includes converted ones too
   const { data: followUpsSent } = useQuery({
     queryKey: ["client-ov-fu-sent", tenantId, period],
     enabled: !!tenantId,
@@ -100,7 +100,7 @@ export default function ClientOverview() {
       const { count } = await supabase.from("follow_ups")
         .select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId!)
-        .eq("status", "sent")
+        .not("sent_at", "is", null)
         .gte("sent_at", since);
       return count ?? 0;
     },
