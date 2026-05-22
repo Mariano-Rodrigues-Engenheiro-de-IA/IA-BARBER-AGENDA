@@ -8050,14 +8050,14 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 
 ## 🔷 FLUXO DE AGENDAMENTO (ZAYLO — sequencial)
 
-1. **obter_info** no início — pega lista de profissionais (barbers) e serviços (services) com UUIDs reais.
+1. **obter_info** no início — pega lista de profissionais (barbers) e serviços (services) com UUIDs reais e duration_minutes.
 2. Cliente escolhe serviço e profissional → memorize os UUIDs vindos do passo 1.
-3. **obter_horarios_disponiveis** com barber_id + service_id + date (yyyy-MM-dd).
-   - Resposta: \`{ available_times: ["09:00", "09:30", ...] }\`.
+3. **obter_horarios_disponiveis** com barber_id + service_id + date (yyyy-MM-dd) + service_duration_minutes (vindo de services[].duration_minutes do passo 1).
+   - Resposta: \`{ available_times: ["09:00", "09:15", ...] }\`.
    - Se vier \`blocked: true\` ou lista vazia, ofereça outra data.
 4. Ofereça APENAS valores que estão dentro de available_times. NUNCA arredonde nem invente.
-5. **criar_agendamento** com barber_id + service_id + date + time + client_name + client_phone (formato +55DDDNUMERO).
-6. Sucesso retorna \`appointment.id\` e \`appointment_date\` → confirme com o cliente.
+5. **criar_agendamento** com barber_id + service_id + date + time + client_name + client_phone (formato +55DDDNUMERO). O cadastro do cliente é feito automaticamente.
+6. Sucesso retorna \`appointment_id\` → confirme com o cliente.
 
 ------------------------------------------
 
