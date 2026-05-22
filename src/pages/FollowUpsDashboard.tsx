@@ -243,8 +243,8 @@ export default function FollowUpsDashboard() {
             { label: "Mensagens enviadas", value: seqMetrics.messagesSent, icon: MessageCircle, color: "text-primary" },
             { label: "Em andamento", value: seqMetrics.active, icon: Clock, color: "text-yellow-500" },
             { label: "Responderam", value: seqMetrics.replied, icon: MessageCircle, color: "text-primary" },
-            { label: "Convertidos", value: seqMetrics.convertedMessages, icon: CheckCircle2, color: "text-accent" },
-            { label: "Sem resposta", value: seqMetrics.unansweredMessages, icon: XCircle, color: "text-destructive" },
+            { label: "Mensagens convertidas", value: seqMetrics.convertedMessages, icon: CheckCircle2, color: "text-accent" },
+            { label: "Mensagens sem resposta", value: seqMetrics.unansweredMessages, icon: XCircle, color: "text-destructive" },
           ].map((s) => (
             <div key={s.label} className="glass-card p-5 space-y-3">
               <div className="flex items-center justify-between">
