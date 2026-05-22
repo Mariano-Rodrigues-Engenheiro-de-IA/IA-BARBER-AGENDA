@@ -1042,6 +1042,42 @@ export default function TenantFormPage() {
           </Button>
         </div>
       </form>
+
+      <AlertDialog open={promptSummaryOpen} onOpenChange={(o) => { setPromptSummaryOpen(o); if (!o) setPromptSummary(""); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
+            <AlertDialogDescription>
+              Você alterou o prompt do sistema. Uma nova versão (v{(versions?.[0]?.version ?? 0) + 1}) será
+              criada e o cliente verá a alteração imediatamente. Descreva o que mudou nesta versão.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="admin-change-summary">Resumo das alterações</Label>
+            <Textarea
+              id="admin-change-summary"
+              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              value={promptSummary}
+              onChange={(e) => setPromptSummary(e.target.value)}
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={async () => {
+                if (!promptSummary.trim()) { toast.error("Descreva um resumo das alterações"); return; }
+                const s = promptSummary.trim();
+                setPromptSummaryOpen(false);
+                setPromptSummary("");
+                await doSave(s);
+              }}
+            >
+              Confirmar e salvar v{(versions?.[0]?.version ?? 0) + 1}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
