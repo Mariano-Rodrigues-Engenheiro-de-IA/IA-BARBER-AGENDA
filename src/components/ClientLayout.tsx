@@ -4,7 +4,7 @@ import { useAuth, useModulePermission, type AppModule } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LayoutDashboard, MessageCircle, Clock, LogOut, Menu, Kanban, Power, PowerOff, Smartphone, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -100,6 +100,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         </Button>
         <div className="flex items-center gap-3 px-1 py-1">
           <Avatar className="h-8 w-8">
+            {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
             <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
           </Avatar>
           <p className="text-xs text-muted-foreground truncate flex-1">{user?.email}</p>
