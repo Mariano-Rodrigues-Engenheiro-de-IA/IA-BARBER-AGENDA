@@ -4851,12 +4851,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const organization = String(config.contact_organization || "").trim();
         if (!fullName) return { error: "Nome do contato não configurado." };
         if (!contactPhone) return { error: "Telefone do contato não configurado." };
-        const contactPayload: any = { fullName, phoneNumber: contactPhone };
-        if (organization) contactPayload.organization = organization;
+        const contactBody: any = { number: phoneNumber, fullName, phoneNumber: contactPhone };
+        if (organization) contactBody.organization = organization;
         const res = await fetch(`${uazapiUrl}/send/contact`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, contact: contactPayload }),
+          body: JSON.stringify(contactBody),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_contact result:`, JSON.stringify(data).slice(0, 200));
