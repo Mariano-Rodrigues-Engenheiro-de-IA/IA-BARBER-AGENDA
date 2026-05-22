@@ -8108,15 +8108,16 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "obter_horarios_disponiveis",
-        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id real de obter_info. Use APENAS o campo available_times da resposta.",
+        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id e service_id reais vindos de obter_info. Use APENAS os valores do campo available_times da resposta.",
         parameters: {
           type: "object",
           properties: {
-            barber_id: { type: "string", description: "UUID do profissional (de obter_info)" },
-            service_id: { type: "string", description: "UUID do serviço (de obter_info)" },
-            date: { type: "string", description: "Data YYYY-MM-DD" },
+            barber_id: { type: "string", description: "UUID do profissional (de obter_info → barbers[].id)" },
+            service_id: { type: "string", description: "UUID do serviço (de obter_info → services[].id)" },
+            date: { type: "string", description: "Data YYYY-MM-DD (fuso de Brasília)" },
+            service_duration_minutes: { type: "number", description: "Duração do serviço em minutos (de obter_info → services[].duration_minutes). Passe sempre que souber." },
           },
-          required: ["barber_id", "date"],
+          required: ["barber_id", "service_id", "date"],
         },
       },
     },
@@ -8124,7 +8125,7 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário exato retornado por obter_horarios_disponiveis.",
+        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário EXATO retornado por obter_horarios_disponiveis. O sistema cria/identifica o cliente automaticamente pelo client_phone+client_name.",
         parameters: {
           type: "object",
           properties: {
@@ -8134,6 +8135,7 @@ function buildZayloTools(tenant: any) {
             time: { type: "string", description: "HH:MM (exato de available_times)" },
             client_name: { type: "string" },
             client_phone: { type: "string", description: "Telefone com DDI (ex: +5511999998888)" },
+            observacoes: { type: "string", description: "Observações opcionais para a clínica" },
           },
           required: ["barber_id", "service_id", "date", "time", "client_name", "client_phone"],
         },
@@ -8157,15 +8159,13 @@ function buildZayloTools(tenant: any) {
       type: "function",
       function: {
         name: "confirmar_agendamento",
-        description: "Confirma um agendamento real na Zaylo. Prefira usar appointment_id vindo de listar_agendamentos. Alternativamente aceite client_phone+date+time.",
+        description: "Confirma um agendamento real na Zaylo. Use o appointment_id retornado por listar_agendamentos ou por criar_agendamento.",
         parameters: {
           type: "object",
           properties: {
             appointment_id: { type: "string" },
-            client_phone: { type: "string" },
-            date: { type: "string", description: "YYYY-MM-DD" },
-            time: { type: "string", description: "HH:MM" },
           },
+          required: ["appointment_id"],
         },
       },
     },
@@ -8178,6 +8178,7 @@ function buildZayloTools(tenant: any) {
           type: "object",
           properties: {
             appointment_id: { type: "string" },
+            motivo: { type: "string", description: "Motivo do cancelamento (opcional)" },
           },
           required: ["appointment_id"],
         },
