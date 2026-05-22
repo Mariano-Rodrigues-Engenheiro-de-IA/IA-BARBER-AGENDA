@@ -11,13 +11,10 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Save, History, Wrench } from "lucide-react";
+import { Save } from "lucide-react";
 import { CustomToolsTab, type CustomTool } from "@/components/CustomToolsTab";
+import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
 
 export default function ClientAi() {
   const { tenantId, user } = useAuth();
@@ -41,17 +38,18 @@ export default function ClientAi() {
     queryFn: async () => {
       const { data } = await supabase
         .from("ai_prompt_versions")
-        .select("id,version,prompt,created_at,created_by_role")
+        .select("id,version,prompt,created_at,created_by_role,change_summary")
         .eq("tenant_id", tenantId!)
         .order("version", { ascending: false });
-      return data ?? [];
+      return (data ?? []) as PromptVersion[];
     },
   });
 
   const [form, setForm] = useState<any>({});
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [viewVersion, setViewVersion] = useState<any>(null);
+  const [changeSummary, setChangeSummary] = useState("");
+
   useEffect(() => {
     if (tenant) {
       setForm(tenant);
@@ -64,7 +62,7 @@ export default function ClientAi() {
     }
   }, [tenant]);
 
-  // Realtime: refresh when tenant row changes (admin edits propagate live)
+  // Realtime: refresh tenant + versions (admin/cliente edits propagate live)
   useEffect(() => {
     if (!tenantId) return;
     const channel = supabase
@@ -74,10 +72,14 @@ export default function ClientAi() {
         { event: "UPDATE", schema: "public", table: "tenants", filter: `id=eq.${tenantId}` },
         () => { refetch(); },
       )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ai_prompt_versions", filter: `tenant_id=eq.${tenantId}` },
+        () => { refetchVersions(); },
+      )
       .subscribe();
     return () => { supabase.removeChannel(channel); };
-  }, [tenantId, refetch]);
-
+  }, [tenantId, refetch, refetchVersions]);
 
   const saveTools = async (next: CustomTool[]) => {
     setCustomTools(next);
@@ -108,6 +110,10 @@ export default function ClientAi() {
 
   const handleSavePrompt = async () => {
     if (!tenantId) return;
+    if (!changeSummary.trim()) {
+      toast.error("Descreva um resumo das alterações");
+      return;
+    }
     const prompt = form.agent_system_prompt ?? "";
     const nextVersion = (versions?.[0]?.version ?? 0) + 1;
 
@@ -123,17 +129,19 @@ export default function ClientAi() {
       prompt,
       created_by: user?.id,
       created_by_role: "client",
-    });
+      change_summary: changeSummary.trim(),
+    } as any);
     if (vErr) toast.error("Salvo, mas não foi possível registrar a versão: " + vErr.message);
 
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId, user_id: user?.id, actor_role: "client",
       action: "edit_ai_prompt", entity: "tenants", entity_id: tenantId,
-      after: { agent_system_prompt: prompt, version: nextVersion },
+      after: { agent_system_prompt: prompt, version: nextVersion, change_summary: changeSummary.trim() },
     });
 
     toast.success(`Prompt salvo — versão ${nextVersion}`);
     setConfirmOpen(false);
+    setChangeSummary("");
     refetch();
     refetchVersions();
   };
@@ -172,40 +180,15 @@ export default function ClientAi() {
                       Versão atual: v{currentVersion}
                     </span>
                   )}
-                  <Dialog>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" size="sm">
-                        <History className="w-4 h-4 mr-2" />Versões
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
-                      <DialogHeader>
-                        <DialogTitle>Histórico de versões do prompt</DialogTitle>
-                      </DialogHeader>
-                      <ScrollArea className="h-[60vh] pr-3">
-                        <div className="space-y-2">
-                          {(versions ?? []).length === 0 && (
-                            <p className="text-sm text-muted-foreground">Nenhuma versão salva ainda.</p>
-                          )}
-                          {(versions ?? []).map((v: any) => (
-                            <button
-                              key={v.id}
-                              onClick={() => setViewVersion(v)}
-                              className="w-full text-left p-3 rounded-lg border border-border hover:bg-muted transition-colors"
-                            >
-                              <div className="flex justify-between items-center mb-1">
-                                <span className="font-semibold text-sm">v{v.version}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {new Date(v.created_at).toLocaleString("pt-BR")}
-                                </span>
-                              </div>
-                              <p className="text-xs text-muted-foreground line-clamp-2">{v.prompt}</p>
-                            </button>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    </DialogContent>
-                  </Dialog>
+                  <PromptVersionsDialog
+                    tenantId={tenantId!}
+                    versions={versions ?? []}
+                    currentVersion={currentVersion}
+                    canRestore={ai.editable}
+                    actorRole="client"
+                    userId={user?.id}
+                    onRestored={() => { refetch(); refetchVersions(); }}
+                  />
                 </div>
               </div>
 
@@ -234,8 +217,6 @@ export default function ClientAi() {
             />
           </TabsContent>
         )}
-
-
 
         {company.visible && (
           <TabsContent value="company" className="space-y-4">
@@ -294,49 +275,32 @@ export default function ClientAi() {
         )}
       </Tabs>
 
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+      <AlertDialog open={confirmOpen} onOpenChange={(o) => { setConfirmOpen(o); if (!o) setChangeSummary(""); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar salvamento do prompt</AlertDialogTitle>
+            <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja salvar este prompt? Uma nova versão (v{currentVersion + 1}) será
-              criada e a IA passará a responder com essas instruções imediatamente. Você poderá consultar
-              versões anteriores em "Versões", mas a versão ativa será essa nova.
+              Uma nova versão (v{currentVersion + 1}) será criada e a IA passará a responder
+              com essas instruções imediatamente. Descreva o que mudou nesta versão para
+              consultar depois no histórico.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="change-summary">Resumo das alterações</Label>
+            <Textarea
+              id="change-summary"
+              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              value={changeSummary}
+              onChange={(e) => setChangeSummary(e.target.value)}
+              rows={3}
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={!!viewVersion} onOpenChange={(o) => !o && setViewVersion(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>
-              Versão v{viewVersion?.version} —{" "}
-              {viewVersion && new Date(viewVersion.created_at).toLocaleString("pt-BR")}
-            </DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="h-[60vh]">
-            <pre className="text-xs whitespace-pre-wrap font-mono p-3 bg-muted rounded-lg">
-              {viewVersion?.prompt}
-            </pre>
-          </ScrollArea>
-          {ai.editable && viewVersion && viewVersion.version !== currentVersion && (
-            <Button
-              onClick={() => {
-                setForm({ ...form, agent_system_prompt: viewVersion.prompt });
-                setViewVersion(null);
-                toast.info("Conteúdo carregado no editor. Clique em Salvar para criar uma nova versão.");
-              }}
-            >
-              Carregar esta versão no editor
-            </Button>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

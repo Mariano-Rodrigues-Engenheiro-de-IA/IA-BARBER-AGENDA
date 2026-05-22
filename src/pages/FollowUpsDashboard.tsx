@@ -7,7 +7,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Clock, CheckCircle2, XCircle, Sparkles, TrendingUp, Users, MessageCircle, Filter } from "lucide-react";
 
-
 type FollowUp = {
   id: string;
   tenant_id: string;
@@ -28,9 +27,25 @@ type FollowUp = {
 type Tenant = { id: string; name: string };
 type Sequence = { id: string; tenant_id: string; name: string; trigger_type: string };
 
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Pendente",
+  sent: "Enviado",
+  confirmed: "Confirmado",
+  cancelled: "Cancelado",
+  expired: "Expirado",
+};
+
+const CANCEL_REASON_LABEL: Record<string, string> = {
+  lead_replied: "lead respondeu",
+  manual: "manual",
+  expired: "expirado",
+};
+
+const formatKeyword = (k?: string | null) =>
+  !k ? "—" : k === "__catch_all__" ? "(qualquer mensagem)" : k;
+
 export default function FollowUpsDashboard() {
-  const [period, setPeriod] = useState<"7d" | "30d" | "all">("30d");
-  const [tenantFilter, setTenantFilter] = useState<string>("all");
+  const [period, setPeriod] = useState<"7d" | "14d" | "30d" | "all">("30d");
   const [sequenceFilter, setSequenceFilter] = useState<string>("all");
   const [timelinePhone, setTimelinePhone] = useState<{ tenantId: string; phone: string } | null>(null);
 
@@ -39,7 +54,7 @@ export default function FollowUpsDashboard() {
     queryFn: async () => {
       let query = supabase.from("follow_ups").select("*").order("created_at", { ascending: false }).limit(1000);
       if (period !== "all") {
-        const days = period === "7d" ? 7 : 30;
+        const days = period === "7d" ? 7 : period === "14d" ? 14 : 30;
         const since = new Date(Date.now() - days * 86400000).toISOString();
         query = query.gte("created_at", since);
       }
@@ -73,26 +88,14 @@ export default function FollowUpsDashboard() {
   const filtered = useMemo(() => {
     if (!followUps) return [];
     return followUps.filter((f) => {
-      if (tenantFilter !== "all" && f.tenant_id !== tenantFilter) return false;
       if (sequenceFilter !== "all" && f.sequence_id !== sequenceFilter) return false;
       return true;
     });
-  }, [followUps, tenantFilter, sequenceFilter]);
+  }, [followUps, sequenceFilter]);
 
-  // Legacy stats (non-sequence)
-  const legacy = useMemo(() => filtered.filter((f) => !f.sequence_id), [filtered]);
   const seqRows = useMemo(() => filtered.filter((f) => f.sequence_id), [filtered]);
 
-  const stats = useMemo(() => ({
-    sent: filtered.filter((f) => f.status === "sent").length,
-    confirmed: filtered.filter((f) => f.status === "confirmed").length,
-    pending: filtered.filter((f) => f.status === "pending").length,
-    expired: filtered.filter((f) => f.status === "expired").length,
-  }), [filtered]);
-
-  // Sequence-specific metrics
   const seqMetrics = useMemo(() => {
-    // Group by tenant+phone+sequence (one "lead journey")
     const journeys = new Map<string, FollowUp[]>();
     seqRows.forEach((f) => {
       const k = `${f.tenant_id}|${f.phone_number}|${f.sequence_id}`;
@@ -132,7 +135,6 @@ export default function FollowUpsDashboard() {
     return { totalLeads, active, completed, replied, converted, byKeyword, stepReached, stepResponded, journeys };
   }, [seqRows]);
 
-  // Build leads table
   const leadsTable = useMemo(() => {
     const rows: { tenantId: string; phone: string; sequenceId: string; sequenceName: string; tenantName: string; keyword: string; currentStep: number; totalSteps: number; status: string; lastUpdate: string }[] = [];
     for (const [key, items] of seqMetrics.journeys) {
@@ -189,25 +191,19 @@ export default function FollowUpsDashboard() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={period} onValueChange={(v) => setPeriod(v as any)}>
-            <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="7d">Últimos 7 dias</SelectItem>
+              <SelectItem value="14d">Últimos 14 dias</SelectItem>
               <SelectItem value="30d">Últimos 30 dias</SelectItem>
-              <SelectItem value="all">Todos</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={tenantFilter} onValueChange={setTenantFilter}>
-            <SelectTrigger className="w-[180px]"><SelectValue placeholder="Projeto" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os projetos</SelectItem>
-              {tenants?.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+              <SelectItem value="all">Todos os follow-ups</SelectItem>
             </SelectContent>
           </Select>
           <Select value={sequenceFilter} onValueChange={setSequenceFilter}>
             <SelectTrigger className="w-[200px]"><SelectValue placeholder="Follow-up" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos os follow-ups</SelectItem>
-              {sequences?.filter((s) => tenantFilter === "all" || s.tenant_id === tenantFilter).map((s) => (
+              {sequences?.map((s) => (
                 <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
               ))}
             </SelectContent>
@@ -216,7 +212,6 @@ export default function FollowUpsDashboard() {
       </div>
 
       <div className="space-y-6">
-        {/* KPI cards */}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {[
             { label: "Leads captados", value: seqMetrics.totalLeads, icon: Users, color: "text-primary" },
@@ -235,7 +230,6 @@ export default function FollowUpsDashboard() {
           ))}
         </div>
 
-        {/* Funnel */}
         {funnelData.length > 0 && (
           <div className="glass-card p-5">
             <h3 className="font-semibold mb-4 flex items-center gap-2"><TrendingUp className="w-4 h-4" />Funil por etapa</h3>
@@ -256,19 +250,17 @@ export default function FollowUpsDashboard() {
           </div>
         )}
 
-        {/* By keyword */}
         {Object.keys(seqMetrics.byKeyword).length > 0 && (
           <div className="glass-card p-5">
             <h3 className="font-semibold mb-4 flex items-center gap-2"><Filter className="w-4 h-4" />Por palavra-chave</h3>
             <div className="flex flex-wrap gap-2">
               {Object.entries(seqMetrics.byKeyword).sort((a, b) => b[1] - a[1]).map(([kw, count]) => (
-                <Badge key={kw} variant="outline" className="text-sm">{kw === "__catch_all__" ? "(catch-all)" : kw}: <strong className="ml-1">{count}</strong></Badge>
+                <Badge key={kw} variant="outline" className="text-sm">{formatKeyword(kw)}: <strong className="ml-1">{count}</strong></Badge>
               ))}
             </div>
           </div>
         )}
 
-        {/* Leads table */}
         <div className="glass-card overflow-hidden">
           <div className="p-5 border-b border-border"><h3 className="font-semibold">Leads</h3></div>
           {leadsTable.length === 0 ? (
@@ -282,7 +274,6 @@ export default function FollowUpsDashboard() {
                 <thead>
                   <tr className="border-b border-border text-left">
                     <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Telefone</th>
-                    <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Projeto</th>
                     <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Follow-up</th>
                     <th className="p-4 text-xs font-medium text-muted-foreground uppercase">Palavra-chave</th>
                     <th className="p-4 text-xs font-medium text-muted-foreground uppercase text-center">Etapa</th>
@@ -294,9 +285,8 @@ export default function FollowUpsDashboard() {
                   {leadsTable.slice(0, 100).map((row, idx) => (
                     <tr key={idx} className="border-b border-border/50 hover:bg-muted/30 cursor-pointer" onClick={() => setTimelinePhone({ tenantId: row.tenantId, phone: row.phone })}>
                       <td className="p-4 text-sm font-mono">{row.phone}</td>
-                      <td className="p-4 text-sm">{row.tenantName}</td>
                       <td className="p-4 text-sm">{row.sequenceName}</td>
-                      <td className="p-4 text-sm text-muted-foreground">{row.keyword === "__catch_all__" ? "(catch-all)" : row.keyword}</td>
+                      <td className="p-4 text-sm text-muted-foreground">{formatKeyword(row.keyword)}</td>
                       <td className="p-4 text-sm text-center">{row.currentStep}/{row.totalSteps}</td>
                       <td className="p-4">{statusBadge(row.status)}</td>
                       <td className="p-4 text-xs text-muted-foreground">{row.lastUpdate ? new Date(row.lastUpdate).toLocaleString("pt-BR") : "—"}</td>
@@ -319,7 +309,6 @@ export default function FollowUpsDashboard() {
   );
 }
 
-
 function TimelineDialog({ info, onClose, followUps, seqMap }: {
   info: { tenantId: string; phone: string } | null;
   onClose: () => void;
@@ -337,23 +326,24 @@ function TimelineDialog({ info, onClose, followUps, seqMap }: {
     <Dialog open={!!info} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Timeline — {info?.phone}</DialogTitle>
+          <DialogTitle>Linha do tempo — {info?.phone}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3 max-h-[60vh] overflow-y-auto">
           {items.map((f) => {
             const seq = f.sequence_id ? seqMap[f.sequence_id] : null;
             const statusColor = f.status === "sent" ? "text-primary" : f.status === "confirmed" ? "text-accent" : f.status === "pending" ? "text-yellow-500" : "text-destructive";
+            const reasonLabel = f.cancel_reason ? (CANCEL_REASON_LABEL[f.cancel_reason] ?? f.cancel_reason) : null;
             return (
               <div key={f.id} className="border border-border rounded-md p-3 space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-medium">{seq?.name || "Follow-up"} — Etapa {f.step_order || "?"}</span>
-                  <span className={`text-xs uppercase font-bold ${statusColor}`}>{f.status}</span>
+                  <span className={`text-xs uppercase font-bold ${statusColor}`}>{STATUS_LABEL[f.status] ?? f.status}</span>
                 </div>
                 <p className="text-sm text-muted-foreground">{f.follow_up_message?.slice(0, 200)}</p>
                 <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
                   <span>Criado: {new Date(f.created_at).toLocaleString("pt-BR")}</span>
                   {f.sent_at && <span>Enviado: {new Date(f.sent_at).toLocaleString("pt-BR")}</span>}
-                  {f.cancelled_at && <span>Cancelado: {new Date(f.cancelled_at).toLocaleString("pt-BR")} ({f.cancel_reason})</span>}
+                  {f.cancelled_at && <span>Cancelado: {new Date(f.cancelled_at).toLocaleString("pt-BR")}{reasonLabel ? ` (${reasonLabel})` : ""}</span>}
                   {f.confirmed_at && <span>Confirmado: {new Date(f.confirmed_at).toLocaleString("pt-BR")}</span>}
                 </div>
               </div>
