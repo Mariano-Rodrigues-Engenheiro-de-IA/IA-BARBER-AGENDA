@@ -772,6 +772,43 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ===== Webhook authentication =====
+  // Validates a shared secret to prevent forged webhook events.
+  // Configure UAZAPI to send the secret either as `?token=...` query param
+  // or as `x-webhook-token` / `x-uazapi-token` header.
+  // If WHATSAPP_WEBHOOK_SECRET is not configured, we log a warning but accept
+  // the request (to avoid downtime during rollout). Set the secret + configure
+  // UAZAPI to enforce validation.
+  const webhookSecret = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
+  if (webhookSecret) {
+    const url = new URL(req.url);
+    const provided =
+      url.searchParams.get("token") ||
+      req.headers.get("x-webhook-token") ||
+      req.headers.get("x-uazapi-token") ||
+      "";
+    // Constant-time-ish compare
+    const a = new TextEncoder().encode(provided);
+    const b = new TextEncoder().encode(webhookSecret);
+    let ok = a.length === b.length;
+    const len = Math.max(a.length, b.length);
+    let diff = a.length ^ b.length;
+    for (let i = 0; i < len; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+    ok = ok && diff === 0;
+    if (!ok) {
+      console.warn("Webhook rejected: invalid or missing secret");
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  } else {
+    console.warn(
+      "WHATSAPP_WEBHOOK_SECRET not set — webhook is accepting unsigned requests. " +
+      "Set the secret and configure UAZAPI to send it as ?token=... or x-webhook-token header."
+    );
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
