@@ -318,10 +318,19 @@ export default function ClientConversations() {
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
                 <ContactAvatar phone={selected} size={40} />
 
-                <div>
-                  <div className="font-semibold text-[15px] text-foreground">{selected}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-[15px] text-foreground truncate">{selected}</div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmDelete(selected)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Excluir
+                </Button>
               </div>
               <div ref={messagesViewportRef} className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
                 <div className="space-y-2 max-w-3xl mx-auto">
