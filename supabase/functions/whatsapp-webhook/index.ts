@@ -7434,6 +7434,36 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
+
+        // Helper: busca horários livres do profissional naquele dia (valida/devolve opções).
+        const fetchHorariosLivres = async (): Promise<string[]> => {
+          try {
+            const hRes = await frizzarFetch(`/listar/horarios/${args.profissionalId}/${args.dia}`, {
+              method: "POST",
+              headers: jsonHeaders,
+              body: JSON.stringify(body),
+            });
+            const hTxt = await hRes.text();
+            const hParsed = JSON.parse(hTxt);
+            if (Array.isArray(hParsed)) {
+              const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia)) ?? hParsed[0];
+              return Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [];
+            }
+          } catch { /* ignore */ }
+          return [];
+        };
+
+        // Pré-validação: evita 500 quando o horário não está na grade livre.
+        const horariosLivresPre = await fetchHorariosLivres();
+        if (horariosLivresPre.length > 0 && !horariosLivresPre.includes(args.hora)) {
+          return {
+            error: `Horário ${args.hora} indisponível em ${args.dia} para o profissional. Escolha um dos horários livres abaixo e tente novamente.`,
+            horariosLivres: horariosLivresPre,
+            dia: args.dia,
+            profissionalId: args.profissionalId,
+          };
+        }
+
         const path = `/agendar/cliente/${args.clienteId}/dia/${args.dia}/hora/${args.hora}/profissional/${args.profissionalId}`;
         console.log(`[Frizzar] agendar body:`, JSON.stringify(body));
         const res = await frizzarFetch(path, {
@@ -7445,6 +7475,16 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         console.log(`[Frizzar] agendar response (${res.status}):`, text.slice(0, 600));
         if (res.status === 403) {
           return { error: "Cliente bloqueado ou limite de agendamentos atingido." };
+        }
+        // 500 / corpo vazio normalmente = slot indisponível ou conflito — devolve opções.
+        if (!res.ok || !text.trim()) {
+          const livres = horariosLivresPre.length > 0 ? horariosLivresPre : await fetchHorariosLivres();
+          return {
+            error: `Frizzar recusou o agendamento (status ${res.status}). Provavelmente o horário ${args.hora} acabou de ser ocupado ou é inválido. Ofereça um dos horários livres abaixo.`,
+            horariosLivres: livres,
+            dia: args.dia,
+            profissionalId: args.profissionalId,
+          };
         }
         try {
           const parsed = JSON.parse(text);
