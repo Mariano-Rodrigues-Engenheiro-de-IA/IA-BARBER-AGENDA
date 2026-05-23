@@ -3953,6 +3953,18 @@ async function callAIAgent(
           console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}]`);
         }
 
+        // Reschedule support: when a cancel/edit succeeds, clear the per-service
+        // scheduling guard so the AI can call `agendar` again for the same service
+        // (e.g. customer wants to change the day/time of an existing appointment).
+        const isCancelOrEditTool = [
+          "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
+        ].includes(toolCall.function.name);
+        const cancelOrEditSucceeded = isCancelOrEditTool && !toolResult?.error && !toolResult?.blocked;
+        if (cancelOrEditSucceeded && sessionState.scheduledServiceIds.length > 0) {
+          console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
+          sessionState.scheduledServiceIds = [];
+        }
+
         // Track valid agendasIds from buscar_agendamentos_dia
         if (toolCall.function.name === "buscar_agendamentos_dia" && Array.isArray(toolResult)) {
           sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
