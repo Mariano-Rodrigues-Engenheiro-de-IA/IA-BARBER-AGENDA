@@ -27,9 +27,26 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  // ===== Auth guard: shared secret OR service-role bearer =====
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const providedSecret = req.headers.get("x-cron-secret") || req.headers.get("x-webhook-secret");
+  const authHeader = req.headers.get("Authorization") || "";
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+
+  const secretOk = cronSecret && providedSecret && providedSecret === cronSecret;
+  const serviceOk = bearer && bearer === serviceRoleKey;
+
+  if (!secretOk && !serviceOk) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    serviceRoleKey
   );
 
   try {

@@ -10,10 +10,44 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ===== AUTHENTICATION =====
+  const authHeader = req.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const authClient = createClient(
+    supabaseUrl,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  );
+
+  const token = authHeader.replace("Bearer ", "");
+  const { data: claimsData, error: claimsErr } = await authClient.auth.getClaims(token);
+  if (claimsErr || !claimsData?.claims) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  const userId = claimsData.claims.sub as string;
+
   const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
+    supabaseUrl,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+
+  // Resolve caller role + tenant
+  const [{ data: isAdminData }, { data: tenantRow }] = await Promise.all([
+    supabase.rpc("has_role", { _user_id: userId, _role: "admin" }),
+    supabase.from("tenant_users").select("tenant_id").eq("user_id", userId).maybeSingle(),
+  ]);
+  const isAdmin = !!isAdminData;
+  const callerTenantId = tenantRow?.tenant_id ?? null;
 
   try {
     const { leadId, tenantId, phoneNumber, toLabelId, toLabelName, toggleFlag } = await req.json();
@@ -21,6 +55,14 @@ Deno.serve(async (req) => {
     if (!tenantId || !phoneNumber) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
         status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ===== AUTHORIZATION: caller must be admin OR belong to the target tenant =====
+    if (!isAdmin && callerTenantId !== tenantId) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -52,8 +94,7 @@ Deno.serve(async (req) => {
     // ===== FLAG TOGGLE MODE =====
     if (toggleFlag) {
       const flagLabelId = String(toggleFlag);
-      
-      // Get existing lead
+
       const { data: lead } = await supabase
         .from("crm_leads")
         .select("id, flag_labels")
@@ -67,7 +108,6 @@ Deno.serve(async (req) => {
         ? currentFlags.filter((f: string) => f !== flagLabelId)
         : [...currentFlags, flagLabelId];
 
-      // Update or create lead in DB
       if (lead) {
         await supabase.from("crm_leads")
           .update({ flag_labels: newFlags, updated_at: new Date().toISOString() })
@@ -81,7 +121,6 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Sync to WhatsApp: add or remove label
       const labelBody = hasFlag
         ? { number: phoneNumber, remove_labelid: flagLabelId }
         : { number: phoneNumber, add_labelid: flagLabelId };
@@ -106,16 +145,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Get current lead to know old label
     const { data: lead } = await supabase
       .from("crm_leads")
-      .select("id, label_id")
+      .select("id, label_id, tenant_id")
       .eq("id", leadId)
       .single();
 
+    // Extra guard: lead must belong to the asserted tenant
+    if (!lead || lead.tenant_id !== tenantId) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const fromLabel = lead?.label_id || null;
 
-    // Remove old label if different
     if (fromLabel && fromLabel !== toLabelId) {
       await fetch(`${uazapiUrl}/chat/labels`, {
         method: "POST",
@@ -125,7 +170,6 @@ Deno.serve(async (req) => {
       console.log(`Removed label ${fromLabel} from ${phoneNumber}`);
     }
 
-    // Add new label
     const addRes = await fetch(`${uazapiUrl}/chat/labels`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
@@ -133,13 +177,11 @@ Deno.serve(async (req) => {
     });
     console.log(`Added label ${toLabelId} to ${phoneNumber}, status: ${addRes.status}`);
 
-    // Update DB
     await supabase
       .from("crm_leads")
       .update({ label_id: toLabelId, label_name: toLabelName || null, updated_at: new Date().toISOString() })
       .eq("id", leadId);
 
-    // Insert history
     await supabase.from("crm_lead_history").insert({
       lead_id: leadId,
       from_label: fromLabel,
@@ -152,7 +194,7 @@ Deno.serve(async (req) => {
     });
   } catch (err) {
     console.error("move-crm-lead error:", err);
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: (err as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
