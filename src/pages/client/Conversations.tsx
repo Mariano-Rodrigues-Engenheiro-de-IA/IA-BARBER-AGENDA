@@ -1,9 +1,21 @@
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, MessageCircle } from "lucide-react";
+import { Search, MessageCircle, Trash2, Loader2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { toast } from "@/hooks/use-toast";
 
 // Strip internal tags that should never be shown to end-user
 function cleanContent(raw: string): string {
@@ -79,9 +91,39 @@ function ContactAvatar({ phone, size }: { phone: string; size?: number }) {
 
 export default function ClientConversations() {
   const { tenantId } = useAuth();
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
+
+  const handleDeleteConversation = async (phone: string) => {
+    if (!tenantId || !phone) return;
+    setDeleting(true);
+    try {
+      const { error: msgErr } = await supabase
+        .from("chat_messages")
+        .delete()
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", phone);
+      if (msgErr) throw msgErr;
+      await supabase
+        .from("conversation_state")
+        .delete()
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", phone);
+      toast({ title: "Conversa excluída", description: phone });
+      if (selected === phone) setSelected(null);
+      setConfirmDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["client-contacts", tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["client-conv", tenantId, phone] });
+    } catch (e: any) {
+      toast({ title: "Erro ao excluir", description: e?.message ?? "Tente novamente", variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const { data: contactsRaw } = useQuery({
     queryKey: ["client-contacts", tenantId],
@@ -226,10 +268,10 @@ export default function ClientConversations() {
           </div>
           <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {contacts.map((c) => (
-              <button
+              <div
                 key={c.phone}
                 onClick={() => setSelected(c.phone)}
-                className={`flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
+                className={`group flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
@@ -244,7 +286,18 @@ export default function ClientConversations() {
                     {c.preview || "—"}
                   </div>
                 </div>
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDelete(c.phone);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                  title="Excluir conversa"
+                  aria-label="Excluir conversa"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             ))}
             {contacts.length === 0 && (
               <div className="p-6 text-center text-sm text-muted-foreground">Nenhuma conversa.</div>
@@ -265,10 +318,19 @@ export default function ClientConversations() {
               <div className="px-4 py-3 border-b border-border bg-[hsl(var(--wa-panel))] flex items-center gap-3">
                 <ContactAvatar phone={selected} size={40} />
 
-                <div>
-                  <div className="font-semibold text-[15px] text-foreground">{selected}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-semibold text-[15px] text-foreground truncate">{selected}</div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmDelete(selected)}
+                  className="text-muted-foreground hover:text-destructive"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Excluir
+                </Button>
               </div>
               <div ref={messagesViewportRef} className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4">
                 <div className="space-y-2 max-w-3xl mx-auto">
@@ -311,6 +373,31 @@ export default function ClientConversations() {
           )}
         </div>
       </div>
+
+      <AlertDialog open={!!confirmDelete} onOpenChange={(o) => !o && !deleting && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir conversa?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Todas as mensagens com <span className="font-medium text-foreground">{confirmDelete}</span> serão removidas permanentemente, junto com o estado da sessão da IA. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmDelete) handleDeleteConversation(confirmDelete);
+              }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
