@@ -91,9 +91,39 @@ function ContactAvatar({ phone, size }: { phone: string; size?: number }) {
 
 export default function ClientConversations() {
   const { tenantId } = useAuth();
+  const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const messagesViewportRef = useRef<HTMLDivElement>(null);
+
+  const handleDeleteConversation = async (phone: string) => {
+    if (!tenantId || !phone) return;
+    setDeleting(true);
+    try {
+      const { error: msgErr } = await supabase
+        .from("chat_messages")
+        .delete()
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", phone);
+      if (msgErr) throw msgErr;
+      await supabase
+        .from("conversation_state")
+        .delete()
+        .eq("tenant_id", tenantId)
+        .eq("phone_number", phone);
+      toast({ title: "Conversa excluída", description: phone });
+      if (selected === phone) setSelected(null);
+      setConfirmDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["client-contacts", tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["client-conv", tenantId, phone] });
+    } catch (e: any) {
+      toast({ title: "Erro ao excluir", description: e?.message ?? "Tente novamente", variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const { data: contactsRaw } = useQuery({
     queryKey: ["client-contacts", tenantId],
