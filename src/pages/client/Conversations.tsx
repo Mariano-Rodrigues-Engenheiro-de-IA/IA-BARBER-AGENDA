@@ -268,10 +268,10 @@ export default function ClientConversations() {
           </div>
           <div className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
             {contacts.map((c) => (
-              <button
+              <div
                 key={c.phone}
                 onClick={() => setSelected(c.phone)}
-                className={`flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
+                className={`group flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
                   selected === c.phone ? "bg-muted" : ""
                 }`}
               >
@@ -286,7 +286,18 @@ export default function ClientConversations() {
                     {c.preview || "—"}
                   </div>
                 </div>
-              </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDelete(c.phone);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                  title="Excluir conversa"
+                  aria-label="Excluir conversa"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
             ))}
             {contacts.length === 0 && (
               <div className="p-6 text-center text-sm text-muted-foreground">Nenhuma conversa.</div>
