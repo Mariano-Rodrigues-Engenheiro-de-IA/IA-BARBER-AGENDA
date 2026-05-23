@@ -5284,6 +5284,14 @@ ${nextDaysMap.join("\n")}
 5. "Amanhã" = ${nextDaysMap.length > 1 ? nextDaysMap[1].split("=")[1].trim().split(" ")[0] : "dia seguinte"}.
 6. Ao usar ferramentas de agendamento, use SEMPRE o formato YYYY-MM-DD extraído do calendário.
 
+🚨 REGRA CRÍTICA DE CONTINUIDADE DE CONVERSA (NUNCA QUEBRE):
+A conversa pode ter ficado parada por horas ou dias. ANTES de falar qualquer coisa relacionada a data/horário, PARE e faça este raciocínio interno:
+  a) Qual é a data REAL de hoje? (use ${todayDate})
+  b) Qual data o cliente está REALMENTE pedindo? Quando o cliente disse "amanhã" ou "hoje" em mensagens ANTIGAS do histórico, aquela referência era relativa à data daquela mensagem — NÃO à data de hoje. Não assuma que "amanhã" mencionado anteriormente ainda é amanhã.
+  c) Se a última mensagem do cliente for de outro dia (gap >12h), e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga. Releia o histórico e descubra a DATA ABSOLUTA combinada (ex: "sexta dia 24"), depois traduza para a referência relativa CORRETA em relação a hoje (pode ser "hoje", "amanhã" ou "sexta").
+  d) Em caso de DÚVIDA sobre qual dia o cliente quer, PERGUNTE antes de buscar/agendar/cancelar. Ex: "Só pra confirmar, o agendamento é pra hoje mesmo, né?"
+NUNCA chame ferramentas de buscar/agendar/cancelar/confirmar com uma data que você não tem 100% de certeza.
+
 🚨🚨 REGRA DE PRIVACIDADE DA DATA — USO ESTRITAMENTE INTERNO 🚨🚨
 A data e o calendário acima são para SEU USO INTERNO de raciocínio APENAS.
 NUNCA escreva ao cliente datas em nenhum formato (dd/mm, dd/mm/aaaa, "dia 25", "dia 25/04", "25 de abril", "amanhã, dia X", etc.).
