@@ -129,8 +129,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
-          <img src={logoZaylo} alt="Zaylo IA" className="w-7 h-7 rounded-lg object-contain" />
-          <span className="font-semibold text-foreground">Zaylo IA</span>
+          <img src={logoZaylo} alt="IA Barber Pro" className="w-7 h-7 rounded-lg object-contain" />
+          <span className="font-semibold text-foreground">IA Barber Pro</span>
         </div>
         <div className="p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">
           {children}
