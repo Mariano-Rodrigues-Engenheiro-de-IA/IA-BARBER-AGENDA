@@ -75,23 +75,26 @@ export default function TenantDashboardPage() {
     const uniqueClients = new Set(messages?.filter((m) => m.role === "user").map((m) => m.phone_number)).size;
     const totalMessages = messages?.length ?? 0;
 
+    const priceMap = buildServicePriceMap(agentLogs ?? []);
     let linksSent = 0;
-    const bookingIds = new Set<string>();
+    const bookingValues = new Map<string, number>();
     agentLogs?.forEach((log) => {
       const tools = log.tool_calls as any[];
       if (!Array.isArray(tools)) return;
       tools.forEach((tc: any) => {
         const bid = getBookingId(tc);
-        if (bid) bookingIds.add(bid);
+        if (bid && !bookingValues.has(bid)) bookingValues.set(bid, getBookingValue(tc, priceMap));
         if (tc.name === "enviar_link_agendamento") linksSent++;
       });
     });
-    const bookings = bookingIds.size;
+    const bookings = bookingValues.size;
+    let revenue = 0;
+    bookingValues.forEach((v) => (revenue += v));
 
     const fuSent = followUps?.filter((f) => f.status === "sent").length ?? 0;
     const fuConfirmed = followUps?.filter((f) => f.status === "confirmed").length ?? 0;
 
-    return { uniqueClients, totalMessages, bookings, linksSent, fuSent, fuConfirmed };
+    return { uniqueClients, totalMessages, bookings, revenue, linksSent, fuSent, fuConfirmed };
   }, [messages, agentLogs, followUps]);
 
   // Chart: messages per day
