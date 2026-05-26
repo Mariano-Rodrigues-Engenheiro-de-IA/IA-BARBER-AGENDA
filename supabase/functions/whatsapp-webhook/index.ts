@@ -3144,6 +3144,10 @@ async function callAIAgent(
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: string[] = [];
   let sessionBlocked = false;
+  // Tracks if a cancel/edit (reschedule flow) succeeded earlier in THIS invocation.
+  // When true, the per-service dedup guard for agendar/criar_agendamento is bypassed
+  // so the customer can be rebooked for the same service immediately after cancelling.
+  let cancelOrEditHappenedThisInvocation = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
