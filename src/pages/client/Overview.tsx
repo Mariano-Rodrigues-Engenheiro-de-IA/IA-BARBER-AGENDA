@@ -222,10 +222,11 @@ export default function ClientOverview() {
         </Select>
       </div>
 
-      {/* Top 4 cards (período) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
+      {/* Top cards (período) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard icon={DollarSign} label={`Faturamento (${days}d)`} value={fmtBRL(aiStats.revenue)} color="text-emerald-400" />
         <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
+        <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
         <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
       </div>
