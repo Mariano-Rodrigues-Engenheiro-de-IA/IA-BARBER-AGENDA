@@ -73,14 +73,17 @@ export default function TenantDashboardPage() {
 
     let bookings = 0;
     let linksSent = 0;
+    const bookingIds = new Set<string>();
     agentLogs?.forEach((log) => {
       const tools = log.tool_calls as any[];
       if (!Array.isArray(tools)) return;
       tools.forEach((tc: any) => {
-        if (["criar_agendamento", "agendar"].includes(tc.name) && !tc.blocked) bookings++;
+        const bid = getBookingId(tc);
+        if (bid) bookingIds.add(bid);
         if (tc.name === "enviar_link_agendamento") linksSent++;
       });
     });
+    const bookings = bookingIds.size;
 
     const fuSent = followUps?.filter((f) => f.status === "sent").length ?? 0;
     const fuConfirmed = followUps?.filter((f) => f.status === "confirmed").length ?? 0;
