@@ -200,6 +200,7 @@ export default function ClientOverview() {
     cliente: { label: "Cliente", color: "hsl(var(--primary))" },
     ia: { label: "IA", color: "hsl(160 70% 45%)" },
     agendamentos: { label: "Agendamentos", color: "hsl(160 70% 45%)" },
+    faturamento: { label: "Faturamento (R$)", color: "hsl(45 95% 55%)" },
     mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
     valor: { label: "Total", color: "hsl(var(--primary))" },
   };
