@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Send, CalendarCheck, Bot, UserCheck } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { getBookingId } from "@/lib/booking";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, Legend,
