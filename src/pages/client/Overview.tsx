@@ -135,23 +135,8 @@ export default function ClientOverview() {
     return { bookings: seen.size, revenue, aiMessages, uniqueClients };
   }, [agentLogs, messages, priceMap]);
 
-  // Ticket médio fixo (todo o histórico, não muda com o filtro de período)
-  const ticketMedio = useMemo(() => {
-    const logs = allTimeLogs ?? [];
-    const pm = buildServicePriceMap(logs);
-    const seen = new Map<string, number>();
-    logs.forEach((l: any) => {
-      const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
-      tools.forEach((tc: any) => {
-        const id = getBookingId(tc);
-        if (!id || seen.has(id)) return;
-        seen.set(id, getBookingValue(tc, pm));
-      });
-    });
-    let revenue = 0;
-    seen.forEach((v) => (revenue += v));
-    return seen.size > 0 ? revenue / seen.size : 0;
-  }, [allTimeLogs]);
+
+
 
   // Activity chart
   const activityData = useMemo(() => {
