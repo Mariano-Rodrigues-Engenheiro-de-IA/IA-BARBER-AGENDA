@@ -69,6 +69,28 @@ export default function TenantDashboardPage() {
     enabled: !!id,
   });
 
+  // All-time logs para ticket médio fixo
+  const { data: allTimeLogs } = useQuery({
+    queryKey: ["tenant-dashboard-logs-alltime", id],
+    enabled: !!id,
+    queryFn: async () => {
+      const all: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase.from("agent_logs")
+          .select("tool_calls")
+          .eq("tenant_id", id!)
+          .range(from, from + pageSize - 1);
+        if (error) break;
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
+    },
+  });
+
   const isLoading = loadingTenant || loadingMsgs || loadingLogs || loadingFU;
 
   const stats = useMemo(() => {
