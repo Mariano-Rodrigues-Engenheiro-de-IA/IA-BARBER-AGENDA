@@ -6,7 +6,7 @@ import { useTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban, DollarSign } from "lucide-react";
+import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban, DollarSign, Receipt } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
@@ -124,6 +124,7 @@ export default function TenantDashboardPage() {
   const statCards = [
     { label: "Faturamento", value: fmtBRL(stats.revenue), icon: DollarSign, color: "text-emerald-400" },
     { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
+    { label: "Ticket Médio", value: stats.bookings > 0 ? fmtBRL(stats.revenue / stats.bookings) : fmtBRL(0), icon: Receipt, color: "text-emerald-400" },
     { label: "Clientes Atendidos", value: stats.uniqueClients, icon: Users, color: "text-primary" },
     { label: "Mensagens Trocadas", value: stats.totalMessages, icon: MessageSquare, color: "text-accent" },
     { label: "Links Enviados", value: stats.linksSent, icon: Link2, color: "text-yellow-500" },
