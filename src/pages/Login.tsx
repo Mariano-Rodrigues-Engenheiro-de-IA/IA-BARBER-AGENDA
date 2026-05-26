@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,23 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import logoZaylo from "@/assets/logo-zaylo.png";
 
+function useForceDarkOnLogin() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const hadLight = root.classList.contains("light");
+    root.classList.remove("light");
+    root.classList.add("dark");
+    return () => {
+      if (hadLight) {
+        root.classList.remove("dark");
+        root.classList.add("light");
+      }
+    };
+  }, []);
+}
+
 export default function LoginPage() {
+  useForceDarkOnLogin();
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
