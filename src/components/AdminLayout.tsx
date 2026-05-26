@@ -37,9 +37,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <>
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
-          <img src={logoZaylo} alt="Zaylo IA" className="w-12 h-12 rounded-xl object-contain" />
+          <img src={logoZaylo} alt="IA Barber Pro" className="w-12 h-12 rounded-xl object-contain" />
           <div>
-            <h1 className="font-bold text-foreground text-lg leading-tight">Zaylo IA</h1>
+            <h1 className="font-bold text-foreground text-lg leading-tight">IA Barber Pro</h1>
             <p className="text-xs text-muted-foreground">Painel Admin</p>
           </div>
         </div>
