@@ -122,9 +122,10 @@ export default function TenantDashboardPage() {
   };
 
   const statCards = [
+    { label: "Faturamento", value: fmtBRL(stats.revenue), icon: DollarSign, color: "text-emerald-400" },
+    { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
     { label: "Clientes Atendidos", value: stats.uniqueClients, icon: Users, color: "text-primary" },
     { label: "Mensagens Trocadas", value: stats.totalMessages, icon: MessageSquare, color: "text-accent" },
-    { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
     { label: "Links Enviados", value: stats.linksSent, icon: Link2, color: "text-yellow-500" },
     { label: "Follow-ups Enviados", value: stats.fuSent, icon: Send, color: "text-primary" },
     { label: "Follow-ups Confirmados", value: stats.fuConfirmed, icon: CheckCircle2, color: "text-accent" },
