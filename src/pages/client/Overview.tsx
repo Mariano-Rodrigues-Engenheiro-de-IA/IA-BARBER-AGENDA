@@ -5,7 +5,10 @@ import { useMemo, useState } from "react";
 import { Send, CalendarCheck, Bot, UserCheck, DollarSign } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { getBookingId } from "@/lib/booking";
+import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+
+const fmtBRL = (n: number) =>
+  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, Legend,
