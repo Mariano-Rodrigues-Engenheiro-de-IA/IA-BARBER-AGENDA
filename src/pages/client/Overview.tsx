@@ -113,20 +113,26 @@ export default function ClientOverview() {
   // Identifica agendamento real (dedupe por id) — usa helper compartilhado
   const isSuccessfulBooking = getBookingId;
 
-  // Tangible AI cards
+  // Mapa { servicoId → preço } a partir das chamadas listar/buscar serviços no período
+  const priceMap = useMemo(() => buildServicePriceMap(agentLogs ?? []), [agentLogs]);
+
+  // Cards
   const aiStats = useMemo(() => {
-    const bookingIds = new Set<string>();
+    const seen = new Map<string, number>(); // bookingId → valor
     (agentLogs ?? []).forEach((l: any) => {
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
         const id = isSuccessfulBooking(tc);
-        if (id) bookingIds.add(id);
+        if (!id || seen.has(id)) return;
+        seen.set(id, getBookingValue(tc, priceMap));
       });
     });
+    let revenue = 0;
+    seen.forEach((v) => (revenue += v));
     const aiMessages = (messages ?? []).filter((m: any) => m.role === "assistant").length;
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
-    return { bookings: bookingIds.size, aiMessages, uniqueClients };
-  }, [agentLogs, messages]);
+    return { bookings: seen.size, revenue, aiMessages, uniqueClients };
+  }, [agentLogs, messages, priceMap]);
 
   // Activity chart
   const activityData = useMemo(() => {
