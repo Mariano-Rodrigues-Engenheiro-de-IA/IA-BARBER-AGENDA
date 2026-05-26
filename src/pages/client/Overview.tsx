@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { Send, CalendarCheck, Bot, UserCheck } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import { getBookingId } from "@/lib/booking";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, Legend,
@@ -106,18 +107,8 @@ export default function ClientOverview() {
     },
   });
 
-  // Helper: is this tool_call a successful appointment creation?
-  const isSuccessfulBooking = (tc: any): string | null => {
-    if (!tc || tc.blocked) return null;
-    if (!["criar_agendamento", "agendar"].includes(tc.name)) return null;
-    const r = tc.result;
-    if (!r || typeof r !== "object") return null;
-    if (Array.isArray(r.Errors) && r.Errors.length > 0) return null;
-    if (r.deduplicated) return null;
-    if (r.error) return null;
-    const id = r.id ?? r.agendamento_id ?? r.appointment_id;
-    return id != null ? String(id) : null;
-  };
+  // Identifica agendamento real (dedupe por id) — usa helper compartilhado
+  const isSuccessfulBooking = getBookingId;
 
   // Tangible AI cards
   const aiStats = useMemo(() => {

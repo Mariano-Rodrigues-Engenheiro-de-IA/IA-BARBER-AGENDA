@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { getBookingId } from "@/lib/booking";
 
 export default function TenantDashboardPage() {
   const { id } = useParams();
@@ -71,16 +72,18 @@ export default function TenantDashboardPage() {
     const uniqueClients = new Set(messages?.filter((m) => m.role === "user").map((m) => m.phone_number)).size;
     const totalMessages = messages?.length ?? 0;
 
-    let bookings = 0;
     let linksSent = 0;
+    const bookingIds = new Set<string>();
     agentLogs?.forEach((log) => {
       const tools = log.tool_calls as any[];
       if (!Array.isArray(tools)) return;
       tools.forEach((tc: any) => {
-        if (["criar_agendamento", "agendar"].includes(tc.name) && !tc.blocked) bookings++;
+        const bid = getBookingId(tc);
+        if (bid) bookingIds.add(bid);
         if (tc.name === "enviar_link_agendamento") linksSent++;
       });
     });
+    const bookings = bookingIds.size;
 
     const fuSent = followUps?.filter((f) => f.status === "sent").length ?? 0;
     const fuConfirmed = followUps?.filter((f) => f.status === "confirmed").length ?? 0;
