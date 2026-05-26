@@ -3144,6 +3144,10 @@ async function callAIAgent(
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: string[] = [];
   let sessionBlocked = false;
+  // Tracks if a cancel/edit (reschedule flow) succeeded earlier in THIS invocation.
+  // When true, the per-service dedup guard for agendar/criar_agendamento is bypassed
+  // so the customer can be rebooked for the same service immediately after cancelling.
+  let cancelOrEditHappenedThisInvocation = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -3644,7 +3648,20 @@ async function callAIAgent(
         isSchedulingTool &&
         attemptedServiceIds.length > 0 &&
         attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
-      if (isSchedulingTool && alreadyScheduledSameService) {
+      // Allow re-booking the same service when a cancel/edit just happened in this
+      // invocation (genuine remarcação flow). Without this bypass the dedup guard
+      // would block the "agendar" right after a successful cancelar_agendamento.
+      if (isSchedulingTool && alreadyScheduledSameService && cancelOrEditHappenedThisInvocation) {
+        console.log(`${toolCall.function.name}: dedup BYPASSED (cancel/edit happened earlier in this invocation — remarcação)`);
+        sessionState.scheduledServiceIds = sessionState.scheduledServiceIds.filter(
+          (id) => !attemptedServiceIds.includes(id),
+        );
+      }
+      const stillBlockedByDedup =
+        isSchedulingTool &&
+        attemptedServiceIds.length > 0 &&
+        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
+      if (isSchedulingTool && stillBlockedByDedup) {
         console.log(`${toolCall.function.name} BLOCKED: service(s) [${attemptedServiceIds.join(",")}] already scheduled in this session`);
         toolResult = {
           message: "Esse(s) serviço(s) já foi(ram) agendado(s) nesta interação. Para agendar um serviço diferente, basta passar outro servicoId. Não repita o mesmo serviço.",
@@ -3997,9 +4014,12 @@ async function callAIAgent(
           "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
         ].includes(toolCall.function.name);
         const cancelOrEditSucceeded = isCancelOrEditTool && !toolResult?.error && !toolResult?.blocked;
-        if (cancelOrEditSucceeded && sessionState.scheduledServiceIds.length > 0) {
-          console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
-          sessionState.scheduledServiceIds = [];
+        if (cancelOrEditSucceeded) {
+          cancelOrEditHappenedThisInvocation = true;
+          if (sessionState.scheduledServiceIds.length > 0) {
+            console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
+            sessionState.scheduledServiceIds = [];
+          }
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
