@@ -94,6 +94,29 @@ export default function ClientOverview() {
     },
   });
 
+  // All-time agent logs — usado para calcular ticket médio fixo (não muda com o filtro)
+  const { data: allTimeLogs } = useQuery({
+    queryKey: ["client-ov-logs-alltime", tenantId],
+    enabled: !!tenantId,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const all: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase.from("agent_logs")
+          .select("tool_calls")
+          .eq("tenant_id", tenantId!)
+          .range(from, from + pageSize - 1);
+        if (error) break;
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return all;
+    },
+  });
+
   // Follow-ups effectively sent (sent_at present) — includes converted ones too
   const { data: followUpsSent } = useQuery({
     queryKey: ["client-ov-fu-sent", tenantId, period],
