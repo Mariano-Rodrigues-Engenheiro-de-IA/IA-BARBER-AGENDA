@@ -47,11 +47,11 @@ export default function LoginPage() {
         <div className="glass-card p-8 space-y-6">
           <div className="text-center space-y-2">
             <div className="flex justify-center">
-              <img src={logoZaylo} alt="Zaylo IA" className="w-20 h-20 rounded-2xl object-contain" />
+            <img src={logoZaylo} alt="IA Barber Pro" className="w-20 h-20 rounded-2xl object-contain" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">Zaylo IA</h1>
+            <h1 className="text-2xl font-bold text-foreground">IA Barber Pro</h1>
             <p className="text-sm text-muted-foreground">
-              Painel de administração do ecossistema
+              Painel de controle da sua IA
             </p>
           </div>
 
