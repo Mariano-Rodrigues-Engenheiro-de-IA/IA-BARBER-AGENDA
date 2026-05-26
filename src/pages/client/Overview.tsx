@@ -2,7 +2,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send, CalendarCheck, Bot, UserCheck } from "lucide-react";
+import { Send, CalendarCheck, Bot, UserCheck, DollarSign } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { getBookingId } from "@/lib/booking";
