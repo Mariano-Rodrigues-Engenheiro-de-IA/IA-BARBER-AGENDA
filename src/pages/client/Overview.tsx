@@ -151,10 +151,10 @@ export default function ClientOverview() {
   }, [messages, days]);
 
   const toolDaily = useMemo(() => {
-    const map: Record<string, { date: string; agendamentos: number; ids: Set<string> }> = {};
+    const map: Record<string, { date: string; agendamentos: number; faturamento: number; ids: Set<string> }> = {};
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      map[d] = { date: d.slice(5), agendamentos: 0, ids: new Set() };
+      map[d] = { date: d.slice(5), agendamentos: 0, faturamento: 0, ids: new Set() };
     }
     (agentLogs ?? []).forEach((l: any) => {
       const k = l.created_at.slice(0, 10);
@@ -165,11 +165,12 @@ export default function ClientOverview() {
         if (id && !map[k].ids.has(id)) {
           map[k].ids.add(id);
           map[k].agendamentos++;
+          map[k].faturamento += getBookingValue(tc, priceMap);
         }
       });
     });
-    return Object.values(map).map(({ date, agendamentos }) => ({ date, agendamentos }));
-  }, [agentLogs, days]);
+    return Object.values(map).map(({ date, agendamentos, faturamento }) => ({ date, agendamentos, faturamento: Math.round(faturamento) }));
+  }, [agentLogs, days, priceMap]);
 
   const topClients = useMemo(() => {
     const counts: Record<string, number> = {};
