@@ -3648,7 +3648,20 @@ async function callAIAgent(
         isSchedulingTool &&
         attemptedServiceIds.length > 0 &&
         attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
-      if (isSchedulingTool && alreadyScheduledSameService) {
+      // Allow re-booking the same service when a cancel/edit just happened in this
+      // invocation (genuine remarcação flow). Without this bypass the dedup guard
+      // would block the "agendar" right after a successful cancelar_agendamento.
+      if (isSchedulingTool && alreadyScheduledSameService && cancelOrEditHappenedThisInvocation) {
+        console.log(`${toolCall.function.name}: dedup BYPASSED (cancel/edit happened earlier in this invocation — remarcação)`);
+        sessionState.scheduledServiceIds = sessionState.scheduledServiceIds.filter(
+          (id) => !attemptedServiceIds.includes(id),
+        );
+      }
+      const stillBlockedByDedup =
+        isSchedulingTool &&
+        attemptedServiceIds.length > 0 &&
+        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
+      if (isSchedulingTool && stillBlockedByDedup) {
         console.log(`${toolCall.function.name} BLOCKED: service(s) [${attemptedServiceIds.join(",")}] already scheduled in this session`);
         toolResult = {
           message: "Esse(s) serviço(s) já foi(ram) agendado(s) nesta interação. Para agendar um serviço diferente, basta passar outro servicoId. Não repita o mesmo serviço.",
