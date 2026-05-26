@@ -6,10 +6,13 @@ import { useTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban } from "lucide-react";
+import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban, DollarSign } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import { getBookingId } from "@/lib/booking";
+import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+
+const fmtBRL = (n: number) =>
+  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 export default function TenantDashboardPage() {
   const { id } = useParams();
@@ -72,23 +75,26 @@ export default function TenantDashboardPage() {
     const uniqueClients = new Set(messages?.filter((m) => m.role === "user").map((m) => m.phone_number)).size;
     const totalMessages = messages?.length ?? 0;
 
+    const priceMap = buildServicePriceMap(agentLogs ?? []);
     let linksSent = 0;
-    const bookingIds = new Set<string>();
+    const bookingValues = new Map<string, number>();
     agentLogs?.forEach((log) => {
       const tools = log.tool_calls as any[];
       if (!Array.isArray(tools)) return;
       tools.forEach((tc: any) => {
         const bid = getBookingId(tc);
-        if (bid) bookingIds.add(bid);
+        if (bid && !bookingValues.has(bid)) bookingValues.set(bid, getBookingValue(tc, priceMap));
         if (tc.name === "enviar_link_agendamento") linksSent++;
       });
     });
-    const bookings = bookingIds.size;
+    const bookings = bookingValues.size;
+    let revenue = 0;
+    bookingValues.forEach((v) => (revenue += v));
 
     const fuSent = followUps?.filter((f) => f.status === "sent").length ?? 0;
     const fuConfirmed = followUps?.filter((f) => f.status === "confirmed").length ?? 0;
 
-    return { uniqueClients, totalMessages, bookings, linksSent, fuSent, fuConfirmed };
+    return { uniqueClients, totalMessages, bookings, revenue, linksSent, fuSent, fuConfirmed };
   }, [messages, agentLogs, followUps]);
 
   // Chart: messages per day
@@ -116,9 +122,10 @@ export default function TenantDashboardPage() {
   };
 
   const statCards = [
+    { label: "Faturamento", value: fmtBRL(stats.revenue), icon: DollarSign, color: "text-emerald-400" },
+    { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
     { label: "Clientes Atendidos", value: stats.uniqueClients, icon: Users, color: "text-primary" },
     { label: "Mensagens Trocadas", value: stats.totalMessages, icon: MessageSquare, color: "text-accent" },
-    { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
     { label: "Links Enviados", value: stats.linksSent, icon: Link2, color: "text-yellow-500" },
     { label: "Follow-ups Enviados", value: stats.fuSent, icon: Send, color: "text-primary" },
     { label: "Follow-ups Confirmados", value: stats.fuConfirmed, icon: CheckCircle2, color: "text-accent" },

@@ -2,10 +2,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send, CalendarCheck, Bot, UserCheck } from "lucide-react";
+import { Send, CalendarCheck, Bot, UserCheck, DollarSign } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { getBookingId } from "@/lib/booking";
+import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+
+const fmtBRL = (n: number) =>
+  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   PieChart, Pie, Cell, Legend,
@@ -110,20 +113,26 @@ export default function ClientOverview() {
   // Identifica agendamento real (dedupe por id) — usa helper compartilhado
   const isSuccessfulBooking = getBookingId;
 
-  // Tangible AI cards
+  // Mapa { servicoId → preço } a partir das chamadas listar/buscar serviços no período
+  const priceMap = useMemo(() => buildServicePriceMap(agentLogs ?? []), [agentLogs]);
+
+  // Cards
   const aiStats = useMemo(() => {
-    const bookingIds = new Set<string>();
+    const seen = new Map<string, number>(); // bookingId → valor
     (agentLogs ?? []).forEach((l: any) => {
       const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
       tools.forEach((tc: any) => {
         const id = isSuccessfulBooking(tc);
-        if (id) bookingIds.add(id);
+        if (!id || seen.has(id)) return;
+        seen.set(id, getBookingValue(tc, priceMap));
       });
     });
+    let revenue = 0;
+    seen.forEach((v) => (revenue += v));
     const aiMessages = (messages ?? []).filter((m: any) => m.role === "assistant").length;
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
-    return { bookings: bookingIds.size, aiMessages, uniqueClients };
-  }, [agentLogs, messages]);
+    return { bookings: seen.size, revenue, aiMessages, uniqueClients };
+  }, [agentLogs, messages, priceMap]);
 
   // Activity chart
   const activityData = useMemo(() => {
@@ -142,10 +151,10 @@ export default function ClientOverview() {
   }, [messages, days]);
 
   const toolDaily = useMemo(() => {
-    const map: Record<string, { date: string; agendamentos: number; ids: Set<string> }> = {};
+    const map: Record<string, { date: string; agendamentos: number; faturamento: number; ids: Set<string> }> = {};
     for (let i = days - 1; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
-      map[d] = { date: d.slice(5), agendamentos: 0, ids: new Set() };
+      map[d] = { date: d.slice(5), agendamentos: 0, faturamento: 0, ids: new Set() };
     }
     (agentLogs ?? []).forEach((l: any) => {
       const k = l.created_at.slice(0, 10);
@@ -156,11 +165,12 @@ export default function ClientOverview() {
         if (id && !map[k].ids.has(id)) {
           map[k].ids.add(id);
           map[k].agendamentos++;
+          map[k].faturamento += getBookingValue(tc, priceMap);
         }
       });
     });
-    return Object.values(map).map(({ date, agendamentos }) => ({ date, agendamentos }));
-  }, [agentLogs, days]);
+    return Object.values(map).map(({ date, agendamentos, faturamento }) => ({ date, agendamentos, faturamento: Math.round(faturamento) }));
+  }, [agentLogs, days, priceMap]);
 
   const topClients = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -190,6 +200,7 @@ export default function ClientOverview() {
     cliente: { label: "Cliente", color: "hsl(var(--primary))" },
     ia: { label: "IA", color: "hsl(160 70% 45%)" },
     agendamentos: { label: "Agendamentos", color: "hsl(160 70% 45%)" },
+    faturamento: { label: "Faturamento (R$)", color: "hsl(45 95% 55%)" },
     mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
     valor: { label: "Total", color: "hsl(var(--primary))" },
   };
@@ -211,10 +222,11 @@ export default function ClientOverview() {
         </Select>
       </div>
 
-      {/* Top 4 cards (período) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
+      {/* Top cards (período) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard icon={DollarSign} label={`Faturamento (${days}d)`} value={fmtBRL(aiStats.revenue)} color="text-emerald-400" />
         <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
+        <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
         <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
       </div>
@@ -244,6 +256,22 @@ export default function ClientOverview() {
               <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
               <ChartTooltip content={<ChartTooltipContent />} />
               <Bar dataKey="agendamentos" fill="hsl(160 70% 45%)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        </div>
+
+        <div className="glass-card p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-foreground">Faturamento por dia</h3>
+            <span className="text-xs text-muted-foreground">Total: {fmtBRL(aiStats.revenue)}</span>
+          </div>
+          <ChartContainer config={chartConfig} className="h-[260px] w-full">
+            <BarChart data={toolDaily}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <XAxis dataKey="date" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} tickFormatter={(v) => `R$${v}`} />
+              <ChartTooltip content={<ChartTooltipContent formatter={(v: any) => fmtBRL(Number(v))} />} />
+              <Bar dataKey="faturamento" fill="hsl(45 95% 55%)" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartContainer>
         </div>
