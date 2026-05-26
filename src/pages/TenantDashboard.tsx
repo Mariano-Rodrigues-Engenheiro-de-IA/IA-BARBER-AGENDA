@@ -6,10 +6,13 @@ import { useTenant } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban } from "lucide-react";
+import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban, DollarSign } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
-import { getBookingId } from "@/lib/booking";
+import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+
+const fmtBRL = (n: number) =>
+  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 export default function TenantDashboardPage() {
   const { id } = useParams();
