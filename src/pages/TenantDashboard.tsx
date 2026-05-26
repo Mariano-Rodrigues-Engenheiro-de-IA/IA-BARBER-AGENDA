@@ -72,7 +72,6 @@ export default function TenantDashboardPage() {
     const uniqueClients = new Set(messages?.filter((m) => m.role === "user").map((m) => m.phone_number)).size;
     const totalMessages = messages?.length ?? 0;
 
-    let bookings = 0;
     let linksSent = 0;
     const bookingIds = new Set<string>();
     agentLogs?.forEach((log) => {
