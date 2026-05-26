@@ -69,27 +69,6 @@ export default function TenantDashboardPage() {
     enabled: !!id,
   });
 
-  // All-time logs para ticket médio fixo
-  const { data: allTimeLogs } = useQuery({
-    queryKey: ["tenant-dashboard-logs-alltime", id],
-    enabled: !!id,
-    queryFn: async () => {
-      const all: any[] = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase.from("agent_logs")
-          .select("tool_calls")
-          .eq("tenant_id", id!)
-          .range(from, from + pageSize - 1);
-        if (error) break;
-        all.push(...(data ?? []));
-        if (!data || data.length < pageSize) break;
-        from += pageSize;
-      }
-      return all;
-    },
-  });
 
   const isLoading = loadingTenant || loadingMsgs || loadingLogs || loadingFU;
 
@@ -139,24 +118,6 @@ export default function TenantDashboardPage() {
     }));
   }, [messages, days]);
 
-  // Ticket médio fixo — todo o histórico, não depende do filtro de período
-  const ticketMedio = useMemo(() => {
-    const logs = allTimeLogs ?? [];
-    const pm = buildServicePriceMap(logs);
-    const seen = new Map<string, number>();
-    logs.forEach((l: any) => {
-      const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
-      tools.forEach((tc: any) => {
-        const id = getBookingId(tc);
-        if (!id || seen.has(id)) return;
-        seen.set(id, getBookingValue(tc, pm));
-      });
-    });
-    let revenue = 0;
-    seen.forEach((v) => (revenue += v));
-    return seen.size > 0 ? revenue / seen.size : 0;
-  }, [allTimeLogs]);
-
   const chartConfig: ChartConfig = {
     mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
   };
@@ -164,7 +125,7 @@ export default function TenantDashboardPage() {
   const statCards = [
     { label: "Faturamento", value: fmtBRL(stats.revenue), icon: DollarSign, color: "text-emerald-400" },
     { label: "Agendamentos", value: stats.bookings, icon: CalendarCheck, color: "text-emerald-400" },
-    { label: "Ticket Médio", value: fmtBRL(ticketMedio), icon: Receipt, color: "text-emerald-400" },
+    { label: "Ticket Médio", value: stats.bookings > 0 ? fmtBRL(stats.revenue / stats.bookings) : fmtBRL(0), icon: Receipt, color: "text-emerald-400" },
     { label: "Clientes Atendidos", value: stats.uniqueClients, icon: Users, color: "text-primary" },
     { label: "Mensagens Trocadas", value: stats.totalMessages, icon: MessageSquare, color: "text-accent" },
     { label: "Links Enviados", value: stats.linksSent, icon: Link2, color: "text-yellow-500" },

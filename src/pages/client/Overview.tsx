@@ -94,28 +94,6 @@ export default function ClientOverview() {
     },
   });
 
-  // All-time agent logs — usado para calcular ticket médio fixo (não muda com o filtro)
-  const { data: allTimeLogs } = useQuery({
-    queryKey: ["client-ov-logs-alltime", tenantId],
-    enabled: !!tenantId,
-    refetchInterval: 60000,
-    queryFn: async () => {
-      const all: any[] = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase.from("agent_logs")
-          .select("tool_calls")
-          .eq("tenant_id", tenantId!)
-          .range(from, from + pageSize - 1);
-        if (error) break;
-        all.push(...(data ?? []));
-        if (!data || data.length < pageSize) break;
-        from += pageSize;
-      }
-      return all;
-    },
-  });
 
   // Follow-ups effectively sent (sent_at present) — includes converted ones too
   const { data: followUpsSent } = useQuery({
@@ -157,23 +135,8 @@ export default function ClientOverview() {
     return { bookings: seen.size, revenue, aiMessages, uniqueClients };
   }, [agentLogs, messages, priceMap]);
 
-  // Ticket médio fixo (todo o histórico, não muda com o filtro de período)
-  const ticketMedio = useMemo(() => {
-    const logs = allTimeLogs ?? [];
-    const pm = buildServicePriceMap(logs);
-    const seen = new Map<string, number>();
-    logs.forEach((l: any) => {
-      const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
-      tools.forEach((tc: any) => {
-        const id = getBookingId(tc);
-        if (!id || seen.has(id)) return;
-        seen.set(id, getBookingValue(tc, pm));
-      });
-    });
-    let revenue = 0;
-    seen.forEach((v) => (revenue += v));
-    return seen.size > 0 ? revenue / seen.size : 0;
-  }, [allTimeLogs]);
+
+
 
   // Activity chart
   const activityData = useMemo(() => {
@@ -267,7 +230,7 @@ export default function ClientOverview() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard icon={DollarSign} label={`Faturamento (${days}d)`} value={fmtBRL(aiStats.revenue)} color="text-emerald-400" />
         <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
-        <StatCard icon={Receipt} label="Ticket médio" value={fmtBRL(ticketMedio)} color="text-emerald-400" />
+        <StatCard icon={Receipt} label={`Ticket médio (${days}d)`} value={aiStats.bookings > 0 ? fmtBRL(aiStats.revenue / aiStats.bookings) : fmtBRL(0)} color="text-emerald-400" />
         <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
         <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
