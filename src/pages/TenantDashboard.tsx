@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Users, MessageSquare, CalendarCheck, Link2, Send, CheckCircle2, Kanban } from "lucide-react";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { getBookingId } from "@/lib/booking";
 
 export default function TenantDashboardPage() {
   const { id } = useParams();
