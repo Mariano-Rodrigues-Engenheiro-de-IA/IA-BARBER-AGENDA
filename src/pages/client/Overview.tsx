@@ -2,7 +2,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send, CalendarCheck, Bot, UserCheck, DollarSign } from "lucide-react";
+import { Send, CalendarCheck, Bot, UserCheck, DollarSign, Receipt } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
 import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
@@ -223,9 +223,10 @@ export default function ClientOverview() {
       </div>
 
       {/* Top cards (período) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard icon={DollarSign} label={`Faturamento (${days}d)`} value={fmtBRL(aiStats.revenue)} color="text-emerald-400" />
         <StatCard icon={CalendarCheck} label={`Agendamentos (${days}d)`} value={aiStats.bookings} color="text-accent" />
+        <StatCard icon={Receipt} label={`Ticket médio (${days}d)`} value={aiStats.bookings > 0 ? fmtBRL(aiStats.revenue / aiStats.bookings) : fmtBRL(0)} color="text-emerald-400" />
         <StatCard icon={Send} label={`Follow-ups enviados (${days}d)`} value={followUpsSent ?? "—"} />
         <StatCard icon={Bot} label={`Respostas da IA (${days}d)`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${days}d)`} value={aiStats.uniqueClients} color="text-warning" />
