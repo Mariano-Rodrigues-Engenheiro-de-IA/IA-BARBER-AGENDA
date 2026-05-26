@@ -261,6 +261,22 @@ export default function ClientOverview() {
         </div>
 
         <div className="glass-card p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-foreground">Faturamento por dia</h3>
+            <span className="text-xs text-muted-foreground">Total: {fmtBRL(aiStats.revenue)}</span>
+          </div>
+          <ChartContainer config={chartConfig} className="h-[260px] w-full">
+            <BarChart data={toolDaily}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <XAxis dataKey="date" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} tickFormatter={(v) => `R$${v}`} />
+              <ChartTooltip content={<ChartTooltipContent formatter={(v: any) => fmtBRL(Number(v))} />} />
+              <Bar dataKey="faturamento" fill="hsl(45 95% 55%)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
+        </div>
+
+        <div className="glass-card p-5 space-y-3">
           <h3 className="font-semibold text-foreground">Top 5 clientes mais ativos</h3>
           {topClients.length === 0 ? (
             <div className="h-[260px] flex items-center justify-center text-muted-foreground text-sm">Sem dados</div>
