@@ -4014,9 +4014,12 @@ async function callAIAgent(
           "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
         ].includes(toolCall.function.name);
         const cancelOrEditSucceeded = isCancelOrEditTool && !toolResult?.error && !toolResult?.blocked;
-        if (cancelOrEditSucceeded && sessionState.scheduledServiceIds.length > 0) {
-          console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
-          sessionState.scheduledServiceIds = [];
+        if (cancelOrEditSucceeded) {
+          cancelOrEditHappenedThisInvocation = true;
+          if (sessionState.scheduledServiceIds.length > 0) {
+            console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
+            sessionState.scheduledServiceIds = [];
+          }
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
