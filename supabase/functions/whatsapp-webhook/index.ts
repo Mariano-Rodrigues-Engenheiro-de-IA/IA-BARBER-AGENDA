@@ -1,5 +1,60 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio transcription via Lovable AI Gateway (Gemini Flash)
+// Returns the transcribed text, or null on any failure.
+// ─────────────────────────────────────────────────────────────────────────────
+async function transcribeAudioViaGemini(
+  base64: string,
+  mimeType: string,
+): Promise<string | null> {
+  try {
+    const apiKey = Deno.env.get("LOVABLE_API_KEY");
+    if (!apiKey) {
+      console.warn("[Transcribe] LOVABLE_API_KEY ausente — pulando transcrição");
+      return null;
+    }
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é um transcritor de áudios em português do Brasil. Transcreva EXATAMENTE o que foi dito, sem comentários, sem aspas, sem prefixos. Se não houver fala inteligível, responda apenas com a string vazia.",
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Transcreva este áudio:" },
+              {
+                type: "image_url",
+                image_url: { url: `data:${mimeType};base64,${base64}` },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[Transcribe] HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content ?? "").trim();
+    if (!text) return null;
+    return text;
+  } catch (e) {
+    console.warn("[Transcribe] erro:", e);
+    return null;
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
@@ -1393,11 +1448,22 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Transcribe audio (best-effort) so the conversation panel shows the spoken text.
+      let audioTranscript: string | null = null;
+      if (isAudioMessage && mediaBase64 && mediaMimeType?.startsWith("audio/")) {
+        audioTranscript = await transcribeAudioViaGemini(mediaBase64, mediaMimeType);
+        if (audioTranscript) {
+          console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
+        }
+      }
+
       // Build text content for storage
-      const storedContent = isAudioMessage 
-        ? (messageContent || "[Áudio recebido]") 
-        : isImageMessage 
-          ? (messageContent || "[Imagem recebida]") 
+      const storedContent = isAudioMessage
+        ? (audioTranscript
+            ? `🎙️ ${audioTranscript}`
+            : (messageContent || "[Áudio recebido]"))
+        : isImageMessage
+          ? (messageContent || "[Imagem recebida]")
           : messageContent;
 
       // Save message as unprocessed for debounce queue
@@ -1409,6 +1475,31 @@ Deno.serve(async (req) => {
         message_id: messageId,
         processed: false,
       });
+
+      // ===== Per-conversation pause: save the message but skip the AI =====
+      try {
+        const { data: pauseRow } = await supabase
+          .from("conversation_pauses")
+          .select("paused")
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber)
+          .maybeSingle();
+        if (pauseRow?.paused) {
+          console.log(`[ConvPaused] IA pausada para ${phoneNumber} nesta conversa — mensagem salva, sem resposta.`);
+          // Mark as processed so it doesn't get picked up later if the conv is unpaused.
+          await supabase
+            .from("chat_messages")
+            .update({ processed: true })
+            .eq("tenant_id", tenant.id)
+            .eq("phone_number", phoneNumber)
+            .eq("processed", false);
+          return new Response(JSON.stringify({ status: "conversation_paused" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        console.warn("[ConvPaused] erro ao consultar pausa por conversa:", e);
+      }
 
       // ===== DEBOUNCE: Wait for more messages, then claim atomically =====
       const tenantSettings = tenant.agent_settings && typeof tenant.agent_settings === "object" ? tenant.agent_settings as Record<string, any> : {};

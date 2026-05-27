@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, MessageCircle, Trash2, Loader2 } from "lucide-react";
+import { Search, MessageCircle, Trash2, Loader2, Bot, BotOff } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -165,9 +165,18 @@ export default function ClientConversations() {
     refetchInterval: 10000,
   });
 
+  // WhatsApp group IDs come with non-digit chars (@g.us) or length >= 14.
+  // The AI doesn't reply to groups, so hide them from the panel.
+  const isGroupPhone = (phone: string) => {
+    if (!phone) return true;
+    if (/[^0-9]/.test(phone)) return true;
+    return phone.length >= 14;
+  };
+
   const contacts = useMemo(() => {
     const m = new Map<string, { phone: string; last: string; preview: string; lastRole: string }>();
     (contactsRaw ?? []).forEach((x: any) => {
+      if (isGroupPhone(x.phone_number)) return;
       if (!m.has(x.phone_number)) {
         m.set(x.phone_number, {
           phone: x.phone_number,
@@ -182,6 +191,43 @@ export default function ClientConversations() {
     const s = search.toLowerCase();
     return list.filter((c) => c.phone.toLowerCase().includes(s) || c.preview.toLowerCase().includes(s));
   }, [contactsRaw, search]);
+
+  // Per-conversation pause state
+  const { data: pausesRaw } = useQuery({
+    queryKey: ["client-conv-pauses", tenantId],
+    enabled: !!tenantId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("conversation_pauses")
+        .select("phone_number,paused")
+        .eq("tenant_id", tenantId!);
+      return data ?? [];
+    },
+    refetchInterval: 20000,
+  });
+  const pausedSet = useMemo(() => {
+    const s = new Set<string>();
+    (pausesRaw ?? []).forEach((p: any) => { if (p.paused) s.add(p.phone_number); });
+    return s;
+  }, [pausesRaw]);
+
+  const toggleConvPause = async (phone: string) => {
+    if (!tenantId || !phone) return;
+    const isPaused = pausedSet.has(phone);
+    const next = !isPaused;
+    const { error } = await supabase
+      .from("conversation_pauses")
+      .upsert(
+        { tenant_id: tenantId, phone_number: phone, paused: next, updated_at: new Date().toISOString() },
+        { onConflict: "tenant_id,phone_number" },
+      );
+    if (error) {
+      toast({ title: "Erro ao atualizar pausa", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: next ? "IA pausada nesta conversa" : "IA reativada nesta conversa", description: phone });
+    queryClient.invalidateQueries({ queryKey: ["client-conv-pauses", tenantId] });
+  };
 
   useEffect(() => {
     const viewport = messagesViewportRef.current;
@@ -282,10 +328,30 @@ export default function ClientConversations() {
                     <span className="font-medium text-[15px] text-foreground truncate">{c.phone}</span>
                     <span className="text-[11px] text-muted-foreground shrink-0">{fmtTime(c.last)}</span>
                   </div>
-                  <div className="text-[13px] text-muted-foreground truncate">
-                    {c.preview || "—"}
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="text-[13px] text-muted-foreground truncate flex-1">
+                      {c.preview || "—"}
+                    </div>
+                    {pausedSet.has(c.phone) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                        IA pausada
+                      </span>
+                    )}
                   </div>
                 </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleConvPause(c.phone);
+                  }}
+                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-muted ${
+                    pausedSet.has(c.phone) ? "text-amber-500" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={pausedSet.has(c.phone) ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
+                  aria-label="Pausar IA"
+                >
+                  {pausedSet.has(c.phone) ? <BotOff className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -319,9 +385,29 @@ export default function ClientConversations() {
                 <ContactAvatar phone={selected} size={40} />
 
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-[15px] text-foreground truncate">{selected}</div>
+                  <div className="font-semibold text-[15px] text-foreground truncate flex items-center gap-2">
+                    {selected}
+                    {pausedSet.has(selected) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                        IA pausada
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
+                <Button
+                  variant={pausedSet.has(selected) ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => toggleConvPause(selected)}
+                  className={pausedSet.has(selected) ? "" : "text-muted-foreground"}
+                  title={pausedSet.has(selected) ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
+                >
+                  {pausedSet.has(selected) ? (
+                    <><BotOff className="w-4 h-4 mr-2" />Reativar IA</>
+                  ) : (
+                    <><Bot className="w-4 h-4 mr-2" />Pausar IA</>
+                  )}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
