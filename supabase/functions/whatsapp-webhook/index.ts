@@ -1,5 +1,60 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Audio transcription via Lovable AI Gateway (Gemini Flash)
+// Returns the transcribed text, or null on any failure.
+// ─────────────────────────────────────────────────────────────────────────────
+async function transcribeAudioViaGemini(
+  base64: string,
+  mimeType: string,
+): Promise<string | null> {
+  try {
+    const apiKey = Deno.env.get("LOVABLE_API_KEY");
+    if (!apiKey) {
+      console.warn("[Transcribe] LOVABLE_API_KEY ausente — pulando transcrição");
+      return null;
+    }
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é um transcritor de áudios em português do Brasil. Transcreva EXATAMENTE o que foi dito, sem comentários, sem aspas, sem prefixos. Se não houver fala inteligível, responda apenas com a string vazia.",
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Transcreva este áudio:" },
+              {
+                type: "image_url",
+                image_url: { url: `data:${mimeType};base64,${base64}` },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[Transcribe] HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const data = await res.json();
+    const text = String(data?.choices?.[0]?.message?.content ?? "").trim();
+    if (!text) return null;
+    return text;
+  } catch (e) {
+    console.warn("[Transcribe] erro:", e);
+    return null;
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
