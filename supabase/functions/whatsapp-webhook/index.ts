@@ -1148,6 +1148,37 @@ Deno.serve(async (req) => {
         });
       }
 
+      // 🛑 PAUSA POR CONVERSA — checa ANTES de qualquer processamento pesado.
+      // Salva a mensagem para o usuário ver no painel, mas não chama a IA.
+      try {
+        const { data: pauseRow, error: pauseErr } = await supabase
+          .from("conversation_pauses")
+          .select("paused")
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber)
+          .maybeSingle();
+        console.log(`[ConvPaused] check ${tenant.id}/${phoneNumber} -> row=${JSON.stringify(pauseRow)} err=${pauseErr?.message ?? "none"}`);
+        if (pauseRow?.paused) {
+          const _msgId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id || null;
+          await supabase.from("chat_messages").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            role: "user",
+            content: messageContent || (hasMedia ? (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]") : ""),
+            message_id: _msgId,
+            processed: true,
+          });
+          console.log(`[ConvPaused] IA pausada para ${phoneNumber} — mensagem salva, sem resposta da IA.`);
+          return new Response(JSON.stringify({ status: "conversation_paused" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      } catch (e) {
+        console.warn("[ConvPaused] erro ao consultar pausa por conversa:", e);
+      }
+
+
+
       if (messageId) {
         const { data: existing } = await supabase
           .from("chat_messages")
@@ -1476,30 +1507,9 @@ Deno.serve(async (req) => {
         processed: false,
       });
 
-      // ===== Per-conversation pause: save the message but skip the AI =====
-      try {
-        const { data: pauseRow } = await supabase
-          .from("conversation_pauses")
-          .select("paused")
-          .eq("tenant_id", tenant.id)
-          .eq("phone_number", phoneNumber)
-          .maybeSingle();
-        if (pauseRow?.paused) {
-          console.log(`[ConvPaused] IA pausada para ${phoneNumber} nesta conversa — mensagem salva, sem resposta.`);
-          // Mark as processed so it doesn't get picked up later if the conv is unpaused.
-          await supabase
-            .from("chat_messages")
-            .update({ processed: true })
-            .eq("tenant_id", tenant.id)
-            .eq("phone_number", phoneNumber)
-            .eq("processed", false);
-          return new Response(JSON.stringify({ status: "conversation_paused" }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-      } catch (e) {
-        console.warn("[ConvPaused] erro ao consultar pausa por conversa:", e);
-      }
+      // (pausa por conversa já verificada no início do handler)
+
+
 
       // ===== DEBOUNCE: Wait for more messages, then claim atomically =====
       const tenantSettings = tenant.agent_settings && typeof tenant.agent_settings === "object" ? tenant.agent_settings as Record<string, any> : {};
