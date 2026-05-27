@@ -385,9 +385,29 @@ export default function ClientConversations() {
                 <ContactAvatar phone={selected} size={40} />
 
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-[15px] text-foreground truncate">{selected}</div>
+                  <div className="font-semibold text-[15px] text-foreground truncate flex items-center gap-2">
+                    {selected}
+                    {pausedSet.has(selected) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                        IA pausada
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground">{conv?.length ?? 0} mensagens</div>
                 </div>
+                <Button
+                  variant={pausedSet.has(selected) ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => toggleConvPause(selected)}
+                  className={pausedSet.has(selected) ? "" : "text-muted-foreground"}
+                  title={pausedSet.has(selected) ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
+                >
+                  {pausedSet.has(selected) ? (
+                    <><BotOff className="w-4 h-4 mr-2" />Reativar IA</>
+                  ) : (
+                    <><Bot className="w-4 h-4 mr-2" />Pausar IA</>
+                  )}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
