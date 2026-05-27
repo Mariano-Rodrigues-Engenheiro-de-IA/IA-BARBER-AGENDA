@@ -165,9 +165,18 @@ export default function ClientConversations() {
     refetchInterval: 10000,
   });
 
+  // WhatsApp group IDs come with non-digit chars (@g.us) or length >= 14.
+  // The AI doesn't reply to groups, so hide them from the panel.
+  const isGroupPhone = (phone: string) => {
+    if (!phone) return true;
+    if (/[^0-9]/.test(phone)) return true;
+    return phone.length >= 14;
+  };
+
   const contacts = useMemo(() => {
     const m = new Map<string, { phone: string; last: string; preview: string; lastRole: string }>();
     (contactsRaw ?? []).forEach((x: any) => {
+      if (isGroupPhone(x.phone_number)) return;
       if (!m.has(x.phone_number)) {
         m.set(x.phone_number, {
           phone: x.phone_number,
@@ -182,6 +191,43 @@ export default function ClientConversations() {
     const s = search.toLowerCase();
     return list.filter((c) => c.phone.toLowerCase().includes(s) || c.preview.toLowerCase().includes(s));
   }, [contactsRaw, search]);
+
+  // Per-conversation pause state
+  const { data: pausesRaw } = useQuery({
+    queryKey: ["client-conv-pauses", tenantId],
+    enabled: !!tenantId,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("conversation_pauses")
+        .select("phone_number,paused")
+        .eq("tenant_id", tenantId!);
+      return data ?? [];
+    },
+    refetchInterval: 20000,
+  });
+  const pausedSet = useMemo(() => {
+    const s = new Set<string>();
+    (pausesRaw ?? []).forEach((p: any) => { if (p.paused) s.add(p.phone_number); });
+    return s;
+  }, [pausesRaw]);
+
+  const toggleConvPause = async (phone: string) => {
+    if (!tenantId || !phone) return;
+    const isPaused = pausedSet.has(phone);
+    const next = !isPaused;
+    const { error } = await supabase
+      .from("conversation_pauses")
+      .upsert(
+        { tenant_id: tenantId, phone_number: phone, paused: next, updated_at: new Date().toISOString() },
+        { onConflict: "tenant_id,phone_number" },
+      );
+    if (error) {
+      toast({ title: "Erro ao atualizar pausa", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: next ? "IA pausada nesta conversa" : "IA reativada nesta conversa", description: phone });
+    queryClient.invalidateQueries({ queryKey: ["client-conv-pauses", tenantId] });
+  };
 
   useEffect(() => {
     const viewport = messagesViewportRef.current;
