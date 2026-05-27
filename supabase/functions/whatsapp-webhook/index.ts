@@ -1576,11 +1576,53 @@ Deno.serve(async (req) => {
       let aiResponse: string;
       let agentResult: AgentResult | null = null;
 
-      if (directResponse) {
-        aiResponse = directResponse;
-      } else {
-        agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
-        aiResponse = agentResult.response;
+      try {
+        if (directResponse) {
+          aiResponse = directResponse;
+        } else {
+          agentResult = await callAIAgent(supabase, tenant, phoneNumber, history || [], combinedContent, provider, mediaBase64, mediaMimeType, senderName);
+          aiResponse = agentResult.response;
+        }
+      } catch (aiErr: any) {
+        const errMsg = aiErr?.message || String(aiErr);
+        console.error(`[AI Pipeline] Unhandled error for ${phoneNumber} (tenant ${tenant.name}):`, errMsg, aiErr?.stack);
+
+        // Release the claim so the message can be reprocessed when the next webhook arrives
+        try {
+          await supabase
+            .from("chat_messages")
+            .update({ processed: false })
+            .in("id", Array.from(claimedIds));
+          console.log(`[AI Pipeline] Released ${claimedIds.size} message(s) back to processed=false for retry`);
+        } catch (releaseErr: any) {
+          console.error("[AI Pipeline] Failed to release claim:", releaseErr?.message || releaseErr);
+        }
+
+        // Log the failure so it shows up in agent_logs / dashboards
+        try {
+          await supabase.from("agent_logs").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: combinedContent,
+            ai_response: "",
+            tool_calls: [{
+              name: "__pipeline_error__",
+              args: { phase: "callAIAgent" },
+              result: { released_for_retry: true },
+              blocked: true,
+            }],
+            errors: [`Pipeline error: ${errMsg}`],
+            model_used: "error",
+            duration_ms: Date.now() - tDebounceEnd,
+            session_blocked: false,
+          });
+        } catch (logErr: any) {
+          console.error("[AI Pipeline] Failed to log error:", logErr?.message || logErr);
+        }
+
+        return new Response(JSON.stringify({ status: "ai_error_released", error: errMsg }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
       const tAiDone = Date.now();
 
