@@ -232,14 +232,9 @@ export default function ClientAi() {
                 <Input disabled={!company.editable} value={form.address ?? ""}
                   onChange={(e) => setForm({ ...form, address: e.target.value })} />
               </div>
-              <div className="space-y-2 md:col-span-2">
-                <Label>Link de agendamento</Label>
-                <Input disabled={!company.editable} value={form.booking_link ?? ""}
-                  onChange={(e) => setForm({ ...form, booking_link: e.target.value })} />
-              </div>
               {company.editable && (
                 <Button className="md:col-span-2 w-fit"
-                  onClick={() => save({ name: form.name, phone: form.phone, address: form.address, booking_link: form.booking_link }, "edit_company_data")}>
+                  onClick={() => save({ name: form.name, phone: form.phone, address: form.address }, "edit_company_data")}>
                   <Save className="w-4 h-4 mr-2" />Salvar
                 </Button>
               )}

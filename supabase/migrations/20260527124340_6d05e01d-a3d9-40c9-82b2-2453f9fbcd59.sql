@@ -1,0 +1,1 @@
+UPDATE public.tenants SET booking_link = NULL WHERE api_provider = 'none' AND booking_link IS NOT NULL;

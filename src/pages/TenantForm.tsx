@@ -918,20 +918,10 @@ export default function TenantFormPage() {
 
 
               {provider === "none" && (
-                <div className="space-y-4 pt-4 border-t border-border">
-                  <h4 className="text-sm font-medium text-foreground">Link no Prompt da IA</h4>
-                  <div className="space-y-2">
-                    <Label htmlFor="booking_link">URL que a IA vai colar nas respostas</Label>
-                    <Input
-                      id="booking_link"
-                      value={(form as any).booking_link || ""}
-                      onChange={(e) => handleChange("booking_link" as any, e.target.value)}
-                      placeholder="https://link-de-agendamento.com"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Este link é injetado automaticamente no prompt do agente. A IA cola ele direto na mensagem quando o cliente quiser agendar (não é uma ferramenta separada).
-                    </p>
-                  </div>
+                <div className="space-y-2 pt-4 border-t border-border">
+                  <p className="text-xs text-muted-foreground">
+                    Sem integração de agendamento. Se você quiser que a IA envie um link de agendamento, coloque o link diretamente no <strong>Prompt do Sistema</strong> (aba Agente) — não há mais campo separado para isso, evitando link duplicado.
+                  </p>
                 </div>
               )}
             </div>
