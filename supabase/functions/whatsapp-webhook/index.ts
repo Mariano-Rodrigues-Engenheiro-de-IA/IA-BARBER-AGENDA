@@ -7389,15 +7389,31 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
   };
   const jsonHeaders: Record<string, string> = { ...headers, "Content-Type": "application/json" };
 
-  // wrapper que tenta a URL primária e, em caso de erro de rede/DNS, repete na URL de fallback
+  // wrapper que tenta a URL primária, faz retry com backoff em 5xx transientes (502/503/504)
+  // e, em caso de erro de rede/DNS ou 5xx persistente, repete na URL de fallback.
+  const transientStatuses = new Set([502, 503, 504]);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const frizzarFetch = async (path: string, init?: RequestInit): Promise<Response> => {
     const tryFetch = async (base: string) => {
       const url = base + path;
-      console.log(`[Frizzar] -> ${init?.method || "GET"} ${url}`);
-      return await fetch(url, init);
+      let lastRes: Response | null = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        console.log(`[Frizzar] -> ${init?.method || "GET"} ${url} (tentativa ${attempt}/3)`);
+        const res = await fetch(url, init);
+        if (!transientStatuses.has(res.status)) return res;
+        console.warn(`[Frizzar] status transitório ${res.status} em ${url} — backoff`);
+        lastRes = res;
+        if (attempt < 3) await sleep(400 * attempt); // 400ms, 800ms
+      }
+      return lastRes!;
     };
     try {
-      return await tryFetch(primaryBase);
+      const res = await tryFetch(primaryBase);
+      if (transientStatuses.has(res.status) && fallbackBase) {
+        console.warn(`[Frizzar] 5xx persistente em ${primaryBase} — tentando fallback ${fallbackBase}`);
+        return await tryFetch(fallbackBase);
+      }
+      return res;
     } catch (err) {
       const msg = (err as Error)?.message || String(err);
       const isNetwork = /dns|name not resolved|getaddrinfo|enotfound|network|fetch failed|connection|tcp/i.test(msg);
@@ -7408,6 +7424,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       throw err;
     }
   };
+
 
   console.log(`[Frizzar] base primária=${primaryBase} | fallback=${fallbackBase ?? "(nenhum)"}`);
 
