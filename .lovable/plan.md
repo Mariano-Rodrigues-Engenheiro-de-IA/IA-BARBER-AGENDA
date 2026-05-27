@@ -1,57 +1,35 @@
-## Problema
+## Trava contra erro de data no agendamento (Frizzar)
 
-Quando o cliente tenta salvar o prompt pelo painel (Barbearia Marquêz e outros), recebe:
-> "Apenas administradores podem alterar credenciais e configurações sensíveis do tenant"
+### Problema
+Na Ícaro Frisar, a IA listou horários para um dia e agendou em outro (27 vs 28). Hoje a tool `agendar` da Frizzar valida apenas o **horário** dentro de `horariosLivres`, mas **não valida a data** — então qualquer `dia` errado passa direto.
 
-Mesmo com o módulo `ai_prompt` configurado como `editable` para aquele tenant.
+### Escopo
+Somente provider **Frizzar**. Arquivo único: `supabase/functions/whatsapp-webhook/index.ts`.
+Sem migration, sem mexer em Trinks/OneBeleza/Bemp/Zaylo, sem mudança de UI.
 
-## Causa
+### Mudanças
 
-O trigger `prevent_tenant_sensitive_update` (banco) bloqueia **todos os não-admins** de alterar estes campos da tabela `tenants`:
+**1. Memória da última `listar_horarios` por conversa**
+Map in-process `frizzarLastListed` chaveado por `tenantId:phoneNumber:profissionalId` armazenando `{ dia, listedAt }`. Sobrevive entre invocações da mesma instância warm (cobre o caso real de listar→agendar em sequência).
 
-- `agent_system_prompt`
-- `agent_knowledge_base`
-- `agent_settings`
-- `agent_paused`
-- (+ credenciais de API, slug, status, kanban_columns, etc.)
+**2. Handler `listar_horarios`**
+Após retornar normalizado, gravar `{ dia: args.data, listedAt: Date.now() }` no Map.
 
-O painel do cliente (`src/pages/client/Ai.tsx`) faz `update` direto na tabela `tenants` com `agent_system_prompt`, então cai na regra do trigger e é rejeitado — independente das policies de RLS e do `tenant_permissions`.
-
-## Correção (1 migration, sem mudar UI)
-
-Reescrever o trigger para separar dois grupos de campos:
-
-**Grupo A — sempre admin-only** (credenciais e config estrutural):
-`uazapi_token`, `uazapi_url`, `trinks_api_key`, `trinks_establishment_id`, `onebeleza_token`, `onebeleza_celular`, `bemp_token`, `bemp_domain`, `frizzar_token`, `frizzar_base_url`, `zaylo_*`, `api_provider`, `status`, `slug`, `kanban_columns`.
-
-**Grupo B — admin OU cliente com permissão de módulo:**
-
-| Campo | Módulo exigido (`can_edit_module`) |
-|---|---|
-| `agent_system_prompt` | `ai_prompt` |
-| `agent_knowledge_base` | `ai_knowledge` |
-| `agent_settings` | `ai_prompt` (usado pelas custom tools / config do agente) |
-| `agent_paused` | `ai_prompt` |
-
-Lógica do trigger novo:
-
-```text
-se admin → permite
-se mudou qualquer campo do Grupo A → bloqueia (erro atual)
-para cada campo do Grupo B alterado:
-    se NOT can_edit_module(auth.uid(), tenant_id, <módulo>) → bloqueia
-permite
+**3. Handler `agendar` — pré-validação de data**
+Antes de bater na API Frizzar, comparar `args.dia` com a última data consultada para aquele `profissionalId`. Se diferente (e gravação recente, <30min), bloquear com erro estruturado:
+```
+{
+  error: "Data divergente: você listou horários para {ultimaData} mas tentou agendar em {args.dia}. Confirme a data com o cliente e chame listar_horarios para a nova data ANTES de agendar.",
+  ultimaDataListada, diaSolicitado
+}
 ```
 
-Isso preserva 100% da proteção sobre credenciais e mantém o comportamento atual quando o admin oculta/torna read-only o módulo no painel, mas libera o caso legítimo: módulo `editable` → cliente salva o prompt.
+**4. Reforço no prompt (`buildFrizzarPromptSection`)**
+Adicionar bloco "🚨 REGRA ABSOLUTA — DATA NO AGENDAR" instruindo:
+- O `dia` em `agendar` deve ser EXATAMENTE o da última `listar_horarios`.
+- Se cliente trocar de data, refazer `listar_horarios` antes.
+- Sempre confirmar em voz alta: "Posso agendar para [DD/MM] às [HH:mm]?".
+- Sistema bloqueia divergência.
 
-## Verificação após aplicar
-
-1. Logar como cliente da Barbearia Marquêz → editar prompt → Salvar → deve criar v(N+1) em `ai_prompt_versions` sem erro.
-2. Tentar via cliente alterar `uazapi_token` (não tem UI para isso, mas via query) → deve continuar bloqueado.
-3. Admin no painel → continua salvando tudo normalmente.
-
-## Arquivos tocados
-
-- 1 migration SQL (`CREATE OR REPLACE FUNCTION public.prevent_tenant_sensitive_update ...`).
-- Nenhum arquivo de frontend ou edge function.
+### Arquivos
+- `supabase/functions/whatsapp-webhook/index.ts` — 3 trechos (linhas ~7123, ~7472, ~7509, ~7336).
