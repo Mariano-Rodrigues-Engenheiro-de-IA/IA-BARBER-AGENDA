@@ -7447,8 +7447,16 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (res.status === 404) {
           return { notFound: true, message: "Cliente não encontrado. Use cadastrar_cliente." };
         }
+        if (transientStatuses.has(res.status)) {
+          return {
+            error: "A API da Frizzar está temporariamente instável (erro 502 no servidor da Frizzar). NÃO tente cadastrar o cliente nem prosseguir o fluxo agora. Peça desculpas ao cliente e diga: 'Nosso sistema de agendamento tá com instabilidade momentânea, tenta de novo em uns minutinhos, beleza?'",
+            upstreamStatus: res.status,
+            retryable: true,
+          };
+        }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
+
 
       case "cadastrar_cliente": {
         const tel = normalizePhone(args.telefone);
