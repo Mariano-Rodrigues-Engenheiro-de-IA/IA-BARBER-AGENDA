@@ -328,10 +328,30 @@ export default function ClientConversations() {
                     <span className="font-medium text-[15px] text-foreground truncate">{c.phone}</span>
                     <span className="text-[11px] text-muted-foreground shrink-0">{fmtTime(c.last)}</span>
                   </div>
-                  <div className="text-[13px] text-muted-foreground truncate">
-                    {c.preview || "—"}
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="text-[13px] text-muted-foreground truncate flex-1">
+                      {c.preview || "—"}
+                    </div>
+                    {pausedSet.has(c.phone) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                        IA pausada
+                      </span>
+                    )}
                   </div>
                 </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleConvPause(c.phone);
+                  }}
+                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-muted ${
+                    pausedSet.has(c.phone) ? "text-amber-500" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={pausedSet.has(c.phone) ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
+                  aria-label="Pausar IA"
+                >
+                  {pausedSet.has(c.phone) ? <BotOff className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
