@@ -7333,10 +7333,17 @@ function buildFrizzarTools(tenant: any) {
 
 // ===================== FRIZZAR TOOL EXECUTION =====================
 
+// Memória in-process da última `listar_horarios` por conversa/profissional.
+// Chave: `${tenantId}:${phoneNumber}:${profissionalId}` → { dia, listedAt }.
+// Usada por `agendar` para travar tentativa de agendar em data diferente da consultada.
+const frizzarLastListed = new Map<string, { dia: string; listedAt: number }>();
+
 async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+  const lastListedKey = (profId: any) => `${tenant.id}:${_phoneNumber || ""}:${profId}`;
+
 
   // Resolução da URL base da Frizzar:
   // 1) override por tenant (campo frizzar_base_url) — útil se a Frizzar mudar o host;
