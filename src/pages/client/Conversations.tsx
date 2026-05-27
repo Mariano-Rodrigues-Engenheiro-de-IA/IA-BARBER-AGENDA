@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, MessageCircle, Trash2, Loader2 } from "lucide-react";
+import { Search, MessageCircle, Trash2, Loader2, Bot, BotOff } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
