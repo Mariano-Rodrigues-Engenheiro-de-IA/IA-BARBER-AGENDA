@@ -7498,6 +7498,11 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           if (Array.isArray(parsed)) {
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             const escolhido = exato ?? parsed[0];
+            // Registra a data efetivamente consultada para esta conversa/profissional.
+            const diaRegistrado = (typeof escolhido?.dia === "string" ? escolhido.dia.slice(0, 10) : args.data);
+            if (diaRegistrado && args.profissionalId) {
+              frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: diaRegistrado, listedAt: Date.now() });
+            }
             return {
               data: args.data,
               horariosLivres: escolhido?.horariosLivres ?? [],
@@ -7518,6 +7523,20 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
+
+        // 🚨 TRAVA DE DATA: valida que `dia` bate com a última `listar_horarios` para este profissional.
+        // Evita o bug em que a IA lista para 27 e tenta agendar 28 (ou vice-versa).
+        const lastListed = frizzarLastListed.get(lastListedKey(args.profissionalId));
+        if (lastListed && Date.now() - lastListed.listedAt < 30 * 60 * 1000 && lastListed.dia !== args.dia) {
+          console.warn(`[Frizzar] BLOQUEIO data divergente: listada=${lastListed.dia} vs agendar=${args.dia} (prof=${args.profissionalId}, phone=${_phoneNumber})`);
+          return {
+            error: `Data divergente: você listou horários para ${lastListed.dia} mas tentou agendar em ${args.dia}. Confirme a data com o cliente e chame listar_horarios para a data correta ANTES de chamar agendar.`,
+            ultimaDataListada: lastListed.dia,
+            diaSolicitado: args.dia,
+            profissionalId: args.profissionalId,
+          };
+        }
+
 
         // Helper: busca horários livres do profissional naquele dia (valida/devolve opções).
         const fetchHorariosLivres = async (): Promise<string[]> => {
