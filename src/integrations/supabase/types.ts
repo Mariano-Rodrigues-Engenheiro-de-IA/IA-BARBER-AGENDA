@@ -180,6 +180,41 @@ export type Database = {
           },
         ]
       }
+      conversation_pauses: {
+        Row: {
+          created_at: string
+          id: string
+          paused: boolean
+          phone_number: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          paused?: boolean
+          phone_number: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          paused?: boolean
+          phone_number?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_pauses_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       conversation_state: {
         Row: {
           created_at: string
