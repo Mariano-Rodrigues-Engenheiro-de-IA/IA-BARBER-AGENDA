@@ -1,52 +1,51 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Audio transcription via Lovable AI Gateway (Gemini Flash)
-// Returns the transcribed text, or null on any failure.
+// Audio transcription via OpenAI Whisper (gpt-4o-mini-transcribe).
+// Handles WhatsApp's OGG/Opus format reliably. Returns text or null on failure.
 // ─────────────────────────────────────────────────────────────────────────────
 async function transcribeAudioViaGemini(
   base64: string,
   mimeType: string,
 ): Promise<string | null> {
   try {
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
+    const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) {
-      console.warn("[Transcribe] LOVABLE_API_KEY ausente — pulando transcrição");
+      console.warn("[Transcribe] OPENAI_API_KEY ausente — pulando transcrição");
       return null;
     }
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+
+    // Decode base64 → bytes → Blob
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    // Infer extension from mimeType (WhatsApp normally sends audio/ogg; codecs=opus).
+    const mt = (mimeType || "audio/ogg").toLowerCase();
+    let ext = "ogg";
+    if (mt.includes("mpeg") || mt.includes("mp3")) ext = "mp3";
+    else if (mt.includes("wav")) ext = "wav";
+    else if (mt.includes("m4a") || mt.includes("mp4")) ext = "m4a";
+    else if (mt.includes("webm")) ext = "webm";
+    else if (mt.includes("ogg") || mt.includes("opus")) ext = "ogg";
+
+    const blob = new Blob([bytes], { type: mt.split(";")[0] || "audio/ogg" });
+    const form = new FormData();
+    form.append("file", blob, `audio.${ext}`);
+    form.append("model", "gpt-4o-mini-transcribe");
+    form.append("language", "pt");
+    form.append("response_format", "text");
+
+    const res = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content:
-              "Você é um transcritor de áudios em português do Brasil. Transcreva EXATAMENTE o que foi dito, sem comentários, sem aspas, sem prefixos. Se não houver fala inteligível, responda apenas com a string vazia.",
-          },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Transcreva este áudio:" },
-              {
-                type: "image_url",
-                image_url: { url: `data:${mimeType};base64,${base64}` },
-              },
-            ],
-          },
-        ],
-      }),
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
     });
     if (!res.ok) {
-      console.warn(`[Transcribe] HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      console.warn(`[Transcribe] HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
       return null;
     }
-    const data = await res.json();
-    const text = String(data?.choices?.[0]?.message?.content ?? "").trim();
+    const text = (await res.text()).trim();
     if (!text) return null;
     return text;
   } catch (e) {
