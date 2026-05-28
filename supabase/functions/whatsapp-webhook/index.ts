@@ -2304,6 +2304,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
   const defaultState: AgentSessionState = {
     criarAgendamentoSuccessId: null,
     scheduledServiceIds: [],
+    scheduledSlotSignatures: [],
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
     allowedServiceIds: [],
