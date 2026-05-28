@@ -4163,7 +4163,10 @@ async function callAIAgent(
               sessionState.scheduledServiceIds.push(sid);
             }
           }
-          console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}]`);
+          if (attemptedSlotSignature && !sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature)) {
+            sessionState.scheduledSlotSignatures.push(attemptedSlotSignature);
+          }
+          console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}] slot=${attemptedSlotSignature}`);
         }
 
         // Reschedule support: when a cancel/edit succeeds, clear the per-service
