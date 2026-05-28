@@ -3769,11 +3769,12 @@ async function callAIAgent(
         continue;
       }
 
-      // Block duplicate scheduling for the SAME service across all providers.
-      // Different services in the same session are allowed (e.g. corte + barba in
-      // separate appointments). Cancel/desmarcar tools are never blocked here.
+      // Block duplicate scheduling ONLY when the EXACT same slot (services + date + time + professional)
+      // has already been booked successfully. Re-booking the same service on a different date/time
+      // (remarcação) is allowed without requiring an explicit cancel beforehand.
       const isSchedulingTool = ["criar_agendamento", "agendar"].includes(toolCall.function.name);
       let attemptedServiceIds: number[] = [];
+      let attemptedSlotSignature = "";
       if (isSchedulingTool) {
         const candidateIds = [
           parsedArgs?.serviceId,
@@ -3789,28 +3790,40 @@ async function callAIAgent(
         attemptedServiceIds = candidateIds
           .map((v) => toPositiveInteger(v))
           .filter((v): v is number => typeof v === "number");
+
+        // Build a slot signature that works across providers
+        const dt: string =
+          (typeof parsedArgs?.dataHoraInicio === "string" && parsedArgs.dataHoraInicio) ||
+          (typeof parsedArgs?.start === "string" && parsedArgs.start) ||
+          "";
+        const date =
+          (typeof parsedArgs?.dia === "string" && parsedArgs.dia) ||
+          (typeof parsedArgs?.data === "string" && parsedArgs.data) ||
+          (typeof parsedArgs?.date === "string" && parsedArgs.date) ||
+          (dt ? dt.slice(0, 10) : "");
+        const time =
+          (typeof parsedArgs?.hora === "string" && parsedArgs.hora) ||
+          (typeof parsedArgs?.horario === "string" && parsedArgs.horario) ||
+          (typeof parsedArgs?.time === "string" && parsedArgs.time) ||
+          (dt && dt.length >= 16 ? dt.slice(11, 16) : "");
+        const prof =
+          toPositiveInteger(parsedArgs?.profissionalId) ??
+          toPositiveInteger(parsedArgs?.professionalId) ??
+          "";
+        const servicesKey = [...attemptedServiceIds].sort((a, b) => a - b).join(",");
+        attemptedSlotSignature = `${servicesKey}|${date}|${time}|${prof}`;
       }
-      const alreadyScheduledSameService =
+
+      const exactSlotAlreadyBooked =
         isSchedulingTool &&
+        attemptedSlotSignature !== "" &&
         attemptedServiceIds.length > 0 &&
-        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
-      // Allow re-booking the same service when a cancel/edit just happened in this
-      // invocation (genuine remarcação flow). Without this bypass the dedup guard
-      // would block the "agendar" right after a successful cancelar_agendamento.
-      if (isSchedulingTool && alreadyScheduledSameService && cancelOrEditHappenedThisInvocation) {
-        console.log(`${toolCall.function.name}: dedup BYPASSED (cancel/edit happened earlier in this invocation — remarcação)`);
-        sessionState.scheduledServiceIds = sessionState.scheduledServiceIds.filter(
-          (id) => !attemptedServiceIds.includes(id),
-        );
-      }
-      const stillBlockedByDedup =
-        isSchedulingTool &&
-        attemptedServiceIds.length > 0 &&
-        attemptedServiceIds.every((id) => sessionState.scheduledServiceIds.includes(id));
-      if (isSchedulingTool && stillBlockedByDedup) {
-        console.log(`${toolCall.function.name} BLOCKED: service(s) [${attemptedServiceIds.join(",")}] already scheduled in this session`);
+        sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature);
+
+      if (isSchedulingTool && exactSlotAlreadyBooked) {
+        console.log(`${toolCall.function.name} BLOCKED: exact slot already booked (${attemptedSlotSignature})`);
         toolResult = {
-          message: "Esse(s) serviço(s) já foi(ram) agendado(s) nesta interação. Para agendar um serviço diferente, basta passar outro servicoId. Não repita o mesmo serviço.",
+          message: "Esse agendamento exato (mesmos serviços, data, hora e profissional) já foi criado nesta conversa. Não chame a ferramenta novamente para o mesmo slot.",
           blocked: true,
         };
         wasBlocked = true;
