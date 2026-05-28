@@ -4182,6 +4182,9 @@ async function callAIAgent(
             console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
             sessionState.scheduledServiceIds = [];
           }
+          if (sessionState.scheduledSlotSignatures.length > 0) {
+            sessionState.scheduledSlotSignatures = [];
+          }
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
