@@ -5198,8 +5198,8 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const fullName = String(config.contact_full_name || "").trim();
         const contactPhone = String(config.contact_phone || "").replace(/\D/g, "");
         const organization = String(config.contact_organization || "").trim();
-        if (!fullName) return { error: "Nome do contato não configurado." };
-        if (!contactPhone) return { error: "Telefone do contato não configurado." };
+        if (!fullName) return { error: "Nome do contato não configurado. Não tente novamente — peça ao admin configurar.", blocked: true };
+        if (!contactPhone) return { error: "Telefone do contato não configurado. Não tente novamente — peça ao admin configurar.", blocked: true };
         const contactBody: any = { number: phoneNumber, fullName, phoneNumber: contactPhone };
         if (organization) contactBody.organization = organization;
         const res = await fetch(`${uazapiUrl}/send/contact`, {
