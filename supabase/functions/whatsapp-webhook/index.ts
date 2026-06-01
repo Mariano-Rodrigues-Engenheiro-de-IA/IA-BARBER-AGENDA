@@ -6513,6 +6513,14 @@ function buildNoneTools(_tenant: any) {
 
 // ===================== TRINKS TOOL EXECUTION =====================
 
+// 🚨 TRAVAS TRINKS (in-process, sobrevivem entre invocações warm)
+// Cache de IDs válidos de profissionais por tenant (TTL 30min) — bloqueia IDs alucinados (ex.: 1, 1001).
+const trinksKnownProfs = new Map<string, { ids: Set<number>; fetchedAt: number }>();
+// Cache da última `listar_horarios` por conversa — { data, slotsByProf: prof->Set<HH:MM> }
+// Bloqueia `criar_agendamento` em horário/data fora do que foi efetivamente consultado.
+const trinksLastListed = new Map<string, { data: string; slotsByProf: Map<number, Set<string>>; listedAt: number }>();
+const TRINKS_CACHE_TTL_MS = 30 * 60 * 1000;
+
 async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
@@ -6570,11 +6578,16 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const data = await res.json();
         const list = data?.data || data;
         if (Array.isArray(list)) {
-          return list.map((p: any) => ({
+          const mapped = list.map((p: any) => ({
             id: p.id || p.Id,
             nome: p.nome || p.Nome,
             apelido: p.apelido || p.Apelido,
           }));
+          // Popula cache de IDs válidos para travar alucinação em criar_agendamento.
+          const ids = new Set<number>(mapped.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)));
+          trinksKnownProfs.set(tenant.id, { ids, fetchedAt: Date.now() });
+          console.log(`[Trinks] cache profs atualizado: tenant=${tenant.id} ids=${[...ids].join(",")}`);
+          return mapped;
         }
         return data;
       }
@@ -6637,7 +6650,26 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
               }
             }
           }
-          
+
+          // Popula cache de slots reais por profissional para travar criar_agendamento alucinado.
+          try {
+            const profissionais = parsed?.data || parsed;
+            if (Array.isArray(profissionais) && args.data) {
+              const slotsByProf = new Map<number, Set<string>>();
+              for (const prof of profissionais) {
+                const pid = Number(prof?.id || prof?.Id);
+                if (!Number.isFinite(pid)) continue;
+                const slots = new Set<string>(
+                  Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : []
+                );
+                slotsByProf.set(pid, slots);
+              }
+              const key = `${tenant.id}:${phoneNumber || ""}`;
+              trinksLastListed.set(key, { data: args.data, slotsByProf, listedAt: Date.now() });
+              console.log(`[Trinks] cache horários: ${key} data=${args.data} profs=${slotsByProf.size}`);
+            }
+          } catch (e) { console.warn("[Trinks] falha ao cachear horários:", (e as Error).message); }
+
           return parsed;
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
@@ -6717,6 +6749,51 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         let dataHoraInicio = args.dataHoraInicio || "";
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
+
+        // 🚨 TRAVA 1 — profissionalId alucinado.
+        const profCache = trinksKnownProfs.get(tenant.id);
+        const profId = Number(args.profissionalId);
+        if (profCache && Date.now() - profCache.fetchedAt < TRINKS_CACHE_TTL_MS) {
+          if (!Number.isFinite(profId) || !profCache.ids.has(profId)) {
+            console.warn(`[Trinks] BLOQUEIO profissionalId inválido: ${args.profissionalId} (válidos: ${[...profCache.ids].join(",")})`);
+            return {
+              error: `profissionalId inválido: ${args.profissionalId}. Use APENAS um ID retornado por listar_profissionais.`,
+              profissionalIdRecebido: args.profissionalId,
+              profissionaisValidos: [...profCache.ids],
+              blocked: true,
+            };
+          }
+        }
+
+        // 🚨 TRAVA 2 — data/horário fora do que foi listado.
+        const slotsCache = trinksLastListed.get(`${tenant.id}:${phoneNumber || ""}`);
+        if (slotsCache && Date.now() - slotsCache.listedAt < TRINKS_CACHE_TTL_MS) {
+          const m = dataHoraInicio.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+          if (m) {
+            const [_, dataReq, horaReq] = m;
+            if (dataReq !== slotsCache.data) {
+              console.warn(`[Trinks] BLOQUEIO data divergente: listada=${slotsCache.data} vs agendar=${dataReq}`);
+              return {
+                error: `Data divergente: você listou horários para ${slotsCache.data} mas tentou agendar em ${dataReq}. Chame listar_horarios para a data correta ANTES de criar_agendamento.`,
+                ultimaDataListada: slotsCache.data,
+                dataSolicitada: dataReq,
+                blocked: true,
+              };
+            }
+            const slotsProf = Number.isFinite(profId) ? slotsCache.slotsByProf.get(profId) : undefined;
+            if (slotsProf && slotsProf.size > 0 && !slotsProf.has(horaReq)) {
+              console.warn(`[Trinks] BLOQUEIO horário fora da grade: prof=${profId} hora=${horaReq} disponíveis=${[...slotsProf].join(",")}`);
+              return {
+                error: `Horário ${horaReq} não está disponível em ${dataReq} para o profissional ${profId}. Escolha um dos horários abaixo e tente novamente.`,
+                horariosDisponiveis: [...slotsProf],
+                data: dataReq,
+                profissionalId: profId,
+                blocked: true,
+              };
+            }
+          }
+        }
+
 
         // Check for duplicates
         try {
