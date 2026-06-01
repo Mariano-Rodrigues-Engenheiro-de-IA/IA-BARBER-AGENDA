@@ -1391,6 +1391,42 @@ Deno.serve(async (req) => {
         });
       }
 
+      const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
+      const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
+
+      let mediaBase64: string | null = null;
+      let mediaMimeType: string | null = null;
+      let audioTranscript: string | null = null;
+
+      if (hasMedia) {
+        const resolvedMedia = await resolveIncomingMedia({
+          payload,
+          msg,
+          messageId,
+          uazapiUrl: uazapiUrlMedia,
+          uazapiToken: uazapiTokenMedia,
+          isAudioMessage,
+          isImageMessage,
+        });
+        mediaBase64 = resolvedMedia.base64;
+        mediaMimeType = resolvedMedia.mimeType;
+
+        if (isAudioMessage && mediaBase64 && mediaMimeType?.startsWith("audio/")) {
+          audioTranscript = await transcribeAudioViaGemini(mediaBase64, mediaMimeType);
+          if (audioTranscript) {
+            console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
+          }
+        }
+      }
+
+      const storedContent = isAudioMessage
+        ? (audioTranscript
+            ? `🎙️ ${audioTranscript}`
+            : (messageContent || "[Áudio recebido]"))
+        : isImageMessage
+          ? (messageContent || "[Imagem recebida]")
+          : messageContent;
+
       // 🛑 PAUSA POR CONVERSA — checa ANTES de qualquer processamento pesado.
       // Salva a mensagem para o usuário ver no painel, mas não chama a IA.
       try {
@@ -1407,7 +1443,7 @@ Deno.serve(async (req) => {
             tenant_id: tenant.id,
             phone_number: phoneNumber,
             role: "user",
-            content: messageContent || (hasMedia ? (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]") : ""),
+            content: storedContent || (hasMedia ? (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]") : ""),
             message_id: _msgId,
             processed: true,
           });
@@ -1574,171 +1610,6 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-
-      // Download media if present
-      let mediaBase64: string | null = null;
-      let mediaMimeType: string | null = null;
-
-      if (hasMedia && messageId) {
-        try {
-          const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
-          const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-
-          console.log(`Downloading media for messageId: ${messageId}`);
-
-          let gotMedia = false;
-
-          // UAZAPI v2: POST /message/download with {id} in JSON body
-          try {
-            const dlRes = await fetch(`${uazapiUrlMedia}/message/download`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiTokenMedia },
-              body: JSON.stringify({ id: messageId }),
-            });
-            console.log(`POST /message/download status: ${dlRes.status}`);
-            if (dlRes.ok) {
-              const ct = dlRes.headers.get("content-type") || "";
-              if (ct.includes("json")) {
-                const dlData = await dlRes.json();
-                console.log("message/download JSON keys:", Object.keys(dlData || {}));
-                const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
-                if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-                  if (base64Content.startsWith("data:")) {
-                    const [header, data] = base64Content.split(",", 2);
-                    mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    mediaBase64 = data;
-                  } else {
-                    mediaBase64 = base64Content;
-                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                  }
-                  gotMedia = true;
-                  console.log(`Media via POST /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-                }
-                // Check if response has a URL instead of base64
-                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
-                if (!gotMedia && mediaUrl) {
-                  const mediaRes = await fetch(mediaUrl);
-                  if (mediaRes.ok) {
-                    const mediaBuffer = await mediaRes.arrayBuffer();
-                    const bytes = new Uint8Array(mediaBuffer);
-                    let binary = "";
-                    for (let i = 0; i < bytes.length; i++) {
-                      binary += String.fromCharCode(bytes[i]);
-                    }
-                    mediaBase64 = btoa(binary);
-                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    gotMedia = true;
-                    console.log(`Media via POST /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                  }
-                }
-              } else {
-                // Binary response
-                const buf = await dlRes.arrayBuffer();
-                if (buf.byteLength > 100) {
-                  const bytes = new Uint8Array(buf);
-                  let binary = "";
-                  for (let i = 0; i < bytes.length; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                  }
-                  mediaBase64 = btoa(binary);
-                  mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                  gotMedia = true;
-                  console.log(`Media via POST /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                }
-              }
-            }
-          } catch (e) {
-            console.log("POST /message/download failed:", e);
-          }
-
-          // Fallback: GET /message/download/{id}
-          if (!gotMedia) {
-            try {
-              const dlRes2 = await fetch(`${uazapiUrlMedia}/message/download/${messageId}`, {
-                headers: { "token": uazapiTokenMedia },
-              });
-              console.log(`GET /message/download/${messageId} status: ${dlRes2.status}`);
-              if (dlRes2.ok) {
-                const ct = dlRes2.headers.get("content-type") || "";
-                if (ct.includes("json")) {
-                  const dlData = await dlRes2.json();
-                   const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
-                   if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-                     if (base64Content.startsWith("data:")) {
-                       const [header, data] = base64Content.split(",", 2);
-                       mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                       mediaBase64 = data;
-                     } else {
-                       mediaBase64 = base64Content;
-                       mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                     }
-                     gotMedia = true;
-                     console.log(`Media via GET /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-                   }
-                   // Check URL-based response
-                   if (!gotMedia) {
-                     const mediaUrl2 = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
-                     if (mediaUrl2) {
-                       const mediaRes2 = await fetch(mediaUrl2);
-                       if (mediaRes2.ok) {
-                         const mediaBuffer2 = await mediaRes2.arrayBuffer();
-                         const bytes2 = new Uint8Array(mediaBuffer2);
-                         let binary2 = "";
-                         for (let i = 0; i < bytes2.length; i++) {
-                           binary2 += String.fromCharCode(bytes2[i]);
-                         }
-                         mediaBase64 = btoa(binary2);
-                         mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes2.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                         gotMedia = true;
-                         console.log(`Media via GET /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                       }
-                     }
-                   }
-                } else {
-                  const buf = await dlRes2.arrayBuffer();
-                  if (buf.byteLength > 100) {
-                    const bytes = new Uint8Array(buf);
-                    let binary = "";
-                    for (let i = 0; i < bytes.length; i++) {
-                      binary += String.fromCharCode(bytes[i]);
-                    }
-                    mediaBase64 = btoa(binary);
-                    mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    gotMedia = true;
-                    console.log(`Media via GET /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                  }
-                }
-              }
-            } catch (e) {
-              console.log("GET /message/download fallback failed:", e);
-            }
-          }
-
-          if (!gotMedia) {
-            console.error("All media download methods failed for messageId:", messageId);
-          }
-        } catch (mediaErr) {
-          console.error("Error downloading media:", mediaErr);
-        }
-      }
-
-      // Transcribe audio (best-effort) so the conversation panel shows the spoken text.
-      let audioTranscript: string | null = null;
-      if (isAudioMessage && mediaBase64 && mediaMimeType?.startsWith("audio/")) {
-        audioTranscript = await transcribeAudioViaGemini(mediaBase64, mediaMimeType);
-        if (audioTranscript) {
-          console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
-        }
-      }
-
-      // Build text content for storage
-      const storedContent = isAudioMessage
-        ? (audioTranscript
-            ? `🎙️ ${audioTranscript}`
-            : (messageContent || "[Áudio recebido]"))
-        : isImageMessage
-          ? (messageContent || "[Imagem recebida]")
-          : messageContent;
 
       // Save message as unprocessed for debounce queue
       await supabase.from("chat_messages").insert({
