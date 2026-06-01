@@ -4678,6 +4678,33 @@ async function callAIAgent(
     finalResponse = "";
   }
 
+  // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
+  // sem o cliente confirmar, troca a resposta por um pedido de paciência + flag interna
+  // para o operador humano assumir. Evita irritar o cliente em loop.
+  if (finalResponse) {
+    const timeTokens = (finalResponse.match(/\b\d{1,2}[:h]\d{2}\b/g) || []).map((t) => t.toLowerCase());
+    if (timeTokens.length >= 3) {
+      const signature = [...new Set(timeTokens)].sort().join(",");
+      const history: string[] = Array.isArray((sessionState as any).lastTimeListings)
+        ? (sessionState as any).lastTimeListings
+        : [];
+      history.push(signature);
+      while (history.length > 3) history.shift();
+      (sessionState as any).lastTimeListings = history;
+      if (history.length === 3 && history[0] === history[1] && history[1] === history[2]) {
+        console.warn(`[LoopDetector] 3x mesma lista de horários para ${phoneNumber}: ${signature}. Substituindo resposta e zerando histórico.`);
+        logErrors.push(`Loop de listagem de horários detectado (sig=${signature})`);
+        finalResponse = "Vou pedir pra um atendente humano te ajudar a finalizar isso, um momento por favor 🙏";
+        sessionBlocked = true;
+        (sessionState as any).lastTimeListings = [];
+        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+      }
+    } else {
+      // resposta sem listagem → reset do tracker
+      (sessionState as any).lastTimeListings = [];
+    }
+  }
+
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
