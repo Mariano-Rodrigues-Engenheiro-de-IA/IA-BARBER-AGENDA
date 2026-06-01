@@ -3707,8 +3707,29 @@ async function callAIAgent(
     const errText = await response.text();
     console.error("AI gateway error (initial):", response.status, errText);
     logErrors.push(`AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`);
+    // 🚨 FIX #4: contador de falhas consecutivas do AI gateway.
+    // Após 2 falhas seguidas em 10min, escala pra humano em vez de pedir "tente novamente".
+    const now = Date.now();
+    const prevAt = (sessionState as any).lastAiFailureAt || 0;
+    const prevCount = (sessionState as any).aiFailureCount || 0;
+    const within10min = now - prevAt < 10 * 60 * 1000;
+    const newCount = within10min ? prevCount + 1 : 1;
+    (sessionState as any).aiFailureCount = newCount;
+    (sessionState as any).lastAiFailureAt = now;
+    let fallbackMsg = "Desculpe, tive um problema ao consultar o sistema. Tente novamente.";
+    if (newCount >= 2) {
+      console.warn(`[AIGatewayFallback] ${newCount} falhas consecutivas para ${phoneNumber}, escalando.`);
+      logErrors.push(`AI gateway: ${newCount} falhas consecutivas → escalar humano`);
+      fallbackMsg = "Estou com instabilidade aqui, já chamei um atendente pra te ajudar 🙏 Em instantes alguém retorna.";
+      sessionBlocked = true;
+      (sessionState as any).aiFailureCount = 0;
+    }
     await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-    return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+    return { response: fallbackMsg, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+  }
+  // Sucesso → zera contador de falhas
+  if ((sessionState as any).aiFailureCount) {
+    (sessionState as any).aiFailureCount = 0;
   }
   let result: any = await response.json();
   let assistantMessage: any = result.choices?.[0]?.message;
@@ -4101,7 +4122,17 @@ async function callAIAgent(
         // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
         if (!toolResult && isAgendaIdTool && provider === "onebeleza") {
-          // If validAgendasIds is empty (new invocation), auto-fetch agendamentos
+          // 🚨 TTL TRAVA: invalida cache de agendamentos se foi capturado há mais de 5min,
+          // para evitar usar dados obsoletos em fluxo de cancelamento/remarcação.
+          const fetchedAt = (sessionState as any).validAgendasIdsFetchedAt || 0;
+          const cacheAgeMs = Date.now() - fetchedAt;
+          const CACHE_TTL_MS = 5 * 60 * 1000;
+          if (sessionState.validAgendasIds.length > 0 && cacheAgeMs > CACHE_TTL_MS) {
+            console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds cache stale (${Math.round(cacheAgeMs/1000)}s old), invalidating to force re-fetch`);
+            sessionState.validAgendasIds = [];
+            (sessionState as any).oneBelezaAgendaOptions = [];
+          }
+          // If validAgendasIds is empty (new invocation or stale), auto-fetch agendamentos
           if (sessionState.validAgendasIds.length === 0) {
             console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds empty, auto-fetching agendamentos...`);
             
@@ -4170,6 +4201,7 @@ async function callAIAgent(
               });
               sessionState.validAgendasIds = (myAgendamentos.length > 0 ? myAgendamentos : fetchResult).map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
               (sessionState as any).oneBelezaAgendaOptions = myAgendamentos.length > 0 ? myAgendamentos : fetchResult;
+              (sessionState as any).validAgendasIdsFetchedAt = Date.now();
               console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}] (date: ${dateToFetch}, filtered: ${myAgendamentos.length > 0})`);
             }
           }
@@ -4303,10 +4335,26 @@ async function callAIAgent(
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
+        // 🚨 CROSS-CLIENT TRAVA: filtra agendamentos pelo telefone do lead atual
+        // ANTES de devolver pro modelo, para evitar que a IA confunda agendamento de
+        // outra pessoa (ex: irmão/parente) como sendo do cliente que está conversando.
         if (toolCall.function.name === "buscar_agendamentos_dia" && Array.isArray(toolResult)) {
-          sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
-          (sessionState as any).oneBelezaAgendaOptions = toolResult;
-          console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
+          const phoneClean = (phoneNumber || "").replace(/^55/, "").replace(/\D/g, "");
+          const myAgendamentos = toolResult.filter((a: any) => {
+            const cel = String(a?.celular || "").replace(/^55/, "").replace(/\D/g, "");
+            if (!cel) return false;
+            return cel === phoneClean || cel.endsWith(phoneClean) || phoneClean.endsWith(cel);
+          });
+          const filtered = myAgendamentos;
+          sessionState.validAgendasIds = filtered.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+          (sessionState as any).oneBelezaAgendaOptions = filtered;
+          (sessionState as any).validAgendasIdsFetchedAt = Date.now();
+          console.log(`Tracked validAgendasIds (filtered by phone ${phoneClean}): [${sessionState.validAgendasIds}] (raw=${toolResult.length}, mine=${filtered.length})`);
+          // 🔁 Substitui o resultado entregue à IA pelo subset do próprio cliente.
+          // Se o cliente não tem nada marcado nesse dia, devolve array vazio com aviso.
+          toolResult = filtered.length > 0
+            ? filtered
+            : { empty: true, message: `Nenhum agendamento encontrado para o telefone ${phoneNumber} nessa data. NÃO mencione agendamentos de outros clientes.` };
         }
 
         if (provider === "bemp" && toolCall.function.name === "listar_unidades" && Array.isArray(toolResult)) {
@@ -4649,6 +4697,33 @@ async function callAIAgent(
     // Last-resort fallback: stay completely silent rather than send a generic line that
     // breaks character. Returning empty string prevents the webhook from sending a message.
     finalResponse = "";
+  }
+
+  // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
+  // sem o cliente confirmar, troca a resposta por um pedido de paciência + flag interna
+  // para o operador humano assumir. Evita irritar o cliente em loop.
+  if (finalResponse) {
+    const timeTokens = (finalResponse.match(/\b\d{1,2}[:h]\d{2}\b/g) || []).map((t) => t.toLowerCase());
+    if (timeTokens.length >= 3) {
+      const signature = [...new Set(timeTokens)].sort().join(",");
+      const history: string[] = Array.isArray((sessionState as any).lastTimeListings)
+        ? (sessionState as any).lastTimeListings
+        : [];
+      history.push(signature);
+      while (history.length > 3) history.shift();
+      (sessionState as any).lastTimeListings = history;
+      if (history.length === 3 && history[0] === history[1] && history[1] === history[2]) {
+        console.warn(`[LoopDetector] 3x mesma lista de horários para ${phoneNumber}: ${signature}. Substituindo resposta e zerando histórico.`);
+        logErrors.push(`Loop de listagem de horários detectado (sig=${signature})`);
+        finalResponse = "Vou pedir pra um atendente humano te ajudar a finalizar isso, um momento por favor 🙏";
+        sessionBlocked = true;
+        (sessionState as any).lastTimeListings = [];
+        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+      }
+    } else {
+      // resposta sem listagem → reset do tracker
+      (sessionState as any).lastTimeListings = [];
+    }
   }
 
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
