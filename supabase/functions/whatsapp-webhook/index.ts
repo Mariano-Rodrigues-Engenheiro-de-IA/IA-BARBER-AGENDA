@@ -6750,6 +6750,51 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (dataHoraInicio.includes(" ")) dataHoraInicio = dataHoraInicio.replace(" ", "T");
         if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dataHoraInicio)) dataHoraInicio += ":00";
 
+        // 🚨 TRAVA 1 — profissionalId alucinado.
+        const profCache = trinksKnownProfs.get(tenant.id);
+        const profId = Number(args.profissionalId);
+        if (profCache && Date.now() - profCache.fetchedAt < TRINKS_CACHE_TTL_MS) {
+          if (!Number.isFinite(profId) || !profCache.ids.has(profId)) {
+            console.warn(`[Trinks] BLOQUEIO profissionalId inválido: ${args.profissionalId} (válidos: ${[...profCache.ids].join(",")})`);
+            return {
+              error: `profissionalId inválido: ${args.profissionalId}. Use APENAS um ID retornado por listar_profissionais.`,
+              profissionalIdRecebido: args.profissionalId,
+              profissionaisValidos: [...profCache.ids],
+              blocked: true,
+            };
+          }
+        }
+
+        // 🚨 TRAVA 2 — data/horário fora do que foi listado.
+        const slotsCache = trinksLastListed.get(`${tenant.id}:${phoneNumber || ""}`);
+        if (slotsCache && Date.now() - slotsCache.listedAt < TRINKS_CACHE_TTL_MS) {
+          const m = dataHoraInicio.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+          if (m) {
+            const [_, dataReq, horaReq] = m;
+            if (dataReq !== slotsCache.data) {
+              console.warn(`[Trinks] BLOQUEIO data divergente: listada=${slotsCache.data} vs agendar=${dataReq}`);
+              return {
+                error: `Data divergente: você listou horários para ${slotsCache.data} mas tentou agendar em ${dataReq}. Chame listar_horarios para a data correta ANTES de criar_agendamento.`,
+                ultimaDataListada: slotsCache.data,
+                dataSolicitada: dataReq,
+                blocked: true,
+              };
+            }
+            const slotsProf = Number.isFinite(profId) ? slotsCache.slotsByProf.get(profId) : undefined;
+            if (slotsProf && slotsProf.size > 0 && !slotsProf.has(horaReq)) {
+              console.warn(`[Trinks] BLOQUEIO horário fora da grade: prof=${profId} hora=${horaReq} disponíveis=${[...slotsProf].join(",")}`);
+              return {
+                error: `Horário ${horaReq} não está disponível em ${dataReq} para o profissional ${profId}. Escolha um dos horários abaixo e tente novamente.`,
+                horariosDisponiveis: [...slotsProf],
+                data: dataReq,
+                profissionalId: profId,
+                blocked: true,
+              };
+            }
+          }
+        }
+
+
         // Check for duplicates
         try {
           const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${resolvedClienteId}`, { headers });
