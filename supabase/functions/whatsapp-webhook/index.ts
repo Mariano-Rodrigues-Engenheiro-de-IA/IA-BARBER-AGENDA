@@ -3707,8 +3707,29 @@ async function callAIAgent(
     const errText = await response.text();
     console.error("AI gateway error (initial):", response.status, errText);
     logErrors.push(`AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`);
+    // 🚨 FIX #4: contador de falhas consecutivas do AI gateway.
+    // Após 2 falhas seguidas em 10min, escala pra humano em vez de pedir "tente novamente".
+    const now = Date.now();
+    const prevAt = (sessionState as any).lastAiFailureAt || 0;
+    const prevCount = (sessionState as any).aiFailureCount || 0;
+    const within10min = now - prevAt < 10 * 60 * 1000;
+    const newCount = within10min ? prevCount + 1 : 1;
+    (sessionState as any).aiFailureCount = newCount;
+    (sessionState as any).lastAiFailureAt = now;
+    let fallbackMsg = "Desculpe, tive um problema ao consultar o sistema. Tente novamente.";
+    if (newCount >= 2) {
+      console.warn(`[AIGatewayFallback] ${newCount} falhas consecutivas para ${phoneNumber}, escalando.`);
+      logErrors.push(`AI gateway: ${newCount} falhas consecutivas → escalar humano`);
+      fallbackMsg = "Estou com instabilidade aqui, já chamei um atendente pra te ajudar 🙏 Em instantes alguém retorna.";
+      sessionBlocked = true;
+      (sessionState as any).aiFailureCount = 0;
+    }
     await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-    return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+    return { response: fallbackMsg, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+  }
+  // Sucesso → zera contador de falhas
+  if ((sessionState as any).aiFailureCount) {
+    (sessionState as any).aiFailureCount = 0;
   }
   let result: any = await response.json();
   let assistantMessage: any = result.choices?.[0]?.message;
