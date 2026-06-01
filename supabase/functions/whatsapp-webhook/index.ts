@@ -54,6 +54,250 @@ async function transcribeAudioViaGemini(
   }
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 8192;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...slice);
+  }
+
+  return btoa(binary);
+}
+
+function normalizeIncomingMediaMimeType(
+  mimeType: string | null | undefined,
+  isAudioMessage: boolean,
+  isImageMessage: boolean,
+): string | null {
+  const raw = String(mimeType || "").trim().toLowerCase();
+
+  if (!raw) {
+    return isAudioMessage ? "audio/ogg" : isImageMessage ? "image/jpeg" : null;
+  }
+
+  if (raw.startsWith("audio/") || raw.startsWith("image/") || raw.startsWith("video/")) {
+    return raw.split(";")[0];
+  }
+
+  if (raw.includes("opus") || raw.includes("ogg")) return "audio/ogg";
+  if (raw.includes("mpeg") || raw.includes("mp3")) return "audio/mpeg";
+  if (raw.includes("wav")) return "audio/wav";
+  if (raw.includes("m4a") || raw.includes("mp4") || raw.includes("aac")) return "audio/mp4";
+  if (raw.includes("webm")) return "audio/webm";
+  if (raw.includes("jpeg") || raw.includes("jpg")) return "image/jpeg";
+  if (raw.includes("png")) return "image/png";
+
+  if (raw === "application/octet-stream" || raw === "binary/octet-stream") {
+    return isAudioMessage ? "audio/ogg" : isImageMessage ? "image/jpeg" : raw;
+  }
+
+  return raw;
+}
+
+async function resolveIncomingMedia({
+  payload,
+  msg,
+  messageId,
+  uazapiUrl,
+  uazapiToken,
+  isAudioMessage,
+  isImageMessage,
+}: {
+  payload: any;
+  msg: any;
+  messageId: string | null;
+  uazapiUrl: string;
+  uazapiToken: string;
+  isAudioMessage: boolean;
+  isImageMessage: boolean;
+}): Promise<{ base64: string | null; mimeType: string | null }> {
+  const fallbackMimeType = normalizeIncomingMediaMimeType(null, isAudioMessage, isImageMessage);
+
+  const tryInlineSource = async (source: any, label: string): Promise<{ base64: string; mimeType: string | null } | null> => {
+    if (!source || typeof source !== "object") return null;
+
+    const inlineMime = normalizeIncomingMediaMimeType(
+      source.mimetype || source.mimeType || source.mediaType || source.type || fallbackMimeType,
+      isAudioMessage,
+      isImageMessage,
+    );
+
+    const base64Candidate = [source.base64, source.data, source.file, source.content]
+      .find((value) => typeof value === "string" && value.length > 100);
+
+    if (typeof base64Candidate === "string") {
+      if (base64Candidate.startsWith("data:")) {
+        const [header, data] = base64Candidate.split(",", 2);
+        const mimeFromHeader = header.match(/data:([^;]+)/)?.[1] || inlineMime;
+        console.log(`[Media] Resolved inline data URL from ${label}`);
+        return {
+          base64: data,
+          mimeType: normalizeIncomingMediaMimeType(mimeFromHeader, isAudioMessage, isImageMessage),
+        };
+      }
+
+      console.log(`[Media] Resolved inline base64 from ${label}`);
+      return {
+        base64: base64Candidate.replace(/\s+/g, ""),
+        mimeType: inlineMime,
+      };
+    }
+
+    const mediaUrl = [source.url, source.fileUrl, source.fileURL, source.link, source.mediaUrl]
+      .find((value) => typeof value === "string" && /^https?:\/\//i.test(value));
+
+    if (!mediaUrl) return null;
+
+    try {
+      const mediaRes = await fetch(mediaUrl);
+      if (!mediaRes.ok) return null;
+
+      const buf = await mediaRes.arrayBuffer();
+      if (buf.byteLength <= 100) return null;
+
+      console.log(`[Media] Resolved inline URL from ${label}`);
+      return {
+        base64: arrayBufferToBase64(buf),
+        mimeType: normalizeIncomingMediaMimeType(
+          mediaRes.headers.get("content-type") || inlineMime,
+          isAudioMessage,
+          isImageMessage,
+        ),
+      };
+    } catch (error) {
+      console.warn(`[Media] Failed inline URL fetch from ${label}:`, error);
+      return null;
+    }
+  };
+
+  const candidateSources = [
+    msg?.audioMessage,
+    msg?.message?.audioMessage,
+    payload?.audioMessage,
+    payload?.message?.audioMessage,
+    payload?.data?.audioMessage,
+    payload?.data?.message?.audioMessage,
+    msg?.imageMessage,
+    msg?.message?.imageMessage,
+    payload?.imageMessage,
+    payload?.message?.imageMessage,
+    payload?.data?.imageMessage,
+    payload?.data?.message?.imageMessage,
+    msg,
+    msg?.message,
+    payload?.message,
+    payload?.data?.message,
+    payload?.data,
+    payload,
+  ];
+
+  for (let i = 0; i < candidateSources.length; i++) {
+    const resolved = await tryInlineSource(candidateSources[i], `candidate_${i + 1}`);
+    if (resolved?.base64) {
+      return {
+        base64: resolved.base64,
+        mimeType: normalizeIncomingMediaMimeType(resolved.mimeType, isAudioMessage, isImageMessage),
+      };
+    }
+  }
+
+  if (!messageId || !uazapiUrl || !uazapiToken) {
+    return { base64: null, mimeType: fallbackMimeType };
+  }
+
+  try {
+    console.log(`Downloading media for messageId: ${messageId}`);
+
+    const endpoints = [
+      {
+        label: "POST /message/download",
+        run: () => fetch(`${uazapiUrl}/message/download`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          body: JSON.stringify({ id: messageId }),
+        }),
+      },
+      {
+        label: `GET /message/download/${messageId}`,
+        run: () => fetch(`${uazapiUrl}/message/download/${messageId}`, {
+          headers: { "token": uazapiToken },
+        }),
+      },
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        const res = await endpoint.run();
+        console.log(`${endpoint.label} status: ${res.status}`);
+        if (!res.ok) continue;
+
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("json")) {
+          const data = await res.json().catch(() => null);
+          const base64Content = data?.base64 || data?.data || data?.file || data?.content;
+
+          if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
+            if (base64Content.startsWith("data:")) {
+              const [header, body] = base64Content.split(",", 2);
+              return {
+                base64: body,
+                mimeType: normalizeIncomingMediaMimeType(
+                  header.match(/data:([^;]+)/)?.[1] || data?.mimetype || data?.mimeType || fallbackMimeType,
+                  isAudioMessage,
+                  isImageMessage,
+                ),
+              };
+            }
+
+            return {
+              base64: base64Content.replace(/\s+/g, ""),
+              mimeType: normalizeIncomingMediaMimeType(data?.mimetype || data?.mimeType || fallbackMimeType, isAudioMessage, isImageMessage),
+            };
+          }
+
+          const mediaUrl = data?.url || data?.fileUrl || data?.fileURL || data?.link || data?.mediaUrl;
+          if (typeof mediaUrl === "string" && /^https?:\/\//i.test(mediaUrl)) {
+            const mediaRes = await fetch(mediaUrl);
+            if (mediaRes.ok) {
+              const mediaBuffer = await mediaRes.arrayBuffer();
+              if (mediaBuffer.byteLength > 100) {
+                return {
+                  base64: arrayBufferToBase64(mediaBuffer),
+                  mimeType: normalizeIncomingMediaMimeType(
+                    data?.mimetype || data?.mimeType || mediaRes.headers.get("content-type") || fallbackMimeType,
+                    isAudioMessage,
+                    isImageMessage,
+                  ),
+                };
+              }
+            }
+          }
+
+          continue;
+        }
+
+        const buf = await res.arrayBuffer();
+        if (buf.byteLength > 100) {
+          return {
+            base64: arrayBufferToBase64(buf),
+            mimeType: normalizeIncomingMediaMimeType(ct || fallbackMimeType, isAudioMessage, isImageMessage),
+          };
+        }
+      } catch (endpointError) {
+        console.warn(`${endpoint.label} failed:`, endpointError);
+      }
+    }
+  } catch (mediaErr) {
+    console.error("Error downloading media:", mediaErr);
+  }
+
+  console.error("All media resolution methods failed for messageId:", messageId);
+  return { base64: null, mimeType: fallbackMimeType };
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
@@ -1147,6 +1391,42 @@ Deno.serve(async (req) => {
         });
       }
 
+      const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
+      const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
+
+      let mediaBase64: string | null = null;
+      let mediaMimeType: string | null = null;
+      let audioTranscript: string | null = null;
+
+      if (hasMedia) {
+        const resolvedMedia = await resolveIncomingMedia({
+          payload,
+          msg,
+          messageId,
+          uazapiUrl: uazapiUrlMedia,
+          uazapiToken: uazapiTokenMedia,
+          isAudioMessage,
+          isImageMessage,
+        });
+        mediaBase64 = resolvedMedia.base64;
+        mediaMimeType = resolvedMedia.mimeType;
+
+        if (isAudioMessage && mediaBase64 && mediaMimeType?.startsWith("audio/")) {
+          audioTranscript = await transcribeAudioViaGemini(mediaBase64, mediaMimeType);
+          if (audioTranscript) {
+            console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
+          }
+        }
+      }
+
+      const storedContent = isAudioMessage
+        ? (audioTranscript
+            ? `🎙️ ${audioTranscript}`
+            : (messageContent || "[Áudio recebido]"))
+        : isImageMessage
+          ? (messageContent || "[Imagem recebida]")
+          : messageContent;
+
       // 🛑 PAUSA POR CONVERSA — checa ANTES de qualquer processamento pesado.
       // Salva a mensagem para o usuário ver no painel, mas não chama a IA.
       try {
@@ -1163,7 +1443,7 @@ Deno.serve(async (req) => {
             tenant_id: tenant.id,
             phone_number: phoneNumber,
             role: "user",
-            content: messageContent || (hasMedia ? (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]") : ""),
+            content: storedContent || (hasMedia ? (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]") : ""),
             message_id: _msgId,
             processed: true,
           });
@@ -1330,171 +1610,6 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-
-      // Download media if present
-      let mediaBase64: string | null = null;
-      let mediaMimeType: string | null = null;
-
-      if (hasMedia && messageId) {
-        try {
-          const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
-          const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-
-          console.log(`Downloading media for messageId: ${messageId}`);
-
-          let gotMedia = false;
-
-          // UAZAPI v2: POST /message/download with {id} in JSON body
-          try {
-            const dlRes = await fetch(`${uazapiUrlMedia}/message/download`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiTokenMedia },
-              body: JSON.stringify({ id: messageId }),
-            });
-            console.log(`POST /message/download status: ${dlRes.status}`);
-            if (dlRes.ok) {
-              const ct = dlRes.headers.get("content-type") || "";
-              if (ct.includes("json")) {
-                const dlData = await dlRes.json();
-                console.log("message/download JSON keys:", Object.keys(dlData || {}));
-                const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
-                if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-                  if (base64Content.startsWith("data:")) {
-                    const [header, data] = base64Content.split(",", 2);
-                    mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    mediaBase64 = data;
-                  } else {
-                    mediaBase64 = base64Content;
-                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                  }
-                  gotMedia = true;
-                  console.log(`Media via POST /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-                }
-                // Check if response has a URL instead of base64
-                const mediaUrl = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
-                if (!gotMedia && mediaUrl) {
-                  const mediaRes = await fetch(mediaUrl);
-                  if (mediaRes.ok) {
-                    const mediaBuffer = await mediaRes.arrayBuffer();
-                    const bytes = new Uint8Array(mediaBuffer);
-                    let binary = "";
-                    for (let i = 0; i < bytes.length; i++) {
-                      binary += String.fromCharCode(bytes[i]);
-                    }
-                    mediaBase64 = btoa(binary);
-                    mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    gotMedia = true;
-                    console.log(`Media via POST /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                  }
-                }
-              } else {
-                // Binary response
-                const buf = await dlRes.arrayBuffer();
-                if (buf.byteLength > 100) {
-                  const bytes = new Uint8Array(buf);
-                  let binary = "";
-                  for (let i = 0; i < bytes.length; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                  }
-                  mediaBase64 = btoa(binary);
-                  mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                  gotMedia = true;
-                  console.log(`Media via POST /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                }
-              }
-            }
-          } catch (e) {
-            console.log("POST /message/download failed:", e);
-          }
-
-          // Fallback: GET /message/download/{id}
-          if (!gotMedia) {
-            try {
-              const dlRes2 = await fetch(`${uazapiUrlMedia}/message/download/${messageId}`, {
-                headers: { "token": uazapiTokenMedia },
-              });
-              console.log(`GET /message/download/${messageId} status: ${dlRes2.status}`);
-              if (dlRes2.ok) {
-                const ct = dlRes2.headers.get("content-type") || "";
-                if (ct.includes("json")) {
-                  const dlData = await dlRes2.json();
-                   const base64Content = dlData?.base64 || dlData?.data || dlData?.file || dlData?.content;
-                   if (base64Content && typeof base64Content === "string" && base64Content.length > 100) {
-                     if (base64Content.startsWith("data:")) {
-                       const [header, data] = base64Content.split(",", 2);
-                       mediaMimeType = header.match(/data:([^;]+)/)?.[1] || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                       mediaBase64 = data;
-                     } else {
-                       mediaBase64 = base64Content;
-                       mediaMimeType = dlData?.mimetype || dlData?.mimeType || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                     }
-                     gotMedia = true;
-                     console.log(`Media via GET /message/download (json): ${mediaMimeType}, size: ${mediaBase64!.length} chars`);
-                   }
-                   // Check URL-based response
-                   if (!gotMedia) {
-                     const mediaUrl2 = dlData?.url || dlData?.fileUrl || dlData?.fileURL || dlData?.link || dlData?.mediaUrl;
-                     if (mediaUrl2) {
-                       const mediaRes2 = await fetch(mediaUrl2);
-                       if (mediaRes2.ok) {
-                         const mediaBuffer2 = await mediaRes2.arrayBuffer();
-                         const bytes2 = new Uint8Array(mediaBuffer2);
-                         let binary2 = "";
-                         for (let i = 0; i < bytes2.length; i++) {
-                           binary2 += String.fromCharCode(bytes2[i]);
-                         }
-                         mediaBase64 = btoa(binary2);
-                         mediaMimeType = dlData?.mimetype || dlData?.mimeType || mediaRes2.headers.get("content-type") || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                         gotMedia = true;
-                         console.log(`Media via GET /message/download (url): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                       }
-                     }
-                   }
-                } else {
-                  const buf = await dlRes2.arrayBuffer();
-                  if (buf.byteLength > 100) {
-                    const bytes = new Uint8Array(buf);
-                    let binary = "";
-                    for (let i = 0; i < bytes.length; i++) {
-                      binary += String.fromCharCode(bytes[i]);
-                    }
-                    mediaBase64 = btoa(binary);
-                    mediaMimeType = ct || (isAudioMessage ? "audio/ogg" : "image/jpeg");
-                    gotMedia = true;
-                    console.log(`Media via GET /message/download (binary): ${mediaMimeType}, size: ${mediaBase64.length} chars`);
-                  }
-                }
-              }
-            } catch (e) {
-              console.log("GET /message/download fallback failed:", e);
-            }
-          }
-
-          if (!gotMedia) {
-            console.error("All media download methods failed for messageId:", messageId);
-          }
-        } catch (mediaErr) {
-          console.error("Error downloading media:", mediaErr);
-        }
-      }
-
-      // Transcribe audio (best-effort) so the conversation panel shows the spoken text.
-      let audioTranscript: string | null = null;
-      if (isAudioMessage && mediaBase64 && mediaMimeType?.startsWith("audio/")) {
-        audioTranscript = await transcribeAudioViaGemini(mediaBase64, mediaMimeType);
-        if (audioTranscript) {
-          console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
-        }
-      }
-
-      // Build text content for storage
-      const storedContent = isAudioMessage
-        ? (audioTranscript
-            ? `🎙️ ${audioTranscript}`
-            : (messageContent || "[Áudio recebido]"))
-        : isImageMessage
-          ? (messageContent || "[Imagem recebida]")
-          : messageContent;
 
       // Save message as unprocessed for debounce queue
       await supabase.from("chat_messages").insert({
