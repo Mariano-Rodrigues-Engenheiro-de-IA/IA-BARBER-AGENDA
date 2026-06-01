@@ -6578,11 +6578,16 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const data = await res.json();
         const list = data?.data || data;
         if (Array.isArray(list)) {
-          return list.map((p: any) => ({
+          const mapped = list.map((p: any) => ({
             id: p.id || p.Id,
             nome: p.nome || p.Nome,
             apelido: p.apelido || p.Apelido,
           }));
+          // Popula cache de IDs válidos para travar alucinação em criar_agendamento.
+          const ids = new Set<number>(mapped.map((p: any) => Number(p.id)).filter((n: number) => Number.isFinite(n)));
+          trinksKnownProfs.set(tenant.id, { ids, fetchedAt: Date.now() });
+          console.log(`[Trinks] cache profs atualizado: tenant=${tenant.id} ids=${[...ids].join(",")}`);
+          return mapped;
         }
         return data;
       }
