@@ -204,7 +204,7 @@ async function resolveIncomingMedia({
     }
   }
 
-  if (!messageId) {
+  if (!messageId || !uazapiUrl || !uazapiToken) {
     return { base64: null, mimeType: fallbackMimeType };
   }
 
