@@ -5198,8 +5198,8 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const fullName = String(config.contact_full_name || "").trim();
         const contactPhone = String(config.contact_phone || "").replace(/\D/g, "");
         const organization = String(config.contact_organization || "").trim();
-        if (!fullName) return { error: "Nome do contato não configurado." };
-        if (!contactPhone) return { error: "Telefone do contato não configurado." };
+        if (!fullName) return { error: "Nome do contato não configurado. Não tente novamente — peça ao admin configurar.", blocked: true };
+        if (!contactPhone) return { error: "Telefone do contato não configurado. Não tente novamente — peça ao admin configurar.", blocked: true };
         const contactBody: any = { number: phoneNumber, fullName, phoneNumber: contactPhone };
         if (organization) contactBody.organization = organization;
         const res = await fetch(`${uazapiUrl}/send/contact`, {
@@ -6727,7 +6727,25 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "criar_agendamento": {
+        // 🚨 TRAVA 0 — campos obrigatórios vazios. Evita 400/500 silencioso na Trinks
+        // e impede a IA de chutar agendamento sem ter coletado os dados.
+        const missing: string[] = [];
+        if (!args.servicoId && !Number(args.servicoId)) missing.push("servicoId");
+        if (!args.profissionalId && !Number(args.profissionalId)) missing.push("profissionalId");
+        if (!args.dataHoraInicio || typeof args.dataHoraInicio !== "string") missing.push("dataHoraInicio");
+        if (!args.duracaoEmMinutos && !Number(args.duracaoEmMinutos)) missing.push("duracaoEmMinutos");
+        if (args.valor === undefined || args.valor === null || args.valor === "") missing.push("valor");
+        if (missing.length > 0) {
+          console.warn(`[Trinks] BLOQUEIO criar_agendamento campos vazios: ${missing.join(", ")}`);
+          return {
+            error: `Campos obrigatórios ausentes em criar_agendamento: ${missing.join(", ")}. Obtenha esses valores das tools (listar_servicos, listar_profissionais, listar_horarios) ANTES de chamar criar_agendamento.`,
+            camposFaltantes: missing,
+            blocked: true,
+          };
+        }
+
         let resolvedClienteId = args.clienteId;
+
 
         if (phoneNumber) {
           let tel = phoneNumber.replace(/\D/g, "");
