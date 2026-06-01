@@ -4101,7 +4101,17 @@ async function callAIAgent(
         // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
         if (!toolResult && isAgendaIdTool && provider === "onebeleza") {
-          // If validAgendasIds is empty (new invocation), auto-fetch agendamentos
+          // 🚨 TTL TRAVA: invalida cache de agendamentos se foi capturado há mais de 5min,
+          // para evitar usar dados obsoletos em fluxo de cancelamento/remarcação.
+          const fetchedAt = (sessionState as any).validAgendasIdsFetchedAt || 0;
+          const cacheAgeMs = Date.now() - fetchedAt;
+          const CACHE_TTL_MS = 5 * 60 * 1000;
+          if (sessionState.validAgendasIds.length > 0 && cacheAgeMs > CACHE_TTL_MS) {
+            console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds cache stale (${Math.round(cacheAgeMs/1000)}s old), invalidating to force re-fetch`);
+            sessionState.validAgendasIds = [];
+            (sessionState as any).oneBelezaAgendaOptions = [];
+          }
+          // If validAgendasIds is empty (new invocation or stale), auto-fetch agendamentos
           if (sessionState.validAgendasIds.length === 0) {
             console.log(`[OneBeleza] ${toolCall.function.name}: validAgendasIds empty, auto-fetching agendamentos...`);
             
