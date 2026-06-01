@@ -4180,6 +4180,7 @@ async function callAIAgent(
               });
               sessionState.validAgendasIds = (myAgendamentos.length > 0 ? myAgendamentos : fetchResult).map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
               (sessionState as any).oneBelezaAgendaOptions = myAgendamentos.length > 0 ? myAgendamentos : fetchResult;
+              (sessionState as any).validAgendasIdsFetchedAt = Date.now();
               console.log(`[OneBeleza] Auto-fetched validAgendasIds: [${sessionState.validAgendasIds}] (date: ${dateToFetch}, filtered: ${myAgendamentos.length > 0})`);
             }
           }
