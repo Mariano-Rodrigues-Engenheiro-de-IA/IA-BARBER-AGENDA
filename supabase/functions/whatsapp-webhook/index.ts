@@ -6650,7 +6650,26 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
               }
             }
           }
-          
+
+          // Popula cache de slots reais por profissional para travar criar_agendamento alucinado.
+          try {
+            const profissionais = parsed?.data || parsed;
+            if (Array.isArray(profissionais) && args.data) {
+              const slotsByProf = new Map<number, Set<string>>();
+              for (const prof of profissionais) {
+                const pid = Number(prof?.id || prof?.Id);
+                if (!Number.isFinite(pid)) continue;
+                const slots = new Set<string>(
+                  Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : []
+                );
+                slotsByProf.set(pid, slots);
+              }
+              const key = `${tenant.id}:${phoneNumber || ""}`;
+              trinksLastListed.set(key, { data: args.data, slotsByProf, listedAt: Date.now() });
+              console.log(`[Trinks] cache horários: ${key} data=${args.data} profs=${slotsByProf.size}`);
+            }
+          } catch (e) { console.warn("[Trinks] falha ao cachear horários:", (e as Error).message); }
+
           return parsed;
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
