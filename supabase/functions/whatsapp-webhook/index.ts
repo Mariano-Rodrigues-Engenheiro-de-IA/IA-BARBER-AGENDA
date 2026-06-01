@@ -6513,6 +6513,14 @@ function buildNoneTools(_tenant: any) {
 
 // ===================== TRINKS TOOL EXECUTION =====================
 
+// 🚨 TRAVAS TRINKS (in-process, sobrevivem entre invocações warm)
+// Cache de IDs válidos de profissionais por tenant (TTL 30min) — bloqueia IDs alucinados (ex.: 1, 1001).
+const trinksKnownProfs = new Map<string, { ids: Set<number>; fetchedAt: number }>();
+// Cache da última `listar_horarios` por conversa — { data, slotsByProf: prof->Set<HH:MM> }
+// Bloqueia `criar_agendamento` em horário/data fora do que foi efetivamente consultado.
+const trinksLastListed = new Map<string, { data: string; slotsByProf: Map<number, Set<string>>; listedAt: number }>();
+const TRINKS_CACHE_TTL_MS = 30 * 60 * 1000;
+
 async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
