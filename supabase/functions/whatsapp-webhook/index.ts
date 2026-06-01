@@ -4303,10 +4303,26 @@ async function callAIAgent(
         }
 
         // Track valid agendasIds from buscar_agendamentos_dia
+        // 🚨 CROSS-CLIENT TRAVA: filtra agendamentos pelo telefone do lead atual
+        // ANTES de devolver pro modelo, para evitar que a IA confunda agendamento de
+        // outra pessoa (ex: irmão/parente) como sendo do cliente que está conversando.
         if (toolCall.function.name === "buscar_agendamentos_dia" && Array.isArray(toolResult)) {
-          sessionState.validAgendasIds = toolResult.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
-          (sessionState as any).oneBelezaAgendaOptions = toolResult;
-          console.log(`Tracked validAgendasIds: [${sessionState.validAgendasIds}]`);
+          const phoneClean = (phoneNumber || "").replace(/^55/, "").replace(/\D/g, "");
+          const myAgendamentos = toolResult.filter((a: any) => {
+            const cel = String(a?.celular || "").replace(/^55/, "").replace(/\D/g, "");
+            if (!cel) return false;
+            return cel === phoneClean || cel.endsWith(phoneClean) || phoneClean.endsWith(cel);
+          });
+          const filtered = myAgendamentos;
+          sessionState.validAgendasIds = filtered.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
+          (sessionState as any).oneBelezaAgendaOptions = filtered;
+          (sessionState as any).validAgendasIdsFetchedAt = Date.now();
+          console.log(`Tracked validAgendasIds (filtered by phone ${phoneClean}): [${sessionState.validAgendasIds}] (raw=${toolResult.length}, mine=${filtered.length})`);
+          // 🔁 Substitui o resultado entregue à IA pelo subset do próprio cliente.
+          // Se o cliente não tem nada marcado nesse dia, devolve array vazio com aviso.
+          toolResult = filtered.length > 0
+            ? filtered
+            : { empty: true, message: `Nenhum agendamento encontrado para o telefone ${phoneNumber} nessa data. NÃO mencione agendamentos de outros clientes.` };
         }
 
         if (provider === "bemp" && toolCall.function.name === "listar_unidades" && Array.isArray(toolResult)) {
