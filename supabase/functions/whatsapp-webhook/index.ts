@@ -5838,15 +5838,11 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 
 ------------------------------------------
 
-## 📱 TELEFONE DO CLIENTE
-${phoneNumber}
-Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa informar o telefone.
-
-------------------------------------------
-
-${nameBlock}
+${identityBlock}
 ${humanAttendantBlock}
 ------------------------------------------
+
+
 
 
 ## 🎯 TOM DE VOZ
