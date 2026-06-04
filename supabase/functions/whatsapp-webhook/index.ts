@@ -5709,7 +5709,15 @@ function formatGapMinutes(mins: number | null): string {
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string, explicitClientName?: string | null): string {
+function buildSystemPrompt(
+  tenant: any,
+  phoneNumber: string,
+  provider: string,
+  senderName?: string,
+  leadName?: string,
+  explicitClientName?: string | null,
+  lastClientGapMinutes?: number | null,
+): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
@@ -5717,15 +5725,40 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // ===== CLIENT NAME — only trust explicit conversation name or CRM lead name =====
-  // WhatsApp pushName is just display metadata and must never be used for cadastro.
+  // ===== CLIENT IDENTITY — explicit > CRM > (pushName as weak hint only) =====
+  // WhatsApp pushName is just display metadata and must never be used for cadastro
+  // nem para se dirigir ao cliente.
   const rawName = (explicitClientName && explicitClientName.trim()) || (leadName && leadName.trim()) || "";
   const cleanedName = sanitizeClientName(rawName);
   const isUsable = isUsableClientName(cleanedName);
   const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
-  const nameBlock = isUsable
-    ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
-    : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
+
+  const rawSender = (senderName || "").trim();
+  const cleanedSender = sanitizeClientName(rawSender);
+  const senderUsable = isUsableClientName(cleanedSender);
+  const senderDisplay = rawSender
+    ? (senderUsable ? cleanedSender : `${rawSender} (inválido — emojis/símbolos/números)`)
+    : "(não disponível)";
+
+  const phonePretty = formatPhoneForPrompt(phoneNumber);
+  const gapStr = formatGapMinutes(lastClientGapMinutes ?? null);
+
+  const identityBlock = `## 👤 IDENTIDADE DO CLIENTE
+- Telefone: ${phonePretty}
+- Nome confirmado pelo cliente NESTA conversa: ${explicitClientName && explicitClientName.trim() ? explicitClientName.trim() : "(vazio)"}
+- Nome no CRM/cadastro do estabelecimento: ${leadName && leadName.trim() ? leadName.trim() : "(não cadastrado)"}
+- Nome exibido no WhatsApp (pushName): ${senderDisplay}
+- Nome a usar nas mensagens: ${isUsable ? firstName : "NÃO use nome — atenda de forma neutra, sem gírias de gênero"}
+
+Regras de uso do nome:
+- Prioridade: nome confirmado pelo cliente > nome do CRM > nenhum. NUNCA use o pushName do WhatsApp para se dirigir ao cliente nem para cadastrar — ele é só metadado.
+- Se houver nome válido, use o PRIMEIRO NOME quando soar natural (ex: "Oi, ${firstName || "Fulano"}!"). Não force em toda mensagem.
+- Use o nome válido para inferir gênero conforme as regras do prompt do estabelecimento.
+- Se NÃO houver nome válido e o cliente perguntar "você sabe meu nome?", você pode (opcionalmente) citar o pushName apenas como dica e PEDIR CONFIRMAÇÃO (ex: "Vi um '${senderUsable ? cleanedSender : "—"}' aqui, é você mesmo?"). NUNCA assuma como verdadeiro.
+- O telefone acima já está identificado — o cliente NÃO precisa informar telefone em buscas/agendamentos.
+`;
+
+  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
   const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
