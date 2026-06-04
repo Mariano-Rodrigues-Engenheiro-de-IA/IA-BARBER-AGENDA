@@ -309,6 +309,8 @@ export type Database = {
       }
       crm_leads: {
         Row: {
+          ai_summary: string
+          ai_summary_updated_at: string | null
           board_id: string | null
           created_at: string
           flag_labels: string[]
@@ -322,6 +324,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_summary?: string
+          ai_summary_updated_at?: string | null
           board_id?: string | null
           created_at?: string
           flag_labels?: string[]
@@ -335,6 +339,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_summary?: string
+          ai_summary_updated_at?: string | null
           board_id?: string | null
           created_at?: string
           flag_labels?: string[]
