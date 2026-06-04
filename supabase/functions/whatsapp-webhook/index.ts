@@ -3578,7 +3578,28 @@ async function callAIAgent(
   sessionState.explicitClientName = explicitClientName;
   console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName);
+  // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
+  let lastClientGapMinutes: number | null = null;
+  try {
+    const { data: lastUserRows } = await supabase
+      .from("chat_messages")
+      .select("created_at")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(2);
+    // Index 0 is the current message just inserted; index 1 is the previous one.
+    const prev = lastUserRows?.[1]?.created_at;
+    if (prev) {
+      const diffMs = Date.now() - new Date(prev).getTime();
+      lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+    }
+  } catch (e) {
+    console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
+  }
+
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -5610,7 +5631,12 @@ function extractPhoneNumber(payload: any, msg: any): { phone: string; source: st
 
 // ===================== DATE/TIME HELPERS =====================
 
-function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate: string; year: number; month: number; day: number; hours: number; minutes: number } {
+function getBrasiliaDate(): {
+  dateComplete: string; todayName: string; todayDate: string;
+  year: number; month: number; day: number; hours: number; minutes: number;
+  timeHHMM: string; periodOfDay: string; greeting: string;
+  dayType: string; todayDateBR: string;
+} {
   const now = new Date();
   const brFormatter = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -5629,17 +5655,90 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
   const dateComplete = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   const todayDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const todayDateBR = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
 
   const brDate = new Date(Date.UTC(year, month - 1, day));
+  const dow = brDate.getUTCDay();
   const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
-  const todayName = dayNames[brDate.getUTCDay()];
+  const todayName = dayNames[dow];
 
-  return { dateComplete, todayName, todayDate, year, month, day, hours, minutes };
+  const timeHHMM = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  let periodOfDay: string;
+  let greeting: string;
+  if (hours >= 0 && hours < 6) { periodOfDay = "madrugada"; greeting = "boa madrugada"; }
+  else if (hours < 12) { periodOfDay = "manhã"; greeting = "bom dia"; }
+  else if (hours < 18) { periodOfDay = "tarde"; greeting = "boa tarde"; }
+  else { periodOfDay = "noite"; greeting = "boa noite"; }
+  const dayType = (dow === 0 || dow === 6) ? "fim de semana" : "dia útil";
+
+  return { dateComplete, todayName, todayDate, year, month, day, hours, minutes, timeHHMM, periodOfDay, greeting, dayType, todayDateBR };
+}
+
+// Format phone (e.g. "5561983012868" -> "+55 (61) 98301-2868" + DDD region hint)
+function formatPhoneForPrompt(raw: string): string {
+  const digits = String(raw || "").replace(/\D+/g, "");
+  if (!digits) return raw || "";
+  // DDD region hints (resumo das principais regiões)
+  const dddRegions: Record<string, string> = {
+    "11": "São Paulo/SP (capital)", "12": "São José dos Campos/SP", "13": "Santos/SP", "14": "Bauru/SP", "15": "Sorocaba/SP", "16": "Ribeirão Preto/SP", "17": "São José do Rio Preto/SP", "18": "Presidente Prudente/SP", "19": "Campinas/SP",
+    "21": "Rio de Janeiro/RJ (capital)", "22": "Campos/RJ", "24": "Volta Redonda/RJ",
+    "27": "Vitória/ES", "28": "Cachoeiro/ES",
+    "31": "Belo Horizonte/MG", "32": "Juiz de Fora/MG", "33": "Governador Valadares/MG", "34": "Uberlândia/MG", "35": "Poços de Caldas/MG", "37": "Divinópolis/MG", "38": "Montes Claros/MG",
+    "41": "Curitiba/PR", "42": "Ponta Grossa/PR", "43": "Londrina/PR", "44": "Maringá/PR", "45": "Cascavel/PR", "46": "Pato Branco/PR",
+    "47": "Joinville/SC", "48": "Florianópolis/SC", "49": "Chapecó/SC",
+    "51": "Porto Alegre/RS", "53": "Pelotas/RS", "54": "Caxias do Sul/RS", "55": "Santa Maria/RS",
+    "61": "Brasília/DF", "62": "Goiânia/GO", "63": "Palmas/TO", "64": "Rio Verde/GO", "65": "Cuiabá/MT", "66": "Rondonópolis/MT", "67": "Campo Grande/MS",
+    "68": "Rio Branco/AC", "69": "Porto Velho/RO",
+    "71": "Salvador/BA", "73": "Ilhéus/BA", "74": "Juazeiro/BA", "75": "Feira de Santana/BA", "77": "Vitória da Conquista/BA", "79": "Aracaju/SE",
+    "81": "Recife/PE", "82": "Maceió/AL", "83": "João Pessoa/PB", "84": "Natal/RN", "85": "Fortaleza/CE", "86": "Teresina/PI", "87": "Petrolina/PE", "88": "Juazeiro do Norte/CE", "89": "Picos/PI",
+    "91": "Belém/PA", "92": "Manaus/AM", "93": "Santarém/PA", "94": "Marabá/PA", "95": "Boa Vista/RR", "96": "Macapá/AP", "97": "Coari/AM", "98": "São Luís/MA", "99": "Imperatriz/MA",
+  };
+  // Normalize Brazilian numbers (with country code 55)
+  let pretty = digits;
+  let region = "";
+  if (digits.length === 13 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    pretty = `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    region = dddRegions[ddd] || "";
+  } else if (digits.length === 12 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    pretty = `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+    region = dddRegions[ddd] || "";
+  } else if (digits.length === 11) {
+    const ddd = digits.slice(0, 2);
+    const rest = digits.slice(2);
+    pretty = `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    region = dddRegions[ddd] || "";
+  }
+  return region ? `${pretty} — DDD ${region}` : pretty;
+}
+
+// Format a minute gap as "Xh YYmin" or "Ymin"
+function formatGapMinutes(mins: number | null): string {
+  if (mins == null || !Number.isFinite(mins) || mins < 0) return "primeira mensagem (sem gap anterior)";
+  if (mins < 1) return "menos de 1 minuto";
+  if (mins < 60) return `${Math.round(mins)} min`;
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (h < 24) return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh > 0 ? `${d}d ${rh}h` : `${d}d`;
 }
 
 // ===================== SYSTEM PROMPT =====================
 
-function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, senderName?: string, leadName?: string, explicitClientName?: string | null): string {
+function buildSystemPrompt(
+  tenant: any,
+  phoneNumber: string,
+  provider: string,
+  senderName?: string,
+  leadName?: string,
+  explicitClientName?: string | null,
+  lastClientGapMinutes?: number | null,
+): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
   const todayName = br.todayName;
@@ -5647,15 +5746,40 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
   const customPrompt = tenant.agent_system_prompt || "";
   const knowledgeBase = tenant.agent_knowledge_base || "";
 
-  // ===== CLIENT NAME — only trust explicit conversation name or CRM lead name =====
-  // WhatsApp pushName is just display metadata and must never be used for cadastro.
+  // ===== CLIENT IDENTITY — explicit > CRM > (pushName as weak hint only) =====
+  // WhatsApp pushName is just display metadata and must never be used for cadastro
+  // nem para se dirigir ao cliente.
   const rawName = (explicitClientName && explicitClientName.trim()) || (leadName && leadName.trim()) || "";
   const cleanedName = sanitizeClientName(rawName);
   const isUsable = isUsableClientName(cleanedName);
   const firstName = isUsable ? cleanedName.split(/\s+/)[0] : "";
-  const nameBlock = isUsable
-    ? `## 👤 NOME DO CLIENTE\nNome completo: ${cleanedName}\nPrimeiro nome: ${firstName}\n→ Use o PRIMEIRO NOME ao se dirigir ao cliente quando for natural (ex: "Oi, ${firstName}!"). Não force em toda mensagem.\n→ Use este nome para inferir o gênero conforme as regras do prompt do estabelecimento.\n`
-    : `## 👤 NOME DO CLIENTE\nNome não disponível ou inválido (com símbolos/emojis/números). NÃO use nome — atenda de forma neutra, sem gírias de gênero.\n`;
+
+  const rawSender = (senderName || "").trim();
+  const cleanedSender = sanitizeClientName(rawSender);
+  const senderUsable = isUsableClientName(cleanedSender);
+  const senderDisplay = rawSender
+    ? (senderUsable ? cleanedSender : `${rawSender} (inválido — emojis/símbolos/números)`)
+    : "(não disponível)";
+
+  const phonePretty = formatPhoneForPrompt(phoneNumber);
+  const gapStr = formatGapMinutes(lastClientGapMinutes ?? null);
+
+  const identityBlock = `## 👤 IDENTIDADE DO CLIENTE
+- Telefone: ${phonePretty}
+- Nome confirmado pelo cliente NESTA conversa: ${explicitClientName && explicitClientName.trim() ? explicitClientName.trim() : "(vazio)"}
+- Nome no CRM/cadastro do estabelecimento: ${leadName && leadName.trim() ? leadName.trim() : "(não cadastrado)"}
+- Nome exibido no WhatsApp (pushName): ${senderDisplay}
+- Nome a usar nas mensagens: ${isUsable ? firstName : "NÃO use nome — atenda de forma neutra, sem gírias de gênero"}
+
+Regras de uso do nome:
+- Prioridade: nome confirmado pelo cliente > nome do CRM > nenhum. NUNCA use o pushName do WhatsApp para se dirigir ao cliente nem para cadastrar — ele é só metadado.
+- Se houver nome válido, use o PRIMEIRO NOME quando soar natural (ex: "Oi, ${firstName || "Fulano"}!"). Não force em toda mensagem.
+- Use o nome válido para inferir gênero conforme as regras do prompt do estabelecimento.
+- Se NÃO houver nome válido e o cliente perguntar "você sabe meu nome?", você pode (opcionalmente) citar o pushName apenas como dica e PEDIR CONFIRMAÇÃO (ex: "Vi um '${senderUsable ? cleanedSender : "—"}' aqui, é você mesmo?"). NUNCA assuma como verdadeiro.
+- O telefone acima já está identificado — o cliente NÃO precisa informar telefone em buscas/agendamentos.
+`;
+
+  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
   const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
@@ -5681,12 +5805,22 @@ function buildSystemPrompt(tenant: any, phoneNumber: string, provider: string, s
 - Sempre que você for responder ao cliente, escreva uma mensagem natural, curta e em português, como se fosse uma pessoa real conversando no WhatsApp.
 - Se você acabou de executar ferramentas (ex: enviar imagens, adicionar etiqueta), AINDA ASSIM você DEVE escrever uma mensagem natural em português ao cliente logo em seguida — nunca termine sem texto, nunca devolva texto telegráfico em inglês, nunca devolva meta-comentário entre parênteses.
 
-## 📅 DATA E HORA ATUAL
-- Data e hora (Brasília): ${dateComplete}
-- Dia da semana: ${todayName}
-- Data de hoje: ${todayDate}
+## ⏰ CONTEXTO TEMPORAL (LEIA ANTES DE QUALQUER RESPOSTA)
+- AGORA são **${br.timeHHMM}** da **${br.periodOfDay}** — ${todayName}, ${br.todayDateBR} (${br.dayType})
+- Saudação adequada AGORA: "${br.greeting}" (NUNCA "bom dia" à tarde/noite, NUNCA "boa noite" pela manhã)
+- Data ISO de hoje: ${todayDate} | Data/hora completa Brasília: ${dateComplete}
+- Gap desde a última mensagem do cliente: ${gapStr}
 - Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
 ${nextDaysMap.join("\n")}
+
+🚨 REGRA DE HORÁRIO ATUAL × FUNCIONAMENTO (CRÍTICA):
+- ANTES de dizer "já fechamos", "estamos fechados", "ainda estamos abertos" ou "só amanhã", COMPARE a HORA AGORA (${br.timeHHMM}) com o horário de funcionamento na base de conhecimento do estabelecimento.
+- Se AGORA < horário de fechamento de hoje → o estabelecimento AINDA está aberto. NÃO diga que fechou.
+- Se o cliente pedir um horário FUTURO de hoje (ex: "posso ir às 20h"), só recuse se 20h for DEPOIS do horário de fechamento — não confunda "fecha às 19h30" com "já fechou agora".
+- Se o cliente disser "boa noite" sendo manhã/tarde, responda com a saudação CORRETA do período atual (${br.greeting}), sem espelhar a dele.
+- Se o gap acima for > 12h, releia o histórico antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
+
+
 
 🚨 REGRA CRÍTICA DE DATAS — NUNCA QUEBRE ESTA REGRA:
 1. NUNCA diga uma data sem antes consultar o calendário acima.
@@ -5725,15 +5859,11 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 
 ------------------------------------------
 
-## 📱 TELEFONE DO CLIENTE
-${phoneNumber}
-Use este número em buscas de cliente e agendamentos. O cliente NÃO precisa informar o telefone.
-
-------------------------------------------
-
-${nameBlock}
+${identityBlock}
 ${humanAttendantBlock}
 ------------------------------------------
+
+
 
 
 ## 🎯 TOM DE VOZ
