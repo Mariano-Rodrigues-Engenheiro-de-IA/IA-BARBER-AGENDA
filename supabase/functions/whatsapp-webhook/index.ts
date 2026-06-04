@@ -5610,7 +5610,12 @@ function extractPhoneNumber(payload: any, msg: any): { phone: string; source: st
 
 // ===================== DATE/TIME HELPERS =====================
 
-function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate: string; year: number; month: number; day: number; hours: number; minutes: number } {
+function getBrasiliaDate(): {
+  dateComplete: string; todayName: string; todayDate: string;
+  year: number; month: number; day: number; hours: number; minutes: number;
+  timeHHMM: string; periodOfDay: string; greeting: string;
+  dayType: string; todayDateBR: string;
+} {
   const now = new Date();
   const brFormatter = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -5629,12 +5634,77 @@ function getBrasiliaDate(): { dateComplete: string; todayName: string; todayDate
 
   const dateComplete = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   const todayDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const todayDateBR = `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`;
 
   const brDate = new Date(Date.UTC(year, month - 1, day));
+  const dow = brDate.getUTCDay();
   const dayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
-  const todayName = dayNames[brDate.getUTCDay()];
+  const todayName = dayNames[dow];
 
-  return { dateComplete, todayName, todayDate, year, month, day, hours, minutes };
+  const timeHHMM = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  let periodOfDay: string;
+  let greeting: string;
+  if (hours >= 0 && hours < 6) { periodOfDay = "madrugada"; greeting = "boa madrugada"; }
+  else if (hours < 12) { periodOfDay = "manhã"; greeting = "bom dia"; }
+  else if (hours < 18) { periodOfDay = "tarde"; greeting = "boa tarde"; }
+  else { periodOfDay = "noite"; greeting = "boa noite"; }
+  const dayType = (dow === 0 || dow === 6) ? "fim de semana" : "dia útil";
+
+  return { dateComplete, todayName, todayDate, year, month, day, hours, minutes, timeHHMM, periodOfDay, greeting, dayType, todayDateBR };
+}
+
+// Format phone (e.g. "5561983012868" -> "+55 (61) 98301-2868" + DDD region hint)
+function formatPhoneForPrompt(raw: string): string {
+  const digits = String(raw || "").replace(/\D+/g, "");
+  if (!digits) return raw || "";
+  // DDD region hints (resumo das principais regiões)
+  const dddRegions: Record<string, string> = {
+    "11": "São Paulo/SP (capital)", "12": "São José dos Campos/SP", "13": "Santos/SP", "14": "Bauru/SP", "15": "Sorocaba/SP", "16": "Ribeirão Preto/SP", "17": "São José do Rio Preto/SP", "18": "Presidente Prudente/SP", "19": "Campinas/SP",
+    "21": "Rio de Janeiro/RJ (capital)", "22": "Campos/RJ", "24": "Volta Redonda/RJ",
+    "27": "Vitória/ES", "28": "Cachoeiro/ES",
+    "31": "Belo Horizonte/MG", "32": "Juiz de Fora/MG", "33": "Governador Valadares/MG", "34": "Uberlândia/MG", "35": "Poços de Caldas/MG", "37": "Divinópolis/MG", "38": "Montes Claros/MG",
+    "41": "Curitiba/PR", "42": "Ponta Grossa/PR", "43": "Londrina/PR", "44": "Maringá/PR", "45": "Cascavel/PR", "46": "Pato Branco/PR",
+    "47": "Joinville/SC", "48": "Florianópolis/SC", "49": "Chapecó/SC",
+    "51": "Porto Alegre/RS", "53": "Pelotas/RS", "54": "Caxias do Sul/RS", "55": "Santa Maria/RS",
+    "61": "Brasília/DF", "62": "Goiânia/GO", "63": "Palmas/TO", "64": "Rio Verde/GO", "65": "Cuiabá/MT", "66": "Rondonópolis/MT", "67": "Campo Grande/MS",
+    "68": "Rio Branco/AC", "69": "Porto Velho/RO",
+    "71": "Salvador/BA", "73": "Ilhéus/BA", "74": "Juazeiro/BA", "75": "Feira de Santana/BA", "77": "Vitória da Conquista/BA", "79": "Aracaju/SE",
+    "81": "Recife/PE", "82": "Maceió/AL", "83": "João Pessoa/PB", "84": "Natal/RN", "85": "Fortaleza/CE", "86": "Teresina/PI", "87": "Petrolina/PE", "88": "Juazeiro do Norte/CE", "89": "Picos/PI",
+    "91": "Belém/PA", "92": "Manaus/AM", "93": "Santarém/PA", "94": "Marabá/PA", "95": "Boa Vista/RR", "96": "Macapá/AP", "97": "Coari/AM", "98": "São Luís/MA", "99": "Imperatriz/MA",
+  };
+  // Normalize Brazilian numbers (with country code 55)
+  let pretty = digits;
+  let region = "";
+  if (digits.length === 13 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    pretty = `+55 (${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    region = dddRegions[ddd] || "";
+  } else if (digits.length === 12 && digits.startsWith("55")) {
+    const ddd = digits.slice(2, 4);
+    const rest = digits.slice(4);
+    pretty = `+55 (${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`;
+    region = dddRegions[ddd] || "";
+  } else if (digits.length === 11) {
+    const ddd = digits.slice(0, 2);
+    const rest = digits.slice(2);
+    pretty = `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`;
+    region = dddRegions[ddd] || "";
+  }
+  return region ? `${pretty} — DDD ${region}` : pretty;
+}
+
+// Format a minute gap as "Xh YYmin" or "Ymin"
+function formatGapMinutes(mins: number | null): string {
+  if (mins == null || !Number.isFinite(mins) || mins < 0) return "primeira mensagem (sem gap anterior)";
+  if (mins < 1) return "menos de 1 minuto";
+  if (mins < 60) return `${Math.round(mins)} min`;
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (h < 24) return m > 0 ? `${h}h${String(m).padStart(2, '0')}` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return rh > 0 ? `${d}d ${rh}h` : `${d}d`;
 }
 
 // ===================== SYSTEM PROMPT =====================
