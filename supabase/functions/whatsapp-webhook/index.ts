@@ -3578,7 +3578,28 @@ async function callAIAgent(
   sessionState.explicitClientName = explicitClientName;
   console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName);
+  // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
+  let lastClientGapMinutes: number | null = null;
+  try {
+    const { data: lastUserRows } = await supabase
+      .from("chat_messages")
+      .select("created_at")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .eq("role", "user")
+      .order("created_at", { ascending: false })
+      .limit(2);
+    // Index 0 is the current message just inserted; index 1 is the previous one.
+    const prev = lastUserRows?.[1]?.created_at;
+    if (prev) {
+      const diffMs = Date.now() - new Date(prev).getTime();
+      lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+    }
+  } catch (e) {
+    console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
+  }
+
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
