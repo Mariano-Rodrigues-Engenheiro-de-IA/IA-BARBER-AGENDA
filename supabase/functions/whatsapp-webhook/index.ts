@@ -3400,6 +3400,7 @@ async function callAIAgent(
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
   senderName?: string,
+  simulatorMode?: boolean,
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const logToolCalls: AgentResult["toolCalls"] = [];
