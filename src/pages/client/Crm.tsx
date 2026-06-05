@@ -168,7 +168,7 @@ export default function ClientCrm() {
         funnelCols={funnelCols}
         onClose={() => setOpenLead(null)}
         onSaved={() => refetch()}
-        onOpenConversation={(phone) => navigate(`/app/conversas?phone=${encodeURIComponent(phone)}`)}
+        onOpenConversation={(phone) => navigate(`/app/conversations?phone=${encodeURIComponent(phone)}`)}
       />
     </div>
   );
