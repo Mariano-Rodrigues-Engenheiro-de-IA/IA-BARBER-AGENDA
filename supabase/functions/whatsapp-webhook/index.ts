@@ -3584,11 +3584,15 @@ async function callAIAgent(
 
     const currentSummary = (aiSummary || "").trim();
     const hasToolActivity = logToolCalls.length > 0;
-    const likelyRelevantText = `${userMessage || ""}\n${assistantReply || ""}`;
-    const relevanceHint = /(clube|plano|assinatura|prefir|costumo|geralmente|sempre|barba|corte|peza|sobrancelha|hidrata|coloração|colora|unha|depila|botox|limpeza|massagem|drenagem|alerg|restri|com\s+o|com\s+a|todo\s+m[eê]s|toda\s+semana|quinzenal|mensal)/i;
+    const userMsgsCount = (history || []).filter((m: any) => m?.role === "user").length
+      + (userMessage ? 1 : 0);
+    const trivialOnly = /^\s*(oi+|ol[aá]+|bom\s*dia|boa\s*tarde|boa\s*noite|ok+|obrigad[oa]+|valeu+|tchau+|s+i+m+|n+a+o+|👍|❤️)\s*[!.?]*\s*$/i;
+    const isTrivial = trivialOnly.test(userMessage || "") && !assistantReply;
 
-    if (!currentSummary && !hasToolActivity && !relevanceHint.test(likelyRelevantText)) {
-      console.log(`[SummaryAuto] skipped for ${phoneNumber}: no strong signal`);
+    // Roda sempre que: já existe resumo, houve tool call, OU tem ≥2 msgs do user.
+    // Só pula quando é absolutamente nada (1ª saudação isolada).
+    if (!currentSummary && !hasToolActivity && userMsgsCount < 2 && isTrivial) {
+      console.log(`[SummaryAuto] skipped for ${phoneNumber}: trivial first contact`);
       return;
     }
 
@@ -3599,7 +3603,19 @@ async function callAIAgent(
           {
             role: "system",
             content:
-              "Você é um extrator de memória persistente de CRM. Analise a conversa e responda APENAS JSON válido, sem markdown, no formato {\"should_update\": boolean, \"summary\": string, \"reason\": string}. Só atualize quando houver informação duradoura útil em atendimentos futuros: serviço favorito, combo recorrente, plano/clube/assinatura, profissional preferido, frequência típica, restrição, observação importante. Não inclua fatos efêmeros nem invente. O campo summary deve ser curto, factual, em PT-BR, até 600 caracteres, em 1-3 frases.",
+              "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
+              "Responda APENAS JSON válido (sem markdown) no formato " +
+              "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
+              "REGRA PRINCIPAL: seja GENEROSO ao atualizar. should_update=true sempre que houver QUALQUER fato útil sobre o cliente, mesmo que pequeno:\n" +
+              "- Nome do cliente (quando descoberto)\n" +
+              "- Serviço(s) que mencionou, perguntou ou agendou (mesmo uma vez)\n" +
+              "- Profissional citado/preferido\n" +
+              "- Janela de horário típica (manhã/tarde/sábado/etc.)\n" +
+              "- Plano, clube, assinatura, pacote\n" +
+              "- Restrição, alergia, observação útil\n" +
+              "- Status da última interação (ex: 'agendou corte com X em DATA', 'pediu preço de barba', 'primeiro contato — interesse em sobrancelha', 'desmarcou e quer remarcar')\n\n" +
+              "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
+              "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.",
           },
           {
             role: "user",
@@ -3608,12 +3624,12 @@ async function callAIAgent(
               currentSummary,
               lastUserMessage: userMessage || "",
               assistantReply: assistantReply || "",
-              recentHistory: history.slice(-6),
+              recentHistory: history.slice(-8),
               toolCalls: logToolCalls.slice(-6).map((tool) => ({ name: tool.name, args: tool.args, result: tool.result })),
             }),
           },
         ],
-        max_completion_tokens: 220,
+        max_completion_tokens: 280,
       };
 
       if (modelUsed.includes("gpt-5")) {
