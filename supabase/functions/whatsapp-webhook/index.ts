@@ -5971,6 +5971,8 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 ------------------------------------------
 
 ${identityBlock}
+${summaryBlock}
+${simulatorBlock}
 ${humanAttendantBlock}
 ------------------------------------------
 
