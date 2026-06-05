@@ -4918,6 +4918,35 @@ async function callAIAgent(
         tool_call_id: toolCall.id,
         content: JSON.stringify(toolResult),
       });
+
+      // 🚨 HARD GUARD: se uma ferramenta de AGENDAMENTO falhou, é TERMINANTEMENTE
+      // PROIBIDO confirmar o agendamento. Força a IA a NÃO inventar sucesso e
+      // a acionar a ferramenta de escalar humano (se existir). Vale para TODOS os provedores.
+      const bookingToolNames = new Set([
+        "criar_agendamento", "agendar", "editar_agendamento",
+      ]);
+      if (bookingToolNames.has(toolCall.function.name)) {
+        const r: any = toolResult || {};
+        const succeeded = !r.error && !r.blocked && r.success !== false
+          && !(Array.isArray(r.Errors) && r.Errors.length > 0)
+          && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
+        if (!succeeded) {
+          const escalateTool = (getEnabledCustomTools(tenant) || []).find(
+            (t: any) => t?.type === "escalate_human",
+          );
+          const escalateName = escalateTool?.name;
+          const guardMsg = [
+            "⛔ FALHA NA FERRAMENTA DE AGENDAMENTO.",
+            "É TERMINANTEMENTE PROIBIDO confirmar, dizer que agendou, que está marcado, encaixado, ou qualquer variação de sucesso.",
+            "NÃO invente que o agendamento foi feito.",
+            escalateName
+              ? `OBRIGATÓRIO: chame AGORA a ferramenta "${escalateName}" para acionar um atendente humano. Passe um motivo curto descrevendo a falha.`
+              : "OBRIGATÓRIO: responda ao cliente que não foi possível concluir o agendamento agora e que um atendente humano vai assumir em instantes. NÃO confirme o agendamento.",
+          ].join(" ");
+          messages.push({ role: "system", content: guardMsg });
+          logErrors.push(`[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`);
+        }
+      }
     }
 
     const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };
