@@ -4746,7 +4746,7 @@ async function callAIAgent(
         finalResponse = "Vou pedir pra um atendente humano te ajudar a finalizar isso, um momento por favor 🙏";
         sessionBlocked = true;
         (sessionState as any).lastTimeListings = [];
-        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+        if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       }
     } else {
       // resposta sem listagem → reset do tracker
