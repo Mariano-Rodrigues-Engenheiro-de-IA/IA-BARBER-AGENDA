@@ -4292,7 +4292,7 @@ async function callAIAgent(
 
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
+          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode });
         }
 
         // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
