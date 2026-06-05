@@ -4948,6 +4948,7 @@ async function callAIAgent(
     }
   }
 
+  await maybeAutoPersistClientSummary(finalResponse);
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
@@ -5084,8 +5085,6 @@ async function executeToolForProvider(
     const sb = opts?.supabase;
     if (!sb || !phoneNumber) return { ok: false, error: "Contexto indisponível para persistir resumo." };
     try {
-      // Upsert by (tenant_id, phone_number). crm_leads has no unique constraint declared,
-      // so do a manual find-or-update / insert.
       const { data: existing } = await sb
         .from("crm_leads")
         .select("id")
