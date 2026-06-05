@@ -26,7 +26,7 @@ export default function ClientCrm() {
     enabled: !!tenantId && !!selectedBoardId,
     queryFn: async () => {
       let q = supabase.from("crm_leads")
-        .select("id,name,phone_number,label_id,label_name,notes,updated_at,board_id")
+          .select("id,name,phone_number,label_id,label_name,notes,ai_summary,ai_summary_updated_at,updated_at,board_id")
         .eq("tenant_id", tenantId!)
         .order("updated_at", { ascending: false });
       q = isFirstBoard ? q.or(`board_id.eq.${selectedBoardId},board_id.is.null`) : q.eq("board_id", selectedBoardId!);
@@ -83,6 +83,12 @@ export default function ClientCrm() {
                       <div className="text-sm font-medium text-foreground">{l.name || l.phone_number}</div>
                       <div className="text-xs text-muted-foreground">{l.phone_number}</div>
                       {l.notes && <div className="text-xs text-muted-foreground mt-1 line-clamp-2">{l.notes}</div>}
+                      {l.ai_summary && (
+                        <div className="mt-2 space-y-1 rounded-md border border-border/40 bg-background/40 p-2">
+                          <div className="text-[11px] font-medium text-foreground/80">Resumo da IA</div>
+                          <div className="text-xs text-muted-foreground whitespace-pre-wrap line-clamp-4">{l.ai_summary}</div>
+                        </div>
+                      )}
                     </div>
                   ))}
                   {items.length === 0 && <p className="text-xs text-muted-foreground">Vazio</p>}
