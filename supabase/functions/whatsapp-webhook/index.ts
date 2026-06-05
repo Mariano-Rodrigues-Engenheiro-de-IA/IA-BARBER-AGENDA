@@ -3400,6 +3400,7 @@ async function callAIAgent(
   mediaBase64?: string | null,
   mediaMimeType?: string | null,
   senderName?: string,
+  simulatorMode?: boolean,
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const logToolCalls: AgentResult["toolCalls"] = [];
@@ -3559,47 +3560,53 @@ async function callAIAgent(
     return out;
   };
 
-  // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
+  // Fetch CRM lead name + persistent AI summary
   let leadName = "";
+  let aiSummary = "";
+  let aiSummaryUpdatedAt: string | null = null;
   try {
     const { data: leadRows } = await supabase
       .from("crm_leads")
-      .select("name")
+      .select("name, ai_summary, ai_summary_updated_at")
       .eq("tenant_id", tenant.id)
       .eq("phone_number", phoneNumber)
       .limit(1);
     leadName = leadRows?.[0]?.name || "";
+    aiSummary = leadRows?.[0]?.ai_summary || "";
+    aiSummaryUpdatedAt = leadRows?.[0]?.ai_summary_updated_at || null;
   } catch (e) {
-    console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
+    console.warn("[CallAIAgent] Failed to fetch lead name/summary:", (e as any)?.message);
   }
   const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
   const previousAssistantMessage = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
   const explicitClientName = extractExplicitClientName(userMessage, previousAssistantMessage) || sessionState.explicitClientName || null;
   sessionState.explicitClientName = explicitClientName;
-  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}", simulator: ${!!simulatorMode}`);
 
   // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
   let lastClientGapMinutes: number | null = null;
-  try {
-    const { data: lastUserRows } = await supabase
-      .from("chat_messages")
-      .select("created_at")
-      .eq("tenant_id", tenant.id)
-      .eq("phone_number", phoneNumber)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .limit(2);
-    // Index 0 is the current message just inserted; index 1 is the previous one.
-    const prev = lastUserRows?.[1]?.created_at;
-    if (prev) {
-      const diffMs = Date.now() - new Date(prev).getTime();
-      lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+  if (!simulatorMode) {
+    try {
+      const { data: lastUserRows } = await supabase
+        .from("chat_messages")
+        .select("created_at")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(2);
+      // Index 0 is the current message just inserted; index 1 is the previous one.
+      const prev = lastUserRows?.[1]?.created_at;
+      if (prev) {
+        const diffMs = Date.now() - new Date(prev).getTime();
+        lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+      }
+    } catch (e) {
+      console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
     }
-  } catch (e) {
-    console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
   }
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -3745,7 +3752,7 @@ async function callAIAgent(
       sessionBlocked = true;
       (sessionState as any).aiFailureCount = 0;
     }
-    await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+    if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
     return { response: fallbackMsg, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
   }
   // Sucesso → zera contador de falhas
@@ -4212,7 +4219,7 @@ async function callAIAgent(
             const fetchResult = await executeToolForProvider(provider, tenant, {
               ...toolCall,
               function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: dateToFetch }) },
-            }, phoneNumber);
+            }, phoneNumber, { supabase, simulatorMode });
             if (Array.isArray(fetchResult)) {
               // Filter only agendamentos for this phone number
               const phoneClean = phoneNumber.replace(/^55/, "");
@@ -4291,7 +4298,7 @@ async function callAIAgent(
 
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber);
+          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode });
         }
 
         // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
@@ -4679,7 +4686,7 @@ async function callAIAgent(
       console.error("AI gateway error (tool round):", response.status, errText);
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
       // Save state even on error
-      await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+      if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
@@ -4689,7 +4696,7 @@ async function callAIAgent(
   }
 
   // Save persistent state after all tool rounds
-  await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+  if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
 
@@ -4739,7 +4746,7 @@ async function callAIAgent(
         finalResponse = "Vou pedir pra um atendente humano te ajudar a finalizar isso, um momento por favor 🙏";
         sessionBlocked = true;
         (sessionState as any).lastTimeListings = [];
-        await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+        if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       }
     } else {
       // resposta sem listagem → reset do tracker
@@ -4751,6 +4758,27 @@ async function callAIAgent(
 }
 
 // ===================== PROVIDER DISPATCHER =====================
+
+// Universal tool injected for every provider — the AI uses it to keep a small
+// persistent "dossier" about the client (preferences, plan, journey).
+const ATUALIZAR_RESUMO_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "atualizar_resumo_cliente",
+    description:
+      "Atualiza o RESUMO PERSISTENTE deste cliente (jornada/perfil) quando ele revelar algo relevante e duradouro: serviço favorito, profissional preferido, plano/assinatura/clube, frequência típica, restrições, datas importantes, observações úteis para futuros atendimentos. NÃO use para coisas efêmeras (humor, status de mensagem). Sempre reescreva o resumo INTEIRO (não acumule) e mantenha curto, até ~600 caracteres, em português, no formato 'frase + frase + frase'.",
+    parameters: {
+      type: "object",
+      properties: {
+        resumo: {
+          type: "string",
+          description: "Texto novo COMPLETO do resumo (substitui o anterior). Curto, factual, em PT-BR, até ~600 caracteres.",
+        },
+      },
+      required: ["resumo"],
+    },
+  },
+};
 
 function buildToolsForProvider(provider: string, tenant: any): any[] | undefined {
   let providerTools: any[] | undefined;
@@ -4776,6 +4804,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     default:
       providerTools = buildTrinksTools(tenant);
   }
+
+  // Universal client-summary tool (all providers)
+  providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL];
 
   // Inject custom tools from tenant.agent_settings
   const customTools = getEnabledCustomTools(tenant);
@@ -4811,6 +4842,12 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
   return providerTools;
 }
 
+// Heuristic: any tool that mutates external state must be blocked in simulator mode.
+const WRITE_TOOL_NAME_RE = /^(criar_|cadastrar_|agendar$|agendar_|cancelar_|desmarcar_|editar_|confirmar_|atualizar_|enviar_|send_|escalate)/i;
+function isWriteToolName(name: string): boolean {
+  return WRITE_TOOL_NAME_RE.test(name);
+}
+
 function getEnabledCustomTools(tenant: any): any[] {
   const settings = tenant?.agent_settings;
   if (!settings || typeof settings !== "object") return [];
@@ -4819,10 +4856,72 @@ function getEnabledCustomTools(tenant: any): any[] {
   return tools.filter((t: any) => t.enabled === true);
 }
 
-async function executeToolForProvider(provider: string, tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeToolForProvider(
+  provider: string,
+  tenant: any,
+  toolCall: any,
+  phoneNumber?: string,
+  opts?: { supabase?: any; simulatorMode?: boolean },
+): Promise<any> {
   const funcName = toolCall.function.name;
+  const simulator = !!opts?.simulatorMode;
 
-  // Check if it's a custom tool first
+  // ===== SIMULATOR MODE: block any tool that writes to external systems or to the DB.
+  if (simulator) {
+    const customTools = getEnabledCustomTools(tenant);
+    const isCustom = customTools.some((ct: any) => ct.name === funcName);
+    if (isCustom || isWriteToolName(funcName)) {
+      return {
+        ok: true,
+        simulated: true,
+        message: `Ação simulada — no WhatsApp real, "${funcName}" seria executada de verdade.`,
+      };
+    }
+  }
+
+  // ===== Universal tool: atualizar_resumo_cliente
+  if (funcName === "atualizar_resumo_cliente") {
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    const resumo = String(toolArgs?.resumo ?? "").trim().slice(0, 1200);
+    if (!resumo) return { ok: false, error: "Resumo vazio." };
+    if (simulator) {
+      return { ok: true, simulated: true, message: "Resumo atualizado (simulado)." };
+    }
+    const sb = opts?.supabase;
+    if (!sb || !phoneNumber) return { ok: false, error: "Contexto indisponível para persistir resumo." };
+    try {
+      // Upsert by (tenant_id, phone_number). crm_leads has no unique constraint declared,
+      // so do a manual find-or-update / insert.
+      const { data: existing } = await sb
+        .from("crm_leads")
+        .select("id")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        await sb
+          .from("crm_leads")
+          .update({ ai_summary: resumo, ai_summary_updated_at: new Date().toISOString() })
+          .eq("id", existing[0].id);
+      } else {
+        await sb
+          .from("crm_leads")
+          .insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            label_id: "novo",
+            ai_summary: resumo,
+            ai_summary_updated_at: new Date().toISOString(),
+          } as any);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      console.error("[atualizar_resumo_cliente] failed:", e?.message);
+      return { ok: false, error: e?.message || "Falha ao salvar resumo." };
+    }
+  }
+
+  // Check if it's a custom tool
   const customTools = getEnabledCustomTools(tenant);
   const customTool = customTools.find((ct: any) => ct.name === funcName);
   if (customTool) {
@@ -5738,6 +5837,9 @@ function buildSystemPrompt(
   leadName?: string,
   explicitClientName?: string | null,
   lastClientGapMinutes?: number | null,
+  aiSummary?: string,
+  aiSummaryUpdatedAt?: string | null,
+  simulatorMode?: boolean,
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
@@ -5781,7 +5883,16 @@ Regras de uso do nome:
 
   const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
-  const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
+  // ===== PERSISTENT CLIENT SUMMARY (cross-conversation memory) =====
+  const summaryText = (aiSummary || "").trim();
+  const summaryAgeStr = aiSummaryUpdatedAt ? formatGapMinutes(Math.round((Date.now() - new Date(aiSummaryUpdatedAt).getTime()) / 60000)) : null;
+  const summaryBlock = summaryText
+    ? `\n## 🗂️ RESUMO/JORNADA DESTE CLIENTE (memória persistente)\n${summaryText}\nAtualizado há: ${summaryAgeStr || "—"}\n\nUse este resumo ATIVAMENTE para personalizar o atendimento (ex: "Vai querer o de sempre?", "Como cliente do clube..."). Mas NUNCA leia em voz alta o resumo nem cite que existe um "perfil" — é só conhecimento seu.\n→ Quando o cliente revelar algo NOVO e duradouro (serviço favorito, plano, profissional preferido, frequência, restrição, observação útil), chame a ferramenta \`atualizar_resumo_cliente\` com o resumo INTEIRO reescrito (curto, até ~600 chars). NÃO acumule; consolide.\n`
+    : `\n## 🗂️ RESUMO/JORNADA DESTE CLIENTE (memória persistente)\n(cliente novo / ainda sem resumo — colete informações naturalmente ao longo da conversa)\n\nQuando perceber algo relevante e duradouro sobre o cliente (serviço favorito, plano/assinatura, profissional preferido, frequência típica, restrições, observações úteis para futuros atendimentos), chame a ferramenta \`atualizar_resumo_cliente\` com um resumo CURTO em PT-BR (até ~600 caracteres). NUNCA cite ao cliente que está montando um perfil.\n`;
+
+  const simulatorBlock = simulatorMode
+    ? `\n## 🧪 MODO SIMULADOR (TESTE INTERNO)\nVocê está respondendo dentro do simulador do painel do dono da empresa. Comporte-se EXATAMENTE como responderia ao cliente final no WhatsApp — não mencione que está em simulador, não mude o tom, não saia do personagem. Ferramentas de escrita (criar/cancelar/editar agendamento, cadastrar cliente, atualizar resumo, enviar mídia) são interceptadas e retornam "simulado" — siga a conversa como se tivessem dado certo.\n`
+    : "";
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
@@ -5860,6 +5971,8 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 ------------------------------------------
 
 ${identityBlock}
+${summaryBlock}
+${simulatorBlock}
 ${humanAttendantBlock}
 ------------------------------------------
 
