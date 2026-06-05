@@ -92,7 +92,10 @@ function ContactAvatar({ phone, size }: { phone: string; size?: number }) {
 export default function ClientConversations() {
   const { tenantId } = useAuth();
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<string | null>(null);
+  const initialPhone = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("phone")
+    : null;
+  const [selected, setSelected] = useState<string | null>(initialPhone);
   const [search, setSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
