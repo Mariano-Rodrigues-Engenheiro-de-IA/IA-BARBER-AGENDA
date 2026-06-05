@@ -1468,10 +1468,53 @@ Deno.serve(async (req) => {
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
-      // 🛑 IA pausada manualmente pelo cliente — ignora a mensagem (mas registra)
+      // 🛑 IA pausada manualmente pelo cliente — NÃO chama a IA, mas SALVA a mensagem
+      // para que o atendente humano veja no painel de Conversas e tenha histórico/memória.
       if (tenant.agent_paused) {
-        console.log(`[PAUSED] Tenant ${tenant.name} está com a IA pausada. Mensagem ignorada.`);
-        return new Response(JSON.stringify({ ok: true, ignored: "agent_paused" }), {
+        console.log(`[PAUSED] Tenant ${tenant.name} está com a IA pausada. Salvando mensagem sem resposta.`);
+        try {
+          const _msgId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id || null;
+          // Dedup por message_id (evita duplicar se o webhook reentregar)
+          const { data: existing } = _msgId
+            ? await supabase.from("chat_messages").select("id").eq("message_id", _msgId).maybeSingle()
+            : { data: null };
+          if (!existing) {
+            // Resolve mídia/transcrição mesmo pausado, para o painel mostrar o conteúdo real
+            let pausedContent = messageContent || "";
+            if (hasMedia) {
+              try {
+                const uazUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
+                const uazTok = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
+                const resolved = await resolveIncomingMedia({
+                  payload, msg, messageId, uazapiUrl: uazUrl, uazapiToken: uazTok,
+                  isAudioMessage, isImageMessage,
+                });
+                if (isAudioMessage && resolved.base64 && resolved.mimeType?.startsWith("audio/")) {
+                  const tr = await transcribeAudioViaGemini(resolved.base64, resolved.mimeType);
+                  pausedContent = tr ? `🎙️ ${tr}` : (pausedContent || "[Áudio recebido]");
+                } else if (isImageMessage) {
+                  pausedContent = pausedContent || "[Imagem recebida]";
+                } else {
+                  pausedContent = pausedContent || "[Mídia recebida]";
+                }
+              } catch (e) {
+                console.warn("[PAUSED] erro resolvendo mídia:", e);
+                pausedContent = pausedContent || (isAudioMessage ? "[Áudio recebido]" : "[Mídia recebida]");
+              }
+            }
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "user",
+              content: pausedContent,
+              message_id: _msgId,
+              processed: true,
+            });
+          }
+        } catch (e) {
+          console.warn("[PAUSED] erro ao salvar mensagem com IA pausada:", e);
+        }
+        return new Response(JSON.stringify({ ok: true, ignored: "agent_paused", stored: true }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
