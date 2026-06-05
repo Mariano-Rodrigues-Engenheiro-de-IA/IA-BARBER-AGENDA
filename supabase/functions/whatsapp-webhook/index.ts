@@ -3752,7 +3752,7 @@ async function callAIAgent(
       sessionBlocked = true;
       (sessionState as any).aiFailureCount = 0;
     }
-    await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+    if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
     return { response: fallbackMsg, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
   }
   // Sucesso → zera contador de falhas
