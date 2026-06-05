@@ -3560,47 +3560,53 @@ async function callAIAgent(
     return out;
   };
 
-  // Fetch CRM lead name (manually edited by owner takes priority over WhatsApp pushName)
+  // Fetch CRM lead name + persistent AI summary
   let leadName = "";
+  let aiSummary = "";
+  let aiSummaryUpdatedAt: string | null = null;
   try {
     const { data: leadRows } = await supabase
       .from("crm_leads")
-      .select("name")
+      .select("name, ai_summary, ai_summary_updated_at")
       .eq("tenant_id", tenant.id)
       .eq("phone_number", phoneNumber)
       .limit(1);
     leadName = leadRows?.[0]?.name || "";
+    aiSummary = leadRows?.[0]?.ai_summary || "";
+    aiSummaryUpdatedAt = leadRows?.[0]?.ai_summary_updated_at || null;
   } catch (e) {
-    console.warn("[CallAIAgent] Failed to fetch lead name:", (e as any)?.message);
+    console.warn("[CallAIAgent] Failed to fetch lead name/summary:", (e as any)?.message);
   }
   const sessionState: AgentSessionState = await loadConversationState(supabase, tenant.id, phoneNumber);
   const previousAssistantMessage = [...history].reverse().find((m) => m.role === "assistant")?.content || "";
   const explicitClientName = extractExplicitClientName(userMessage, previousAssistantMessage) || sessionState.explicitClientName || null;
   sessionState.explicitClientName = explicitClientName;
-  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}"`);
+  console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}", simulator: ${!!simulatorMode}`);
 
   // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
   let lastClientGapMinutes: number | null = null;
-  try {
-    const { data: lastUserRows } = await supabase
-      .from("chat_messages")
-      .select("created_at")
-      .eq("tenant_id", tenant.id)
-      .eq("phone_number", phoneNumber)
-      .eq("role", "user")
-      .order("created_at", { ascending: false })
-      .limit(2);
-    // Index 0 is the current message just inserted; index 1 is the previous one.
-    const prev = lastUserRows?.[1]?.created_at;
-    if (prev) {
-      const diffMs = Date.now() - new Date(prev).getTime();
-      lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+  if (!simulatorMode) {
+    try {
+      const { data: lastUserRows } = await supabase
+        .from("chat_messages")
+        .select("created_at")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(2);
+      // Index 0 is the current message just inserted; index 1 is the previous one.
+      const prev = lastUserRows?.[1]?.created_at;
+      if (prev) {
+        const diffMs = Date.now() - new Date(prev).getTime();
+        lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+      }
+    } catch (e) {
+      console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
     }
-  } catch (e) {
-    console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
   }
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode);
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
