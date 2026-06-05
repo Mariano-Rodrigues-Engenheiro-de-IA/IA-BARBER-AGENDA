@@ -300,7 +300,7 @@ async function resolveIncomingMedia({
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
 };
 
 // ===== Business hours helper for follow-up sequences =====
