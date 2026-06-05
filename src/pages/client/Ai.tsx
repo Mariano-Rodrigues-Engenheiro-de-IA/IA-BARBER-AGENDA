@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { CustomToolsTab, type CustomTool } from "@/components/CustomToolsTab";
 import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
+import { SimulatorTab } from "@/components/SimulatorTab";
+
 
 export default function ClientAi() {
   const { tenantId, user } = useAuth();
