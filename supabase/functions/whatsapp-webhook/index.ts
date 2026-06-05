@@ -4849,10 +4849,72 @@ function getEnabledCustomTools(tenant: any): any[] {
   return tools.filter((t: any) => t.enabled === true);
 }
 
-async function executeToolForProvider(provider: string, tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeToolForProvider(
+  provider: string,
+  tenant: any,
+  toolCall: any,
+  phoneNumber?: string,
+  opts?: { supabase?: any; simulatorMode?: boolean },
+): Promise<any> {
   const funcName = toolCall.function.name;
+  const simulator = !!opts?.simulatorMode;
 
-  // Check if it's a custom tool first
+  // ===== SIMULATOR MODE: block any tool that writes to external systems or to the DB.
+  if (simulator) {
+    const customTools = getEnabledCustomTools(tenant);
+    const isCustom = customTools.some((ct: any) => ct.name === funcName);
+    if (isCustom || isWriteToolName(funcName)) {
+      return {
+        ok: true,
+        simulated: true,
+        message: `Ação simulada — no WhatsApp real, "${funcName}" seria executada de verdade.`,
+      };
+    }
+  }
+
+  // ===== Universal tool: atualizar_resumo_cliente
+  if (funcName === "atualizar_resumo_cliente") {
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    const resumo = String(toolArgs?.resumo ?? "").trim().slice(0, 1200);
+    if (!resumo) return { ok: false, error: "Resumo vazio." };
+    if (simulator) {
+      return { ok: true, simulated: true, message: "Resumo atualizado (simulado)." };
+    }
+    const sb = opts?.supabase;
+    if (!sb || !phoneNumber) return { ok: false, error: "Contexto indisponível para persistir resumo." };
+    try {
+      // Upsert by (tenant_id, phone_number). crm_leads has no unique constraint declared,
+      // so do a manual find-or-update / insert.
+      const { data: existing } = await sb
+        .from("crm_leads")
+        .select("id")
+        .eq("tenant_id", tenant.id)
+        .eq("phone_number", phoneNumber)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        await sb
+          .from("crm_leads")
+          .update({ ai_summary: resumo, ai_summary_updated_at: new Date().toISOString() })
+          .eq("id", existing[0].id);
+      } else {
+        await sb
+          .from("crm_leads")
+          .insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            label_id: "novo",
+            ai_summary: resumo,
+            ai_summary_updated_at: new Date().toISOString(),
+          } as any);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      console.error("[atualizar_resumo_cliente] failed:", e?.message);
+      return { ok: false, error: e?.message || "Falha ao salvar resumo." };
+    }
+  }
+
+  // Check if it's a custom tool
   const customTools = getEnabledCustomTools(tenant);
   const customTool = customTools.find((ct: any) => ct.name === funcName);
   if (customTool) {
