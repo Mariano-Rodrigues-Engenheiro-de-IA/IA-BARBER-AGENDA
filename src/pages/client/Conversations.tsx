@@ -165,6 +165,21 @@ export default function ClientConversations() {
     refetchInterval: 10000,
   });
 
+  const { data: leadSummary } = useQuery({
+    queryKey: ["client-conv-summary", tenantId, selected],
+    enabled: !!tenantId && !!selected,
+    refetchInterval: 30000,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("crm_leads")
+        .select("ai_summary,ai_summary_updated_at,name")
+        .eq("tenant_id", tenantId!)
+        .eq("phone_number", selected!)
+        .maybeSingle();
+      return data as { ai_summary: string; ai_summary_updated_at: string | null; name: string | null } | null;
+    },
+  });
+
   // WhatsApp group IDs come with non-digit chars (@g.us) or length >= 14.
   // The AI doesn't reply to groups, so hide them from the panel.
   const isGroupPhone = (phone: string) => {
