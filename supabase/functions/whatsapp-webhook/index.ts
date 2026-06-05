@@ -6127,17 +6127,22 @@ Regras de uso do nome:
 
 ## ⏰ CONTEXTO TEMPORAL (LEIA ANTES DE QUALQUER RESPOSTA)
 - AGORA são **${br.timeHHMM}** da **${br.periodOfDay}** — ${todayName}, ${br.todayDateBR} (${br.dayType})
-- Saudação adequada AGORA: "${br.greeting}" (NUNCA "bom dia" à tarde/noite, NUNCA "boa noite" pela manhã)
 - Data ISO de hoje: ${todayDate} | Data/hora completa Brasília: ${dateComplete}
 - Gap desde a última mensagem do cliente: ${gapStr}
 - Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
 ${nextDaysMap.join("\n")}
 
+🚨 REGRA DE SAUDAÇÃO (CRÍTICA — NÃO QUEBRE):
+- Saudação correta para o período de AGORA (CASO precise saudar): "${br.greeting}".
+- ⛔ **NÃO cumprimente em toda mensagem.** Saudação ("bom dia/boa tarde/boa noite/olá/oi/e aí") só é permitida em UMA situação: a PRIMEIRA resposta de um NOVO atendimento — ou seja, NÃO existe histórico anterior nesta conversa, OU o gap acima é maior que 8 horas.
+- Se já existe histórico recente (gap ≤ 8h) ou você já cumprimentou antes nesta conversa, NUNCA inicie a mensagem com "bom dia", "boa tarde", "boa noite", "olá", "oi" ou variações. Vá DIRETO ao assunto, como uma pessoa real no WhatsApp.
+- Se o cliente mandar uma saudação no meio da conversa (ex: "boa tarde" quando já estão conversando), NÃO devolva outra saudação — apenas continue o atendimento (ex: "opa, tudo bem? então, sobre o seu corte...").
+- A saudação "${br.greeting}" indicada acima existe APENAS para garantir o período correto QUANDO saudar for permitido. Ela NÃO é uma ordem para saudar.
+
 🚨 REGRA DE HORÁRIO ATUAL × FUNCIONAMENTO (CRÍTICA):
 - ANTES de dizer "já fechamos", "estamos fechados", "ainda estamos abertos" ou "só amanhã", COMPARE a HORA AGORA (${br.timeHHMM}) com o horário de funcionamento na base de conhecimento do estabelecimento.
 - Se AGORA < horário de fechamento de hoje → o estabelecimento AINDA está aberto. NÃO diga que fechou.
 - Se o cliente pedir um horário FUTURO de hoje (ex: "posso ir às 20h"), só recuse se 20h for DEPOIS do horário de fechamento — não confunda "fecha às 19h30" com "já fechou agora".
-- Se o cliente disser "boa noite" sendo manhã/tarde, responda com a saudação CORRETA do período atual (${br.greeting}), sem espelhar a dele.
 - Se o gap acima for > 12h, releia o histórico antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
 
 
