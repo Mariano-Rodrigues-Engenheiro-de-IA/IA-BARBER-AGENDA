@@ -4139,7 +4139,7 @@ async function callAIAgent(
       // from running twice in the same session.
       // cadastrar_cliente is allowed to repeat — backend returns "already registered"
       // when duplicate, so it's safe to call as many times as needed in the conversation.
-        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente";
+        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente" || toolKey === "atualizar_resumo_cliente";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
