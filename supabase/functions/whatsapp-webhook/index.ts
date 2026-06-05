@@ -4752,6 +4752,27 @@ async function callAIAgent(
 
 // ===================== PROVIDER DISPATCHER =====================
 
+// Universal tool injected for every provider — the AI uses it to keep a small
+// persistent "dossier" about the client (preferences, plan, journey).
+const ATUALIZAR_RESUMO_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "atualizar_resumo_cliente",
+    description:
+      "Atualiza o RESUMO PERSISTENTE deste cliente (jornada/perfil) quando ele revelar algo relevante e duradouro: serviço favorito, profissional preferido, plano/assinatura/clube, frequência típica, restrições, datas importantes, observações úteis para futuros atendimentos. NÃO use para coisas efêmeras (humor, status de mensagem). Sempre reescreva o resumo INTEIRO (não acumule) e mantenha curto, até ~600 caracteres, em português, no formato 'frase + frase + frase'.",
+    parameters: {
+      type: "object",
+      properties: {
+        resumo: {
+          type: "string",
+          description: "Texto novo COMPLETO do resumo (substitui o anterior). Curto, factual, em PT-BR, até ~600 caracteres.",
+        },
+      },
+      required: ["resumo"],
+    },
+  },
+};
+
 function buildToolsForProvider(provider: string, tenant: any): any[] | undefined {
   let providerTools: any[] | undefined;
   switch (provider) {
@@ -4776,6 +4797,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     default:
       providerTools = buildTrinksTools(tenant);
   }
+
+  // Universal client-summary tool (all providers)
+  providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL];
 
   // Inject custom tools from tenant.agent_settings
   const customTools = getEnabledCustomTools(tenant);
@@ -4809,6 +4833,12 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
   }
 
   return providerTools;
+}
+
+// Heuristic: any tool that mutates external state must be blocked in simulator mode.
+const WRITE_TOOL_NAME_RE = /^(criar_|cadastrar_|agendar$|agendar_|cancelar_|desmarcar_|editar_|confirmar_|atualizar_|enviar_|send_|escalate)/i;
+function isWriteToolName(name: string): boolean {
+  return WRITE_TOOL_NAME_RE.test(name);
 }
 
 function getEnabledCustomTools(tenant: any): any[] {
