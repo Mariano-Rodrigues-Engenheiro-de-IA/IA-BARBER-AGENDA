@@ -4686,7 +4686,7 @@ async function callAIAgent(
       console.error("AI gateway error (tool round):", response.status, errText);
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
       // Save state even on error
-      await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+      if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
