@@ -5837,6 +5837,9 @@ function buildSystemPrompt(
   leadName?: string,
   explicitClientName?: string | null,
   lastClientGapMinutes?: number | null,
+  aiSummary?: string,
+  aiSummaryUpdatedAt?: string | null,
+  simulatorMode?: boolean,
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
