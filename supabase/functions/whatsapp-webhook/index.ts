@@ -4696,7 +4696,7 @@ async function callAIAgent(
   }
 
   // Save persistent state after all tool rounds
-  await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+  if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
 
