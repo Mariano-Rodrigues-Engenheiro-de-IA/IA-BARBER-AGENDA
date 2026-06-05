@@ -1070,6 +1070,92 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ===== SIMULATOR MODE =====
+  // Painel do cliente envia { mode: "simulator", tenantId, message, history }
+  // Roda o mesmo callAIAgent porém:
+  // - usa phone sintético "SIM:<userId>" (não polui chat_messages reais)
+  // - simulatorMode=true → bloqueia tools de mutação e não salva state/logs
+  if (req.headers.get("x-mode") === "simulator") {
+    try {
+      const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+      const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+      const authHeader = req.headers.get("Authorization") || "";
+      if (!authHeader.startsWith("Bearer ")) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: userData, error: userErr } = await userClient.auth.getUser();
+      if (userErr || !userData?.user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const userId = userData.user.id;
+
+      const body = await req.json();
+      const tenantId: string = body.tenantId;
+      const message: string = String(body.message || "").trim();
+      const history: { role: string; content: string }[] = Array.isArray(body.history) ? body.history : [];
+      if (!tenantId || !message) {
+        return new Response(JSON.stringify({ error: "Missing tenantId or message" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const svc = createClient(SUPABASE_URL, SERVICE_KEY);
+
+      // Validar acesso: admin OU tenant_users membro do tenant
+      const { data: roleRow } = await svc.from("user_roles").select("role").eq("user_id", userId).eq("role", "admin").maybeSingle();
+      const isAdmin = !!roleRow;
+      if (!isAdmin) {
+        const { data: membership } = await svc.from("tenant_users").select("tenant_id").eq("user_id", userId).eq("tenant_id", tenantId).maybeSingle();
+        if (!membership) {
+          return new Response(JSON.stringify({ error: "Forbidden" }), {
+            status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      const { data: tenant, error: tenantErr } = await svc.from("tenants").select("*").eq("id", tenantId).maybeSingle();
+      if (tenantErr || !tenant) {
+        return new Response(JSON.stringify({ error: "Tenant not found" }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const provider: string = tenant.api_provider || "trinks";
+      const simPhone = `SIM:${userId}`;
+      const senderName = userData.user.email?.split("@")[0] || "Simulador";
+
+      const result = await callAIAgent(
+        svc, tenant, simPhone, history, message, provider,
+        null, null, senderName, true,
+      );
+
+      return new Response(JSON.stringify({
+        response: result.response,
+        toolCalls: result.toolCalls,
+        errors: result.errors,
+        model: result.model,
+        durationMs: result.durationMs,
+      }), {
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    } catch (e: any) {
+      console.error("[Simulator] error:", e?.message, e?.stack);
+      return new Response(JSON.stringify({ error: "Simulator failed", detail: String(e?.message || e) }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+  }
+
+
+
   // ===== Webhook authentication =====
   // Validates a shared secret to prevent forged webhook events.
   // Configure UAZAPI to send the secret either as `?token=...` query param
