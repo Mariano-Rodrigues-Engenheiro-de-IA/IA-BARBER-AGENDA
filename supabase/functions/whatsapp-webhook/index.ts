@@ -4213,7 +4213,7 @@ async function callAIAgent(
             const fetchResult = await executeToolForProvider(provider, tenant, {
               ...toolCall,
               function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: dateToFetch }) },
-            }, phoneNumber);
+            }, phoneNumber, { supabase, simulatorMode });
             if (Array.isArray(fetchResult)) {
               // Filter only agendamentos for this phone number
               const phoneClean = phoneNumber.replace(/^55/, "");
