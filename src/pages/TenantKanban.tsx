@@ -164,6 +164,12 @@ function LeadCard({ lead, lastMessage, overlay, flagColumns, onToggleFlag }: { l
       {lead.notes && (
         <p className="text-[11px] text-muted-foreground/70 italic truncate">📝 {lead.notes}</p>
       )}
+      {lead.ai_summary && (
+        <div className="rounded-md border border-border/40 bg-background/40 p-2">
+          <p className="text-[10px] font-medium text-foreground/80 mb-1">Resumo da IA</p>
+          <p className="text-[11px] text-muted-foreground whitespace-pre-wrap line-clamp-4">{lead.ai_summary}</p>
+        </div>
+      )}
     </div>
   );
 }

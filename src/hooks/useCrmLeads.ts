@@ -9,6 +9,8 @@ export interface CrmLead {
   label_id: string;
   label_name: string | null;
   notes: string | null;
+  ai_summary: string;
+  ai_summary_updated_at: string | null;
   flag_labels: string[];
   board_id: string | null;
   created_at: string;

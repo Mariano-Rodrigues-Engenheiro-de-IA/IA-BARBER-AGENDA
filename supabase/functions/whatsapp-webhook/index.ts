@@ -300,7 +300,7 @@ async function resolveIncomingMedia({
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
 };
 
 // ===== Business hours helper for follow-up sequences =====
@@ -3548,6 +3548,114 @@ async function callAIAgent(
     });
   };
 
+  const persistClientSummary = async (resumo: string) => {
+    const cleaned = String(resumo || "").trim().slice(0, 1200);
+    if (!cleaned || !phoneNumber) return false;
+
+    const { data: existing } = await supabase
+      .from("crm_leads")
+      .select("id")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      await supabase
+        .from("crm_leads")
+        .update({ ai_summary: cleaned, ai_summary_updated_at: new Date().toISOString() })
+        .eq("id", existing[0].id);
+    } else {
+      await supabase
+        .from("crm_leads")
+        .insert({
+          tenant_id: tenant.id,
+          phone_number: phoneNumber,
+          label_id: "novo",
+          ai_summary: cleaned,
+          ai_summary_updated_at: new Date().toISOString(),
+        } as any);
+    }
+
+    return true;
+  };
+
+  const maybeAutoPersistClientSummary = async (assistantReply: string | null | undefined) => {
+    if (simulatorMode) return;
+
+    const currentSummary = (aiSummary || "").trim();
+    const hasToolActivity = logToolCalls.length > 0;
+    const likelyRelevantText = `${userMessage || ""}\n${assistantReply || ""}`;
+    const relevanceHint = /(clube|plano|assinatura|prefir|costumo|geralmente|sempre|barba|corte|peza|sobrancelha|hidrata|coloração|colora|unha|depila|botox|limpeza|massagem|drenagem|alerg|restri|com\s+o|com\s+a|todo\s+m[eê]s|toda\s+semana|quinzenal|mensal)/i;
+
+    if (!currentSummary && !hasToolActivity && !relevanceHint.test(likelyRelevantText)) {
+      console.log(`[SummaryAuto] skipped for ${phoneNumber}: no strong signal`);
+      return;
+    }
+
+    try {
+      const summaryBody: any = {
+        model: modelUsed,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é um extrator de memória persistente de CRM. Analise a conversa e responda APENAS JSON válido, sem markdown, no formato {\"should_update\": boolean, \"summary\": string, \"reason\": string}. Só atualize quando houver informação duradoura útil em atendimentos futuros: serviço favorito, combo recorrente, plano/clube/assinatura, profissional preferido, frequência típica, restrição, observação importante. Não inclua fatos efêmeros nem invente. O campo summary deve ser curto, factual, em PT-BR, até 600 caracteres, em 1-3 frases.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              tenantName: tenant.name || "",
+              currentSummary,
+              lastUserMessage: userMessage || "",
+              assistantReply: assistantReply || "",
+              recentHistory: history.slice(-6),
+              toolCalls: logToolCalls.slice(-6).map((tool) => ({ name: tool.name, args: tool.args, result: tool.result })),
+            }),
+          },
+        ],
+        max_completion_tokens: 220,
+      };
+
+      if (modelUsed.includes("gpt-5")) {
+        summaryBody.reasoning_effort = "low";
+      }
+
+      const summaryResponse = await fetchAIWithRetry(JSON.stringify(summaryBody), "summary extractor");
+      if (!summaryResponse.ok) {
+        const errText = await summaryResponse.text();
+        console.warn(`[SummaryAuto] extractor failed ${summaryResponse.status}: ${errText.slice(0, 200)}`);
+        return;
+      }
+
+      const summaryJson = await summaryResponse.json();
+      const rawContent = String(summaryJson?.choices?.[0]?.message?.content || "").trim();
+      const jsonBlock = rawContent.match(/\{[\s\S]*\}/)?.[0] || "";
+      if (!jsonBlock) {
+        console.warn(`[SummaryAuto] invalid extractor payload for ${phoneNumber}: ${rawContent.slice(0, 160)}`);
+        return;
+      }
+
+      const parsed = JSON.parse(jsonBlock);
+      const nextSummary = String(parsed?.summary || "").trim().slice(0, 1200);
+      const shouldUpdate = Boolean(parsed?.should_update) && !!nextSummary;
+
+      if (!shouldUpdate) {
+        console.log(`[SummaryAuto] no update for ${phoneNumber}: ${String(parsed?.reason || "n/a")}`);
+        return;
+      }
+
+      if (nextSummary === currentSummary) {
+        console.log(`[SummaryAuto] unchanged for ${phoneNumber}`);
+        return;
+      }
+
+      await persistClientSummary(nextSummary);
+      console.log(`[SummaryAuto] updated for ${phoneNumber}: ${nextSummary.slice(0, 120)}`);
+    } catch (e: any) {
+      console.warn(`[SummaryAuto] failed for ${phoneNumber}:`, e?.message || e);
+    }
+  };
+
   const requestFinalNaturalResponse = async (conversationMessages: any[]): Promise<string | null> => {
     // Re-issue the request WITHOUT tools so the model is forced to produce a natural text reply
     // grounded in the original system prompt + conversation history (knowledge base, prices, tone, etc.)
@@ -4840,6 +4948,7 @@ async function callAIAgent(
     }
   }
 
+  await maybeAutoPersistClientSummary(finalResponse);
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
@@ -4976,8 +5085,6 @@ async function executeToolForProvider(
     const sb = opts?.supabase;
     if (!sb || !phoneNumber) return { ok: false, error: "Contexto indisponível para persistir resumo." };
     try {
-      // Upsert by (tenant_id, phone_number). crm_leads has no unique constraint declared,
-      // so do a manual find-or-update / insert.
       const { data: existing } = await sb
         .from("crm_leads")
         .select("id")
