@@ -207,6 +207,32 @@ export function useUpdateLeadNotes() {
   });
 }
 
+export function useUpdateLead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      leadId,
+      tenantId,
+      patch,
+    }: {
+      leadId: string;
+      tenantId: string;
+      patch: Partial<Pick<CrmLead, "name" | "notes" | "ai_summary">>;
+    }) => {
+      const update: any = { ...patch };
+      if (patch.ai_summary !== undefined) {
+        update.ai_summary_updated_at = new Date().toISOString();
+      }
+      const { error } = await supabase.from("crm_leads").update(update).eq("id", leadId);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["crm-leads", variables.tenantId] });
+      queryClient.invalidateQueries({ queryKey: ["client-crm-leads", variables.tenantId] });
+    },
+  });
+}
+
 export function useAssignLeadBoard() {
   const queryClient = useQueryClient();
   return useMutation({
