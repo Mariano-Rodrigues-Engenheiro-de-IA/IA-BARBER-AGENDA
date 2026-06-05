@@ -148,10 +148,12 @@ export default function ClientAi() {
 
   const tabs = [
     { v: "ai", label: "IA", show: ai.visible },
+    { v: "simulator", label: "Simulador", show: ai.visible },
     { v: "tools", label: "Ferramentas", show: toolsPerm.visible },
     { v: "company", label: "Sua empresa", show: company.visible },
     { v: "integ", label: "Integrações", show: integ.visible },
   ].filter((t) => t.show);
+
 
   const currentVersion = versions?.[0]?.version ?? 0;
 
