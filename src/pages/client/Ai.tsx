@@ -207,6 +207,14 @@ export default function ClientAi() {
           </TabsContent>
         )}
 
+        {ai.visible && (
+          <TabsContent value="simulator" className="space-y-4">
+            <SimulatorTab tenantId={tenantId!} />
+          </TabsContent>
+        )}
+
+
+
         {toolsPerm.visible && (
           <TabsContent value="tools" className="space-y-4">
             <CustomToolsTab
