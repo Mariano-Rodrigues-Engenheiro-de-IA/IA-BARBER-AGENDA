@@ -1,92 +1,59 @@
-## Objetivo
+## Diagnóstico
 
-1. **Resumo persistente do cliente** — IA mantém e atualiza um pequeno "dossiê" por cliente (preferências, plano, histórico de serviços) e usa em toda conversa.
-2. **Simulador de IA no painel do cliente** — nova aba "Simulador" onde o dono manda mensagem e a IA responde usando o **prompt real e código real**, mas sem WhatsApp e **sem nunca criar/cancelar/editar agendamento real** (só leitura).
+Verifiquei o banco: **só 4 de 687 leads têm `ai_summary` preenchido**. O código já está todo no lugar (migração, tool `atualizar_resumo_cliente`, auto-persist, leitura no prompt, card no CRM). O problema é que o **extrator automático está sendo conservador demais** e quase nunca decide salvar.
 
----
+Logs reais do extrator hoje:
+- "Informação é pontual sobre indisponibilidade… (efêmera)" → não salvou
+- "Apenas cumprimento e pergunta do atendente… não é confirmação" → não salvou
 
-## Parte 1 — Resumo persistente do cliente
+Resultado: o painel do cliente fica vazio porque o resumo só nasce em casos raríssimos.
 
-### 1.1 Migração (1 migração)
-Adicionar à tabela `crm_leads`:
-- `ai_summary text default ''`
-- `ai_summary_updated_at timestamptz`
+## O que vou mudar
 
-(RLS já existe, contempla update por cliente e admin — não muda.)
+### 1. Tornar o extrator automático muito mais inclusivo (`whatsapp-webhook/index.ts`)
 
-### 1.2 Novo bloco no system prompt (`buildSystemPrompt`)
-Logo após o bloco "👤 IDENTIDADE DO CLIENTE":
-```
-## 🗂️ RESUMO/JORNADA DESTE CLIENTE
-{ai_summary se existir; senão: "(cliente novo / sem resumo ainda — colete informações naturalmente)"}
-Atualizado em: {ai_summary_updated_at relativo, ex: "há 3 dias"}
-```
-+ Regras curtas:
-- **Use ativamente** este resumo para personalizar (ex: "Vai querer corte e barba de novo?", "Como cliente do clube, o desconto já tá aplicado").
-- **Atualize sempre que** o cliente revelar algo relevante e estável: serviço favorito, plano/assinatura, preferência de profissional, restrições, datas importantes, padrão de frequência.
-- **NÃO** registre coisas efêmeras (humor, mensagens isoladas) nem dados sensíveis sem necessidade.
-- Mantém-se **curto** (até ~600 caracteres). Reescreva consolidando, não acumulando.
+**Critério de disparo** (hoje exige regex de palavra-chave OU tool call OU resumo já existente):
+- Passar a rodar **sempre que a conversa tiver ≥ 2 mensagens do cliente** (ou já existir resumo), independente de regex. Continua pulando saudação isolada ("oi", "bom dia") sem nada mais.
 
-### 1.3 Nova ferramenta universal `atualizar_resumo_cliente`
-Injetada em **todos os provedores** (Trinks, OneBeleza, Frizzar, Bemp, Zaylo, None) via `buildToolsForProvider`. Parâmetros: `{ resumo: string }`. Executor:
-- Faz upsert em `crm_leads` (mesma chave `tenant_id + phone_number` que o sistema já usa).
-- Atualiza `ai_summary` + `ai_summary_updated_at = now()`.
-- Logado em `agent_logs.tool_calls`.
+**Prompt do extrator** (hoje rejeita "informação pontual"):
+- Passar a capturar qualquer um destes, mesmo que isolado:
+  - Nome do cliente (quando descoberto)
+  - Serviço(s) que o cliente já demonstrou interesse / agendou
+  - Profissional mencionado/preferido
+  - Janela de horário típica (manhã/tarde/sábado)
+  - Plano/clube/assinatura
+  - Restrições, alergias, observações úteis
+  - Status da última interação (agendou, desistiu, pediu preço, primeiro contato)
+- Regra de **merge incremental**: receber `currentSummary` e devolver uma versão **expandida** (não apagar o que já existe se a info nova for compatível). Manter ≤ 600 chars.
+- `should_update = true` por padrão; só `false` se a mensagem for puramente social ("ok", "obrigado", "tchau") sem nada novo.
 
-### 1.4 Carregar resumo em `callAIAgent`
-Já buscamos `crm_leads` pra pegar `name`. Vou trazer `ai_summary` e `ai_summary_updated_at` no mesmo SELECT e passar pra `buildSystemPrompt`.
+**Custo**: 1 chamada extra de IA por mensagem processada. Uso modelo barato (mantém o `modelUsed` atual com `reasoning_effort: "low"`). Se ficar caro, depois trocamos para um modelo dedicado mais leve.
 
-### 1.5 UI (mínima, opcional nesta entrega)
-Exibir `ai_summary` no card do CRM/Kanban como um trechinho cinza "🤖 Resumo da IA: …" (read-only) — útil pro dono ver o que a IA aprendeu. Reaproveita o componente atual dos leads.
+### 2. Mostrar o resumo também na tela de **Conversas** do painel do cliente
 
----
+Hoje o resumo só aparece nos cards do CRM. Vou adicionar um bloco discreto **"🤖 Resumo da IA"** no cabeçalho da conversa selecionada em `src/pages/client/Conversations.tsx` (logo abaixo do nome/telefone do contato), lendo `crm_leads.ai_summary` pelo `tenant_id + phone_number`. Read-only. Se vazio, não renderiza nada.
 
-## Parte 2 — Simulador de IA no painel do cliente
+### 3. Backfill opcional dos leads existentes
 
-### 2.1 Estratégia técnica (sem refatorar `whatsapp-webhook`)
-Adicionar um **novo endpoint POST** dentro da própria `whatsapp-webhook/index.ts`, ativado quando o body tem `{ mode: "simulator", message, history }`:
-- Roda `callAIAgent` exatamente como hoje (mesmo prompt, mesmo provedor, mesmas ferramentas).
-- **Bloqueia tools de escrita** (criar/cancelar/editar agendamento, cadastrar cliente, agendar, desmarcar, confirmar, atualizar_resumo_cliente) — quando chamadas no modo simulador, retornam um JSON falso `{ ok: true, simulated: true, message: "Ação simulada — no WhatsApp real isto criaria o agendamento." }` e a IA segue normal.
-- **Tools de leitura** rodam de verdade (buscar serviços, horários, profissionais).
-- **Não envia** nada pela UAZAPI.
-- **Não grava** em `chat_messages`, `agent_logs`, `crm_leads` nem `conversation_state` (a sessão é efêmera).
-- Retorna `{ response: string, toolCalls: [...] }`.
+Adicionar um botão pequeno **"Gerar resumos faltantes"** no topo do CRM (visível só para quem tem permissão de edição do módulo `crm`) que dispara uma edge function nova `backfill-client-summaries` rodando o mesmo extrator sobre as últimas N mensagens de cada lead sem resumo do tenant atual. Processamento em lote pequeno (ex: 20 por clique) para não estourar custo/limite. Mostra progresso e ignora leads que não têm histórico suficiente.
 
-Auth do endpoint:
-- Requer JWT do usuário autenticado (cliente do tenant) — valida via `SUPABASE_JWKS` que já está disponível.
-- Confere se o `user_id` do JWT pertence ao `tenant_id` requisitado (via `tenant_users`).
-- Sem JWT válido → 401.
+> Se preferir não gastar tokens fazendo backfill, podemos pular o item 3 e deixar só os resumos crescerem organicamente daqui pra frente. Me diz na hora de implementar.
 
-### 2.2 UI nova: aba "Simulador" em `src/pages/client/Ai.tsx`
-Adiciona aba `simulator` (entre "Ferramentas" e "Sua empresa"). Componente novo `<SimulatorTab tenantId={…} />`:
-- Chat simples: bolhas usuário/assistente, scroll automático.
-- Header curto: "🧪 Simulador — conversa não real. Buscas funcionam; agendamentos são apenas simulados."
-- Input + botão "Enviar" + botão "Limpar conversa".
-- Estado: `useState<UIMessage[]>` (memória local — não persiste; recarregou → zerou; é proposital).
-- `sendMessage` → `supabase.functions.invoke("whatsapp-webhook", { body: { mode: "simulator", tenantId, message, history } })`.
-- Loader "digitando…" enquanto aguarda.
-- Mostra discretamente quando uma ferramenta de escrita foi simulada (badge cinza "ação simulada").
+## Detalhes técnicos
 
-Permissão de visibilidade da aba: usar `useModulePermission("ai_prompt")` (já existe). Se o cliente tem visibilidade do prompt, vê o simulador.
+**Arquivos alterados**
+- `supabase/functions/whatsapp-webhook/index.ts` — afrouxar `maybeAutoPersistClientSummary` (gating + prompt do extrator + merge).
+- `src/pages/client/Conversations.tsx` — buscar `ai_summary` do lead selecionado e renderizar bloco resumo.
+- `src/hooks/useCrmLeads.ts` — (talvez) helper para buscar 1 lead por phone.
+- (opcional) nova edge function `supabase/functions/backfill-client-summaries/index.ts` + botão no `src/pages/client/Crm.tsx`.
 
-### 2.3 Sem persistência, sem custo de WhatsApp
-- Não chama UAZAPI.
-- Não cria follow-ups.
-- Não toca em `chat_messages`.
-- IA usa o **mesmo modelo** do produção (custa créditos da IA normalmente — é o ponto: testar resposta real).
+**Não muda**
+- Schema do banco (colunas `ai_summary` e `ai_summary_updated_at` já existem).
+- RLS, prompt principal, providers, simulador, fluxo do WhatsApp real.
+- Tool `atualizar_resumo_cliente` continua disponível para a IA chamar explicitamente.
 
----
+## Critério de "100% funcionando"
 
-## Arquivos tocados
-
-- `supabase/functions/whatsapp-webhook/index.ts` — bloco resumo no prompt; nova tool universal; carrega summary; endpoint `mode: "simulator"` com bloqueio de tools de escrita.
-- 1 migração: `crm_leads.ai_summary` + `ai_summary_updated_at`.
-- `src/pages/client/Ai.tsx` — adiciona aba "Simulador".
-- Novo `src/components/SimulatorTab.tsx`.
-- (Opcional) cards do CRM/Kanban: mostrar `ai_summary` resumido.
-
-## Não muda
-
-- Trinks, OneBeleza, Frizzar, Bemp, Zaylo, None: nenhuma mudança no fluxo real do WhatsApp.
-- Prompts customizados de tenant continuam intactos.
-- RLS existente segue valendo.
+- Depois de 2-3 mensagens trocadas com qualquer cliente, o resumo aparece preenchido no card do CRM **e** no topo da conversa.
+- Resumo evolui conforme a conversa (merge incremental, não reescreve do zero).
+- Painel não fica mais "vazio" para a grande maioria dos contatos.
