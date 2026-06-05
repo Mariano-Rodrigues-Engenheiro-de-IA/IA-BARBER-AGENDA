@@ -4231,6 +4231,42 @@ async function callAIAgent(
         attemptedSlotSignature = `${servicesKey}|${date}|${time}|${prof}`;
       }
 
+      if (!toolResult && provider === "frizzar" && toolCall.function.name === "agendar") {
+        const serviceIdCounts = new Map<number, number>();
+        for (const sid of attemptedServiceIds) {
+          serviceIdCounts.set(sid, (serviceIdCounts.get(sid) || 0) + 1);
+        }
+
+        const duplicatedWithinPayload = [...serviceIdCounts.entries()]
+          .filter(([, count]) => count > 1)
+          .map(([sid]) => sid);
+
+        if (duplicatedWithinPayload.length > 0) {
+          toolResult = {
+            error: `Na Frizzar, o mesmo serviço não pode aparecer duas vezes no mesmo agendamento automático. IDs repetidos: ${duplicatedWithinPayload.join(", ")}.`,
+            blocked: true,
+            message: "Se o cliente quiser dois atendimentos do mesmo tipo (ex.: dois cortes), não tente agendar automaticamente. Acione um atendente humano.",
+            duplicateServiceIds: duplicatedWithinPayload,
+          };
+          wasBlocked = true;
+          sessionBlocked = true;
+        } else {
+          const overlappingScheduledServices = [...new Set(attemptedServiceIds)]
+            .filter((sid) => sessionState.scheduledServiceIds.includes(sid));
+
+          if (overlappingScheduledServices.length > 0 && !cancelOrEditHappenedThisInvocation) {
+            toolResult = {
+              error: `Na Frizzar, já existe serviço desta mesma composição agendado nesta conversa. Serviços já agendados/repetidos: ${overlappingScheduledServices.join(", ")}.`,
+              blocked: true,
+              message: "Nunca faça um agendamento parcial e depois outro reaproveitando serviço já agendado. Se precisar alterar ou combinar serviços depois de um sucesso, acione um atendente humano.",
+              overlappingServiceIds: overlappingScheduledServices,
+            };
+            wasBlocked = true;
+            sessionBlocked = true;
+          }
+        }
+      }
+
       const exactSlotAlreadyBooked =
         isSchedulingTool &&
         attemptedSlotSignature !== "" &&
