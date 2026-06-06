@@ -6675,6 +6675,7 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 ${identityBlock}
 ${summaryBlock}
 ${recentActionsBlock}
+${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
 ------------------------------------------
