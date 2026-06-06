@@ -3756,6 +3756,17 @@ async function callAIAgent(
     if (!text) return false;
     const t = text.trim();
     if (t.length === 0) return false;
+    // JSON leak: model echoed a tool result / internal status payload instead of natural text.
+    // Examples observed in prod: {"status":"failed","reason":"duplicate final messages detected"}
+    if ((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]"))) {
+      try {
+        JSON.parse(t);
+        return true;
+      } catch { /* not valid JSON, fall through */ }
+    }
+    // Even partial JSON-shaped leaks with status/reason keys must never reach the client
+    if (/"status"\s*:\s*"(failed|success|error|ok|blocked)"/i.test(t)) return true;
+    if (/"reason"\s*:\s*"[^"]*(duplicate|final\s+messages|detected)/i.test(t)) return true;
     const leakPatterns = [
       /\bneed\s+(next|more|another)\s+(user|input|message|reply)\b/i,
       /\bwait(ing)?\s+for\s+(user|next|more)\b/i,
