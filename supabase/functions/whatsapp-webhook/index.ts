@@ -2538,6 +2538,17 @@ interface AgentSessionState {
   // Só permitimos cadastrar_cliente quando este flag está true E a última mensagem
   // do cliente contém um nome válido (i.e. ele respondeu à pergunta de nome).
   awaitingNameForRegistration?: boolean;
+  // GLOBAL ACTION LEDGER — histórico curto de ações mutáveis concluídas para impedir
+  // que a IA repita a mesma ação em mensagens consecutivas. Cross-provider.
+  recentCompletedActions?: Array<{
+    toolName: string;
+    category: string;
+    dedupeKey: string;
+    status: "success" | "failed" | "blocked";
+    completedAt: string; // ISO
+    summary: string;
+    resultId?: string | number | null;
+  }>;
 }
 
 
@@ -2567,6 +2578,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     executedToolNames: [],
     explicitClientName: null,
     awaitingNameForRegistration: false,
+    recentCompletedActions: [],
   };
 
   try {
@@ -2611,6 +2623,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
+      recentCompletedActions: Array.isArray(s.recentCompletedActions)
+        ? s.recentCompletedActions
+            .filter((a: any) => a && typeof a.toolName === "string" && typeof a.dedupeKey === "string" && typeof a.completedAt === "string")
+            .slice(-12)
+        : [],
     };
   } catch {
     return defaultState;
@@ -2641,6 +2658,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedZayloServiceId: state.selectedZayloServiceId,
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
+      recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
     };
 
     await supabase
@@ -2649,11 +2667,156 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, recentActions=${(state.recentCompletedActions || []).length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
 }
+
+// ===================== GLOBAL ACTION LEDGER =====================
+// Prevents the AI from repeating the SAME mutating action across consecutive
+// user messages in the same conversation. Cross-provider, cross-tool.
+
+const MUTATING_TOOL_CATEGORIES: Record<string, string> = {
+  agendar: "booking",
+  criar_agendamento: "booking",
+  editar_agendamento: "booking_edit",
+  cancelar_agendamento: "booking_cancel",
+  desmarcar_agendamento: "booking_cancel",
+  confirmar_agendamento: "booking_confirm",
+  cadastrar_cliente: "client_register",
+  atualizar_resumo_cliente: "summary_update",
+};
+
+function isMutatingToolName(toolName: string, tenant?: any): { mutating: boolean; category: string } {
+  if (MUTATING_TOOL_CATEGORIES[toolName]) {
+    return { mutating: true, category: MUTATING_TOOL_CATEGORIES[toolName] };
+  }
+  // Read-only prefixes are never mutating
+  if (/^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolName)) {
+    return { mutating: false, category: "lookup" };
+  }
+  // Check custom tool type
+  try {
+    const customTools = (getEnabledCustomTools as any)?.(tenant) || [];
+    const match = customTools.find((t: any) => t?.name === toolName);
+    if (match) {
+      const type = String(match.type || "");
+      // add_label / escalate_human / send_* are mutating side-effects
+      if (type) return { mutating: true, category: `custom_${type}` };
+    }
+  } catch { /* ignore */ }
+  // Unknown tool → treat as mutating to be safe
+  return { mutating: true, category: "unknown" };
+}
+
+function buildDedupeKey(toolName: string, args: any): string {
+  if (!args || typeof args !== "object") return `${toolName}|`;
+  const pick = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = (args as any)[k];
+      if (v !== undefined && v !== null && v !== "") return String(v);
+    }
+    return "";
+  };
+
+  if (toolName === "agendar" || toolName === "criar_agendamento") {
+    const serviceIds: string[] = [];
+    const candidates = [args.serviceId, args.servicoId, args.servicosId, args.servicoid];
+    for (const c of candidates) if (c) serviceIds.push(String(c));
+    if (Array.isArray(args.servicos)) {
+      for (const s of args.servicos) {
+        const sid = s?.codigo ?? s?.servicoId ?? s?.servicosId ?? s?.id;
+        if (sid) serviceIds.push(String(sid));
+      }
+    }
+    const dt = pick("dataHoraInicio", "start");
+    const date = pick("dia", "data", "date") || (dt ? dt.slice(0, 10) : "");
+    const time = pick("hora", "horario", "time") || (dt.length >= 16 ? dt.slice(11, 16) : "");
+    const prof = pick("profissionalId", "professionalId", "barberId");
+    const clientHint = pick("clienteId", "clientId", "nome", "name");
+    return `${toolName}|${serviceIds.sort().join(",")}|${date}|${time}|${prof}|${clientHint}`;
+  }
+
+  if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento" || toolName === "confirmar_agendamento") {
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id", "agendasId")}`;
+  }
+
+  if (toolName === "editar_agendamento") {
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id")}|${pick("dataHoraInicio", "start", "data")}|${pick("hora", "time")}`;
+  }
+
+  if (toolName === "cadastrar_cliente") {
+    return `${toolName}|${(pick("nome", "name") || "").toLowerCase().trim()}`;
+  }
+
+  if (toolName === "atualizar_resumo_cliente") {
+    // Dedupe by content prefix to avoid repeated identical summary updates
+    return `${toolName}|${(pick("summary", "resumo", "content") || "").slice(0, 80).toLowerCase().trim()}`;
+  }
+
+  // Custom tools / unknown: stable JSON
+  try {
+    const sorted = Object.keys(args).sort().reduce((acc: any, k) => { acc[k] = args[k]; return acc; }, {});
+    return `${toolName}|${JSON.stringify(sorted).slice(0, 240)}`;
+  } catch {
+    return `${toolName}|`;
+  }
+}
+
+function buildActionSummary(toolName: string, args: any, result: any): string {
+  try {
+    if (toolName === "agendar" || toolName === "criar_agendamento") {
+      const date = args?.dia || args?.data || args?.date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "");
+      const time = args?.hora || args?.horario || args?.time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "");
+      const prof = args?.profissionalId || args?.professionalId || args?.barberId || "";
+      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || "?"}`;
+    }
+    if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento") {
+      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || "?"}`;
+    }
+    if (toolName === "confirmar_agendamento") {
+      return `confirmação concluída id=${args?.agendamentoId || args?.id || "?"}`;
+    }
+    if (toolName === "cadastrar_cliente") {
+      return `cliente cadastrado: ${args?.nome || args?.name || "?"}`;
+    }
+    if (toolName === "atualizar_resumo_cliente") {
+      return `resumo do cliente atualizado`;
+    }
+    return `${toolName} executado`;
+  } catch {
+    return `${toolName} executado`;
+  }
+}
+
+const ACTION_LEDGER_TTL_MS = 30 * 60 * 1000; // 30 minutos
+const ACTION_LEDGER_MAX = 12;
+
+function pruneRecentActions(state: AgentSessionState): AgentSessionState["recentCompletedActions"] {
+  const now = Date.now();
+  const arr = (state.recentCompletedActions || []).filter((a) => {
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && (now - t) < ACTION_LEDGER_TTL_MS;
+  });
+  return arr.slice(-ACTION_LEDGER_MAX);
+}
+
+function findRecentAction(state: AgentSessionState, dedupeKey: string, status: "success" | "failed" | "blocked" = "success"): { toolName: string; category: string; dedupeKey: string; status: string; completedAt: string; summary: string; resultId?: string | number | null } | null {
+  const list = pruneRecentActions(state);
+  state.recentCompletedActions = list;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].dedupeKey === dedupeKey && list[i].status === status) return list[i];
+  }
+  return null;
+}
+
+function recordCompletedAction(state: AgentSessionState, entry: { toolName: string; category: string; dedupeKey: string; status: "success" | "failed" | "blocked"; summary: string; resultId?: string | number | null }): void {
+  const next = pruneRecentActions(state);
+  next.push({ ...entry, completedAt: new Date().toISOString() });
+  state.recentCompletedActions = next.slice(-ACTION_LEDGER_MAX);
+}
+
 
 // ===================== ID RESOLUTION LAYER =====================
 
@@ -3866,7 +4029,7 @@ async function callAIAgent(
     }
   }
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode);
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState));
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -4133,6 +4296,52 @@ async function callAIAgent(
 
       let toolResult: any;
       let wasBlocked = false;
+
+      // ===== GLOBAL ACTION LEDGER GUARD (cross-provider, cross-tool) =====
+      // Blocks the AI from re-executing the SAME mutating action when the same
+      // intent (toolName + normalized args) was already completed successfully
+      // in the last 30 minutes of this conversation. Prevents the
+      // "client confirms, then sends name → AI books again" class of bugs.
+      {
+        const mutInfo = isMutatingToolName(toolCall.function.name, tenant);
+        if (mutInfo.mutating) {
+          const dedupeKey = buildDedupeKey(toolCall.function.name, parsedArgs);
+          const prior = findRecentAction(sessionState, dedupeKey, "success");
+          if (prior) {
+            const ageMin = Math.round((Date.now() - Date.parse(prior.completedAt)) / 60000);
+            console.log(`[ActionLedger] ${toolCall.function.name} BLOCKED: same action completed ${ageMin}min ago (key=${dedupeKey.slice(0, 120)})`);
+            try {
+              await supabase.from("audit_logs").insert({
+                tenant_id: tenant.id,
+                actor_role: "service",
+                entity: "ai_action_ledger",
+                entity_id: phoneNumber,
+                action: "duplicate_action_blocked",
+                before: {
+                  tool: toolCall.function.name,
+                  category: mutInfo.category,
+                  dedupe_key: dedupeKey.slice(0, 200),
+                  prior_at: prior.completedAt,
+                  prior_summary: prior.summary,
+                  user_message: String(userMessage || "").slice(0, 200),
+                },
+              });
+            } catch { /* ignore */ }
+            toolResult = {
+              error: "ACAO_JA_CONCLUIDA",
+              blocked: true,
+              message: `Você JÁ executou esta ação nesta conversa há ${ageMin} minuto(s): ${prior.summary}. NÃO chame a ferramenta de novo. Apenas responda ao cliente naturalmente (ex: confirme o que já foi feito, agradeça, ou peça a próxima informação). Só repita a ação se o cliente PEDIR EXPLICITAMENTE algo DIFERENTE (outro horário, outro serviço, outra pessoa).`,
+              priorAction: { at: prior.completedAt, summary: prior.summary, resultId: prior.resultId ?? null },
+            };
+            wasBlocked = true;
+            sessionBlocked = true;
+            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+            continue;
+          }
+        }
+      }
+
 
       // Block duplicate tool calls (same tool name) within this session
       // EXCEPT lookup tools that may need to run multiple times across the scheduling flow
@@ -4656,6 +4865,35 @@ async function callAIAgent(
             sessionState.scheduledSlotSignatures = [];
           }
         }
+
+        // ===== GLOBAL ACTION LEDGER — record successful mutating actions =====
+        // Runs for ANY mutating tool (booking, cancel, register, custom side-effects)
+        // so the next message can't accidentally repeat the same action.
+        try {
+          const mutInfo2 = isMutatingToolName(toolCall.function.name, tenant);
+          if (mutInfo2.mutating && !wasBlocked) {
+            const r: any = toolResult || {};
+            const succeeded = !r.error && !r.blocked && r.success !== false
+              && !(Array.isArray(r.Errors) && r.Errors.length > 0);
+            if (succeeded) {
+              const dedupeKey = buildDedupeKey(toolCall.function.name, parsedArgs);
+              const summary = buildActionSummary(toolCall.function.name, parsedArgs, r);
+              const resultId = r?.id ?? r?.agendamentoId ?? r?.appointment_id ?? null;
+              recordCompletedAction(sessionState, {
+                toolName: toolCall.function.name,
+                category: mutInfo2.category,
+                dedupeKey,
+                status: "success",
+                summary,
+                resultId,
+              });
+              console.log(`[ActionLedger] recorded success: ${toolCall.function.name} key=${dedupeKey.slice(0, 100)}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[ActionLedger] record failed: ${(e as any)?.message || e}`);
+        }
+
 
         // Track valid agendasIds from buscar_agendamentos_dia
         // 🚨 CROSS-CLIENT TRAVA: filtra agendamentos pelo telefone do lead atual
@@ -6180,6 +6418,7 @@ function buildSystemPrompt(
   aiSummary?: string,
   aiSummaryUpdatedAt?: string | null,
   simulatorMode?: boolean,
+  recentCompletedActions?: AgentSessionState["recentCompletedActions"],
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
@@ -6233,6 +6472,23 @@ Regras de uso do nome:
   const simulatorBlock = simulatorMode
     ? `\n## 🧪 MODO SIMULADOR (TESTE INTERNO)\nVocê está respondendo dentro do simulador do painel do dono da empresa. Comporte-se EXATAMENTE como responderia ao cliente final no WhatsApp — não mencione que está em simulador, não mude o tom, não saia do personagem. Ferramentas de escrita (criar/cancelar/editar agendamento, cadastrar cliente, atualizar resumo, enviar mídia) são interceptadas e retornam "simulado" — siga a conversa como se tivessem dado certo.\n`
     : "";
+
+  // ===== AÇÕES RECENTES CONCLUÍDAS (ledger global anti-duplicação) =====
+  const recentActionsList = (recentCompletedActions || []).filter((a) => {
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && (Date.now() - t) < 30 * 60 * 1000;
+  });
+  const recentActionsBlock = recentActionsList.length === 0
+    ? ""
+    : `\n## ✅ AÇÕES JÁ EXECUTADAS NESTA CONVERSA (últimos 30 min)\n${recentActionsList
+        .slice(-8)
+        .map((a) => {
+          const minAgo = Math.max(0, Math.round((Date.now() - Date.parse(a.completedAt)) / 60000));
+          return `- há ${minAgo} min — ${a.summary}`;
+        })
+        .join("\n")}\n\n🚨 REGRA CRÍTICA: Você JÁ executou as ações acima. NÃO chame de novo a mesma ferramenta com os mesmos parâmetros. Se a próxima mensagem do cliente for confirmação ("sim", "ok", "valeu"), agradecimento, o NOME do cliente, um emoji ou um comentário curto — apenas responda em texto natural. NÃO interprete isso como pedido para repetir uma ação já feita. Só execute uma ferramenta mutável de novo se o cliente pedir EXPLICITAMENTE algo NOVO ou DIFERENTE (ex.: outro horário, outro dia, outro serviço, outra pessoa).\n`;
+
+
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
@@ -6322,6 +6578,7 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 
 ${identityBlock}
 ${summaryBlock}
+${recentActionsBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
 ------------------------------------------
