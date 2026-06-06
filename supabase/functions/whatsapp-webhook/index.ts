@@ -5397,6 +5397,50 @@ async function callAIAgent(
     }
   }
 
+  // 🔁 ANTI-REPETIÇÃO DE TEXTO — se a resposta gerada for muito parecida com
+  // alguma das últimas respostas enviadas nos últimos 30 min, tenta regenerar
+  // uma vez forçando "diga algo novo ou fique em silêncio". Se ainda assim vier
+  // duplicada, fica em silêncio (string vazia) — preferimos não enviar nada do
+  // que mandar a mesma coisa de novo.
+  if (finalResponse) {
+    const dupHit = findSimilarRecentReply(sessionState, finalResponse);
+    if (dupHit) {
+      console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
+      logErrors.push(`Reply repetida detectada (sim=${dupHit.sim.toFixed(2)}); regenerando.`);
+      const antiRepeatReminder = {
+        role: "system" as const,
+        content:
+          `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que você JÁ ENVIOU há poucos minutos. NÃO repita. Avalie: a última mensagem do cliente traz pergunta ou informação realmente NOVA? Se SIM, responda com algo DIFERENTE e que avance a conversa. Se NÃO (mensagem fragmentada, emoji, "ok", "valeu", ou repetindo o que já perguntou), devolva uma STRING VAZIA — não envie nada. Nunca reenvie a mesma resposta nem uma paráfrase do mesmo conteúdo.`,
+      };
+      try {
+        const regenRaw = await requestFinalNaturalResponse([...messages, antiRepeatReminder]);
+        const regen = stripInternalPrefixes(regenRaw || "").trim();
+        if (regen && !isLeakedReasoningResponse(regen)) {
+          const stillDup = findSimilarRecentReply(sessionState, regen);
+          if (stillDup) {
+            console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}). Silenciando.`);
+            logErrors.push(`Regeneração ainda duplicada — mensagem suprimida.`);
+            finalResponse = "";
+          } else {
+            finalResponse = regen;
+          }
+        } else {
+          // Modelo escolheu não falar — respeita.
+          console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
+          finalResponse = "";
+        }
+      } catch (e) {
+        console.error("[ReplyDedup] Falha ao regenerar, silenciando:", (e as any)?.message);
+        finalResponse = "";
+      }
+    }
+  }
+
+  if (finalResponse) {
+    recordAssistantReply(sessionState, finalResponse);
+    if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+  }
+
   await maybeAutoPersistClientSummary(finalResponse);
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
