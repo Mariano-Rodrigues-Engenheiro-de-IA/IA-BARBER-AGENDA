@@ -4622,7 +4622,7 @@ async function callAIAgent(
         }
 
 
-        // Track successful scheduling per service (allow other services to be booked next)
+        // Track successful scheduling by exact slot to prevent accidental duplicate booking.
         const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
         if (scheduleSucceeded) {
           if (toolResult?.id) sessionState.criarAgendamentoSuccessId = toolResult.id;
@@ -4632,8 +4632,8 @@ async function callAIAgent(
           console.log(`${toolCall.function.name}: slot=${attemptedSlotSignature}`);
         }
 
-        // Reschedule support: when a cancel/edit succeeds, clear the per-service
-        // scheduling guard so the AI can call `agendar` again for the same service
+        // Reschedule support: when a cancel/edit succeeds, clear the slot-based
+        // scheduling guard so the AI can call `agendar` again for a new slot
         // (e.g. customer wants to change the day/time of an existing appointment).
         const isCancelOrEditTool = [
           "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
