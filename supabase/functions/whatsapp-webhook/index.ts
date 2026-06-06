@@ -2623,6 +2623,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
+      recentCompletedActions: Array.isArray(s.recentCompletedActions)
+        ? s.recentCompletedActions
+            .filter((a: any) => a && typeof a.toolName === "string" && typeof a.dedupeKey === "string" && typeof a.completedAt === "string")
+            .slice(-12)
+        : [],
     };
   } catch {
     return defaultState;
