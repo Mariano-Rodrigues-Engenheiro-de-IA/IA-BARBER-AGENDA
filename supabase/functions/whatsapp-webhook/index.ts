@@ -2658,6 +2658,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedZayloServiceId: state.selectedZayloServiceId,
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
+      recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
     };
 
     await supabase
@@ -2666,11 +2667,156 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, recentActions=${(state.recentCompletedActions || []).length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
 }
+
+// ===================== GLOBAL ACTION LEDGER =====================
+// Prevents the AI from repeating the SAME mutating action across consecutive
+// user messages in the same conversation. Cross-provider, cross-tool.
+
+const MUTATING_TOOL_CATEGORIES: Record<string, string> = {
+  agendar: "booking",
+  criar_agendamento: "booking",
+  editar_agendamento: "booking_edit",
+  cancelar_agendamento: "booking_cancel",
+  desmarcar_agendamento: "booking_cancel",
+  confirmar_agendamento: "booking_confirm",
+  cadastrar_cliente: "client_register",
+  atualizar_resumo_cliente: "summary_update",
+};
+
+function isMutatingToolName(toolName: string, tenant?: any): { mutating: boolean; category: string } {
+  if (MUTATING_TOOL_CATEGORIES[toolName]) {
+    return { mutating: true, category: MUTATING_TOOL_CATEGORIES[toolName] };
+  }
+  // Read-only prefixes are never mutating
+  if (/^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolName)) {
+    return { mutating: false, category: "lookup" };
+  }
+  // Check custom tool type
+  try {
+    const customTools = (getEnabledCustomTools as any)?.(tenant) || [];
+    const match = customTools.find((t: any) => t?.name === toolName);
+    if (match) {
+      const type = String(match.type || "");
+      // add_label / escalate_human / send_* are mutating side-effects
+      if (type) return { mutating: true, category: `custom_${type}` };
+    }
+  } catch { /* ignore */ }
+  // Unknown tool → treat as mutating to be safe
+  return { mutating: true, category: "unknown" };
+}
+
+function buildDedupeKey(toolName: string, args: any): string {
+  if (!args || typeof args !== "object") return `${toolName}|`;
+  const pick = (...keys: string[]): string => {
+    for (const k of keys) {
+      const v = (args as any)[k];
+      if (v !== undefined && v !== null && v !== "") return String(v);
+    }
+    return "";
+  };
+
+  if (toolName === "agendar" || toolName === "criar_agendamento") {
+    const serviceIds: string[] = [];
+    const candidates = [args.serviceId, args.servicoId, args.servicosId, args.servicoid];
+    for (const c of candidates) if (c) serviceIds.push(String(c));
+    if (Array.isArray(args.servicos)) {
+      for (const s of args.servicos) {
+        const sid = s?.codigo ?? s?.servicoId ?? s?.servicosId ?? s?.id;
+        if (sid) serviceIds.push(String(sid));
+      }
+    }
+    const dt = pick("dataHoraInicio", "start");
+    const date = pick("dia", "data", "date") || (dt ? dt.slice(0, 10) : "");
+    const time = pick("hora", "horario", "time") || (dt.length >= 16 ? dt.slice(11, 16) : "");
+    const prof = pick("profissionalId", "professionalId", "barberId");
+    const clientHint = pick("clienteId", "clientId", "nome", "name");
+    return `${toolName}|${serviceIds.sort().join(",")}|${date}|${time}|${prof}|${clientHint}`;
+  }
+
+  if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento" || toolName === "confirmar_agendamento") {
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id", "agendasId")}`;
+  }
+
+  if (toolName === "editar_agendamento") {
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id")}|${pick("dataHoraInicio", "start", "data")}|${pick("hora", "time")}`;
+  }
+
+  if (toolName === "cadastrar_cliente") {
+    return `${toolName}|${(pick("nome", "name") || "").toLowerCase().trim()}`;
+  }
+
+  if (toolName === "atualizar_resumo_cliente") {
+    // Dedupe by content prefix to avoid repeated identical summary updates
+    return `${toolName}|${(pick("summary", "resumo", "content") || "").slice(0, 80).toLowerCase().trim()}`;
+  }
+
+  // Custom tools / unknown: stable JSON
+  try {
+    const sorted = Object.keys(args).sort().reduce((acc: any, k) => { acc[k] = args[k]; return acc; }, {});
+    return `${toolName}|${JSON.stringify(sorted).slice(0, 240)}`;
+  } catch {
+    return `${toolName}|`;
+  }
+}
+
+function buildActionSummary(toolName: string, args: any, result: any): string {
+  try {
+    if (toolName === "agendar" || toolName === "criar_agendamento") {
+      const date = args?.dia || args?.data || args?.date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "");
+      const time = args?.hora || args?.horario || args?.time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "");
+      const prof = args?.profissionalId || args?.professionalId || args?.barberId || "";
+      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || "?"}`;
+    }
+    if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento") {
+      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || "?"}`;
+    }
+    if (toolName === "confirmar_agendamento") {
+      return `confirmação concluída id=${args?.agendamentoId || args?.id || "?"}`;
+    }
+    if (toolName === "cadastrar_cliente") {
+      return `cliente cadastrado: ${args?.nome || args?.name || "?"}`;
+    }
+    if (toolName === "atualizar_resumo_cliente") {
+      return `resumo do cliente atualizado`;
+    }
+    return `${toolName} executado`;
+  } catch {
+    return `${toolName} executado`;
+  }
+}
+
+const ACTION_LEDGER_TTL_MS = 30 * 60 * 1000; // 30 minutos
+const ACTION_LEDGER_MAX = 12;
+
+function pruneRecentActions(state: AgentSessionState): AgentSessionState["recentCompletedActions"] {
+  const now = Date.now();
+  const arr = (state.recentCompletedActions || []).filter((a) => {
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && (now - t) < ACTION_LEDGER_TTL_MS;
+  });
+  return arr.slice(-ACTION_LEDGER_MAX);
+}
+
+function findRecentAction(state: AgentSessionState, dedupeKey: string, status: "success" | "failed" | "blocked" = "success"): { toolName: string; category: string; dedupeKey: string; status: string; completedAt: string; summary: string; resultId?: string | number | null } | null {
+  const list = pruneRecentActions(state);
+  state.recentCompletedActions = list;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].dedupeKey === dedupeKey && list[i].status === status) return list[i];
+  }
+  return null;
+}
+
+function recordCompletedAction(state: AgentSessionState, entry: { toolName: string; category: string; dedupeKey: string; status: "success" | "failed" | "blocked"; summary: string; resultId?: string | number | null }): void {
+  const next = pruneRecentActions(state);
+  next.push({ ...entry, completedAt: new Date().toISOString() });
+  state.recentCompletedActions = next.slice(-ACTION_LEDGER_MAX);
+}
+
 
 // ===================== ID RESOLUTION LAYER =====================
 
