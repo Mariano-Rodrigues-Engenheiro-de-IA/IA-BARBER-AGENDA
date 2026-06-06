@@ -6570,7 +6570,21 @@ Regras de uso do nome:
         })
         .join("\n")}\n\n🚨 REGRA CRÍTICA: Você JÁ executou as ações acima. NÃO chame de novo a mesma ferramenta com os mesmos parâmetros. Se a próxima mensagem do cliente for confirmação ("sim", "ok", "valeu"), agradecimento, o NOME do cliente, um emoji ou um comentário curto — apenas responda em texto natural. NÃO interprete isso como pedido para repetir uma ação já feita. Só execute uma ferramenta mutável de novo se o cliente pedir EXPLICITAMENTE algo NOVO ou DIFERENTE (ex.: outro horário, outro dia, outro serviço, outra pessoa).\n`;
 
-
+  // ===== ÚLTIMAS RESPOSTAS DA IA (anti-repetição de texto) =====
+  const recentRepliesList = (recentAssistantReplies || []).filter((r) => {
+    const t = Date.parse(r.at);
+    return Number.isFinite(t) && (Date.now() - t) < 30 * 60 * 1000;
+  });
+  const recentRepliesBlock = recentRepliesList.length === 0
+    ? ""
+    : `\n## 🔁 SUAS ÚLTIMAS RESPOSTAS NESTA CONVERSA (não repita)\n${recentRepliesList
+        .slice(-5)
+        .map((r) => {
+          const minAgo = Math.max(0, Math.round((Date.now() - Date.parse(r.at)) / 60000));
+          const preview = r.text.length > 220 ? r.text.slice(0, 220) + "…" : r.text;
+          return `- há ${minAgo} min: "${preview}"`;
+        })
+        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada, como uma pessoa real que não fica respondendo cada balão.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
