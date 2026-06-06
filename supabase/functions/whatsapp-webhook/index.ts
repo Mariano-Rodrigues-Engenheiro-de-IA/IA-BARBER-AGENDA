@@ -2637,6 +2637,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((a: any) => a && typeof a.toolName === "string" && typeof a.dedupeKey === "string" && typeof a.completedAt === "string")
             .slice(-12)
         : [],
+      recentAssistantReplies: Array.isArray(s.recentAssistantReplies)
+        ? s.recentAssistantReplies
+            .filter((r: any) => r && typeof r.text === "string" && typeof r.norm === "string" && typeof r.at === "string")
+            .slice(-6)
+        : [],
     };
   } catch {
     return defaultState;
