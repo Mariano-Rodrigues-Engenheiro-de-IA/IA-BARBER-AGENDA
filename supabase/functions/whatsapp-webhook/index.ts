@@ -6473,6 +6473,23 @@ Regras de uso do nome:
     ? `\n## 🧪 MODO SIMULADOR (TESTE INTERNO)\nVocê está respondendo dentro do simulador do painel do dono da empresa. Comporte-se EXATAMENTE como responderia ao cliente final no WhatsApp — não mencione que está em simulador, não mude o tom, não saia do personagem. Ferramentas de escrita (criar/cancelar/editar agendamento, cadastrar cliente, atualizar resumo, enviar mídia) são interceptadas e retornam "simulado" — siga a conversa como se tivessem dado certo.\n`
     : "";
 
+  // ===== AÇÕES RECENTES CONCLUÍDAS (ledger global anti-duplicação) =====
+  const recentActionsList = (recentCompletedActions || []).filter((a) => {
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && (Date.now() - t) < 30 * 60 * 1000;
+  });
+  const recentActionsBlock = recentActionsList.length === 0
+    ? ""
+    : `\n## ✅ AÇÕES JÁ EXECUTADAS NESTA CONVERSA (últimos 30 min)\n${recentActionsList
+        .slice(-8)
+        .map((a) => {
+          const minAgo = Math.max(0, Math.round((Date.now() - Date.parse(a.completedAt)) / 60000));
+          return `- há ${minAgo} min — ${a.summary}`;
+        })
+        .join("\n")}\n\n🚨 REGRA CRÍTICA: Você JÁ executou as ações acima. NÃO chame de novo a mesma ferramenta com os mesmos parâmetros. Se a próxima mensagem do cliente for confirmação ("sim", "ok", "valeu"), agradecimento, o NOME do cliente, um emoji ou um comentário curto — apenas responda em texto natural. NÃO interprete isso como pedido para repetir uma ação já feita. Só execute uma ferramenta mutável de novo se o cliente pedir EXPLICITAMENTE algo NOVO ou DIFERENTE (ex.: outro horário, outro dia, outro serviço, outra pessoa).\n`;
+
+
+
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const fullDayNames = ["domingo", "segunda-feira", "terça-feira", "quarta-feira", "quinta-feira", "sexta-feira", "sábado"];
