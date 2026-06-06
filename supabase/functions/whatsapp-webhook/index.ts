@@ -3536,8 +3536,8 @@ async function callAIAgent(
   const logErrors: string[] = [];
   let sessionBlocked = false;
   // Tracks if a cancel/edit (reschedule flow) succeeded earlier in THIS invocation.
-  // When true, the per-service dedup guard for agendar/criar_agendamento is bypassed
-  // so the customer can be rebooked for the same service immediately after cancelling.
+  // When true, slot-based duplicate protection can be reset so the customer can be
+  // rebooked safely after cancelling or editing.
   let cancelOrEditHappenedThisInvocation = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
@@ -5864,6 +5864,23 @@ function getLastAssistantMessage(history: { role: string; content: string }[]): 
     }
   }
   return null;
+}
+
+function extractSingleTimeReference(value: string): string | null {
+  const matches = (String(value || "").match(/\b\d{1,2}[:h]\d{2}\b/g) || [])
+    .map((token) => token.toLowerCase().replace("h", ":"))
+    .map((token) => {
+      const [hours, minutes] = token.split(":");
+      return `${String(hours || "").padStart(2, "0")}:${String(minutes || "").padStart(2, "0")}`;
+    });
+  const unique = [...new Set(matches)];
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function isBookingTimeConfirmationPrompt(value: string): boolean {
+  const normalized = normalizeUserFacingText(value);
+  if (!normalized) return false;
+  return /\b(posso confirmar|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
 }
 
 function isSingleCancellationConfirmationPrompt(value: string): boolean {
