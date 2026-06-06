@@ -6418,6 +6418,7 @@ function buildSystemPrompt(
   aiSummary?: string,
   aiSummaryUpdatedAt?: string | null,
   simulatorMode?: boolean,
+  recentCompletedActions?: AgentSessionState["recentCompletedActions"],
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
