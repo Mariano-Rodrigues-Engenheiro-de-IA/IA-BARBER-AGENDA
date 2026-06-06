@@ -4866,6 +4866,35 @@ async function callAIAgent(
           }
         }
 
+        // ===== GLOBAL ACTION LEDGER — record successful mutating actions =====
+        // Runs for ANY mutating tool (booking, cancel, register, custom side-effects)
+        // so the next message can't accidentally repeat the same action.
+        try {
+          const mutInfo2 = isMutatingToolName(toolCall.function.name, tenant);
+          if (mutInfo2.mutating && !wasBlocked) {
+            const r: any = toolResult || {};
+            const succeeded = !r.error && !r.blocked && r.success !== false
+              && !(Array.isArray(r.Errors) && r.Errors.length > 0);
+            if (succeeded) {
+              const dedupeKey = buildDedupeKey(toolCall.function.name, parsedArgs);
+              const summary = buildActionSummary(toolCall.function.name, parsedArgs, r);
+              const resultId = r?.id ?? r?.agendamentoId ?? r?.appointment_id ?? null;
+              recordCompletedAction(sessionState, {
+                toolName: toolCall.function.name,
+                category: mutInfo2.category,
+                dedupeKey,
+                status: "success",
+                summary,
+                resultId,
+              });
+              console.log(`[ActionLedger] recorded success: ${toolCall.function.name} key=${dedupeKey.slice(0, 100)}`);
+            }
+          }
+        } catch (e) {
+          console.warn(`[ActionLedger] record failed: ${(e as any)?.message || e}`);
+        }
+
+
         // Track valid agendasIds from buscar_agendamentos_dia
         // 🚨 CROSS-CLIENT TRAVA: filtra agendamentos pelo telefone do lead atual
         // ANTES de devolver pro modelo, para evitar que a IA confunda agendamento de
