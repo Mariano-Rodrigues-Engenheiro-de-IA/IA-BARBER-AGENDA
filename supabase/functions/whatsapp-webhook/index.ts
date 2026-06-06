@@ -4251,6 +4251,28 @@ async function callAIAgent(
           wasBlocked = true;
           sessionBlocked = true;
         }
+
+        const lastAssistantMessage = getLastAssistantMessage(history);
+        const lastOfferedTime = extractSingleTimeReference(lastAssistantMessage || "");
+        if (
+          !toolResult &&
+          isAffirmativeReply(userMessage || "") &&
+          lastAssistantMessage &&
+          isBookingTimeConfirmationPrompt(lastAssistantMessage) &&
+          lastOfferedTime &&
+          typeof parsedArgs?.hora === "string" &&
+          parsedArgs.hora !== lastOfferedTime
+        ) {
+          toolResult = {
+            error: `Confirmação ancorada no horário ${lastOfferedTime}, mas a IA tentou agendar ${parsedArgs.hora}.`,
+            blocked: true,
+            message: `O cliente respondeu a uma oferta do horário ${lastOfferedTime}. Use exatamente esse horário ou volte a confirmar antes de agendar.`,
+            expectedHour: lastOfferedTime,
+            attemptedHour: parsedArgs.hora,
+          };
+          wasBlocked = true;
+          sessionBlocked = true;
+        }
       }
 
       const exactSlotAlreadyBooked =
@@ -8188,9 +8210,19 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
    - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
    - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
    - Se \`horariosLivres\` estiver vazio, sugira outra data (use \`outrosDias\` se houver).
-5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
+ 5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
    - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
    - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
+
+## 👥 MAIS DE UMA PESSOA NO MESMO ATENDIMENTO
+
+- Se o cliente quiser agendar para 2 ou mais pessoas (ex.: "pra mim e pro meu irmão"), trate como **agendamentos independentes**.
+- O mesmo serviço pode aparecer em agendamentos diferentes na mesma conversa. **Dois cortes em pessoas diferentes é permitido.**
+- Faça **uma chamada de \`agendar\` por pessoa**. NUNCA tente representar duas pessoas repetindo o mesmo serviço dentro do mesmo body de \`servicos\`.
+- Depois que o primeiro agendamento der certo, siga para a pessoa restante e confirme novamente profissional, dia e horário dela.
+- Se você oferecer um horário para a segunda pessoa e ela responder "sim", o \`agendar\` seguinte deve usar **exatamente o horário que você acabou de oferecer para a segunda pessoa**.
+- Só diga que "os dois" estão agendados quando **os dois agendamentos** tiverem retornado sucesso real.
+- Se o primeiro deu certo e o segundo falhou, deixe claro que apenas o primeiro ficou agendado e continue tratando o segundo sem inventar sucesso total.
 
 ------------------------------------------
 
