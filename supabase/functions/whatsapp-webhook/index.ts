@@ -2832,6 +2832,72 @@ function recordCompletedAction(state: AgentSessionState, entry: { toolName: stri
   state.recentCompletedActions = next.slice(-ACTION_LEDGER_MAX);
 }
 
+// ===================== ANTI-REPETIÇÃO DE RESPOSTAS DA IA =====================
+// Evita que a IA mande quase a mesma mensagem várias vezes seguidas quando o
+// cliente envia mensagens fragmentadas, repetitivas ou sem nova informação.
+const ASSISTANT_REPLY_TTL_MS = 30 * 60 * 1000; // 30 min
+const ASSISTANT_REPLY_MAX = 6;
+const ASSISTANT_REPLY_SIMILARITY_THRESHOLD = 0.78;
+
+function normalizeReplyForCompare(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function replyTokens(norm: string): Set<string> {
+  return new Set(norm.split(" ").filter((w) => w.length >= 3));
+}
+
+function replyJaccard(a: string, b: string): number {
+  const ta = replyTokens(a);
+  const tb = replyTokens(b);
+  if (ta.size === 0 || tb.size === 0) return a === b ? 1 : 0;
+  let inter = 0;
+  for (const w of ta) if (tb.has(w)) inter++;
+  const uni = ta.size + tb.size - inter;
+  return uni === 0 ? 0 : inter / uni;
+}
+
+function pruneRecentAssistantReplies(state: AgentSessionState): NonNullable<AgentSessionState["recentAssistantReplies"]> {
+  const now = Date.now();
+  const arr = (state.recentAssistantReplies || []).filter((r) => {
+    const t = Date.parse(r.at);
+    return Number.isFinite(t) && (now - t) < ASSISTANT_REPLY_TTL_MS;
+  });
+  return arr.slice(-ASSISTANT_REPLY_MAX);
+}
+
+function findSimilarRecentReply(state: AgentSessionState, candidate: string): { idx: number; sim: number; entry: { text: string; norm: string; at: string } } | null {
+  const list = pruneRecentAssistantReplies(state);
+  state.recentAssistantReplies = list;
+  const norm = normalizeReplyForCompare(candidate);
+  if (norm.length < 8) return null; // muito curto (ex: "ok") — não bloqueia
+  let best: { idx: number; sim: number; entry: any } | null = null;
+  for (let i = 0; i < list.length; i++) {
+    const sim = replyJaccard(norm, list[i].norm);
+    if (sim >= ASSISTANT_REPLY_SIMILARITY_THRESHOLD && (!best || sim > best.sim)) {
+      best = { idx: i, sim, entry: list[i] };
+    }
+  }
+  return best;
+}
+
+function recordAssistantReply(state: AgentSessionState, text: string): void {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return;
+  const norm = normalizeReplyForCompare(trimmed);
+  if (norm.length < 4) return;
+  const next = pruneRecentAssistantReplies(state);
+  next.push({ text: trimmed.slice(0, 600), norm: norm.slice(0, 600), at: new Date().toISOString() });
+  state.recentAssistantReplies = next.slice(-ASSISTANT_REPLY_MAX);
+}
+
 
 // ===================== ID RESOLUTION LAYER =====================
 
