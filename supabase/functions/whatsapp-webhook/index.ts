@@ -2578,6 +2578,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     executedToolNames: [],
     explicitClientName: null,
     awaitingNameForRegistration: false,
+    recentCompletedActions: [],
   };
 
   try {
