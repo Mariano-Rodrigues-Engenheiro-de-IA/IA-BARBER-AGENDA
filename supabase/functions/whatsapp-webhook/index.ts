@@ -2673,6 +2673,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
       recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
+      recentAssistantReplies: (state.recentAssistantReplies || []).slice(-6),
     };
 
     await supabase
