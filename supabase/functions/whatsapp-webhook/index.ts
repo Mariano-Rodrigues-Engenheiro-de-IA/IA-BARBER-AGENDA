@@ -2549,6 +2549,14 @@ interface AgentSessionState {
     summary: string;
     resultId?: string | number | null;
   }>;
+  // ANTI-REPETIÇÃO DE TEXTO — últimas respostas enviadas pela IA, para evitar
+  // que ela responda quase a mesma coisa várias vezes seguidas quando o cliente
+  // manda mensagens fragmentadas ou repetitivas. TTL 30 min, máx 6.
+  recentAssistantReplies?: Array<{
+    text: string;
+    norm: string;
+    at: string; // ISO
+  }>;
 }
 
 
@@ -2579,6 +2587,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     explicitClientName: null,
     awaitingNameForRegistration: false,
     recentCompletedActions: [],
+    recentAssistantReplies: [],
   };
 
   try {
@@ -2628,6 +2637,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((a: any) => a && typeof a.toolName === "string" && typeof a.dedupeKey === "string" && typeof a.completedAt === "string")
             .slice(-12)
         : [],
+      recentAssistantReplies: Array.isArray(s.recentAssistantReplies)
+        ? s.recentAssistantReplies
+            .filter((r: any) => r && typeof r.text === "string" && typeof r.norm === "string" && typeof r.at === "string")
+            .slice(-6)
+        : [],
     };
   } catch {
     return defaultState;
@@ -2659,6 +2673,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
       recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
+      recentAssistantReplies: (state.recentAssistantReplies || []).slice(-6),
     };
 
     await supabase
@@ -2815,6 +2830,72 @@ function recordCompletedAction(state: AgentSessionState, entry: { toolName: stri
   const next = pruneRecentActions(state);
   next.push({ ...entry, completedAt: new Date().toISOString() });
   state.recentCompletedActions = next.slice(-ACTION_LEDGER_MAX);
+}
+
+// ===================== ANTI-REPETIÇÃO DE RESPOSTAS DA IA =====================
+// Evita que a IA mande quase a mesma mensagem várias vezes seguidas quando o
+// cliente envia mensagens fragmentadas, repetitivas ou sem nova informação.
+const ASSISTANT_REPLY_TTL_MS = 30 * 60 * 1000; // 30 min
+const ASSISTANT_REPLY_MAX = 6;
+const ASSISTANT_REPLY_SIMILARITY_THRESHOLD = 0.78;
+
+function normalizeReplyForCompare(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function replyTokens(norm: string): Set<string> {
+  return new Set(norm.split(" ").filter((w) => w.length >= 3));
+}
+
+function replyJaccard(a: string, b: string): number {
+  const ta = replyTokens(a);
+  const tb = replyTokens(b);
+  if (ta.size === 0 || tb.size === 0) return a === b ? 1 : 0;
+  let inter = 0;
+  for (const w of ta) if (tb.has(w)) inter++;
+  const uni = ta.size + tb.size - inter;
+  return uni === 0 ? 0 : inter / uni;
+}
+
+function pruneRecentAssistantReplies(state: AgentSessionState): NonNullable<AgentSessionState["recentAssistantReplies"]> {
+  const now = Date.now();
+  const arr = (state.recentAssistantReplies || []).filter((r) => {
+    const t = Date.parse(r.at);
+    return Number.isFinite(t) && (now - t) < ASSISTANT_REPLY_TTL_MS;
+  });
+  return arr.slice(-ASSISTANT_REPLY_MAX);
+}
+
+function findSimilarRecentReply(state: AgentSessionState, candidate: string): { idx: number; sim: number; entry: { text: string; norm: string; at: string } } | null {
+  const list = pruneRecentAssistantReplies(state);
+  state.recentAssistantReplies = list;
+  const norm = normalizeReplyForCompare(candidate);
+  if (norm.length < 8) return null; // muito curto (ex: "ok") — não bloqueia
+  let best: { idx: number; sim: number; entry: any } | null = null;
+  for (let i = 0; i < list.length; i++) {
+    const sim = replyJaccard(norm, list[i].norm);
+    if (sim >= ASSISTANT_REPLY_SIMILARITY_THRESHOLD && (!best || sim > best.sim)) {
+      best = { idx: i, sim, entry: list[i] };
+    }
+  }
+  return best;
+}
+
+function recordAssistantReply(state: AgentSessionState, text: string): void {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return;
+  const norm = normalizeReplyForCompare(trimmed);
+  if (norm.length < 4) return;
+  const next = pruneRecentAssistantReplies(state);
+  next.push({ text: trimmed.slice(0, 600), norm: norm.slice(0, 600), at: new Date().toISOString() });
+  state.recentAssistantReplies = next.slice(-ASSISTANT_REPLY_MAX);
 }
 
 
@@ -4029,7 +4110,7 @@ async function callAIAgent(
     }
   }
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState));
+  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState));
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
@@ -5316,6 +5397,50 @@ async function callAIAgent(
     }
   }
 
+  // 🔁 ANTI-REPETIÇÃO DE TEXTO — se a resposta gerada for muito parecida com
+  // alguma das últimas respostas enviadas nos últimos 30 min, tenta regenerar
+  // uma vez forçando "diga algo novo ou fique em silêncio". Se ainda assim vier
+  // duplicada, fica em silêncio (string vazia) — preferimos não enviar nada do
+  // que mandar a mesma coisa de novo.
+  if (finalResponse) {
+    const dupHit = findSimilarRecentReply(sessionState, finalResponse);
+    if (dupHit) {
+      console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
+      logErrors.push(`Reply repetida detectada (sim=${dupHit.sim.toFixed(2)}); regenerando.`);
+      const antiRepeatReminder = {
+        role: "system" as const,
+        content:
+          `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que você JÁ ENVIOU há poucos minutos. NÃO repita. Avalie: a última mensagem do cliente traz pergunta ou informação realmente NOVA? Se SIM, responda com algo DIFERENTE e que avance a conversa. Se NÃO (mensagem fragmentada, emoji, "ok", "valeu", ou repetindo o que já perguntou), devolva uma STRING VAZIA — não envie nada. Nunca reenvie a mesma resposta nem uma paráfrase do mesmo conteúdo.`,
+      };
+      try {
+        const regenRaw = await requestFinalNaturalResponse([...messages, antiRepeatReminder]);
+        const regen = stripInternalPrefixes(regenRaw || "").trim();
+        if (regen && !isLeakedReasoningResponse(regen)) {
+          const stillDup = findSimilarRecentReply(sessionState, regen);
+          if (stillDup) {
+            console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}). Silenciando.`);
+            logErrors.push(`Regeneração ainda duplicada — mensagem suprimida.`);
+            finalResponse = "";
+          } else {
+            finalResponse = regen;
+          }
+        } else {
+          // Modelo escolheu não falar — respeita.
+          console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
+          finalResponse = "";
+        }
+      } catch (e) {
+        console.error("[ReplyDedup] Falha ao regenerar, silenciando:", (e as any)?.message);
+        finalResponse = "";
+      }
+    }
+  }
+
+  if (finalResponse) {
+    recordAssistantReply(sessionState, finalResponse);
+    if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
+  }
+
   await maybeAutoPersistClientSummary(finalResponse);
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
@@ -6419,6 +6544,7 @@ function buildSystemPrompt(
   aiSummaryUpdatedAt?: string | null,
   simulatorMode?: boolean,
   recentCompletedActions?: AgentSessionState["recentCompletedActions"],
+  recentAssistantReplies?: AgentSessionState["recentAssistantReplies"],
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
@@ -6488,7 +6614,21 @@ Regras de uso do nome:
         })
         .join("\n")}\n\n🚨 REGRA CRÍTICA: Você JÁ executou as ações acima. NÃO chame de novo a mesma ferramenta com os mesmos parâmetros. Se a próxima mensagem do cliente for confirmação ("sim", "ok", "valeu"), agradecimento, o NOME do cliente, um emoji ou um comentário curto — apenas responda em texto natural. NÃO interprete isso como pedido para repetir uma ação já feita. Só execute uma ferramenta mutável de novo se o cliente pedir EXPLICITAMENTE algo NOVO ou DIFERENTE (ex.: outro horário, outro dia, outro serviço, outra pessoa).\n`;
 
-
+  // ===== ÚLTIMAS RESPOSTAS DA IA (anti-repetição de texto) =====
+  const recentRepliesList = (recentAssistantReplies || []).filter((r) => {
+    const t = Date.parse(r.at);
+    return Number.isFinite(t) && (Date.now() - t) < 30 * 60 * 1000;
+  });
+  const recentRepliesBlock = recentRepliesList.length === 0
+    ? ""
+    : `\n## 🔁 SUAS ÚLTIMAS RESPOSTAS NESTA CONVERSA (não repita)\n${recentRepliesList
+        .slice(-5)
+        .map((r) => {
+          const minAgo = Math.max(0, Math.round((Date.now() - Date.parse(r.at)) / 60000));
+          const preview = r.text.length > 220 ? r.text.slice(0, 220) + "…" : r.text;
+          return `- há ${minAgo} min: "${preview}"`;
+        })
+        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada, como uma pessoa real que não fica respondendo cada balão.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
@@ -6579,6 +6719,7 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 ${identityBlock}
 ${summaryBlock}
 ${recentActionsBlock}
+${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
 ------------------------------------------
