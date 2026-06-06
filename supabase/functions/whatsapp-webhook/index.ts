@@ -4297,6 +4297,52 @@ async function callAIAgent(
       let toolResult: any;
       let wasBlocked = false;
 
+      // ===== GLOBAL ACTION LEDGER GUARD (cross-provider, cross-tool) =====
+      // Blocks the AI from re-executing the SAME mutating action when the same
+      // intent (toolName + normalized args) was already completed successfully
+      // in the last 30 minutes of this conversation. Prevents the
+      // "client confirms, then sends name → AI books again" class of bugs.
+      {
+        const mutInfo = isMutatingToolName(toolCall.function.name, tenant);
+        if (mutInfo.mutating) {
+          const dedupeKey = buildDedupeKey(toolCall.function.name, parsedArgs);
+          const prior = findRecentAction(sessionState, dedupeKey, "success");
+          if (prior) {
+            const ageMin = Math.round((Date.now() - Date.parse(prior.completedAt)) / 60000);
+            console.log(`[ActionLedger] ${toolCall.function.name} BLOCKED: same action completed ${ageMin}min ago (key=${dedupeKey.slice(0, 120)})`);
+            try {
+              await supabase.from("audit_logs").insert({
+                tenant_id: tenant.id,
+                actor_role: "service",
+                entity: "ai_action_ledger",
+                entity_id: phoneNumber,
+                action: "duplicate_action_blocked",
+                before: {
+                  tool: toolCall.function.name,
+                  category: mutInfo.category,
+                  dedupe_key: dedupeKey.slice(0, 200),
+                  prior_at: prior.completedAt,
+                  prior_summary: prior.summary,
+                  user_message: String(userMessage || "").slice(0, 200),
+                },
+              });
+            } catch { /* ignore */ }
+            toolResult = {
+              error: "ACAO_JA_CONCLUIDA",
+              blocked: true,
+              message: `Você JÁ executou esta ação nesta conversa há ${ageMin} minuto(s): ${prior.summary}. NÃO chame a ferramenta de novo. Apenas responda ao cliente naturalmente (ex: confirme o que já foi feito, agradeça, ou peça a próxima informação). Só repita a ação se o cliente PEDIR EXPLICITAMENTE algo DIFERENTE (outro horário, outro serviço, outra pessoa).`,
+              priorAction: { at: prior.completedAt, summary: prior.summary, resultId: prior.resultId ?? null },
+            };
+            wasBlocked = true;
+            sessionBlocked = true;
+            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+            continue;
+          }
+        }
+      }
+
+
       // Block duplicate tool calls (same tool name) within this session
       // EXCEPT lookup tools that may need to run multiple times across the scheduling flow
       // and EXCEPT custom tools of type "add_label" — the AI may need to update the lead's
