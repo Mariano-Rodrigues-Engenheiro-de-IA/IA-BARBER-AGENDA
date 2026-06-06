@@ -2549,6 +2549,14 @@ interface AgentSessionState {
     summary: string;
     resultId?: string | number | null;
   }>;
+  // ANTI-REPETIÇÃO DE TEXTO — últimas respostas enviadas pela IA, para evitar
+  // que ela responda quase a mesma coisa várias vezes seguidas quando o cliente
+  // manda mensagens fragmentadas ou repetitivas. TTL 30 min, máx 6.
+  recentAssistantReplies?: Array<{
+    text: string;
+    norm: string;
+    at: string; // ISO
+  }>;
 }
 
 
