@@ -2538,6 +2538,17 @@ interface AgentSessionState {
   // Só permitimos cadastrar_cliente quando este flag está true E a última mensagem
   // do cliente contém um nome válido (i.e. ele respondeu à pergunta de nome).
   awaitingNameForRegistration?: boolean;
+  // GLOBAL ACTION LEDGER — histórico curto de ações mutáveis concluídas para impedir
+  // que a IA repita a mesma ação em mensagens consecutivas. Cross-provider.
+  recentCompletedActions?: Array<{
+    toolName: string;
+    category: string;
+    dedupeKey: string;
+    status: "success" | "failed" | "blocked";
+    completedAt: string; // ISO
+    summary: string;
+    resultId?: string | number | null;
+  }>;
 }
 
 
