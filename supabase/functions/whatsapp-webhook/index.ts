@@ -2483,7 +2483,6 @@ interface OneBelezaSlotOption {
 
 interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
-  scheduledServiceIds: number[];
   scheduledSlotSignatures: string[];
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
@@ -2547,7 +2546,6 @@ interface AgentSessionState {
 async function loadConversationState(supabase: any, tenantId: string, phoneNumber: string): Promise<AgentSessionState> {
   const defaultState: AgentSessionState = {
     criarAgendamentoSuccessId: null,
-    scheduledServiceIds: [],
     scheduledSlotSignatures: [],
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
@@ -2592,7 +2590,6 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     const s = data.state;
     return {
       criarAgendamentoSuccessId: null, // always reset per invocation
-      scheduledServiceIds: Array.isArray(s.scheduledServiceIds) ? s.scheduledServiceIds.filter((id: unknown) => typeof id === "number") : [],
       scheduledSlotSignatures: Array.isArray(s.scheduledSlotSignatures) ? s.scheduledSlotSignatures.filter((v: unknown) => typeof v === "string") : [],
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
@@ -2624,7 +2621,6 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
   try {
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
-      scheduledServiceIds: state.scheduledServiceIds,
       scheduledSlotSignatures: state.scheduledSlotSignatures,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
       allowedServiceIds: state.allowedServiceIds,
@@ -3536,8 +3532,8 @@ async function callAIAgent(
   const logErrors: string[] = [];
   let sessionBlocked = false;
   // Tracks if a cancel/edit (reschedule flow) succeeded earlier in THIS invocation.
-  // When true, the per-service dedup guard for agendar/criar_agendamento is bypassed
-  // so the customer can be rebooked for the same service immediately after cancelling.
+  // When true, slot-based duplicate protection can be reset so the customer can be
+  // rebooked safely after cancelling or editing.
   let cancelOrEditHappenedThisInvocation = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
@@ -4250,20 +4246,28 @@ async function callAIAgent(
           };
           wasBlocked = true;
           sessionBlocked = true;
-        } else {
-          const overlappingScheduledServices = [...new Set(attemptedServiceIds)]
-            .filter((sid) => sessionState.scheduledServiceIds.includes(sid));
+        }
 
-          if (overlappingScheduledServices.length > 0 && !cancelOrEditHappenedThisInvocation) {
-            toolResult = {
-              error: `Na Frizzar, já existe serviço desta mesma composição agendado nesta conversa. Serviços já agendados/repetidos: ${overlappingScheduledServices.join(", ")}.`,
-              blocked: true,
-              message: "Nunca faça um agendamento parcial e depois outro reaproveitando serviço já agendado. Se precisar alterar ou combinar serviços depois de um sucesso, acione um atendente humano.",
-              overlappingServiceIds: overlappingScheduledServices,
-            };
-            wasBlocked = true;
-            sessionBlocked = true;
-          }
+        const lastAssistantMessage = getLastAssistantMessage(history);
+        const lastOfferedTime = extractSingleTimeReference(lastAssistantMessage || "");
+        if (
+          !toolResult &&
+          isAffirmativeReply(userMessage || "") &&
+          lastAssistantMessage &&
+          isBookingTimeConfirmationPrompt(lastAssistantMessage) &&
+          lastOfferedTime &&
+          typeof parsedArgs?.hora === "string" &&
+          parsedArgs.hora !== lastOfferedTime
+        ) {
+          toolResult = {
+            error: `Confirmação ancorada no horário ${lastOfferedTime}, mas a IA tentou agendar ${parsedArgs.hora}.`,
+            blocked: true,
+            message: `O cliente respondeu a uma oferta do horário ${lastOfferedTime}. Use exatamente esse horário ou volte a confirmar antes de agendar.`,
+            expectedHour: lastOfferedTime,
+            attemptedHour: parsedArgs.hora,
+          };
+          wasBlocked = true;
+          sessionBlocked = true;
         }
       }
 
@@ -4618,23 +4622,18 @@ async function callAIAgent(
         }
 
 
-        // Track successful scheduling per service (allow other services to be booked next)
+        // Track successful scheduling by exact slot to prevent accidental duplicate booking.
         const scheduleSucceeded = isSchedulingTool && !toolResult?.error && !toolResult?.blocked && (toolResult?.id || toolResult?.ok || toolResult?.agendamentoId || toolResult?.success);
         if (scheduleSucceeded) {
           if (toolResult?.id) sessionState.criarAgendamentoSuccessId = toolResult.id;
-          for (const sid of attemptedServiceIds) {
-            if (!sessionState.scheduledServiceIds.includes(sid)) {
-              sessionState.scheduledServiceIds.push(sid);
-            }
-          }
           if (attemptedSlotSignature && !sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature)) {
             sessionState.scheduledSlotSignatures.push(attemptedSlotSignature);
           }
-          console.log(`${toolCall.function.name}: scheduled services=[${sessionState.scheduledServiceIds.join(",")}] slot=${attemptedSlotSignature}`);
+          console.log(`${toolCall.function.name}: slot=${attemptedSlotSignature}`);
         }
 
-        // Reschedule support: when a cancel/edit succeeds, clear the per-service
-        // scheduling guard so the AI can call `agendar` again for the same service
+        // Reschedule support: when a cancel/edit succeeds, clear the slot-based
+        // scheduling guard so the AI can call `agendar` again for a new slot
         // (e.g. customer wants to change the day/time of an existing appointment).
         const isCancelOrEditTool = [
           "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
@@ -4642,10 +4641,6 @@ async function callAIAgent(
         const cancelOrEditSucceeded = isCancelOrEditTool && !toolResult?.error && !toolResult?.blocked;
         if (cancelOrEditSucceeded) {
           cancelOrEditHappenedThisInvocation = true;
-          if (sessionState.scheduledServiceIds.length > 0) {
-            console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
-            sessionState.scheduledServiceIds = [];
-          }
           if (sessionState.scheduledSlotSignatures.length > 0) {
             sessionState.scheduledSlotSignatures = [];
           }
@@ -5887,6 +5882,23 @@ function getLastAssistantMessage(history: { role: string; content: string }[]): 
     }
   }
   return null;
+}
+
+function extractSingleTimeReference(value: string): string | null {
+  const matches = (String(value || "").match(/\b\d{1,2}[:h]\d{2}\b/g) || [])
+    .map((token) => token.toLowerCase().replace("h", ":"))
+    .map((token) => {
+      const [hours, minutes] = token.split(":");
+      return `${String(hours || "").padStart(2, "0")}:${String(minutes || "").padStart(2, "0")}`;
+    });
+  const unique = [...new Set(matches)];
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function isBookingTimeConfirmationPrompt(value: string): boolean {
+  const normalized = normalizeUserFacingText(value);
+  if (!normalized) return false;
+  return /\b(posso confirmar|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
 }
 
 function isSingleCancellationConfirmationPrompt(value: string): boolean {
@@ -8194,9 +8206,19 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
    - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
    - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
    - Se \`horariosLivres\` estiver vazio, sugira outra data (use \`outrosDias\` se houver).
-5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
+ 5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
    - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
    - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
+
+## 👥 MAIS DE UMA PESSOA NO MESMO ATENDIMENTO
+
+- Se o cliente quiser agendar para 2 ou mais pessoas (ex.: "pra mim e pro meu irmão"), trate como **agendamentos independentes**.
+- O mesmo serviço pode aparecer em agendamentos diferentes na mesma conversa. **Dois cortes em pessoas diferentes é permitido.**
+- Faça **uma chamada de \`agendar\` por pessoa**. NUNCA tente representar duas pessoas repetindo o mesmo serviço dentro do mesmo body de \`servicos\`.
+- Depois que o primeiro agendamento der certo, siga para a pessoa restante e confirme novamente profissional, dia e horário dela.
+- Se você oferecer um horário para a segunda pessoa e ela responder "sim", o \`agendar\` seguinte deve usar **exatamente o horário que você acabou de oferecer para a segunda pessoa**.
+- Só diga que "os dois" estão agendados quando **os dois agendamentos** tiverem retornado sucesso real.
+- Se o primeiro deu certo e o segundo falhou, deixe claro que apenas o primeiro ficou agendado e continue tratando o segundo sem inventar sucesso total.
 
 ------------------------------------------
 
