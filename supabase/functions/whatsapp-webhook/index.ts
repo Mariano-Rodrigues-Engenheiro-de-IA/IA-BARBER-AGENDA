@@ -2483,7 +2483,6 @@ interface OneBelezaSlotOption {
 
 interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
-  scheduledServiceIds: number[];
   scheduledSlotSignatures: string[];
   validAgendasIds: number[];
   oneBelezaServiceOptions: OneBelezaServiceOption[];
@@ -2547,7 +2546,6 @@ interface AgentSessionState {
 async function loadConversationState(supabase: any, tenantId: string, phoneNumber: string): Promise<AgentSessionState> {
   const defaultState: AgentSessionState = {
     criarAgendamentoSuccessId: null,
-    scheduledServiceIds: [],
     scheduledSlotSignatures: [],
     validAgendasIds: [],
     oneBelezaServiceOptions: [],
@@ -2592,7 +2590,6 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     const s = data.state;
     return {
       criarAgendamentoSuccessId: null, // always reset per invocation
-      scheduledServiceIds: Array.isArray(s.scheduledServiceIds) ? s.scheduledServiceIds.filter((id: unknown) => typeof id === "number") : [],
       scheduledSlotSignatures: Array.isArray(s.scheduledSlotSignatures) ? s.scheduledSlotSignatures.filter((v: unknown) => typeof v === "string") : [],
       validAgendasIds: Array.isArray(s.validAgendasIds) ? s.validAgendasIds : [],
       oneBelezaServiceOptions: Array.isArray(s.oneBelezaServiceOptions) ? s.oneBelezaServiceOptions : [],
@@ -2624,7 +2621,6 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
   try {
     const stateToSave = {
       validAgendasIds: state.validAgendasIds,
-      scheduledServiceIds: state.scheduledServiceIds,
       scheduledSlotSignatures: state.scheduledSlotSignatures,
       oneBelezaServiceOptions: state.oneBelezaServiceOptions,
       allowedServiceIds: state.allowedServiceIds,
