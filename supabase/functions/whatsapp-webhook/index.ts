@@ -4251,20 +4251,6 @@ async function callAIAgent(
           wasBlocked = true;
           sessionBlocked = true;
         } else {
-          const overlappingScheduledServices = [...new Set(attemptedServiceIds)]
-            .filter((sid) => sessionState.scheduledServiceIds.includes(sid));
-
-          if (overlappingScheduledServices.length > 0 && !cancelOrEditHappenedThisInvocation) {
-            toolResult = {
-              error: `Na Frizzar, já existe serviço desta mesma composição agendado nesta conversa. Serviços já agendados/repetidos: ${overlappingScheduledServices.join(", ")}.`,
-              blocked: true,
-              message: "Nunca faça um agendamento parcial e depois outro reaproveitando serviço já agendado. Se precisar alterar ou combinar serviços depois de um sucesso, acione um atendente humano.",
-              overlappingServiceIds: overlappingScheduledServices,
-            };
-            wasBlocked = true;
-            sessionBlocked = true;
-          }
-        }
       }
 
       const exactSlotAlreadyBooked =
@@ -4636,11 +4622,6 @@ async function callAIAgent(
         // Reschedule support: when a cancel/edit succeeds, clear the per-service
         // scheduling guard so the AI can call `agendar` again for the same service
         // (e.g. customer wants to change the day/time of an existing appointment).
-        const isCancelOrEditTool = [
-          "cancelar_agendamento", "desmarcar_agendamento", "editar_agendamento",
-        ].includes(toolCall.function.name);
-        const cancelOrEditSucceeded = isCancelOrEditTool && !toolResult?.error && !toolResult?.blocked;
-        if (cancelOrEditSucceeded) {
           cancelOrEditHappenedThisInvocation = true;
           if (sessionState.scheduledServiceIds.length > 0) {
             console.log(`${toolCall.function.name}: clearing scheduledServiceIds=[${sessionState.scheduledServiceIds.join(",")}] to allow reschedule`);
@@ -4661,10 +4642,6 @@ async function callAIAgent(
             const cel = String(a?.celular || "").replace(/^55/, "").replace(/\D/g, "");
             if (!cel) return false;
             return cel === phoneClean || cel.endsWith(phoneClean) || phoneClean.endsWith(cel);
-          });
-          const filtered = myAgendamentos;
-          sessionState.validAgendasIds = filtered.map((a: any) => a.agendasId).filter((id: any) => typeof id === "number");
-          (sessionState as any).oneBelezaAgendaOptions = filtered;
           (sessionState as any).validAgendasIdsFetchedAt = Date.now();
           console.log(`Tracked validAgendasIds (filtered by phone ${phoneClean}): [${sessionState.validAgendasIds}] (raw=${toolResult.length}, mine=${filtered.length})`);
           // 🔁 Substitui o resultado entregue à IA pelo subset do próprio cliente.
