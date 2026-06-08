@@ -395,7 +395,11 @@ export default function TenantFormPage() {
         uazapi_token: existing.uazapi_token ?? "",
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
-      });
+        celcash_enabled: (existing as any).celcash_enabled ?? false,
+        celcash_env: (existing as any).celcash_env ?? "sandbox",
+        celcash_galax_id: (existing as any).celcash_galax_id ?? "",
+        celcash_galax_hash: (existing as any).celcash_galax_hash ?? "",
+      } as TenantInsert);
       setLogoUrl((existing as any).logo_url ?? "");
 
       // Load custom tools from agent_settings
