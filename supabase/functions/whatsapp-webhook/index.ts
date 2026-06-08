@@ -6,7 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 const CELCASH_TOKEN_CACHE = new Map<string, { token: string; expiresAt: number }>();
 
 function celcashBaseUrl(env?: string | null): string {
-  return env === "production" ? "https://api.cel.cash/v2" : "https://api.sandbox.cel.cash/v2";
+  return env === "production" ? "https://api.celcash.celcoin.com.br/v2" : "https://apisandbox.celcash.celcoin.com.br/v2";
 }
 
 async function getCelCashToken(tenant: any): Promise<string | null> {
