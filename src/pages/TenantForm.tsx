@@ -442,7 +442,7 @@ export default function TenantFormPage() {
     }
   }, [existing]);
 
-  const handleChange = (field: keyof TenantInsert, value: string) => {
+  const handleChange = (field: keyof TenantInsert, value: string | boolean) => {
     setForm((prev) => {
       const updated = { ...prev, [field]: value };
       if (field === "name" && !isEditing) {
