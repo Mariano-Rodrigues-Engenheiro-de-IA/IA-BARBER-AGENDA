@@ -91,8 +91,9 @@ Deno.serve(async (req) => {
       }),
     });
 
-    let payload: any = null;
-    try { payload = await resp.json(); } catch { payload = await resp.text(); }
+    const rawText = await resp.text();
+    let payload: any = rawText;
+    try { payload = JSON.parse(rawText); } catch { /* keep text */ }
 
     if (resp.ok && payload?.access_token) {
       return new Response(JSON.stringify({
