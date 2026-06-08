@@ -1,6 +1,190 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CelCash / GalaxPay — consulta assinatura + inadimplência (cache 1h)
+// ─────────────────────────────────────────────────────────────────────────────
+const CELCASH_TOKEN_CACHE = new Map<string, { token: string; expiresAt: number }>();
+
+function celcashBaseUrl(env?: string | null): string {
+  return env === "production" ? "https://api.cel.cash/v2" : "https://api.sandbox.cel.cash/v2";
+}
+
+async function getCelCashToken(tenant: any): Promise<string | null> {
+  if (!tenant?.celcash_galax_id || !tenant?.celcash_galax_hash) return null;
+  const env = tenant.celcash_env || "sandbox";
+  const cacheKey = `${tenant.id}:${env}`;
+  const cached = CELCASH_TOKEN_CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now() + 30_000) return cached.token;
+
+  try {
+    const basic = btoa(`${tenant.celcash_galax_id}:${tenant.celcash_galax_hash}`);
+    const resp = await fetch(`${celcashBaseUrl(env)}/token`, {
+      method: "POST",
+      headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grant_type: "client_credentials",
+        scope: "customers.read subscriptions.read transactions.read charges.read",
+      }),
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data?.access_token) {
+      console.warn("[CelCash] Token fetch failed:", resp.status, data);
+      return null;
+    }
+    const expiresIn = Number(data.expires_in) || 600;
+    CELCASH_TOKEN_CACHE.set(cacheKey, { token: data.access_token, expiresAt: Date.now() + expiresIn * 1000 });
+    return data.access_token;
+  } catch (e) {
+    console.warn("[CelCash] Token error:", (e as any)?.message);
+    return null;
+  }
+}
+
+function normalizeCelCashPhone(phone: string): string {
+  // CelCash espera apenas dígitos; remover prefixo internacional "55" se vier.
+  const digits = (phone || "").replace(/\D/g, "");
+  if (digits.startsWith("55") && digits.length > 11) return digits.slice(2);
+  return digits;
+}
+
+async function celcashApiGet(env: string, token: string, path: string): Promise<any> {
+  const resp = await fetch(`${celcashBaseUrl(env)}${path}`, {
+    method: "GET",
+    headers: { "Authorization": `Bearer ${token}`, "Accept": "application/json" },
+  });
+  const data = await resp.json().catch(() => null);
+  if (!resp.ok) {
+    console.warn("[CelCash] GET", path, "failed:", resp.status, data);
+    return null;
+  }
+  return data;
+}
+
+async function fetchCelCashContext(tenant: any, phoneNumber: string): Promise<any> {
+  const token = await getCelCashToken(tenant);
+  if (!token) return { error: "no_token" };
+  const env = tenant.celcash_env || "sandbox";
+  const phone = normalizeCelCashPhone(phoneNumber);
+
+  // 1. Buscar cliente por telefone
+  const custResp = await celcashApiGet(env, token, `/customers?phones=${encodeURIComponent(phone)}&startAt=0&limit=1`);
+  const customer = custResp?.Customers?.[0];
+  if (!customer) return { found: false };
+
+  const galaxId = customer.galaxPayId;
+  const result: any = {
+    found: true,
+    customer: {
+      name: customer.name,
+      document: customer.document,
+      galaxPayId: galaxId,
+    },
+    subscriptions: [],
+    overdue: [],
+  };
+
+  // 2. Assinaturas + 3. Transações vencidas (em paralelo)
+  const today = new Date().toISOString().slice(0, 10);
+  const [subsResp, txResp] = await Promise.all([
+    celcashApiGet(env, token, `/subscriptions?customerGalaxPayIds=${galaxId}&startAt=0&limit=10`),
+    celcashApiGet(
+      env, token,
+      `/transactions?customerGalaxPayIds=${galaxId}&paydayDateTo=${today}&status=pendingBoleto,notSend,denied,notCompensated,pendingPix&startAt=0&limit=20`,
+    ),
+  ]);
+
+  result.subscriptions = (subsResp?.Subscriptions || []).map((s: any) => ({
+    galaxPayId: s.galaxPayId,
+    status: s.status,
+    value: s.value,
+    periodicity: s.periodicity,
+    planName: s.Plan?.name,
+    nextPayDay: (s.Transactions || []).find((t: any) => t.status === "notSend")?.payday,
+  }));
+
+  result.overdue = (txResp?.Transactions || []).map((t: any) => ({
+    payday: t.payday,
+    value: t.value,
+    status: t.status,
+    statusDescription: t.statusDescription,
+    subscriptionGalaxPayId: t.subscriptionGalaxPayId,
+  }));
+
+  return result;
+}
+
+async function getCelCashContextCached(supabase: any, tenant: any, phoneNumber: string): Promise<any | null> {
+  if (!tenant?.celcash_enabled || !tenant?.celcash_galax_id || !tenant?.celcash_galax_hash) return null;
+
+  try {
+    const { data: cached } = await supabase
+      .from("celcash_cache")
+      .select("payload, expires_at")
+      .eq("tenant_id", tenant.id)
+      .eq("phone_number", phoneNumber)
+      .maybeSingle();
+
+    if (cached && new Date(cached.expires_at).getTime() > Date.now()) {
+      return cached.payload;
+    }
+  } catch (e) {
+    console.warn("[CelCash] Cache read error:", (e as any)?.message);
+  }
+
+  const payload = await fetchCelCashContext(tenant, phoneNumber);
+  if (!payload) return null;
+
+  try {
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    await supabase.from("celcash_cache").upsert({
+      tenant_id: tenant.id,
+      phone_number: phoneNumber,
+      payload,
+      fetched_at: new Date().toISOString(),
+      expires_at: expiresAt,
+    }, { onConflict: "tenant_id,phone_number" });
+  } catch (e) {
+    console.warn("[CelCash] Cache write error:", (e as any)?.message);
+  }
+
+  return payload;
+}
+
+function formatCelCashContextBlock(ctx: any): string {
+  if (!ctx) return "";
+  if (ctx.error === "no_token") return "\n[CELCASH] Integração ativa mas token indisponível — siga sem informação de assinatura.";
+  if (ctx.found === false) {
+    return "\n[CELCASH] Cliente NÃO encontrado na base de assinaturas — tratar como não-assinante.";
+  }
+  const lines: string[] = ["\n[CELCASH] Dados de assinatura do cliente:"];
+  lines.push(`- Nome no CelCash: ${ctx.customer?.name || "—"}${ctx.customer?.document ? ` (doc ${ctx.customer.document})` : ""}`);
+
+  if (!ctx.subscriptions?.length) {
+    lines.push("- Nenhuma assinatura cadastrada (cliente avulso).");
+  } else {
+    ctx.subscriptions.forEach((s: any, i: number) => {
+      const valor = typeof s.value === "number" ? `R$ ${(s.value / 100).toFixed(2)}` : "—";
+      lines.push(`- Assinatura #${i + 1}: ${s.planName || "Plano"} — status ${s.status} — ${s.periodicity} ${valor}${s.nextPayDay ? ` — próxima cobrança ${s.nextPayDay}` : ""}`);
+    });
+  }
+
+  if (ctx.overdue?.length) {
+    const total = ctx.overdue.reduce((acc: number, t: any) => acc + (Number(t.value) || 0), 0);
+    lines.push(`- ⚠️ ${ctx.overdue.length} cobrança(s) em atraso (total R$ ${(total / 100).toFixed(2)}). Avise o cliente com gentileza ao confirmar o agendamento, mas NÃO bloqueie o atendimento.`);
+    ctx.overdue.slice(0, 3).forEach((t: any) => {
+      lines.push(`  · venc ${t.payday} — R$ ${((t.value || 0) / 100).toFixed(2)} — ${t.statusDescription || t.status}`);
+    });
+  } else if (ctx.subscriptions?.length) {
+    lines.push("- Sem pendências financeiras no momento.");
+  }
+
+  lines.push("Use essas informações para personalizar o atendimento (citar o plano, lembrar de pendências com educação). NÃO recite o galaxPayId.");
+  return lines.join("\n");
+}
+
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Audio transcription via OpenAI Whisper (gpt-4o-mini-transcribe).
 // Handles WhatsApp's OGG/Opus format reliably. Returns text or null on failure.
 // ─────────────────────────────────────────────────────────────────────────────
