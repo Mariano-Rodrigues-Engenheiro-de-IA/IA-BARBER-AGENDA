@@ -83,12 +83,12 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: {
         "Authorization": `Basic ${basic}`,
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({
-        grant_type: "client_credentials",
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
         scope: "customers.read subscriptions.read transactions.read charges.read",
-      }),
+      }).toString(),
     });
 
     const rawText = await resp.text();

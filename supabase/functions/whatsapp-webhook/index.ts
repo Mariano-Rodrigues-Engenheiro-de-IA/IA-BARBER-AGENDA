@@ -20,11 +20,11 @@ async function getCelCashToken(tenant: any): Promise<string | null> {
     const basic = btoa(`${tenant.celcash_galax_id}:${tenant.celcash_galax_hash}`);
     const resp = await fetch(`${celcashBaseUrl(env)}/token`, {
       method: "POST",
-      headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "client_credentials",
+      headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
         scope: "customers.read subscriptions.read transactions.read charges.read",
-      }),
+      }).toString(),
     });
     const data = await resp.json().catch(() => null);
     if (!resp.ok || !data?.access_token) {
