@@ -365,7 +365,11 @@ export default function TenantFormPage() {
     uazapi_token: "",
     agent_system_prompt: "",
     agent_knowledge_base: "",
-  });
+    celcash_enabled: false,
+    celcash_env: "sandbox",
+    celcash_galax_id: "",
+    celcash_galax_hash: "",
+  } as TenantInsert);
 
   useEffect(() => {
     if (existing) {
