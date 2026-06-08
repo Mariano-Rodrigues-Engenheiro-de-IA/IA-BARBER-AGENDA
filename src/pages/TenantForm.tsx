@@ -971,7 +971,77 @@ export default function TenantFormPage() {
                   </p>
                 </div>
               )}
+
+              {/* CelCash — opcional, disponível para todos os providers */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">Integração CelCash / GalaxPay</h4>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Consulta assinatura e inadimplência do cliente antes do agendamento. Opcional.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!(form as any).celcash_enabled}
+                    onCheckedChange={(v) => handleChange("celcash_enabled" as any, v)}
+                  />
+                </div>
+
+                {(form as any).celcash_enabled && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_env">Ambiente</Label>
+                      <Select
+                        value={(form as any).celcash_env || "sandbox"}
+                        onValueChange={(v) => handleChange("celcash_env" as any, v)}
+                      >
+                        <SelectTrigger id="celcash_env">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sandbox">Sandbox (testes)</SelectItem>
+                          <SelectItem value="production">Produção</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_galax_id">Galax ID</Label>
+                      <Input
+                        id="celcash_galax_id"
+                        value={(form as any).celcash_galax_id || ""}
+                        onChange={(e) => handleChange("celcash_galax_id" as any, e.target.value)}
+                        placeholder="ex: 33399"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_galax_hash">Galax Hash</Label>
+                      <div className="relative">
+                        <Input
+                          id="celcash_galax_hash"
+                          type={showApiKey ? "text" : "password"}
+                          value={(form as any).celcash_galax_hash || ""}
+                          onChange={(e) => handleChange("celcash_galax_hash" as any, e.target.value)}
+                          placeholder="Hash de autenticação CelCash"
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                        >
+                          {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Credenciais obtidas no painel CelCash → API. Usadas para OAuth2 (Basic auth → Bearer token).
+                      </p>
+                    </div>
+                    {isEditing && id && <CelCashTestButton tenantId={id} />}
+                  </>
+                )}
+              </div>
             </div>
+
 
             {/* Follow-ups section - visible for ALL providers */}
             <FollowUpsSection followUps={followUps} onChange={setFollowUps} />
