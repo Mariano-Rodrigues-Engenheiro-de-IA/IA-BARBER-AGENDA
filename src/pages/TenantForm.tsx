@@ -209,6 +209,45 @@ function TrinksTestButton({ tenantId }: { tenantId: string }) {
   );
 }
 
+function CelCashTestButton({ tenantId }: { tenantId: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("test-celcash-connection", {
+        body: { tenant_id: tenantId },
+      });
+      if (error) throw error;
+      setResult(data);
+      if (data?.success) toast.success(data.message);
+      else toast.error(data?.message || "Falha na conexão");
+    } catch (err: any) {
+      setResult({ success: false, message: err.message || "Erro ao testar conexão" });
+      toast.error(err.message || "Erro ao testar conexão");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="pt-2 space-y-3">
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
+        {testing ? "Testando..." : "Testar Conexão CelCash"}
+      </Button>
+      {result && (
+        <div className={`flex items-center gap-2 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
+          {result.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+          {result.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UazapiTestButton({ url, token }: { url: string; token: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -326,7 +365,11 @@ export default function TenantFormPage() {
     uazapi_token: "",
     agent_system_prompt: "",
     agent_knowledge_base: "",
-  });
+    celcash_enabled: false,
+    celcash_env: "sandbox",
+    celcash_galax_id: "",
+    celcash_galax_hash: "",
+  } as TenantInsert);
 
   useEffect(() => {
     if (existing) {
@@ -352,7 +395,11 @@ export default function TenantFormPage() {
         uazapi_token: existing.uazapi_token ?? "",
         agent_system_prompt: existing.agent_system_prompt ?? "",
         agent_knowledge_base: existing.agent_knowledge_base ?? "",
-      });
+        celcash_enabled: (existing as any).celcash_enabled ?? false,
+        celcash_env: (existing as any).celcash_env ?? "sandbox",
+        celcash_galax_id: (existing as any).celcash_galax_id ?? "",
+        celcash_galax_hash: (existing as any).celcash_galax_hash ?? "",
+      } as TenantInsert);
       setLogoUrl((existing as any).logo_url ?? "");
 
       // Load custom tools from agent_settings
@@ -395,10 +442,10 @@ export default function TenantFormPage() {
     }
   }, [existing]);
 
-  const handleChange = (field: keyof TenantInsert, value: string) => {
+  const handleChange = (field: keyof TenantInsert, value: string | boolean) => {
     setForm((prev) => {
       const updated = { ...prev, [field]: value };
-      if (field === "name" && !isEditing) {
+      if (field === "name" && !isEditing && typeof value === "string") {
         updated.slug = slugify(value);
       }
       return updated;
@@ -924,7 +971,77 @@ export default function TenantFormPage() {
                   </p>
                 </div>
               )}
+
+              {/* CelCash — opcional, disponível para todos os providers */}
+              <div className="space-y-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-medium text-foreground">Integração CelCash / GalaxPay</h4>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Consulta assinatura e inadimplência do cliente antes do agendamento. Opcional.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!(form as any).celcash_enabled}
+                    onCheckedChange={(v) => handleChange("celcash_enabled" as any, v)}
+                  />
+                </div>
+
+                {(form as any).celcash_enabled && (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_env">Ambiente</Label>
+                      <Select
+                        value={(form as any).celcash_env || "sandbox"}
+                        onValueChange={(v) => handleChange("celcash_env" as any, v)}
+                      >
+                        <SelectTrigger id="celcash_env">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sandbox">Sandbox (testes)</SelectItem>
+                          <SelectItem value="production">Produção</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_galax_id">Galax ID</Label>
+                      <Input
+                        id="celcash_galax_id"
+                        value={(form as any).celcash_galax_id || ""}
+                        onChange={(e) => handleChange("celcash_galax_id" as any, e.target.value)}
+                        placeholder="ex: 33399"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="celcash_galax_hash">Galax Hash</Label>
+                      <div className="relative">
+                        <Input
+                          id="celcash_galax_hash"
+                          type={showApiKey ? "text" : "password"}
+                          value={(form as any).celcash_galax_hash || ""}
+                          onChange={(e) => handleChange("celcash_galax_hash" as any, e.target.value)}
+                          placeholder="Hash de autenticação CelCash"
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          onClick={() => setShowApiKey(!showApiKey)}
+                        >
+                          {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Credenciais obtidas no painel CelCash → API. Usadas para OAuth2 (Basic auth → Bearer token).
+                      </p>
+                    </div>
+                    {isEditing && id && <CelCashTestButton tenantId={id} />}
+                  </>
+                )}
+              </div>
             </div>
+
 
             {/* Follow-ups section - visible for ALL providers */}
             <FollowUpsSection followUps={followUps} onChange={setFollowUps} />
