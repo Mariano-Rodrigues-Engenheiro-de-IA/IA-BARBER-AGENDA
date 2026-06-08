@@ -445,7 +445,7 @@ export default function TenantFormPage() {
   const handleChange = (field: keyof TenantInsert, value: string | boolean) => {
     setForm((prev) => {
       const updated = { ...prev, [field]: value };
-      if (field === "name" && !isEditing) {
+      if (field === "name" && !isEditing && typeof value === "string") {
         updated.slug = slugify(value);
       }
       return updated;
