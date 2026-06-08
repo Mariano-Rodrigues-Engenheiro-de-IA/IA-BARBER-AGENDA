@@ -763,8 +763,19 @@ const isOneBelezaRegistrationSuccess = (status: number, responseText: string) =>
       return false;
     }
   } catch {
-    // Plain text 2xx — only trust if it's not an error-shaped message
-    // We already filtered error keywords above; remaining short text is ambiguous → fail
+    // Plain text 2xx — error keywords already filtered above.
+    // OneBeleza retorna textos como "Cadastro criado com sucesso !" → tratar como sucesso real.
+    if (
+      normalized.includes("cadastro criado") ||
+      normalized.includes("criado com sucesso") ||
+      normalized.includes("cadastrado com sucesso") ||
+      normalized.includes("usuario cadastrado") ||
+      normalized.includes("usuário cadastrado") ||
+      normalized.includes("cliente cadastrado") ||
+      (normalized.includes("sucesso") && !normalized.includes("nao") && !normalized.includes("não"))
+    ) {
+      return true;
+    }
     return false;
   }
   return false;
@@ -1048,6 +1059,18 @@ async function registerOneBelezaClient(
       // Falhou — alias está queimado (telefone associado ou falso-sucesso)
       const aliasTaken = isOneBelezaPhoneInUseError(aliasRes.status, aliasText);
       const aliasFalseSuccess = aliasRes.status >= 200 && aliasRes.status < 300;
+
+      // Antes de queimar por "falso-sucesso", verifica se o cliente foi de fato
+      // criado na API. Alguns endpoints retornam 2xx com corpo ambíguo, mas o
+      // cadastro foi persistido — nesse caso o alias deve permanecer ativo.
+      if (aliasFalseSuccess && !aliasTaken) {
+        const existsAfterAmbiguous = await verifyOneBelezaClientExists(authHeaders, alias);
+        if (existsAfterAmbiguous) {
+          console.log(`${logPrefix} cadastrar_cliente ambiguous 2xx but client exists in API → keep alias=${alias}`);
+          return { res: aliasRes, text: aliasText, aliasUsed: alias };
+        }
+      }
+
       const reason = aliasTaken
         ? "alias_phone_already_associated"
         : (aliasFalseSuccess ? "alias_registration_false_success" : `alias_registration_failed_${aliasRes.status}`);
