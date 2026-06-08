@@ -4317,7 +4317,21 @@ async function callAIAgent(
     }
   }
 
-  const systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState));
+  let systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState));
+
+  // CelCash context injection (opt-in per tenant)
+  if (tenant?.celcash_enabled) {
+    try {
+      const celcashCtx = await getCelCashContextCached(supabase, tenant, phoneNumber);
+      const block = formatCelCashContextBlock(celcashCtx);
+      if (block) {
+        systemPrompt += `\n${block}`;
+        console.log(`[CelCash] Context injected for ${phoneNumber}: found=${celcashCtx?.found}, subs=${celcashCtx?.subscriptions?.length || 0}, overdue=${celcashCtx?.overdue?.length || 0}`);
+      }
+    } catch (e) {
+      console.warn("[CelCash] Context injection failed:", (e as any)?.message);
+    }
+  }
   const messages: any[] = [
     { role: "system", content: systemPrompt },
     ...history.map((m) => ({ role: m.role, content: m.content })),
