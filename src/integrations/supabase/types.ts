@@ -580,6 +580,10 @@ export type Database = {
           bemp_domain: string | null
           bemp_token: string | null
           booking_link: string | null
+          celcash_enabled: boolean
+          celcash_env: string
+          celcash_galax_hash: string | null
+          celcash_galax_id: string | null
           created_at: string
           email: string | null
           frizzar_base_url: string | null
@@ -613,6 +617,10 @@ export type Database = {
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null
+          celcash_enabled?: boolean
+          celcash_env?: string
+          celcash_galax_hash?: string | null
+          celcash_galax_id?: string | null
           created_at?: string
           email?: string | null
           frizzar_base_url?: string | null
@@ -646,6 +654,10 @@ export type Database = {
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null
+          celcash_enabled?: boolean
+          celcash_env?: string
+          celcash_galax_hash?: string | null
+          celcash_galax_id?: string | null
           created_at?: string
           email?: string | null
           frizzar_base_url?: string | null
