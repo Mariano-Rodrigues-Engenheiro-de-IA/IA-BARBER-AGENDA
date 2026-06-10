@@ -47,7 +47,7 @@ async function getToken(env: string, galaxId: string, galaxHash: string) {
     headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       grant_type: "authorization_code",
-      scope: "customers.read subscriptions.read transactions.read charges.read",
+      scope: "customers.read subscriptions.read transactions.read charges.read plans.read",
     }),
   });
   const text = await resp.text();
