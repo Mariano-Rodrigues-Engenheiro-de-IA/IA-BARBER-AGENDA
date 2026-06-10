@@ -139,40 +139,126 @@ export type Database = {
         }
         Relationships: []
       }
-      celcash_cache: {
+      celcash_subscribers: {
         Row: {
+          celcash_customer_id: string
+          celcash_subscription_id: string | null
           created_at: string
-          expires_at: string
-          fetched_at: string
+          document: string | null
+          email: string | null
           id: string
-          payload: Json
-          phone_number: string
+          is_overdue: boolean
+          last_payment_date: string | null
+          name: string | null
+          next_due_date: string | null
+          overdue_amount_cents: number
+          phone_e164: string | null
+          phone_raw: string | null
+          plan_id: string | null
+          plan_name: string | null
+          raw_payload: Json
+          status: string
+          synced_at: string
           tenant_id: string
           updated_at: string
         }
         Insert: {
+          celcash_customer_id: string
+          celcash_subscription_id?: string | null
           created_at?: string
-          expires_at: string
-          fetched_at?: string
+          document?: string | null
+          email?: string | null
           id?: string
-          payload: Json
-          phone_number: string
+          is_overdue?: boolean
+          last_payment_date?: string | null
+          name?: string | null
+          next_due_date?: string | null
+          overdue_amount_cents?: number
+          phone_e164?: string | null
+          phone_raw?: string | null
+          plan_id?: string | null
+          plan_name?: string | null
+          raw_payload?: Json
+          status?: string
+          synced_at?: string
           tenant_id: string
           updated_at?: string
         }
         Update: {
+          celcash_customer_id?: string
+          celcash_subscription_id?: string | null
           created_at?: string
-          expires_at?: string
-          fetched_at?: string
+          document?: string | null
+          email?: string | null
           id?: string
-          payload?: Json
-          phone_number?: string
+          is_overdue?: boolean
+          last_payment_date?: string | null
+          name?: string | null
+          next_due_date?: string | null
+          overdue_amount_cents?: number
+          phone_e164?: string | null
+          phone_raw?: string | null
+          plan_id?: string | null
+          plan_name?: string | null
+          raw_payload?: Json
+          status?: string
+          synced_at?: string
           tenant_id?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "celcash_cache_tenant_id_fkey"
+            foreignKeyName: "celcash_subscribers_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      celcash_sync_runs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          finished_at: string | null
+          id: string
+          started_at: string
+          status: string
+          tenant_id: string
+          total_fetched: number
+          total_marked_canceled: number
+          total_upserted: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          tenant_id: string
+          total_fetched?: number
+          total_marked_canceled?: number
+          total_upserted?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          finished_at?: string | null
+          id?: string
+          started_at?: string
+          status?: string
+          tenant_id?: string
+          total_fetched?: number
+          total_marked_canceled?: number
+          total_upserted?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "celcash_sync_runs_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
