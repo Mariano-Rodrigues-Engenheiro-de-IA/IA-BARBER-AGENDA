@@ -100,7 +100,8 @@ function formatCelCashContextBlock(ctx: any): string {
   } else {
     activeOrOverdue.forEach((s: any, i: number) => {
       const valor = typeof s.value === "number" ? `R$ ${(s.value / 100).toFixed(2)}` : "—";
-      lines.push(`- Assinatura #${i + 1}: ${s.planName || "Plano"} — status ${s.status}${s.periodicity ? ` — ${s.periodicity}` : ""} ${valor}${s.nextPayDay ? ` — próxima cobrança ${s.nextPayDay}` : ""}`);
+      const planLabel = s.planName || (s.planMyId || s.planGalaxPayId ? `Plano #${s.planMyId || s.planGalaxPayId}` : "Plano (nome indisponível)");
+      lines.push(`- Assinatura #${i + 1}: ${planLabel} — status ${s.status}${s.periodicity ? ` — ${s.periodicity}` : ""} ${valor}${s.nextPayDay ? ` — próxima cobrança ${s.nextPayDay}` : ""}`);
     });
   }
 

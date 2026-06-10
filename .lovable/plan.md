@@ -1,85 +1,45 @@
-## Objetivo
+## Diagnóstico do gargalo
 
-Eliminar chamadas em tempo real à CelCash durante o atendimento. A IA consulta uma tabela local (`celcash_subscribers`) por telefone para decidir se o cliente é assinante ativo, qual plano tem e se está inadimplente, antes de agendar na Bemp.
+Investiguei o número final 2868 (`+5561983012868`, Mariano Rodrigues) e a cadeia inteira:
 
-## Arquitetura
+| Camada | Status |
+|---|---|
+| Tabela `celcash_subscribers` | Encontrado, `status=active`, `is_overdue=false`, `plan_id=1193`, **`plan_name=NULL`** |
+| Função `whatsapp-webhook` (`getCelCashContextCached`) | OK — injeta o bloco `[CELCASH]` corretamente |
+| Prompt do tenant Don Castro (REGRA 12 + PASSO 2 do fluxo) | OK — instrui a IA a usar o `plan_name` para escolher o `service_id` "Don's Club [plano]" |
+| Sync `sync-celcash-subscribers` | **Bug**: nunca consegue popular `plan_name` |
 
-```text
-[Cron 1x/hora]
-      │
-      ▼
-[edge: sync-celcash-subscribers]  ─── paginação ──▶  CelCash /customers + /subscriptions + /charges
-      │
-      ▼
-[tabela: celcash_subscribers]  ◀── consulta por telefone ──  [IA / agente Bemp]
+**Causa raiz:** o endpoint `/v2/subscriptions` da CelCash NÃO retorna o nome do plano. Ele só retorna `planMyId` e `planGalaxPayId`. Confirmei lendo os keys do `raw_payload` de uma assinatura real — não existe `Plan`, só `planMyId`/`planGalaxPayId`. Resultado: 100% das 345 assinaturas ativas estão com `plan_name=NULL`, então a IA recebe `[CELCASH] Assinatura #1: Plano — status active …` (sem nome). Sem nome de plano, a IA não consegue mapear "plano corte e barba" → `service_id` do "Don's Club corte e barba" e cai no fallback de serviço avulso.
+
+Ou seja: **não é o prompt nem o webhook — é o sync que está incompleto.**
+
+## Plano de correção
+
+### 1. Buscar planos da CelCash no sync (`supabase/functions/sync-celcash-subscribers/index.ts`)
+
+Antes de iterar pelas subscriptions, fazer 1 chamada por tenant em `GET /v2/plans?limit=100&startAt=0` (paginar se necessário), e montar um `Map<string, string>` com chaves `galaxPayId` e `myId` apontando para o `name` do plano.
+
+Ao montar cada `row` da subscription, popular:
+```ts
+const planKey = String(s.planGalaxPayId ?? s.planMyId ?? "");
+plan_name: planMap.get(planKey) || planMap.get(String(s.planMyId)) || null,
+plan_id: String(s.planMyId ?? s.planGalaxPayId ?? "") || null,
 ```
 
-## Mudanças
+### 2. Reexecutar o sync manualmente para o tenant Don Castro
 
-### 1. Nova tabela `celcash_subscribers`
+Disparar `sync-celcash-subscribers` com `{ tenant_id: "fdbc80c3-…" }` e validar via SQL que `plan_name` ficou preenchido para o número 2868 e para a maioria das 345 ativas.
 
-Substitui o uso de `celcash_cache` (que é cache pontual por telefone). Campos principais:
+### 3. Hardening no bloco `[CELCASH]` (`whatsapp-webhook/index.ts`, função `formatCelCashContextBlock`)
 
-- `tenant_id` (FK tenants)
-- `celcash_customer_id` (id do cliente na CelCash)
-- `phone_e164` (normalizado, índice único por tenant)
-- `phone_raw`, `name`, `document` (CPF/CNPJ), `email`
-- `subscription_id`, `plan_id`, `plan_name`
-- `status` (`active`, `overdue`, `canceled`, `trial`, `pending`)
-- `is_overdue` (bool), `overdue_amount_cents`, `next_due_date`, `last_payment_date`
-- `raw_payload` (jsonb com snapshot completo da CelCash)
-- `synced_at`, `created_at`, `updated_at`
+Se `planName` vier vazio, mostrar `Plano #<plan_id>` em vez de apenas `Plano`, para nunca esconder a informação útil. (Salvaguarda — não substitui a correção do sync.)
 
-Índices: `(tenant_id, phone_e164)` único, `(tenant_id, status)`, `(tenant_id, is_overdue)`.
+### 4. Validação final
 
-RLS: admin vê tudo; usuários do tenant veem só do seu tenant. Service role full.
+- Rodar `supabase--curl_edge_functions` em `lookup-celcash-subscriber` com o telefone 61983012868 e conferir o `plan_name` no JSON.
+- Spawn de uma conversa de teste pelo simulador ou conferir logs do `whatsapp-webhook` (`[CelCash] Context injected …`) para garantir que o bloco agora cita o nome do plano.
 
-### 2. Edge function `sync-celcash-subscribers`
+## Fora do escopo
 
-- Roda por tenant (parâmetro `tenant_id`) ou para todos os tenants com `celcash_enabled = true` (modo cron).
-- Fluxo por tenant:
-  1. Pega `celcash_galax_id` / `celcash_galax_hash` do tenant.
-  2. Gera token (`/v2/token`) — já validado funcionando.
-  3. Pagina `/v2/customers` (ou endpoint equivalente de assinantes) buscando todos.
-  4. Para cada cliente, busca assinatura e status financeiro (inadimplência).
-  5. Faz `upsert` em `celcash_subscribers` por `(tenant_id, celcash_customer_id)`.
-  6. Marca como `canceled` quem sumiu da CelCash (diff por `synced_at`).
-- Normaliza telefone para E.164 (`+55…`) antes de salvar.
-- Log de execução em `agent_logs` (qtd sincronizada, erros, duração).
-
-### 3. Cron via `pg_cron` + `pg_net`
-
-- Habilita extensões (se já não estiverem).
-- Job a cada 1 hora (ajustável) chamando `sync-celcash-subscribers` em modo "todos os tenants".
-- Job adicional a cada 15min só para tenants com muitas mudanças? — opcional, começamos com 1h.
-
-### 4. Endpoint de consulta para a IA
-
-Edge function `lookup-celcash-subscriber`:
-- Input: `tenant_id`, `phone`.
-- Normaliza telefone, consulta `celcash_subscribers`.
-- Retorna: `{ is_subscriber, status, plan_name, is_overdue, overdue_amount, next_due_date, customer_name }`.
-- Se não achar, retorna `{ is_subscriber: false }` (sem fallback à CelCash — fica simples e rápido).
-
-### 5. Integração com fluxo Bemp/IA
-
-No tool/handler que hoje chama Bemp para agendar:
-1. Antes de listar serviços, chama `lookup-celcash-subscriber` pelo telefone do lead.
-2. Se `is_subscriber && !is_overdue`: filtra/prioriza os serviços do plano correspondente na Bemp.
-3. Se `is_overdue`: a IA informa pendência financeira e oferece serviço avulso ou link de regularização.
-4. Se não é assinante: fluxo normal de serviço avulso.
-
-### 6. UI mínima (admin, opcional nesta fase)
-
-Em `/tenants/:id` (aba CelCash) adicionar:
-- Botão "Sincronizar agora" (chama a edge function manualmente).
-- Mostrar `last_sync_at`, total de assinantes, ativos, inadimplentes.
-
-## Pontos de decisão antes de codar
-
-1. **Frequência do cron**: começo com **1 hora**. OK?
-2. **Escopo do sync**: trazer **todos os clientes** ou só **assinantes ativos + inadimplentes**? Sugiro todos para ter histórico completo.
-3. **Tabela `celcash_cache` antiga**: mantenho (cache pontual) ou removo? Sugiro **remover** — fica redundante.
-4. **UI de sincronização agora** ou só backend + cron nesta etapa?
-
-Me confirma esses 4 pontos (ou só diz "segue com os defaults") e eu implemento.
+- Não vou mexer no prompt do Don Castro — ele já está correto.
+- Não vou recriar tabelas nem mexer no cron — ele segue rodando a cada 1h e vai recarregar tudo certo após o fix.

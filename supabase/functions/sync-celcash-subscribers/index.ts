@@ -47,7 +47,7 @@ async function getToken(env: string, galaxId: string, galaxHash: string) {
     headers: { "Authorization": `Basic ${basic}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       grant_type: "authorization_code",
-      scope: "customers.read subscriptions.read transactions.read charges.read",
+      scope: "customers.read subscriptions.read transactions.read charges.read plans.read",
     }),
   });
   const text = await resp.text();
@@ -83,6 +83,37 @@ async function fetchAllSubscriptions(env: string, token: string) {
   return all;
 }
 
+// Lista todos os planos do tenant e retorna mapa { id/myId/galaxPayId -> name }
+async function fetchPlansMap(env: string, token: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const limit = 100;
+  let startAt = 0;
+  for (let i = 0; i < 100; i++) {
+    const url = `${baseUrl(env)}/plans?limit=${limit}&startAt=${startAt}`;
+    const resp = await fetch(url, {
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    const text = await resp.text();
+    let json: any; try { json = JSON.parse(text); } catch { json = null; }
+    if (!resp.ok) {
+      console.warn(`[CelCash] /plans HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      break;
+    }
+    const items: any[] =
+      json?.Plans || json?.plans || json?.data || json?.items || (Array.isArray(json) ? json : []);
+    if (!items.length) break;
+    for (const p of items) {
+      const name = p.name || p.Name || p.title || null;
+      if (!name) continue;
+      const keys = [p.galaxPayId, p.GalaxPayId, p.myId, p.MyId, p.id].filter((x) => x !== undefined && x !== null);
+      for (const k of keys) map.set(String(k), String(name));
+    }
+    if (items.length < limit) break;
+    startAt += items.length;
+  }
+  return map;
+}
+
 function deriveStatus(sub: any): { status: string; isOverdue: boolean; overdueCents: number } {
   // CelCash subscription statuses: active, closed, notStarted, dontBilled, waitingPayment, outOfBilling
   const rawStatus = String(sub.status || sub.subscription_status || sub.situation || "").toLowerCase();
@@ -116,6 +147,8 @@ async function syncTenant(supabase: any, tenant: any) {
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
+    const planMap = await fetchPlansMap(env, token);
+    console.log(`[CelCash] tenant=${tenant.id} subs=${subs.length} plans=${planMap.size}`);
 
     const rows = subs.map((s: any) => {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
@@ -123,6 +156,10 @@ async function syncTenant(supabase: any, tenant: any) {
       const phoneE164 = normalizePhone(phoneRaw);
       const { status, isOverdue, overdueCents } = deriveStatus(s);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
+      const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
+      const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
+      const planNameFromMap = planIdStr ? planMap.get(planIdStr) : null;
+      const planNameFromMap2 = planMap.get(String(s.planMyId ?? "")) || planMap.get(String(s.planGalaxPayId ?? ""));
       return {
         tenant_id: tenant.id,
         celcash_customer_id: String(
@@ -134,8 +171,8 @@ async function syncTenant(supabase: any, tenant: any) {
         name: customer.name || customer.fullName || customer.full_name || s.name || null,
         email: customerEmail,
         document: customer.document || customer.cpf || customer.cnpj || null,
-        plan_id: String(s.PlanMyId ?? s.planMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? "") || null,
-        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || null,
+        plan_id: planIdStr,
+        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || planNameFromMap || planNameFromMap2 || null,
         status,
         is_overdue: isOverdue,
         overdue_amount_cents: overdueCents,
@@ -161,7 +198,7 @@ async function syncTenant(supabase: any, tenant: any) {
     const dedupedRows = Array.from(byCustomer.values());
 
     let upserted = 0;
-    const chunkSize = 200;
+    const chunkSize = 50;
     for (let i = 0; i < dedupedRows.length; i += chunkSize) {
       const chunk = dedupedRows.slice(i, i + chunkSize);
       const { error } = await supabase
