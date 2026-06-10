@@ -83,6 +83,37 @@ async function fetchAllSubscriptions(env: string, token: string) {
   return all;
 }
 
+// Lista todos os planos do tenant e retorna mapa { id/myId/galaxPayId -> name }
+async function fetchPlansMap(env: string, token: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const limit = 100;
+  let startAt = 0;
+  for (let i = 0; i < 100; i++) {
+    const url = `${baseUrl(env)}/plans?limit=${limit}&startAt=${startAt}`;
+    const resp = await fetch(url, {
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    const text = await resp.text();
+    let json: any; try { json = JSON.parse(text); } catch { json = null; }
+    if (!resp.ok) {
+      console.warn(`[CelCash] /plans HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      break;
+    }
+    const items: any[] =
+      json?.Plans || json?.plans || json?.data || json?.items || (Array.isArray(json) ? json : []);
+    if (!items.length) break;
+    for (const p of items) {
+      const name = p.name || p.Name || p.title || null;
+      if (!name) continue;
+      const keys = [p.galaxPayId, p.GalaxPayId, p.myId, p.MyId, p.id].filter((x) => x !== undefined && x !== null);
+      for (const k of keys) map.set(String(k), String(name));
+    }
+    if (items.length < limit) break;
+    startAt += items.length;
+  }
+  return map;
+}
+
 function deriveStatus(sub: any): { status: string; isOverdue: boolean; overdueCents: number } {
   // CelCash subscription statuses: active, closed, notStarted, dontBilled, waitingPayment, outOfBilling
   const rawStatus = String(sub.status || sub.subscription_status || sub.situation || "").toLowerCase();
