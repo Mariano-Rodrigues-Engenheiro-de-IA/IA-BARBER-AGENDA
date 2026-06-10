@@ -147,6 +147,8 @@ async function syncTenant(supabase: any, tenant: any) {
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
+    const planMap = await fetchPlansMap(env, token);
+    console.log(`[CelCash] tenant=${tenant.id} subs=${subs.length} plans=${planMap.size}`);
 
     const rows = subs.map((s: any) => {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
@@ -154,6 +156,10 @@ async function syncTenant(supabase: any, tenant: any) {
       const phoneE164 = normalizePhone(phoneRaw);
       const { status, isOverdue, overdueCents } = deriveStatus(s);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
+      const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
+      const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
+      const planNameFromMap = planIdStr ? planMap.get(planIdStr) : null;
+      const planNameFromMap2 = planMap.get(String(s.planMyId ?? "")) || planMap.get(String(s.planGalaxPayId ?? ""));
       return {
         tenant_id: tenant.id,
         celcash_customer_id: String(
@@ -165,8 +171,8 @@ async function syncTenant(supabase: any, tenant: any) {
         name: customer.name || customer.fullName || customer.full_name || s.name || null,
         email: customerEmail,
         document: customer.document || customer.cpf || customer.cnpj || null,
-        plan_id: String(s.PlanMyId ?? s.planMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? "") || null,
-        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || null,
+        plan_id: planIdStr,
+        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || planNameFromMap || planNameFromMap2 || null,
         status,
         is_overdue: isOverdue,
         overdue_amount_cents: overdueCents,
