@@ -198,7 +198,7 @@ async function syncTenant(supabase: any, tenant: any) {
     const dedupedRows = Array.from(byCustomer.values());
 
     let upserted = 0;
-    const chunkSize = 200;
+    const chunkSize = 50;
     for (let i = 0; i < dedupedRows.length; i += chunkSize) {
       const chunk = dedupedRows.slice(i, i + chunkSize);
       const { error } = await supabase
