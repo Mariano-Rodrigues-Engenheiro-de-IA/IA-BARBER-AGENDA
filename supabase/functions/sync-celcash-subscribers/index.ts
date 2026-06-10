@@ -58,12 +58,12 @@ async function getToken(env: string, galaxId: string, galaxHash: string) {
   return json.access_token as string;
 }
 
-// Tenta listar assinaturas paginando. CelCash usa limit + startAt.
+// Tenta listar assinaturas paginando. CelCash usa limit + startAt (offset).
 async function fetchAllSubscriptions(env: string, token: string) {
   const all: any[] = [];
   const limit = 100;
   let startAt = 0;
-  for (let i = 0; i < 200; i++) { // hard cap 20k
+  for (let i = 0; i < 500; i++) { // hard cap 50k
     const url = `${baseUrl(env)}/subscriptions?limit=${limit}&startAt=${startAt}`;
     const resp = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
@@ -74,7 +74,7 @@ async function fetchAllSubscriptions(env: string, token: string) {
       throw new Error(`CelCash subscriptions HTTP ${resp.status}: ${text.slice(0, 200)}`);
     }
     const items: any[] =
-      json?.subscriptions || json?.data || json?.items || json?.result || (Array.isArray(json) ? json : []);
+      json?.Subscriptions || json?.subscriptions || json?.data || json?.items || (Array.isArray(json) ? json : []);
     if (!items.length) break;
     all.push(...items);
     if (items.length < limit) break;
