@@ -144,12 +144,26 @@ async function syncTenant(supabase: any, tenant: any) {
         raw_payload: s,
         synced_at: new Date().toISOString(),
       };
-    }).filter((r) => r.celcash_customer_id && r.celcash_customer_id !== "undefined");
+    }).filter((r) => r.celcash_customer_id && r.celcash_customer_id !== "undefined" && r.celcash_customer_id !== "");
+
+    // Dedupe por customer: mantém a "melhor" assinatura (active > overdue > pending > paused > trial > canceled > unknown)
+    const rank: Record<string, number> = {
+      active: 6, overdue: 5, pending: 4, paused: 3, trial: 2, canceled: 1, unknown: 0,
+    };
+    const byCustomer = new Map<string, any>();
+    for (const r of rows) {
+      const key = `${r.tenant_id}::${r.celcash_customer_id}`;
+      const existing = byCustomer.get(key);
+      if (!existing || (rank[r.status] ?? 0) > (rank[existing.status] ?? 0)) {
+        byCustomer.set(key, r);
+      }
+    }
+    const dedupedRows = Array.from(byCustomer.values());
 
     let upserted = 0;
     const chunkSize = 200;
-    for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize);
+    for (let i = 0; i < dedupedRows.length; i += chunkSize) {
+      const chunk = dedupedRows.slice(i, i + chunkSize);
       const { error } = await supabase
         .from("celcash_subscribers")
         .upsert(chunk, { onConflict: "tenant_id,celcash_customer_id" });
