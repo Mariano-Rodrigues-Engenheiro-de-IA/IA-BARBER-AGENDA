@@ -84,11 +84,14 @@ async function fetchAllSubscriptions(env: string, token: string) {
 }
 
 function deriveStatus(sub: any): { status: string; isOverdue: boolean; overdueCents: number } {
+  // CelCash subscription statuses: active, closed, notStarted, dontBilled, waitingPayment, outOfBilling
   const rawStatus = String(sub.status || sub.subscription_status || sub.situation || "").toLowerCase();
   let status = "unknown";
-  if (/active|ativ/.test(rawStatus)) status = "active";
-  else if (/overdue|atras|inadimpl/.test(rawStatus)) status = "overdue";
-  else if (/cancel/.test(rawStatus)) status = "canceled";
+  if (rawStatus === "active" || /ativ/.test(rawStatus)) status = "active";
+  else if (rawStatus === "closed" || /cancel/.test(rawStatus)) status = "canceled";
+  else if (rawStatus === "waitingpayment" || /overdue|atras|inadimpl/.test(rawStatus)) status = "overdue";
+  else if (rawStatus === "notstarted") status = "pending";
+  else if (rawStatus === "dontbilled" || rawStatus === "outofbilling") status = "paused";
   else if (/trial/.test(rawStatus)) status = "trial";
   else if (/pend/.test(rawStatus)) status = "pending";
   else if (rawStatus) status = rawStatus;
