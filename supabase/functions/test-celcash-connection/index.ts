@@ -7,8 +7,8 @@ const corsHeaders = {
 
 function baseUrl(env: string) {
   return env === "production"
-    ? "https://api.cel.cash/v2"
-    : "https://api.sandbox.cel.cash/v2";
+    ? "https://api-celcash.celcoin.com.br/v2"
+    : "https://api-celcash.sandbox.cel.cash/v2";
 }
 
 Deno.serve(async (req) => {
