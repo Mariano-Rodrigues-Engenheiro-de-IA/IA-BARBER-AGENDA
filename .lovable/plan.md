@@ -1,110 +1,85 @@
-# Plano
-
 ## Objetivo
-Criar uma proteção global para impedir que a IA execute a mesma ação mutável duas vezes em seguida na mesma conversa, mesmo quando o cliente manda mensagens separadas logo após a confirmação.
 
-## Diagnóstico atual
-Hoje o webhook já tem algumas proteções, mas elas não cobrem esse caso global:
+Eliminar chamadas em tempo real à CelCash durante o atendimento. A IA consulta uma tabela local (`celcash_subscribers`) por telefone para decidir se o cliente é assinante ativo, qual plano tem e se está inadimplente, antes de agendar na Bemp.
 
-- O estado persistente salva `executedToolNames`, porém isso só bloqueia por nome de ferramenta e exclui ferramentas de agenda/cancelamento/edição, que ficam livres para repetir.
-- O estado também salva `scheduledSlotSignatures`, mas isso só protege agendamento idêntico de mesmo slot.
-- Quando chega uma nova mensagem do cliente, a IA roda de novo com ferramentas liberadas e sem um “registro estruturado” das ações concluídas há poucos segundos.
-- Resultado: mesmo com histórico textual, o modelo ainda pode tentar repetir uma ação já concluída.
-
-## O que vou implementar
-
-### 1) Ledger global de ações concluídas no estado da conversa
-Adicionar ao `conversation_state` um histórico curto de ações mutáveis recentes, por exemplo:
+## Arquitetura
 
 ```text
-recentCompletedActions[]
-- toolName
-- category (booking, cancel, cadastro, custom_tool, etc.)
-- dedupeKey normalizada
-- status (success, blocked, failed)
-- completedAt
-- humanSummary
-- resultIds principais
+[Cron 1x/hora]
+      │
+      ▼
+[edge: sync-celcash-subscribers]  ─── paginação ──▶  CelCash /customers + /subscriptions + /charges
+      │
+      ▼
+[tabela: celcash_subscribers]  ◀── consulta por telefone ──  [IA / agente Bemp]
 ```
 
-Isso fica no mesmo JSON de estado, então a mudança é global e sem depender de um provedor específico.
+## Mudanças
 
-### 2) Chave de idempotência por intenção, não só por nome da ferramenta
-Antes de executar qualquer ferramenta mutável, gerar uma `dedupeKey` normalizada.
+### 1. Nova tabela `celcash_subscribers`
 
-Exemplos:
-- agendamento: serviços + data + hora + profissional + cliente/telefone
-- cancelamento: id do agendamento
-- cadastro: telefone + nome validado
-- ferramenta customizada: nome + payload essencial
+Substitui o uso de `celcash_cache` (que é cache pontual por telefone). Campos principais:
 
-Assim o bloqueio deixa de ser “essa ferramenta já rodou” e passa a ser “essa ação já foi concluída”.
+- `tenant_id` (FK tenants)
+- `celcash_customer_id` (id do cliente na CelCash)
+- `phone_e164` (normalizado, índice único por tenant)
+- `phone_raw`, `name`, `document` (CPF/CNPJ), `email`
+- `subscription_id`, `plan_id`, `plan_name`
+- `status` (`active`, `overdue`, `canceled`, `trial`, `pending`)
+- `is_overdue` (bool), `overdue_amount_cents`, `next_due_date`, `last_payment_date`
+- `raw_payload` (jsonb com snapshot completo da CelCash)
+- `synced_at`, `created_at`, `updated_at`
 
-### 3) Guarda global pré-execução
-Criar uma barreira única antes de executar ferramentas mutáveis:
+Índices: `(tenant_id, phone_e164)` único, `(tenant_id, status)`, `(tenant_id, is_overdue)`.
 
-- Se já existe `success` recente para a mesma `dedupeKey`, bloquear a nova tentativa.
-- Se a ação acabou de ser concluída e a nova mensagem do cliente não traz uma nova intenção clara, bloquear nova mutação e forçar resposta natural.
-- Se a ação anterior falhou, não fingir sucesso; manter a regra de escalonamento humano.
+RLS: admin vê tudo; usuários do tenant veem só do seu tenant. Service role full.
 
-Isso vira uma proteção global para agenda, cancelamento, cadastro e custom tools mutáveis.
+### 2. Edge function `sync-celcash-subscribers`
 
-### 4) Janela de “cooldown pós-sucesso”
-Adicionar uma regra curta após qualquer mutação bem-sucedida.
+- Roda por tenant (parâmetro `tenant_id`) ou para todos os tenants com `celcash_enabled = true` (modo cron).
+- Fluxo por tenant:
+  1. Pega `celcash_galax_id` / `celcash_galax_hash` do tenant.
+  2. Gera token (`/v2/token`) — já validado funcionando.
+  3. Pagina `/v2/customers` (ou endpoint equivalente de assinantes) buscando todos.
+  4. Para cada cliente, busca assinatura e status financeiro (inadimplência).
+  5. Faz `upsert` em `celcash_subscribers` por `(tenant_id, celcash_customer_id)`.
+  6. Marca como `canceled` quem sumiu da CelCash (diff por `synced_at`).
+- Normaliza telefone para E.164 (`+55…`) antes de salvar.
+- Log de execução em `agent_logs` (qtd sincronizada, erros, duração).
 
-Exemplo de comportamento:
-- A IA acabou de agendar.
-- O cliente manda logo depois “William” ou “obrigado”.
-- Dentro dessa janela, a IA vê que existe uma ação recém-concluída e só pode:
-  - responder naturalmente,
-  - atualizar memória/resumo,
-  - ou pedir complemento, se realmente faltar algo.
-- Ela não pode repetir ferramenta mutável sem uma nova intenção explícita.
+### 3. Cron via `pg_cron` + `pg_net`
 
-### 5) Injetar no contexto da IA um resumo estruturado do que acabou de acontecer
-Além do histórico textual, incluir no prompt/contexto algo como:
+- Habilita extensões (se já não estiverem).
+- Job a cada 1 hora (ajustável) chamando `sync-celcash-subscribers` em modo "todos os tenants".
+- Job adicional a cada 15min só para tenants com muitas mudanças? — opcional, começamos com 1h.
 
-```text
-AÇÕES RECENTES CONCLUÍDAS:
-- 16:26 agendar: concluído com sucesso para corte, dia X, hora Y, profissional Z
-- Próxima mensagem do cliente só deve continuar a conversa; não repita essa ação sem novo pedido explícito
-```
+### 4. Endpoint de consulta para a IA
 
-Isso ajuda o modelo a “raciocinar sobre o que acabou de fazer” antes mesmo do guard técnico bloquear.
+Edge function `lookup-celcash-subscriber`:
+- Input: `tenant_id`, `phone`.
+- Normaliza telefone, consulta `celcash_subscribers`.
+- Retorna: `{ is_subscriber, status, plan_name, is_overdue, overdue_amount, next_due_date, customer_name }`.
+- Se não achar, retorna `{ is_subscriber: false }` (sem fallback à CelCash — fica simples e rápido).
 
-### 6) Política global de repetição segura
-Definir uma regra única:
+### 5. Integração com fluxo Bemp/IA
 
-- Ferramenta mutável só repete se houver mudança material de intenção ou parâmetros.
-- Duas mensagens seguidas do cliente não significam duas execuções.
-- Confirmação, nome, agradecimento, emoji, complemento solto ou resposta tardia não reabrem automaticamente a última ação.
+No tool/handler que hoje chama Bemp para agendar:
+1. Antes de listar serviços, chama `lookup-celcash-subscriber` pelo telefone do lead.
+2. Se `is_subscriber && !is_overdue`: filtra/prioriza os serviços do plano correspondente na Bemp.
+3. Se `is_overdue`: a IA informa pendência financeira e oferece serviço avulso ou link de regularização.
+4. Se não é assinante: fluxo normal de serviço avulso.
 
-### 7) Observabilidade e logs
-Registrar quando o guard bloquear repetição:
-- ferramenta
-- dedupeKey
-- ação anterior encontrada
-- motivo do bloqueio
-- trecho da última mensagem do cliente
+### 6. UI mínima (admin, opcional nesta fase)
 
-Assim dá para auditar casos como Bendita Barber/William sem depender só do prompt.
+Em `/tenants/:id` (aba CelCash) adicionar:
+- Botão "Sincronizar agora" (chama a edge function manualmente).
+- Mostrar `last_sync_at`, total de assinantes, ativos, inadimplentes.
 
-## Arquivo principal
-- `supabase/functions/whatsapp-webhook/index.ts`
+## Pontos de decisão antes de codar
 
-## Validação
-Vou validar com cenários como:
-- cliente confirma agendamento e depois manda só o nome
-- cliente manda duas mensagens seguidas com o mesmo pedido
-- cliente agradece após sucesso
-- cliente realmente quer uma segunda ação diferente
-- ferramenta falha e a IA tenta repetir/confirmar
+1. **Frequência do cron**: começo com **1 hora**. OK?
+2. **Escopo do sync**: trazer **todos os clientes** ou só **assinantes ativos + inadimplentes**? Sugiro todos para ter histórico completo.
+3. **Tabela `celcash_cache` antiga**: mantenho (cache pontual) ou removo? Sugiro **remover** — fica redundante.
+4. **UI de sincronização agora** ou só backend + cron nesta etapa?
 
-## Detalhes técnicos
-- Reaproveitar o `conversation_state` existente; não devo precisar de nova tabela para a primeira versão.
-- Manter os guards atuais específicos de agenda, mas colocar esse novo guard global acima deles.
-- Salvar só um histórico curto de ações recentes para não inflar o estado.
-- Diferenciar ferramentas mutáveis de consulta para não bloquear buscas legítimas.
-
-## Resultado esperado
-A IA para de “esquecer” a ação que acabou de concluir e deixa de tentar repetir ferramenta por causa de mensagens consecutivas do cliente. O bloqueio passa a ser sistêmico, não dependente de prompt nem restrito ao caso de agendamento.
+Me confirma esses 4 pontos (ou só diz "segue com os defaults") e eu implemento.
