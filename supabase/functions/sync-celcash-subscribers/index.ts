@@ -115,25 +115,28 @@ async function syncTenant(supabase: any, tenant: any) {
     const subs = await fetchAllSubscriptions(env, token);
 
     const rows = subs.map((s: any) => {
-      const customer = s.customer || s.client || s.payer || {};
+      const customer = s.Customer || s.customer || s.client || s.payer || {};
       const phoneRaw = pickPhone(customer) || pickPhone(s);
       const phoneE164 = normalizePhone(phoneRaw);
       const { status, isOverdue, overdueCents } = deriveStatus(s);
+      const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       return {
         tenant_id: tenant.id,
-        celcash_customer_id: String(customer.id || customer.galaxPayId || s.customer_id || s.payer_id || s.id),
-        celcash_subscription_id: String(s.id || s.subscription_id || s.galaxPayId || ""),
+        celcash_customer_id: String(
+          customer.galaxPayId ?? customer.id ?? customer.myId ?? s.customer_id ?? s.payer_id ?? ""
+        ),
+        celcash_subscription_id: String(s.galaxPayId ?? s.id ?? s.myId ?? s.subscription_id ?? ""),
         phone_e164: phoneE164,
-        phone_raw: phoneRaw || null,
+        phone_raw: phoneRaw ? String(phoneRaw) : null,
         name: customer.name || customer.fullName || customer.full_name || s.name || null,
-        email: customer.email || s.email || null,
+        email: customerEmail,
         document: customer.document || customer.cpf || customer.cnpj || null,
-        plan_id: String(s.plan_id || s.plan?.id || s.planMyId || "") || null,
-        plan_name: s.plan?.name || s.plan_name || s.planName || null,
+        plan_id: String(s.PlanMyId ?? s.planMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? "") || null,
+        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || null,
         status,
         is_overdue: isOverdue,
         overdue_amount_cents: overdueCents,
-        next_due_date: s.next_due_date || s.nextDueDate || s.due_date || null,
+        next_due_date: s.next_due_date || s.nextDueDate || s.firstPayDayDate || null,
         last_payment_date: s.last_payment_date || s.lastPaymentDate || null,
         raw_payload: s,
         synced_at: new Date().toISOString(),
