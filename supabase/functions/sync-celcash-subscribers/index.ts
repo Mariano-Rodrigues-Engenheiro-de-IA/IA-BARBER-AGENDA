@@ -27,6 +27,11 @@ function normalizePhone(raw?: string | null): string | null {
 
 function pickPhone(obj: any): string | null {
   if (!obj || typeof obj !== "object") return null;
+  // CelCash returns "phones" as an array of numbers; prefer the longest (mobile)
+  if (Array.isArray(obj.phones) && obj.phones.length) {
+    const sorted = [...obj.phones].map(String).sort((a, b) => b.length - a.length);
+    return sorted[0];
+  }
   return (
     obj.phone || obj.mobile || obj.cellphone || obj.cell_phone ||
     obj.telefone || obj.celular || obj.phone_number || obj.phoneNumber ||
