@@ -3,10 +3,10 @@ import { corsHeaders } from "npm:@supabase/supabase-js@2/cors";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY")!;
 
-const AI_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const MODEL = "google/gemini-2.5-flash";
+const AI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+const MODEL = "gpt-5-mini";
 
 const SYSTEM_PROMPT =
   "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
@@ -48,7 +48,7 @@ async function extractSummary(tenantName: string, currentSummary: string, histor
   const resp = await fetch(AI_ENDPOINT, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),

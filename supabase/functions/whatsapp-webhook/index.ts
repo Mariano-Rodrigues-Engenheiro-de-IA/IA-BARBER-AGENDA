@@ -3939,19 +3939,12 @@ async function callAIAgent(
   let cancelOrEditHappenedThisInvocation = false;
   const hasAudio = mediaBase64 && mediaMimeType?.startsWith("audio/");
   const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  // Use direct OpenAI when key is configured (cheaper). Fallback to Lovable AI Gateway.
-  // Audio still uses Lovable AI Gateway because it requires Gemini (OpenAI direct doesn't accept audio inline the same way).
-  const useDirectOpenAI = !!OPENAI_API_KEY && !hasAudio;
-  const modelUsed = hasAudio
-    ? "google/gemini-2.5-flash"
-    : (useDirectOpenAI ? "gpt-5-mini" : "openai/gpt-5-mini");
-  const aiEndpoint = useDirectOpenAI
-    ? "https://api.openai.com/v1/chat/completions"
-    : "https://ai.gateway.lovable.dev/v1/chat/completions";
-  const aiAuthKey = useDirectOpenAI ? OPENAI_API_KEY! : LOVABLE_API_KEY;
-  if (!aiAuthKey) throw new Error("Neither OPENAI_API_KEY nor LOVABLE_API_KEY is configured");
-  console.log(`AI provider: ${useDirectOpenAI ? "OpenAI direct" : "Lovable AI Gateway"}, model: ${modelUsed}`);
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
+  // Always use OpenAI direct. Audio is transcribed via Whisper (transcribeAudioViaGemini) before reaching the chat model.
+  const modelUsed = "gpt-5-mini";
+  const aiEndpoint = "https://api.openai.com/v1/chat/completions";
+  const aiAuthKey = OPENAI_API_KEY;
+  console.log(`AI provider: OpenAI direct, model: ${modelUsed}`);
 
   // Retry transient upstream errors (502/503/504) up to 3 attempts with exponential backoff.
   const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
