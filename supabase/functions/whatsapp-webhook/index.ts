@@ -9,12 +9,29 @@ function celcashPhoneVariants(phone: string): string[] {
   const digits = (phone || "").replace(/\D/g, "");
   if (!digits) return [];
   const set = new Set<string>();
+
+  // Normaliza para "55 + DDD + número" (sem +)
+  let national = digits;
+  if (!national.startsWith("55")) {
+    if (national.length === 10 || national.length === 11) national = `55${national}`;
+  }
   set.add(`+${digits}`);
-  if (digits.startsWith("55") && digits.length >= 12) {
-    set.add(`+${digits}`);
-    set.add(`+${digits.slice(2)}`);
-  } else if (digits.length === 10 || digits.length === 11) {
-    set.add(`+55${digits}`);
+  set.add(`+${national}`);
+
+  // Se começa com 55, gera variantes com/sem o 9 do celular BR
+  if (national.startsWith("55") && national.length >= 12) {
+    const ddd = national.slice(2, 4);
+    const rest = national.slice(4);
+    // Versão sem o 9 inicial (ex.: 8 dígitos)
+    if (rest.length === 9 && rest.startsWith("9")) {
+      set.add(`+55${ddd}${rest.slice(1)}`);
+    }
+    // Versão com o 9 inicial (ex.: 9 dígitos)
+    if (rest.length === 8) {
+      set.add(`+55${ddd}9${rest}`);
+    }
+    // Também a forma sem DDI
+    set.add(`+${national.slice(2)}`);
   }
   return Array.from(set);
 }
