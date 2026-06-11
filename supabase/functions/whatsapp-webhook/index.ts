@@ -3955,7 +3955,7 @@ async function callAIAgent(
 
   // Retry transient upstream errors (502/503/504) up to 3 attempts with exponential backoff.
   const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
-    const transientStatuses = new Set([502, 503, 504]);
+    const transientStatuses = new Set([500, 502, 503, 504, 408, 429]);
     const maxAttempts = 3;
     let lastResp: Response | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
