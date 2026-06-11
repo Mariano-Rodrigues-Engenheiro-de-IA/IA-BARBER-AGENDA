@@ -19,12 +19,19 @@ function normalizePhone(raw?: string | null): string | null {
 function phoneVariants(raw: string): string[] {
   const digits = raw.replace(/\D/g, "");
   const set = new Set<string>();
-  const e164 = normalizePhone(raw);
-  if (e164) set.add(e164);
-  if (digits) {
-    set.add(`+${digits}`);
-    if (digits.startsWith("55")) set.add(`+${digits.slice(2)}`);
-    else set.add(`+55${digits}`);
+  if (!digits) return [];
+  let national = digits;
+  if (!national.startsWith("55") && (national.length === 10 || national.length === 11)) {
+    national = `55${national}`;
+  }
+  set.add(`+${digits}`);
+  set.add(`+${national}`);
+  if (national.startsWith("55") && national.length >= 12) {
+    const ddd = national.slice(2, 4);
+    const rest = national.slice(4);
+    if (rest.length === 9 && rest.startsWith("9")) set.add(`+55${ddd}${rest.slice(1)}`);
+    if (rest.length === 8) set.add(`+55${ddd}9${rest}`);
+    set.add(`+${national.slice(2)}`);
   }
   return Array.from(set);
 }
