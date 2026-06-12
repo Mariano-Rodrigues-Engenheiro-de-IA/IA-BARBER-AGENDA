@@ -3925,7 +3925,7 @@ async function callAIAgent(
   supabase: any,
   tenant: any,
   phoneNumber: string,
-  history: { role: string; content: string }[],
+  history: { role: string; content: string; created_at?: string }[],
   userMessage: string,
   provider: string,
   mediaBase64?: string | null,
