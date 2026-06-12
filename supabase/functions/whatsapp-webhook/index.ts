@@ -103,34 +103,31 @@ async function getCelCashContextCached(supabase: any, tenant: any, phoneNumber: 
 function formatCelCashContextBlock(ctx: any): string {
   if (!ctx) return "";
   if (ctx.found === false) {
-    return "\n[CELCASH] Cliente NÃO encontrado na base de assinaturas — tratar como não-assinante.";
+    return `
+## 💳 ASSINATURA E AGENDAMENTO (Bemp + CelCash)
+
+[CELCASH] Este telefone NÃO está na base de assinantes ATIVOS.
+→ Trate como CLIENTE AVULSO. Ao agendar, use o serviço solicitado em modo
+  pago/avulso (corte avulso, barba avulsa, etc). NÃO ofereça nem assuma
+  benefício de plano de assinatura.`;
   }
-  const lines: string[] = ["\n[CELCASH] Dados de assinatura do cliente:"];
-  lines.push(`- Nome no CelCash: ${ctx.customer?.name || "—"}${ctx.customer?.document ? ` (doc ${ctx.customer.document})` : ""}`);
+  const sub = (ctx.subscriptions || [])[0] || {};
+  const planLabel = sub.planName || (sub.planMyId || sub.planGalaxPayId ? `Plano #${sub.planMyId || sub.planGalaxPayId}` : "plano sem nome");
+  return `
+## 💳 ASSINATURA E AGENDAMENTO (Bemp + CelCash)
 
-  const activeOrOverdue = (ctx.subscriptions || []).filter(
-    (s: any) => s.status === "active" || s.status === "overdue" || s.status === "trial" || s.status === "pending"
-  );
+[CELCASH] Cliente é ASSINANTE ATIVO.
+- Nome no CelCash: ${ctx.customer?.name || "—"}
+- Plano: ${planLabel}
 
-  if (!activeOrOverdue.length) {
-    lines.push("- Sem assinatura ativa no momento (tratar como cliente avulso).");
-  } else {
-    activeOrOverdue.forEach((s: any, i: number) => {
-      const valor = typeof s.value === "number" ? `R$ ${(s.value / 100).toFixed(2)}` : "—";
-      const planLabel = s.planName || (s.planMyId || s.planGalaxPayId ? `Plano #${s.planMyId || s.planGalaxPayId}` : "Plano (nome indisponível)");
-      lines.push(`- Assinatura #${i + 1}: ${planLabel} — status ${s.status}${s.periodicity ? ` — ${s.periodicity}` : ""} ${valor}${s.nextPayDay ? ` — próxima cobrança ${s.nextPayDay}` : ""}`);
-    });
-  }
-
-  if (ctx.overdue?.length) {
-    const total = ctx.overdue.reduce((acc: number, t: any) => acc + (Number(t.value) || 0), 0);
-    lines.push(`- ⚠️ ${ctx.overdue.length} cobrança(s) em atraso (total R$ ${(total / 100).toFixed(2)}). Avise o cliente com gentileza ao confirmar o agendamento, mas NÃO bloqueie o atendimento.`);
-  } else if (activeOrOverdue.length) {
-    lines.push("- Sem pendências financeiras no momento.");
-  }
-
-  lines.push("Use essas informações para personalizar o atendimento (citar o plano, lembrar de pendências com educação). NÃO recite o galaxPayId.");
-  return lines.join("\n");
+→ Ao agendar, use o serviço correspondente ao plano dele (${planLabel}).
+→ Se a tool **agendar** retornar erro do tipo \`subscription_overdue\`
+  (pagamento pendente / inadimplência / assinatura em atraso), NÃO tente
+  agendar de novo. Envie EXATAMENTE:
+  "Não consegui concluir seu agendamento porque há um pagamento pendente
+  na sua assinatura. Deseja regularizar?"
+  e aguarde a resposta. NÃO envie link de pagamento. NÃO escale humano
+  automaticamente.`;
 }
 
 
