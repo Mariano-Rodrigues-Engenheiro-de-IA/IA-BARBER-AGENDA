@@ -1,61 +1,95 @@
-## Problema
+## Objetivo
 
-Hoje, quando o cliente volta a responder dias (ou semanas) depois, a IA continua a conversa como se fosse o mesmo dia: reusa horários, confirmações e contexto antigo. O histórico enviado ao modelo é apenas `{role, content}` — sem data/hora —, então o modelo não percebe a virada de dia.
+Para tenants **Bemp + CelCash habilitado**, simplificar o fluxo: tabela local só com **ativos**, IA decide entre **agendar com plano** (ativo) ou **avulso** (não-ativo), e trata **inadimplência** reagindo ao erro de pagamento pendente devolvido pela **API Bemp**.
 
-Já existe um sinal parcial (`lastClientGapMinutes` + uma regra "gap >12h" no prompt), mas ele só fala da última mensagem do **cliente** e é uma menção solta. Não cobre a última mensagem do **humano/IA**, nem força reset de contexto.
+**Escopo:** somente quando `tenant.api_provider = 'bemp'` E `tenant.celcash_enabled = true`. Para qualquer outro provider (Trinks, OneBeleza, Zaylo, None) ou tenant sem CelCash, nada muda.
 
-## Solução (3 camadas)
+---
 
-### 1. Timestamps reais no histórico enviado ao modelo
-Em `callAIAgent`, ao montar `messages` a partir de `history`, prefixar cada mensagem com um marcador interno datado em Brasília, ex:
+## 1. Sync CelCash — só ativos
+
+**Arquivo:** `supabase/functions/sync-celcash-subscribers/index.ts`
+
+- Filtrar antes do upsert: só linhas com `status === "active"` (e `trial`, se existir) entram em `celcash_subscribers`.
+- Substituir o "marca como canceled quem não veio" por **DELETE** dos que não vieram no sync. A tabela passa a ser snapshot de ativos.
+- Em `celcash_sync_runs`, manter `total_fetched` (todas as subs da API) + `total_upserted` (ativos) + novo `total_removed`.
+- Resultado esperado: ~345 linhas para Toledos.
+
+## 2. Lookup local — semântica nova
+
+**Arquivo:** `supabase/functions/lookup-celcash-subscriber/index.ts`
+
+- Achou linha → `is_subscriber: true` + `plan_id`, `plan_name`.
+- Não achou → `is_subscriber: false` (sem distinção overdue/canceled).
+- Remover `is_overdue` e `overdue_amount_cents` da resposta.
+
+## 3. Prompt da IA — regra global condicional (Bemp + CelCash)
+
+**Arquivo:** `supabase/functions/whatsapp-webhook/index.ts` (montagem do system prompt)
+
+Injetar o bloco abaixo **somente quando** `tenant.api_provider === 'bemp'` E `tenant.celcash_enabled === true`:
 
 ```
-[12/06 14:03] Cliente: ...
-[12/06 14:05] IA: ...
-[19/06 09:11] [ATENDENTE HUMANO]: ...
+## 💳 ASSINATURA E AGENDAMENTO (Bemp + CelCash)
+
+1. ANTES de agendar, chame verificar_assinante(telefone do cliente).
+2. Se is_subscriber=true → agende usando o serviço/plano correspondente
+   ao plan_name retornado.
+3. Se is_subscriber=false → agende como AVULSO (corte avulso, barba
+   avulsa, ou o serviço solicitado em modo pago).
+4. Se a ferramenta de agendamento da Bemp retornar erro indicando
+   PAGAMENTO PENDENTE / INADIMPLÊNCIA / ASSINATURA EM ATRASO, NÃO
+   tente de novo. Envie ao cliente:
+   "Não consegui concluir seu agendamento porque há um pagamento
+   pendente na sua assinatura. Deseja regularizar?"
+   E aguarde a resposta. Não envie link de pagamento, não escale
+   humano automaticamente.
 ```
 
-Para isso, a query de histórico (linha ~2066) passa a selecionar `created_at` e a transformação para `messages` (linha ~4285) injeta o prefixo no `content`. Mantém role original (`user`/`assistant`) para o modelo. O prefixo é **interno** e cai na mesma regra já existente que proíbe a IA de reproduzir colchetes na resposta ao cliente.
+Para outros providers ou tenants sem CelCash, o prompt continua exatamente como está hoje.
 
-### 2. Bloco de "estado temporal" no system prompt
-Em `buildSystemPrompt`, além do `gapStr` atual, calcular e injetar um bloco no topo:
+## 4. Detecção do erro de pagamento pendente — só na Bemp
 
-```
-## ⏰ ESTADO TEMPORAL DESTA INTERAÇÃO
-- Agora (Brasília): 12/06/2026 14:32 (sexta-feira)
-- Última mensagem do cliente antes desta: 05/06 10:14 (gap: 7 dias)
-- Última mensagem sua (IA): 05/06 10:15
-- Última mensagem do atendente humano: 05/06 11:00
-- Status da sessão: NOVA SESSÃO (gap ≥ 8h ou dia diferente)
-```
+**Arquivo:** `supabase/functions/whatsapp-webhook/index.ts` (executor da Bemp)
 
-O flag `NOVA SESSÃO` é derivado por: gap do cliente ≥ 8h **ou** data calendário diferente de hoje (Brasília).
+- No executor das tools de agendamento da **Bemp**, inspecionar a resposta da API. Se `status >= 400` E o corpo bater regex `/pagamento.*pendente|inadimpl|assinatura.*atras|payment.*overdue|subscription.*overdue/i`, retornar à IA:
+  ```json
+  { "error": "subscription_overdue",
+    "message": "Cliente está com pagamento pendente na assinatura." }
+  ```
+- Não tocar nos executores de Trinks / OneBeleza / Zaylo.
 
-### 3. Nova regra global — "Virada de dia / conversa antiga"
-Adicionar seção `## 📅 REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA` ao prompt, aplicada a todos os providers:
+## 5. Tool `verificar_assinante` (Bemp + CelCash)
 
-- Antes de responder, SEMPRE comparar "Agora" com a data da última troca real.
-- Se `Status = NOVA SESSÃO`:
-  - **Não** dar continuidade automática ao tópico anterior (não reconfirmar agendamento antigo, não retomar fluxo de escolha de horário/serviço pendente, não enviar link/PIX que já tinha sido oferecido).
-  - Tratar a mensagem atual como uma **nova interação**: cumprimento curto adequado ao horário + perguntar como pode ajudar **agora**.
-  - Se a mensagem atual referenciar claramente o assunto antigo (ex: "pode confirmar aquele horário?"), **revalidar** os dados: reconsultar disponibilidade/preço/cadastro via ferramentas antes de prometer qualquer coisa — horários, valores e ofertas anteriores estão **expirados**.
-- Horários relativos ("hoje", "amanhã", "sexta") do histórico antigo são **inválidos**; só vale a data absoluta. Se precisar mencionar, traduzir para a referência relativa correta em relação a "Agora".
-- Se a última mensagem foi do humano/IA e ficou sem resposta por dias, não "completar" o assunto antigo — começar do zero educadamente.
+**Arquivo:** `supabase/functions/whatsapp-webhook/index.ts`
 
-Remover a regra solta atual de "gap >12h" (linha ~6850) e consolidar dentro dessa nova seção para evitar conflito.
+- Garantir que a tool `verificar_assinante({ telefone })` é injetada para a IA **somente** quando `api_provider='bemp'` E `celcash_enabled=true`. Ela chama internamente `lookup-celcash-subscriber`.
+- Se já existe com outro nome, padronizar para `verificar_assinante`.
 
-## Arquivos afetados
+## 6. UI — Painel de assinantes
 
-- `supabase/functions/whatsapp-webhook/index.ts`
-  - query de histórico (~2066): incluir `created_at`
-  - montagem de `messages` (~4283): prefixar timestamp Brasília por mensagem
-  - cálculo de gaps (~4245): adicionar gap do humano e da própria IA + flag `isNewSession`
-  - `buildSystemPrompt` (~6698): receber novos campos, injetar bloco "Estado temporal" e a nova regra global; remover regra duplicada de gap >12h
+**Arquivo:** `src/pages/client/Overview.tsx` (e qualquer card que mostre métricas CelCash)
 
-Sem mudanças de schema, sem mudanças de UI, sem mudanças em outras edge functions.
+- Renomear "Total" → "Assinantes ativos".
+- Remover contadores de "inativos" e "inadimplentes".
+- Nota curta: "A tabela contém apenas assinantes ativos. Inadimplência é detectada no momento do agendamento."
+- Só aparece para tenants com `celcash_enabled=true` (já é o comportamento atual).
+
+---
+
+## Fora de escopo
+
+- ❌ Mudanças em Trinks, OneBeleza, Zaylo ou tenants sem CelCash.
+- ❌ Lookup ao vivo na CelCash a cada conversa.
+- ❌ Sync de `/charges`.
+- ❌ Envio automático de link/PIX.
+- ❌ Escalonamento humano automático na inadimplência.
+
+---
 
 ## Validação
 
-1. Conferir em `agent_logs` uma execução nova: o prompt deve conter o bloco "Estado temporal" e mensagens do histórico com prefixo `[DD/MM HH:MM]`.
-2. Cenário real: pegar conversa com gap de vários dias e simular nova mensagem do cliente — IA deve cumprimentar e perguntar o que precisa, não retomar o agendamento antigo.
-3. Cenário same-day: gap curto — IA deve continuar normalmente (sem flag NOVA SESSÃO).
+1. Rodar sync manual de Toledos (Bemp + CelCash) → `celcash_subscribers` com ~345 linhas, todas `active`.
+2. Conferir que tenant Trinks/OneBeleza sem CelCash não recebe o bloco novo no prompt nem a tool `verificar_assinante`.
+3. Simular telefone ativo → IA agenda com plano. Telefone não cadastrado → IA agenda avulso.
+4. Forçar resposta mock de erro "pagamento pendente" da Bemp → IA envia mensagem padrão e para.
