@@ -4405,23 +4405,12 @@ async function callAIAgent(
     const errText = await response.text();
     console.error("AI gateway error (initial):", response.status, errText);
     logErrors.push(`AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`);
-    // 🚨 FIX #4: contador de falhas consecutivas do AI gateway.
-    // Após 2 falhas seguidas em 10min, escala pra humano em vez de pedir "tente novamente".
-    const now = Date.now();
-    const prevAt = (sessionState as any).lastAiFailureAt || 0;
-    const prevCount = (sessionState as any).aiFailureCount || 0;
-    const within10min = now - prevAt < 10 * 60 * 1000;
-    const newCount = within10min ? prevCount + 1 : 1;
-    (sessionState as any).aiFailureCount = newCount;
-    (sessionState as any).lastAiFailureAt = now;
-    let fallbackMsg = "Desculpe, tive um problema ao consultar o sistema. Tente novamente.";
-    if (newCount >= 2) {
-      console.warn(`[AIGatewayFallback] ${newCount} falhas consecutivas para ${phoneNumber}, escalando.`);
-      logErrors.push(`AI gateway: ${newCount} falhas consecutivas → escalar humano`);
-      fallbackMsg = "Estou com instabilidade aqui, já chamei um atendente pra te ajudar 🙏 Em instantes alguém retorna.";
-      sessionBlocked = true;
-      (sessionState as any).aiFailureCount = 0;
-    }
+    // 🚨 Política global: NUNCA expor erro técnico ao cliente. Escala humano de imediato.
+    console.warn(`[AIGatewayFallback] Falha no gateway para ${phoneNumber}, escalando humano sem expor erro.`);
+    logErrors.push(`AI gateway: falha → escalar humano (sem expor erro ao cliente)`);
+    const fallbackMsg = "Só um instante, vou avisar o responsável pra te atender por aqui 🙏";
+    sessionBlocked = true;
+    (sessionState as any).aiFailureCount = 0;
     if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
     return { response: fallbackMsg, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
   }
@@ -5496,7 +5485,8 @@ async function callAIAgent(
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
       // Save state even on error
       if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-      return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+      sessionBlocked = true;
+      return { response: "Só um instante, vou avisar o responsável pra te atender por aqui 🙏", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
     result = await response.json();
@@ -6982,6 +6972,25 @@ Mensagens longas são proibidas. Sempre curtas e em tom de conversa.
 ❌ "vou consultar o sistema"
 ✅ "Seria corte, barba ou os dois?"
 ✅ "Esse tá ocupado. Tenho 12h ou 15h. Qual prefere?"
+
+------------------------------------------
+
+## 🆘 REGRA GLOBAL — FALHAS DE SISTEMA (NUNCA EXPONHA ERROS)
+
+🔴 PROIBIDO TERMINANTEMENTE dizer ao cliente qualquer variação de:
+- "Tive um problema ao consultar o sistema"
+- "Desculpe, deu um erro"
+- "Estou com instabilidade / fora do ar / lento / com falha"
+- "O sistema falhou / travou / não respondeu"
+- "Tente novamente em alguns minutos"
+- Qualquer menção a "API", "servidor", "sistema", "erro", "bug", "falha técnica", status HTTP, ou nome de ferramenta.
+
+✅ COMO AGIR quando uma ferramenta falhar, retornar erro, instabilidade, timeout, ou você não conseguir concluir o que o cliente pediu:
+1. Se existir a ferramenta de escalar humano (ex: escalate_human), chame-a IMEDIATAMENTE com um motivo curto.
+2. Responda ao cliente APENAS com algo no espírito de: "Só um instante, vou avisar o responsável pra te atender por aqui 🙏" (pode variar a frase, mas mantenha o tom: tranquilo, sem culpa, sem mencionar erro).
+3. NÃO tente refazer a operação várias vezes nem prossiga o fluxo de agendamento depois disso — pare e aguarde o humano.
+
+Toda barbearia tem um responsável humano disponível. Quando algo não funciona, você SEMPRE escala — você NUNCA admite falha técnica ao cliente.
 
 ------------------------------------------
 
@@ -9066,7 +9075,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         }
         if (transientStatuses.has(res.status)) {
           return {
-            error: "A API da Frizzar está temporariamente instável (erro 502 no servidor da Frizzar). NÃO tente cadastrar o cliente nem prosseguir o fluxo agora. Peça desculpas ao cliente e diga: 'Nosso sistema de agendamento tá com instabilidade momentânea, tenta de novo em uns minutinhos, beleza?'",
+            error: "Falha transitória ao consultar o cliente. NÃO mencione erro, sistema, instabilidade ou tente de novo ao cliente. Chame a ferramenta de escalar humano se existir; caso contrário responda APENAS: 'Só um instante, vou avisar o responsável pra te atender por aqui 🙏' e não prossiga com o fluxo.",
             upstreamStatus: res.status,
             retryable: true,
           };
