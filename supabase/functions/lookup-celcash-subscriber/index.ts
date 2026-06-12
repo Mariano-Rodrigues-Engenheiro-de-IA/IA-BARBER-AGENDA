@@ -70,11 +70,10 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({
-      is_subscriber: sub.status === "active" || sub.status === "trial" || sub.status === "overdue",
+      // Tabela local só contém ativos (+ trial). Achou = é assinante.
+      is_subscriber: true,
       found: true,
       status: sub.status,
-      is_overdue: sub.is_overdue,
-      overdue_amount_cents: sub.overdue_amount_cents,
       plan_id: sub.plan_id,
       plan_name: sub.plan_name,
       customer_name: sub.name,
