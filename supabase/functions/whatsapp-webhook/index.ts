@@ -1703,6 +1703,10 @@ Deno.serve(async (req) => {
           if (audioTranscript) {
             console.log(`[Transcribe] OK (${audioTranscript.length} chars): ${audioTranscript.slice(0, 120)}`);
           }
+          // OpenAI chat models don't accept audio as image_url — after transcription,
+          // drop the binary so we only send text downstream.
+          mediaBase64 = null;
+          mediaMimeType = null;
         }
       }
 
