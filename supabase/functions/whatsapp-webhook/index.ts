@@ -2065,7 +2065,7 @@ Deno.serve(async (req) => {
 
       const { data: historyRaw } = await supabase
         .from("chat_messages")
-        .select("role, content, processed")
+        .select("role, content, processed, created_at")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
         .or("role.eq.assistant,processed.eq.true")
@@ -3925,7 +3925,7 @@ async function callAIAgent(
   supabase: any,
   tenant: any,
   phoneNumber: string,
-  history: { role: string; content: string }[],
+  history: { role: string; content: string; created_at?: string }[],
   userMessage: string,
   provider: string,
   mediaBase64?: string | null,
@@ -4242,10 +4242,19 @@ async function callAIAgent(
   sessionState.explicitClientName = explicitClientName;
   console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}", simulator: ${!!simulatorMode}`);
 
-  // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
+  // Compute gaps (minutes) for the AI's temporal awareness.
+  // - lastClientGapMinutes: from the previous CLIENT message (excluding the current one)
+  // - lastAssistantGapMinutes: from the last IA-generated assistant message
+  // - lastHumanGapMinutes: from the last [ATENDENTE HUMANO] message
   let lastClientGapMinutes: number | null = null;
+  let lastAssistantGapMinutes: number | null = null;
+  let lastHumanGapMinutes: number | null = null;
+  let lastClientAtISO: string | null = null;
+  let lastAssistantAtISO: string | null = null;
+  let lastHumanAtISO: string | null = null;
   if (!simulatorMode) {
     try {
+      // Previous user message (index 1; index 0 is the current one)
       const { data: lastUserRows } = await supabase
         .from("chat_messages")
         .select("created_at")
@@ -4254,18 +4263,43 @@ async function callAIAgent(
         .eq("role", "user")
         .order("created_at", { ascending: false })
         .limit(2);
-      // Index 0 is the current message just inserted; index 1 is the previous one.
-      const prev = lastUserRows?.[1]?.created_at;
-      if (prev) {
-        const diffMs = Date.now() - new Date(prev).getTime();
-        lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+      const prevUser = lastUserRows?.[1]?.created_at;
+      if (prevUser) {
+        lastClientAtISO = prevUser;
+        lastClientGapMinutes = Math.max(0, Math.round((Date.now() - new Date(prevUser).getTime()) / 60000));
       }
     } catch (e) {
       console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
     }
+
+    // Derive assistant/human gaps from the loaded history (avoids extra queries).
+    try {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const m: any = history[i];
+        if (m.role !== "assistant" || !m.created_at) continue;
+        const isHuman = typeof m.content === "string" && /^\s*\[ATENDENTE HUMANO\]/i.test(m.content);
+        if (isHuman && !lastHumanAtISO) {
+          lastHumanAtISO = m.created_at;
+          lastHumanGapMinutes = Math.max(0, Math.round((Date.now() - new Date(m.created_at).getTime()) / 60000));
+        } else if (!isHuman && !lastAssistantAtISO) {
+          lastAssistantAtISO = m.created_at;
+          lastAssistantGapMinutes = Math.max(0, Math.round((Date.now() - new Date(m.created_at).getTime()) / 60000));
+        }
+        if (lastHumanAtISO && lastAssistantAtISO) break;
+      }
+    } catch (e) {
+      console.warn("[CallAIAgent] Failed to derive assistant/human gaps:", (e as any)?.message);
+    }
   }
 
-  let systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState));
+  let systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState), {
+    lastClientAtISO,
+    lastAssistantAtISO,
+    lastHumanAtISO,
+    lastClientGapMinutes,
+    lastAssistantGapMinutes,
+    lastHumanGapMinutes,
+  });
 
   // CelCash context injection (opt-in per tenant)
   if (tenant?.celcash_enabled) {
@@ -4280,9 +4314,28 @@ async function callAIAgent(
       console.warn("[CelCash] Context injection failed:", (e as any)?.message);
     }
   }
+
+  // Brasília-formatted timestamp prefix for each history message (internal marker for the model).
+  const tsPrefix = (iso?: string): string => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const parts = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit", month: "2-digit",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(d);
+      const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `[${get("day")}/${get("month")} ${get("hour")}:${get("minute")}] `;
+    } catch { return ""; }
+  };
+
   const messages: any[] = [
     { role: "system", content: systemPrompt },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
+    ...history.map((m: any) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? `${tsPrefix(m.created_at)}${m.content}` : m.content,
+    })),
   ];
 
   if (provider === "zaylo") {
@@ -6701,6 +6754,14 @@ function buildSystemPrompt(
   simulatorMode?: boolean,
   recentCompletedActions?: AgentSessionState["recentCompletedActions"],
   recentAssistantReplies?: AgentSessionState["recentAssistantReplies"],
+  temporalContext?: {
+    lastClientAtISO?: string | null;
+    lastAssistantAtISO?: string | null;
+    lastHumanAtISO?: string | null;
+    lastClientGapMinutes?: number | null;
+    lastAssistantGapMinutes?: number | null;
+    lastHumanGapMinutes?: number | null;
+  },
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
@@ -6726,6 +6787,51 @@ function buildSystemPrompt(
 
   const phonePretty = formatPhoneForPrompt(phoneNumber);
   const gapStr = formatGapMinutes(lastClientGapMinutes ?? null);
+
+  // ===== TEMPORAL CONTEXT (this interaction) =====
+  const fmtBR = (iso?: string | null): string => {
+    if (!iso) return "—";
+    try {
+      const parts = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(new Date(iso));
+      const g = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `${g("day")}/${g("month")}/${g("year")} ${g("hour")}:${g("minute")}`;
+    } catch { return "—"; }
+  };
+  const sameCalendarDayAsToday = (iso?: string | null): boolean => {
+    if (!iso) return true;
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date(iso));
+      const g = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `${g("year")}-${g("month")}-${g("day")}` === `${br.year}-${String(br.month).padStart(2, "0")}-${String(br.day).padStart(2, "0")}`;
+    } catch { return true; }
+  };
+  const tc = temporalContext || {};
+  const gapClient = tc.lastClientGapMinutes ?? lastClientGapMinutes ?? null;
+  const gapAssistant = tc.lastAssistantGapMinutes ?? null;
+  const gapHuman = tc.lastHumanGapMinutes ?? null;
+  const lastClientStr = `${fmtBR(tc.lastClientAtISO)} (gap: ${formatGapMinutes(gapClient ?? null)})`;
+  const lastAssistantStr = tc.lastAssistantAtISO ? `${fmtBR(tc.lastAssistantAtISO)} (gap: ${formatGapMinutes(gapAssistant ?? null)})` : "—";
+  const lastHumanStr = tc.lastHumanAtISO ? `${fmtBR(tc.lastHumanAtISO)} (gap: ${formatGapMinutes(gapHuman ?? null)})` : "—";
+  // NOVA SESSÃO: gap do cliente ≥ 8h OU última troca (cliente/humano/IA) em dia calendário diferente de hoje
+  const lastAnyISO = [tc.lastClientAtISO, tc.lastAssistantAtISO, tc.lastHumanAtISO]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
+  const isNewSession = (gapClient != null && gapClient >= 8 * 60) || (lastAnyISO != null && !sameCalendarDayAsToday(lastAnyISO));
+  const temporalBlock = `## ⏰ ESTADO TEMPORAL DESTA INTERAÇÃO
+- Agora (Brasília): ${br.todayDateBR} ${br.timeHHMM} (${br.todayName})
+- Última mensagem do cliente antes desta: ${lastClientStr}
+- Última mensagem sua (IA): ${lastAssistantStr}
+- Última mensagem do atendente humano: ${lastHumanStr}
+- Status da sessão: ${isNewSession ? "🆕 NOVA SESSÃO (gap ≥ 8h ou dia calendário diferente — NÃO continue o assunto antigo automaticamente)" : "▶️ CONTINUAÇÃO (mesmo dia, gap < 8h)"}
+`;
 
   const identityBlock = `## 👤 IDENTIDADE DO CLIENTE
 - Telefone: ${phonePretty}
@@ -6808,12 +6914,25 @@ Regras de uso do nome:
 - Sempre que você for responder ao cliente, escreva uma mensagem natural, curta e em português, como se fosse uma pessoa real conversando no WhatsApp.
 - Se você acabou de executar ferramentas (ex: enviar imagens, adicionar etiqueta), AINDA ASSIM você DEVE escrever uma mensagem natural em português ao cliente logo em seguida — nunca termine sem texto, nunca devolva texto telegráfico em inglês, nunca devolva meta-comentário entre parênteses.
 
+${temporalBlock}
 ## ⏰ CONTEXTO TEMPORAL (LEIA ANTES DE QUALQUER RESPOSTA)
 - AGORA são **${br.timeHHMM}** da **${br.periodOfDay}** — ${todayName}, ${br.todayDateBR} (${br.dayType})
 - Data ISO de hoje: ${todayDate} | Data/hora completa Brasília: ${dateComplete}
 - Gap desde a última mensagem do cliente: ${gapStr}
+- 📌 Cada mensagem do histórico abaixo vem com um prefixo INTERNO \`[DD/MM HH:MM]\` indicando quando foi enviada (Brasília). Use isso para raciocinar sobre o tempo entre as trocas e para detectar virada de dia/semana. NUNCA escreva esse prefixo na sua resposta ao cliente.
 - Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
 ${nextDaysMap.join("\n")}
+
+🚨 REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA (APLICA-SE A TODAS AS BARBEARIAS):
+Antes de QUALQUER resposta, compare "Agora" do bloco "ESTADO TEMPORAL DESTA INTERAÇÃO" com a data da última troca real (cliente, IA ou atendente humano).
+- Se o "Status da sessão" estiver marcado como 🆕 NOVA SESSÃO (gap ≥ 8h OU dia calendário diferente de hoje):
+  • NÃO dê continuidade automática ao assunto da conversa anterior. NÃO reconfirme agendamento que estava sendo combinado, NÃO retome a escolha de horário/serviço pendente, NÃO reenvie link/PIX/valor que já tinha sido oferecido em dia anterior.
+  • Trate a mensagem atual como uma NOVA interação: cumprimento curto adequado ao período (use a regra de saudação) + pergunte como pode ajudar AGORA. Aja como uma pessoa real que retoma o WhatsApp depois de horas/dias sem responder.
+  • Se a mensagem atual referenciar claramente o assunto antigo (ex: "pode confirmar aquele horário?", "fechado então?"), você DEVE REVALIDAR via ferramentas — reconsultar disponibilidade/preço/cadastro/agendamento ANTES de prometer qualquer coisa. Horários, valores e ofertas mencionados em dias anteriores estão EXPIRADOS e podem não valer mais.
+  • Se a última mensagem foi sua (IA) ou do atendente humano e ficou DIAS sem resposta, NÃO "complete" o assunto antigo nem cobre o cliente; comece do zero, educadamente.
+- Em QUALQUER caso (nova sessão ou continuação): referências relativas ("hoje", "amanhã", "sexta") presentes em mensagens antigas do histórico (prefixo de outro dia) são INVÁLIDAS para a conversa de hoje. Só vale data ABSOLUTA. Se precisar reusar, traduza para a referência relativa correta em relação ao "Agora".
+
+
 
 🚨 REGRA DE SAUDAÇÃO (CRÍTICA — NÃO QUEBRE):
 - Saudação correta para o período de AGORA (CASO precise saudar): "${br.greeting}".
@@ -6829,7 +6948,7 @@ As informações acima (hora atual, período do dia, data, dia da semana, sauda�
 - ✅ Use o horário de funcionamento INTERNAMENTE para decidir se aceita/recusa um horário pedido pelo cliente, mas sem citá-lo se não foi perguntado. Ex: cliente pede "20h", se fecha às 19h, responda algo como "20h a gente já não pega, posso te encaixar mais cedo?" — não precisa recitar a tabela inteira.
 - ✅ Só diga "já fechamos / estamos fechados / ainda abertos" se o cliente perguntar isso diretamente. Caso contrário, apenas conduza o atendimento normalmente.
 - Comparação interna: se AGORA < fechamento de hoje → ainda está aberto. Se cliente pedir horário FUTURO de hoje, só recuse se for DEPOIS do fechamento.
-- Se o gap acima for > 12h, releia o histórico antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
+- Se o "Status da sessão" for 🆕 NOVA SESSÃO, releia o histórico (cada mensagem traz prefixo \`[DD/MM HH:MM]\`) e siga a "REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA" antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
 
 REGRA GERAL: dados de contexto (nome do cliente, hora, período, horário de funcionamento) servem para VOCÊ entender a situação. Use só o mínimo necessário na resposta — fale como uma pessoa real no WhatsApp, não como um robô recitando informações.
 
@@ -6847,7 +6966,7 @@ REGRA GERAL: dados de contexto (nome do cliente, hora, período, horário de fun
 A conversa pode ter ficado parada por horas ou dias. ANTES de falar qualquer coisa relacionada a data/horário, PARE e faça este raciocínio interno:
   a) Qual é a data REAL de hoje? (use ${todayDate})
   b) Qual data o cliente está REALMENTE pedindo? Quando o cliente disse "amanhã" ou "hoje" em mensagens ANTIGAS do histórico, aquela referência era relativa à data daquela mensagem — NÃO à data de hoje. Não assuma que "amanhã" mencionado anteriormente ainda é amanhã.
-  c) Se a última mensagem do cliente for de outro dia (gap >12h), e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga. Releia o histórico e descubra a DATA ABSOLUTA combinada (ex: "sexta dia 24"), depois traduza para a referência relativa CORRETA em relação a hoje (pode ser "hoje", "amanhã" ou "sexta").
+  c) Se o "Status da sessão" for 🆕 NOVA SESSÃO (mensagem do cliente em outro dia/semana) e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga e NÃO assuma que o horário ainda está disponível. Releia o histórico (use o prefixo \`[DD/MM HH:MM]\` de cada mensagem) para descobrir a DATA ABSOLUTA combinada, REVALIDE via ferramentas e só então traduza para a referência relativa CORRETA em relação a hoje.
   d) Em caso de DÚVIDA sobre qual dia o cliente quer, PERGUNTE antes de buscar/agendar/cancelar. Ex: "Só pra confirmar, o agendamento é pra hoje mesmo, né?"
 NUNCA chame ferramentas de buscar/agendar/cancelar/confirmar com uma data que você não tem 100% de certeza.
 
