@@ -2065,7 +2065,7 @@ Deno.serve(async (req) => {
 
       const { data: historyRaw } = await supabase
         .from("chat_messages")
-        .select("role, content, processed")
+        .select("role, content, processed, created_at")
         .eq("tenant_id", tenant.id)
         .eq("phone_number", phoneNumber)
         .or("role.eq.assistant,processed.eq.true")
