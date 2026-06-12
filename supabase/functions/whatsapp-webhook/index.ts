@@ -6948,7 +6948,7 @@ As informações acima (hora atual, período do dia, data, dia da semana, sauda�
 - ✅ Use o horário de funcionamento INTERNAMENTE para decidir se aceita/recusa um horário pedido pelo cliente, mas sem citá-lo se não foi perguntado. Ex: cliente pede "20h", se fecha às 19h, responda algo como "20h a gente já não pega, posso te encaixar mais cedo?" — não precisa recitar a tabela inteira.
 - ✅ Só diga "já fechamos / estamos fechados / ainda abertos" se o cliente perguntar isso diretamente. Caso contrário, apenas conduza o atendimento normalmente.
 - Comparação interna: se AGORA < fechamento de hoje → ainda está aberto. Se cliente pedir horário FUTURO de hoje, só recuse se for DEPOIS do fechamento.
-- Se o gap acima for > 12h, releia o histórico antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
+- Se o "Status da sessão" for 🆕 NOVA SESSÃO, releia o histórico (cada mensagem traz prefixo \`[DD/MM HH:MM]\`) e siga a "REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA" antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
 
 REGRA GERAL: dados de contexto (nome do cliente, hora, período, horário de funcionamento) servem para VOCÊ entender a situação. Use só o mínimo necessário na resposta — fale como uma pessoa real no WhatsApp, não como um robô recitando informações.
 
