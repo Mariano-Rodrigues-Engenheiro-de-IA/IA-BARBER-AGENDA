@@ -9898,6 +9898,19 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         });
         const text = await res.text();
         console.log(`[Bemp] agendar (${res.status}):`, text.slice(0, 600));
+
+        // Detecção de inadimplência (Bemp + CelCash): se a Bemp recusou por pagamento pendente,
+        // devolvemos um erro padronizado para a IA seguir a regra "subscription_overdue".
+        const overdueRegex = /pagamento.*pendente|inadimpl|assinatura.*atras|atras.*assinatura|payment.*overdue|subscription.*overdue|em\s+atraso/i;
+        if (!res.ok && overdueRegex.test(text)) {
+          console.log(`[Bemp] agendar BLOQUEADO por pagamento pendente (cliente inadimplente).`);
+          return {
+            error: "subscription_overdue",
+            blocked: true,
+            message: "Cliente está com pagamento pendente na assinatura. NÃO tente agendar de novo. Responda ao cliente: \"Não consegui concluir seu agendamento porque há um pagamento pendente na sua assinatura. Deseja regularizar?\" e aguarde resposta.",
+          };
+        }
+
         try {
           const parsed = JSON.parse(text);
           if (res.ok) return { ok: true, ...parsed };
