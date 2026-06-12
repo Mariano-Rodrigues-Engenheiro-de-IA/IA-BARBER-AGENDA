@@ -4335,11 +4335,8 @@ async function callAIAgent(
     const mediaInstruction = buildMediaInstruction();
 
     if (mediaMimeType.startsWith("audio/")) {
-      // Use Gemini model for audio — send as image_url data URL which Gemini handles natively
-      contentParts.push({
-        type: "image_url",
-        image_url: { url: `data:${mediaMimeType};base64,${mediaBase64}` },
-      });
+      // Audio is transcribed via Whisper upstream and merged into the text message.
+      // OpenAI chat models reject audio data URLs ("Invalid MIME type"), so we skip it here.
       contentParts.push({
         type: "text",
         text: mediaInstruction,
