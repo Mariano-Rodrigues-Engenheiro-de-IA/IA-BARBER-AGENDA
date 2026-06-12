@@ -5485,7 +5485,8 @@ async function callAIAgent(
       logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
       // Save state even on error
       if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
-      return { response: "Desculpe, tive um problema ao consultar o sistema. Tente novamente.", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
+      sessionBlocked = true;
+      return { response: "Só um instante, vou avisar o responsável pra te atender por aqui 🙏", toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
     }
 
     result = await response.json();
