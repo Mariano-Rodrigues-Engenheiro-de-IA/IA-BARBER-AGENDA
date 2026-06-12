@@ -183,15 +183,17 @@ async function syncTenant(supabase: any, tenant: any) {
       };
     }).filter((r) => r.celcash_customer_id && r.celcash_customer_id !== "undefined" && r.celcash_customer_id !== "");
 
-    // Dedupe por customer: mantém a "melhor" assinatura (active > overdue > pending > paused > trial > canceled > unknown)
-    const rank: Record<string, number> = {
-      active: 6, overdue: 5, pending: 4, paused: 3, trial: 2, canceled: 1, unknown: 0,
-    };
+    // NOVA POLÍTICA: a tabela é um snapshot APENAS de assinantes ATIVOS (+ trial).
+    // Quem não é ativo simplesmente não entra — a IA trata cliente ausente
+    // como "não-assinante" e agenda como avulso.
+    const activeRows = rows.filter((r) => r.status === "active" || r.status === "trial");
+
+    // Dedupe por customer (active tem prioridade sobre trial)
     const byCustomer = new Map<string, any>();
-    for (const r of rows) {
+    for (const r of activeRows) {
       const key = `${r.tenant_id}::${r.celcash_customer_id}`;
       const existing = byCustomer.get(key);
-      if (!existing || (rank[r.status] ?? 0) > (rank[existing.status] ?? 0)) {
+      if (!existing || (r.status === "active" && existing.status !== "active")) {
         byCustomer.set(key, r);
       }
     }
@@ -208,25 +210,25 @@ async function syncTenant(supabase: any, tenant: any) {
       upserted += chunk.length;
     }
 
-    // Marca como canceled quem não veio neste sync
+    // Remove TODO mundo que não veio neste sync (snapshot puro de ativos atuais).
     const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const { count: marked } = await supabase
+    const { data: removedRows } = await supabase
       .from("celcash_subscribers")
-      .update({ status: "canceled", is_overdue: false })
+      .delete()
       .eq("tenant_id", tenant.id)
       .lt("synced_at", cutoff)
-      .neq("status", "canceled")
-      .select("id", { count: "exact", head: true });
+      .select("id");
+    const removed = removedRows?.length || 0;
 
     await supabase.from("celcash_sync_runs").update({
       status: "success",
       finished_at: new Date().toISOString(),
       total_fetched: subs.length,
       total_upserted: upserted,
-      total_marked_canceled: marked || 0,
+      total_marked_canceled: removed, // coluna reaproveitada: agora significa "removidos"
     }).eq("id", run.id);
 
-    return { tenant_id: tenant.id, fetched: subs.length, upserted, marked_canceled: marked || 0 };
+    return { tenant_id: tenant.id, fetched: subs.length, active_upserted: upserted, removed };
   } catch (e: any) {
     await supabase.from("celcash_sync_runs").update({
       status: "error",
