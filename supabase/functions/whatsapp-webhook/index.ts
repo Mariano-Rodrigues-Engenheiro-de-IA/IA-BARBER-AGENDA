@@ -4242,10 +4242,19 @@ async function callAIAgent(
   sessionState.explicitClientName = explicitClientName;
   console.log(`[CallAIAgent] Names — sender: "${senderName || ""}", lead: "${leadName}", explicit: "${explicitClientName || ""}", simulator: ${!!simulatorMode}`);
 
-  // Compute gap (minutes) since the previous user message — for the AI's temporal awareness.
+  // Compute gaps (minutes) for the AI's temporal awareness.
+  // - lastClientGapMinutes: from the previous CLIENT message (excluding the current one)
+  // - lastAssistantGapMinutes: from the last IA-generated assistant message
+  // - lastHumanGapMinutes: from the last [ATENDENTE HUMANO] message
   let lastClientGapMinutes: number | null = null;
+  let lastAssistantGapMinutes: number | null = null;
+  let lastHumanGapMinutes: number | null = null;
+  let lastClientAtISO: string | null = null;
+  let lastAssistantAtISO: string | null = null;
+  let lastHumanAtISO: string | null = null;
   if (!simulatorMode) {
     try {
+      // Previous user message (index 1; index 0 is the current one)
       const { data: lastUserRows } = await supabase
         .from("chat_messages")
         .select("created_at")
@@ -4254,18 +4263,43 @@ async function callAIAgent(
         .eq("role", "user")
         .order("created_at", { ascending: false })
         .limit(2);
-      // Index 0 is the current message just inserted; index 1 is the previous one.
-      const prev = lastUserRows?.[1]?.created_at;
-      if (prev) {
-        const diffMs = Date.now() - new Date(prev).getTime();
-        lastClientGapMinutes = Math.max(0, Math.round(diffMs / 60000));
+      const prevUser = lastUserRows?.[1]?.created_at;
+      if (prevUser) {
+        lastClientAtISO = prevUser;
+        lastClientGapMinutes = Math.max(0, Math.round((Date.now() - new Date(prevUser).getTime()) / 60000));
       }
     } catch (e) {
       console.warn("[CallAIAgent] Failed to compute last client gap:", (e as any)?.message);
     }
+
+    // Derive assistant/human gaps from the loaded history (avoids extra queries).
+    try {
+      for (let i = history.length - 1; i >= 0; i--) {
+        const m: any = history[i];
+        if (m.role !== "assistant" || !m.created_at) continue;
+        const isHuman = typeof m.content === "string" && /^\s*\[ATENDENTE HUMANO\]/i.test(m.content);
+        if (isHuman && !lastHumanAtISO) {
+          lastHumanAtISO = m.created_at;
+          lastHumanGapMinutes = Math.max(0, Math.round((Date.now() - new Date(m.created_at).getTime()) / 60000));
+        } else if (!isHuman && !lastAssistantAtISO) {
+          lastAssistantAtISO = m.created_at;
+          lastAssistantGapMinutes = Math.max(0, Math.round((Date.now() - new Date(m.created_at).getTime()) / 60000));
+        }
+        if (lastHumanAtISO && lastAssistantAtISO) break;
+      }
+    } catch (e) {
+      console.warn("[CallAIAgent] Failed to derive assistant/human gaps:", (e as any)?.message);
+    }
   }
 
-  let systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState));
+  let systemPrompt = buildSystemPrompt(tenant, phoneNumber, provider, senderName, leadName, explicitClientName, lastClientGapMinutes, aiSummary, aiSummaryUpdatedAt, !!simulatorMode, pruneRecentActions(sessionState), pruneRecentAssistantReplies(sessionState), {
+    lastClientAtISO,
+    lastAssistantAtISO,
+    lastHumanAtISO,
+    lastClientGapMinutes,
+    lastAssistantGapMinutes,
+    lastHumanGapMinutes,
+  });
 
   // CelCash context injection (opt-in per tenant)
   if (tenant?.celcash_enabled) {
@@ -4280,9 +4314,28 @@ async function callAIAgent(
       console.warn("[CelCash] Context injection failed:", (e as any)?.message);
     }
   }
+
+  // Brasília-formatted timestamp prefix for each history message (internal marker for the model).
+  const tsPrefix = (iso?: string): string => {
+    if (!iso) return "";
+    try {
+      const d = new Date(iso);
+      const parts = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit", month: "2-digit",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(d);
+      const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `[${get("day")}/${get("month")} ${get("hour")}:${get("minute")}] `;
+    } catch { return ""; }
+  };
+
   const messages: any[] = [
     { role: "system", content: systemPrompt },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
+    ...history.map((m: any) => ({
+      role: m.role,
+      content: typeof m.content === "string" ? `${tsPrefix(m.created_at)}${m.content}` : m.content,
+    })),
   ];
 
   if (provider === "zaylo") {
