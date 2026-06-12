@@ -6788,6 +6788,51 @@ function buildSystemPrompt(
   const phonePretty = formatPhoneForPrompt(phoneNumber);
   const gapStr = formatGapMinutes(lastClientGapMinutes ?? null);
 
+  // ===== TEMPORAL CONTEXT (this interaction) =====
+  const fmtBR = (iso?: string | null): string => {
+    if (!iso) return "—";
+    try {
+      const parts = new Intl.DateTimeFormat("pt-BR", {
+        timeZone: "America/Sao_Paulo",
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(new Date(iso));
+      const g = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `${g("day")}/${g("month")}/${g("year")} ${g("hour")}:${g("minute")}`;
+    } catch { return "—"; }
+  };
+  const sameCalendarDayAsToday = (iso?: string | null): boolean => {
+    if (!iso) return true;
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Sao_Paulo",
+        year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date(iso));
+      const g = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      return `${g("year")}-${g("month")}-${g("day")}` === `${br.year}-${String(br.month).padStart(2, "0")}-${String(br.day).padStart(2, "0")}`;
+    } catch { return true; }
+  };
+  const tc = temporalContext || {};
+  const gapClient = tc.lastClientGapMinutes ?? lastClientGapMinutes ?? null;
+  const gapAssistant = tc.lastAssistantGapMinutes ?? null;
+  const gapHuman = tc.lastHumanGapMinutes ?? null;
+  const lastClientStr = `${fmtBR(tc.lastClientAtISO)} (gap: ${formatGapMinutes(gapClient ?? null)})`;
+  const lastAssistantStr = tc.lastAssistantAtISO ? `${fmtBR(tc.lastAssistantAtISO)} (gap: ${formatGapMinutes(gapAssistant ?? null)})` : "—";
+  const lastHumanStr = tc.lastHumanAtISO ? `${fmtBR(tc.lastHumanAtISO)} (gap: ${formatGapMinutes(gapHuman ?? null)})` : "—";
+  // NOVA SESSÃO: gap do cliente ≥ 8h OU última troca (cliente/humano/IA) em dia calendário diferente de hoje
+  const lastAnyISO = [tc.lastClientAtISO, tc.lastAssistantAtISO, tc.lastHumanAtISO]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
+  const isNewSession = (gapClient != null && gapClient >= 8 * 60) || (lastAnyISO != null && !sameCalendarDayAsToday(lastAnyISO));
+  const temporalBlock = `## ⏰ ESTADO TEMPORAL DESTA INTERAÇÃO
+- Agora (Brasília): ${br.todayDateBR} ${br.timeHHMM} (${br.todayName})
+- Última mensagem do cliente antes desta: ${lastClientStr}
+- Última mensagem sua (IA): ${lastAssistantStr}
+- Última mensagem do atendente humano: ${lastHumanStr}
+- Status da sessão: ${isNewSession ? "🆕 NOVA SESSÃO (gap ≥ 8h ou dia calendário diferente — NÃO continue o assunto antigo automaticamente)" : "▶️ CONTINUAÇÃO (mesmo dia, gap < 8h)"}
+`;
+
   const identityBlock = `## 👤 IDENTIDADE DO CLIENTE
 - Telefone: ${phonePretty}
 - Nome confirmado pelo cliente NESTA conversa: ${explicitClientName && explicitClientName.trim() ? explicitClientName.trim() : "(vazio)"}
