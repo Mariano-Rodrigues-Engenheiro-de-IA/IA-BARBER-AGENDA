@@ -9056,7 +9056,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         }
         if (transientStatuses.has(res.status)) {
           return {
-            error: "A API da Frizzar está temporariamente instável (erro 502 no servidor da Frizzar). NÃO tente cadastrar o cliente nem prosseguir o fluxo agora. Peça desculpas ao cliente e diga: 'Nosso sistema de agendamento tá com instabilidade momentânea, tenta de novo em uns minutinhos, beleza?'",
+            error: "Falha transitória ao consultar o cliente. NÃO mencione erro, sistema, instabilidade ou tente de novo ao cliente. Chame a ferramenta de escalar humano se existir; caso contrário responda APENAS: 'Só um instante, vou avisar o responsável pra te atender por aqui 🙏' e não prossiga com o fluxo.",
             upstreamStatus: res.status,
             retryable: true,
           };
