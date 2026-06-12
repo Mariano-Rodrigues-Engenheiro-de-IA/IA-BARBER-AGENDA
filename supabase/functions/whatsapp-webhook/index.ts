@@ -6754,6 +6754,14 @@ function buildSystemPrompt(
   simulatorMode?: boolean,
   recentCompletedActions?: AgentSessionState["recentCompletedActions"],
   recentAssistantReplies?: AgentSessionState["recentAssistantReplies"],
+  temporalContext?: {
+    lastClientAtISO?: string | null;
+    lastAssistantAtISO?: string | null;
+    lastHumanAtISO?: string | null;
+    lastClientGapMinutes?: number | null;
+    lastAssistantGapMinutes?: number | null;
+    lastHumanGapMinutes?: number | null;
+  },
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
