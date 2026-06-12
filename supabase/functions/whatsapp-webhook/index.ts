@@ -6966,7 +6966,7 @@ REGRA GERAL: dados de contexto (nome do cliente, hora, período, horário de fun
 A conversa pode ter ficado parada por horas ou dias. ANTES de falar qualquer coisa relacionada a data/horário, PARE e faça este raciocínio interno:
   a) Qual é a data REAL de hoje? (use ${todayDate})
   b) Qual data o cliente está REALMENTE pedindo? Quando o cliente disse "amanhã" ou "hoje" em mensagens ANTIGAS do histórico, aquela referência era relativa à data daquela mensagem — NÃO à data de hoje. Não assuma que "amanhã" mencionado anteriormente ainda é amanhã.
-  c) Se a última mensagem do cliente for de outro dia (gap >12h), e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga. Releia o histórico e descubra a DATA ABSOLUTA combinada (ex: "sexta dia 24"), depois traduza para a referência relativa CORRETA em relação a hoje (pode ser "hoje", "amanhã" ou "sexta").
+  c) Se o "Status da sessão" for 🆕 NOVA SESSÃO (mensagem do cliente em outro dia/semana) e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga e NÃO assuma que o horário ainda está disponível. Releia o histórico (use o prefixo \`[DD/MM HH:MM]\` de cada mensagem) para descobrir a DATA ABSOLUTA combinada, REVALIDE via ferramentas e só então traduza para a referência relativa CORRETA em relação a hoje.
   d) Em caso de DÚVIDA sobre qual dia o cliente quer, PERGUNTE antes de buscar/agendar/cancelar. Ex: "Só pra confirmar, o agendamento é pra hoje mesmo, né?"
 NUNCA chame ferramentas de buscar/agendar/cancelar/confirmar com uma data que você não tem 100% de certeza.
 
