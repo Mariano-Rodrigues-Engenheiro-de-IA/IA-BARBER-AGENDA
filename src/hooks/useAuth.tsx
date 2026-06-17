@@ -60,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<PermissionsMap>({});
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   const apply = (p: { isAdmin: boolean; role: Role; tenantId: string | null; permissions: PermissionsMap }) => {
     setIsAdmin(p.isAdmin); setRole(p.role); setTenantId(p.tenantId); setPermissions(p.permissions);
@@ -72,7 +73,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session); setUser(session?.user ?? null);
       if (session?.user) {
         lastUserId = session.user.id;
-        apply(await loadProfile(session.user.id));
+        setProfileLoading(true);
+        try {
+          apply(await loadProfile(session.user.id));
+        } finally {
+          setProfileLoading(false);
+        }
       }
       setLoading(false);
     });
@@ -83,7 +89,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (newUserId === lastUserId) return; // ignore TOKEN_REFRESHED etc.
       lastUserId = newUserId;
       if (s?.user) {
-        loadProfile(s.user.id).then(apply);
+        setProfileLoading(true);
+        loadProfile(s.user.id)
+          .then(apply)
+          .finally(() => setProfileLoading(false));
       } else {
         apply({ isAdmin: false, role: null, tenantId: null, permissions: {} });
       }
