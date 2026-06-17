@@ -42,17 +42,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
   if (role === null) return <Loading />;
-  if (!isAdmin) {
-    if (role === "client") return <Navigate to="/app" replace />;
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="glass-card p-8 text-center max-w-md">
-          <h2 className="text-xl font-bold text-foreground mb-2">Acesso negado</h2>
-          <p className="text-muted-foreground">Você não tem permissão de administrador.</p>
-        </div>
-      </div>
-    );
-  }
+  if (!isAdmin) return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
   return <AdminLayout>{children}</AdminLayout>;
 }
 

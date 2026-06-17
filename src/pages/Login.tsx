@@ -55,14 +55,17 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on" method="post">
             <div className="space-y-2">
-              <Label htmlFor="email">E-mail</Label>
+              <Label htmlFor="username">E-mail</Label>
               <Input
-                id="email"
-                name="email"
+                id="username"
+                name="username"
                 type="email"
+                inputMode="email"
                 autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
                 placeholder="admin@zaylo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
