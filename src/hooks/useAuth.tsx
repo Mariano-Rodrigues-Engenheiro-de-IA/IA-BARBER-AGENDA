@@ -19,6 +19,7 @@ interface AuthContextType {
   tenantId: string | null;
   permissions: PermissionsMap;
   loading: boolean;
+  authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshPermissions: () => Promise<void>;
