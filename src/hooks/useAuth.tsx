@@ -19,6 +19,7 @@ interface AuthContextType {
   tenantId: string | null;
   permissions: PermissionsMap;
   loading: boolean;
+  authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshPermissions: () => Promise<void>;
@@ -131,8 +132,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     resetProfile();
   };
 
+  const authReady = !loading && (!user || (!profileLoading && role !== null));
+
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, role, tenantId, permissions, loading: loading || profileLoading, signIn, signOut, refreshPermissions }}>
+    <AuthContext.Provider value={{ session, user, isAdmin, role, tenantId, permissions, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );

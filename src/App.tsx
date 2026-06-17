@@ -38,33 +38,32 @@ function Loading() {
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin, role, loading } = useAuth();
-  if (loading) return <Loading />;
+  const { user, isAdmin, role, authReady } = useAuth();
+  if (!authReady) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role === null) return <Loading />;
   if (!isAdmin) return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
   return <AdminLayout>{children}</AdminLayout>;
 }
 
 function ClientRoute({ children }: { children: React.ReactNode }) {
-  const { user, role, tenantId, loading } = useAuth();
-  if (loading) return <Loading />;
+  const { user, role, tenantId, authReady } = useAuth();
+  if (!authReady) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
-  if (role === null) return <Loading />;
   if (role === "admin") return <Navigate to="/" replace />;
   if (role !== "client" || !tenantId) return <Navigate to="/login" replace />;
   return <ClientLayout>{children}</ClientLayout>;
 }
 
 function AppRoutes() {
-  const { user, role, loading } = useAuth();
-  if (loading) return <Loading />;
+  const { user, role, authReady } = useAuth();
+  if (!authReady) return <Loading />;
 
   const home = role === "client" ? "/app" : "/";
 
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to={home} replace /> : <LoginPage />} />
+
 
       {/* Admin */}
       <Route path="/" element={<AdminRoute><DashboardPage /></AdminRoute>} />

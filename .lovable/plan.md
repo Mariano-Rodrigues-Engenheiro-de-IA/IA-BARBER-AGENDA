@@ -1,39 +1,30 @@
-# Corrigir flash de "acesso negado" e salvamento de senha pelo navegador
+## Plano
 
-## Problema 1 — Flash de "acesso negado" / "Sem empresa vinculada"
+1. **Corrigir a corrida pós-login no auth**
+   - Ajustar `useAuth` para não expor `user` às rotas enquanto `role`, `tenantId` e permissões ainda estão carregando.
+   - Criar/usar um estado explícito de prontidão, por exemplo `authReady` ou `profileReady`, para diferenciar:
+     - sessão encontrada
+     - perfil/permissões realmente carregados
 
-**Causa:** em `src/hooks/useAuth.tsx`, quando o `onAuthStateChange` dispara após o login, o estado `user` é atualizado imediatamente, mas `loadProfile()` (que busca `role`, `tenantId` e `permissions`) roda de forma assíncrona **sem** marcar `loading=true`. Nesse intervalo, `AdminRoute`/`ClientRoute` em `src/App.tsx` veem `user` presente + `role=null` + `tenantId=null` e renderizam a tela de bloqueio por uma fração de segundo antes do perfil chegar.
+2. **Segurar o redirecionamento da tela `/login`**
+   - Hoje a rota pode redirecionar assim que existe `user`, antes de saber se ele é cliente ou admin.
+   - Alterar para redirecionar apenas quando o perfil estiver pronto:
+     - cliente → `/app`
+     - admin → `/`
+   - Enquanto o perfil carrega, mostrar só `Carregando...`.
 
-**Correção:**
+3. **Eliminar qualquer renderização intermediária de bloqueio**
+   - Garantir que `AdminRoute` e `ClientRoute` nunca avaliem permissão enquanto o auth/perfil estiver carregando.
+   - Para usuário cliente tentando cair na rota admin `/`, redirecionar silenciosamente para `/app`, sem tela de erro.
 
-1. Em `useAuth.tsx`, adicionar um estado `profileLoading` (separado do `loading` inicial):
-   - `setProfileLoading(true)` antes de chamar `loadProfile()` no `onAuthStateChange` (e também na carga inicial).
-   - `setProfileLoading(false)` no `.then(apply)`.
-2. Expor `loading` combinado: `loading: loading || profileLoading` no contexto, para que as rotas continuem mostrando o `<Loading />` global enquanto o perfil chega.
-3. Como rede de segurança em `App.tsx`, em `AdminRoute` e `ClientRoute`, quando `user` existe mas `role` ainda é `null`, renderizar `<Loading />` em vez do bloco de "acesso negado" / "Sem empresa vinculada". O bloco só aparece quando temos certeza (role definida e divergente).
+4. **Validar contra o site publicado**
+   - Depois da implementação, testar o fluxo no domínio publicado, não só no preview.
+   - Confirmar que o texto “Acesso negado” não aparece no DOM/tela durante o login.
+   - Confirmar que o usuário cliente entra direto no painel.
 
-Resultado: o usuário vê "Carregando..." → painel, sem o flash.
+5. **Publicar/atualizar o frontend**
+   - Como o problema acontece no site publicado, a correção de frontend só vale no domínio final depois de atualizar a publicação.
+   - Backend já foi corrigido automaticamente antes; esta etapa é para garantir que o JavaScript novo esteja no site publicado.
 
-## Problema 2 — Navegador não oferece salvar a senha
-
-**Causa:** o formulário em `src/pages/Login.tsx` não tem os atributos que gerenciadores de senha (Chrome, Safari, 1Password etc.) usam para detectar credenciais. Sem `name` e `autocomplete` corretos, o navegador não pergunta "Deseja salvar a senha?" e não preenche nos próximos logins.
-
-**Correção em `src/pages/Login.tsx`:**
-
-1. No `<input>` de email: adicionar `name="email"` e `autoComplete="username"`.
-2. No `<input>` de senha: adicionar `name="password"` e `autoComplete="current-password"`.
-3. Garantir que o `<form>` envolve os dois inputs e o botão de submit (já envolve) — mantém o submit por Enter funcionando, que é o gatilho que o navegador usa para oferecer o save.
-
-Não há mudança no backend: a senha já é gravada corretamente no `auth.users` pelo Supabase. O problema é só de hint para o navegador armazenar localmente.
-
-## Validação
-
-- Logout → login: confirmar que não há mais flash da mensagem vermelha antes do painel carregar.
-- Login pela primeira vez em janela limpa: Chrome deve perguntar "Salvar senha para zayloia.com?".
-- Próximo login: campos devem ser auto-preenchidos.
-
-## Arquivos alterados
-
-- `src/hooks/useAuth.tsx` — estado `profileLoading` e `loading` combinado.
-- `src/App.tsx` — `AdminRoute`/`ClientRoute` mostram `<Loading />` enquanto `user` existe mas `role` ainda não foi resolvida.
-- `src/pages/Login.tsx` — atributos `name` e `autoComplete` nos inputs.
+## Observação
+O banco já tem o vínculo correto do usuário cliente com a empresa e as permissões de leitura foram corrigidas. O problema restante é o timing do frontend publicado durante o redirecionamento pós-login.
