@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
@@ -61,9 +61,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [permissions, setPermissions] = useState<PermissionsMap>({});
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
+  const profileRequestId = useRef(0);
 
   const apply = (p: { isAdmin: boolean; role: Role; tenantId: string | null; permissions: PermissionsMap }) => {
     setIsAdmin(p.isAdmin); setRole(p.role); setTenantId(p.tenantId); setPermissions(p.permissions);
+  };
+
+  const resetProfile = () => apply({ isAdmin: false, role: null, tenantId: null, permissions: {} });
+
+  const loadAndApplyProfile = async (userId: string) => {
+    const requestId = ++profileRequestId.current;
+    setProfileLoading(true);
+    try {
+      const profile = await loadProfile(userId);
+      if (profileRequestId.current === requestId) apply(profile);
+    } catch (error) {
+      if (profileRequestId.current === requestId) resetProfile();
+      console.error("Erro ao carregar permissões do usuário", error);
+    } finally {
+      if (profileRequestId.current === requestId) setProfileLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -73,12 +90,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session); setUser(session?.user ?? null);
       if (session?.user) {
         lastUserId = session.user.id;
-        setProfileLoading(true);
-        try {
-          apply(await loadProfile(session.user.id));
-        } finally {
-          setProfileLoading(false);
-        }
+        await loadAndApplyProfile(session.user.id);
+      } else {
+        profileRequestId.current += 1;
+        resetProfile();
+        setProfileLoading(false);
       }
       setLoading(false);
     });
@@ -89,12 +105,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (newUserId === lastUserId) return; // ignore TOKEN_REFRESHED etc.
       lastUserId = newUserId;
       if (s?.user) {
-        setProfileLoading(true);
-        loadProfile(s.user.id)
-          .then(apply)
-          .finally(() => setProfileLoading(false));
+        void loadAndApplyProfile(s.user.id);
       } else {
-        apply({ isAdmin: false, role: null, tenantId: null, permissions: {} });
+        profileRequestId.current += 1;
+        resetProfile();
+        setProfileLoading(false);
       }
     });
 
@@ -112,7 +127,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     await supabase.auth.signOut();
-    apply({ isAdmin: false, role: null, tenantId: null, permissions: {} });
+    profileRequestId.current += 1;
+    resetProfile();
   };
 
   return (
