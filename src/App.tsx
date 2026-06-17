@@ -41,6 +41,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, isAdmin, role, loading } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
+  if (role === null) return <Loading />;
   if (!isAdmin) {
     if (role === "client") return <Navigate to="/app" replace />;
     return (
@@ -59,6 +60,7 @@ function ClientRoute({ children }: { children: React.ReactNode }) {
   const { user, role, tenantId, loading } = useAuth();
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
+  if (role === null) return <Loading />;
   if (role === "admin") return <Navigate to="/" replace />;
   if (role !== "client" || !tenantId) {
     return (

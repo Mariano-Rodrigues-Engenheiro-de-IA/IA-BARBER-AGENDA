@@ -60,7 +60,9 @@ export default function LoginPage() {
               <Label htmlFor="email">E-mail</Label>
               <Input
                 id="email"
+                name="email"
                 type="email"
+                autoComplete="username"
                 placeholder="admin@zaylo.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -71,7 +73,9 @@ export default function LoginPage() {
               <Label htmlFor="password">Senha</Label>
               <Input
                 id="password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
