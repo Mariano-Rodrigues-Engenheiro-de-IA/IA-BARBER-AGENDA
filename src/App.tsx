@@ -52,16 +52,7 @@ function ClientRoute({ children }: { children: React.ReactNode }) {
   if (!user) return <Navigate to="/login" replace />;
   if (role === null) return <Loading />;
   if (role === "admin") return <Navigate to="/" replace />;
-  if (role !== "client" || !tenantId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="glass-card p-8 text-center max-w-md">
-          <h2 className="text-xl font-bold text-foreground mb-2">Sem empresa vinculada</h2>
-          <p className="text-muted-foreground">Peça ao administrador para liberar seu acesso.</p>
-        </div>
-      </div>
-    );
-  }
+  if (role !== "client" || !tenantId) return <Navigate to="/login" replace />;
   return <ClientLayout>{children}</ClientLayout>;
 }
 
