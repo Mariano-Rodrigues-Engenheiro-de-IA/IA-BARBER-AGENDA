@@ -26,8 +26,16 @@ export function getBookingId(tc: any): string | null {
 
   // Frizzar
   if (r.agendamentoId != null) return String(r.agendamentoId);
+  // Bemp: data é objeto { id, start, ... }
+  if (r.data && typeof r.data === "object" && !Array.isArray(r.data)) {
+    const did = (r.data as any).id ?? (r.data as any).agendamento_id ?? (r.data as any).appointment_id;
+    if (did != null && typeof did !== "boolean") {
+      const s = String(did).trim();
+      if (s && s !== "true" && s !== "false") return s;
+    }
+  }
   // Trinks: data é o id numérico; id é boolean
-  if (r.data != null && typeof r.data !== "boolean") return String(r.data);
+  if (r.data != null && typeof r.data !== "boolean" && typeof r.data !== "object") return String(r.data);
   // OneBeleza / Bemp / outros
   const candidates = [r.id, r.agendamento_id, r.appointment_id];
   for (const c of candidates) {
