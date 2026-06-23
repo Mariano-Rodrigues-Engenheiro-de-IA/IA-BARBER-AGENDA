@@ -5511,6 +5511,19 @@ async function callAIAgent(
           ].join(" ");
           messages.push({ role: "system", content: guardMsg });
           logErrors.push(`[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`);
+        } else {
+          // ✅ SUCESSO: força a IA a PARAR de chamar ferramentas e responder agora.
+          // Sem isso, em alguns casos a IA chama listar_horarios/listar_agendamentos
+          // depois do agendar bem-sucedido, estoura o limite de rounds e acaba
+          // entregando uma resposta vazia ao cliente — mesmo com a reserva criada.
+          const successMsg = [
+            "✅ AGENDAMENTO CRIADO COM SUCESSO.",
+            "PARE imediatamente de chamar ferramentas — NÃO chame listar_horarios, listar_agendamentos, buscar_agendamento, agendar de novo, nem qualquer outra. NADA.",
+            "Sua PRÓXIMA ação OBRIGATÓRIA é responder ao cliente em PORTUGUÊS, em UMA mensagem curta de WhatsApp, confirmando:",
+            "(1) que o agendamento foi feito; (2) data e horário; (3) serviço; (4) profissional. Use os dados do último resultado da ferramenta.",
+            "Não invente preço nem nada que não esteja no resultado. Termine com uma despedida curta (ex: 'até lá!' ou um emoji).",
+          ].join(" ");
+          messages.push({ role: "system", content: successMsg });
         }
       }
     }
