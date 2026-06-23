@@ -5584,9 +5584,21 @@ async function callAIAgent(
   }
 
   if (!finalResponse) {
-    // Last-resort fallback: stay completely silent rather than send a generic line that
-    // breaks character. Returning empty string prevents the webhook from sending a message.
-    finalResponse = "";
+    // 🛟 Última rede de segurança: se um AGENDAMENTO foi efetivamente criado
+    // nesta rodada mas a IA não conseguiu produzir uma resposta (estourou o
+    // limite de rounds, devolveu vazio, etc.), montamos uma confirmação
+    // determinística a partir do resultado da própria tool. Evita o pior
+    // cenário: reserva criada na agenda + cliente sem nenhuma resposta no WhatsApp.
+    const bookingFallback = buildDeterministicBookingConfirmation(logToolCalls);
+    if (bookingFallback) {
+      console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
+      logErrors.push(`Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`);
+      finalResponse = bookingFallback;
+    } else {
+      // Last-resort fallback: stay completely silent rather than send a generic line that
+      // breaks character. Returning empty string prevents the webhook from sending a message.
+      finalResponse = "";
+    }
   }
 
   // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
