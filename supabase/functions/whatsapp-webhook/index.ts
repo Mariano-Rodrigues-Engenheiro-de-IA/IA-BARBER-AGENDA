@@ -3058,7 +3058,98 @@ function recordAssistantReply(state: AgentSessionState, text: string): void {
 }
 
 
+// Constrói uma mensagem determinística de confirmação de agendamento a partir
+// dos tool_calls da rodada. Usada como rede de segurança quando a IA cria a
+// reserva mas falha em produzir resposta textual ao cliente (estouro de rounds,
+// content vazio, etc.). Cobre Frizzar / Trinks / One Beleza / Bemp / Zaylo.
+function buildDeterministicBookingConfirmation(
+  logToolCalls: Array<{ name: string; args: any; result: any; blocked?: boolean }>,
+): string | null {
+  const bookingNames = new Set(["agendar", "criar_agendamento"]);
+  // Pega a ÚLTIMA chamada de booking bem-sucedida nesta rodada
+  let chosen: { name: string; args: any; result: any } | null = null;
+  for (const tc of logToolCalls || []) {
+    if (!tc || tc.blocked) continue;
+    if (!bookingNames.has(tc.name)) continue;
+    const r: any = tc.result || {};
+    const ok = !r.error && r.success !== false
+      && !(Array.isArray(r.Errors) && r.Errors.length > 0)
+      && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
+    if (ok) chosen = { name: tc.name, args: tc.args || {}, result: r };
+  }
+  if (!chosen) return null;
+
+  const r: any = chosen.result;
+  const args: any = chosen.args || {};
+
+  // --- Extrai data/hora em formato amigável ---
+  let quando = "";
+  // Frizzar: result.inicioFormatado "29/06 10:00" ou agendamentos[0].inicio ISO
+  if (typeof r.inicioFormatado === "string") {
+    quando = r.inicioFormatado;
+  } else if (Array.isArray(r.agendamentos) && r.agendamentos[0]) {
+    const a = r.agendamentos[0];
+    if (typeof a.inicioFormatado === "string") quando = a.inicioFormatado;
+    else if (typeof a.inicio === "string") {
+      const d = new Date(a.inicio);
+      if (!isNaN(d.getTime())) {
+        const dd = String(d.getUTCDate()).padStart(2, "0");
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const hh = String(d.getUTCHours()).padStart(2, "0");
+        const mi = String(d.getUTCMinutes()).padStart(2, "0");
+        quando = `${dd}/${mm} ${hh}:${mi}`;
+      }
+    }
+  }
+  // Fallback: pega de args (data + hora / dataHoraInicio)
+  if (!quando) {
+    const dataArg = args.dia || args.data || args.date;
+    const horaArg = args.hora || args.time;
+    if (dataArg && horaArg) {
+      // formata YYYY-MM-DD para DD/MM
+      const m = String(dataArg).match(/^(\d{4})-(\d{2})-(\d{2})/);
+      quando = m ? `${m[3]}/${m[2]} ${horaArg}` : `${dataArg} ${horaArg}`;
+    } else if (args.dataHoraInicio) {
+      const d = new Date(args.dataHoraInicio);
+      if (!isNaN(d.getTime())) {
+        const dd = String(d.getUTCDate()).padStart(2, "0");
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const hh = String(d.getUTCHours()).padStart(2, "0");
+        const mi = String(d.getUTCMinutes()).padStart(2, "0");
+        quando = `${dd}/${mm} ${hh}:${mi}`;
+      }
+    }
+  }
+
+  // --- Serviço ---
+  let servico = "";
+  if (typeof r.servico === "string") servico = r.servico;
+  else if (Array.isArray(r.agendamentos) && r.agendamentos[0]?.servicoNome) servico = r.agendamentos[0].servicoNome;
+  else if (typeof r.service_name === "string") servico = r.service_name;
+
+  // --- Profissional ---
+  let prof = "";
+  if (typeof r.profissional === "string") prof = r.profissional;
+  else if (Array.isArray(r.agendamentos) && r.agendamentos[0]?.funcionarioNome) prof = r.agendamentos[0].funcionarioNome;
+  else if (typeof r.professional_name === "string") prof = r.professional_name;
+  else if (r.data && typeof r.data === "object" && typeof (r.data as any).professional_name === "string") prof = (r.data as any).professional_name;
+
+  if (!quando && !servico && !prof) {
+    // Sem nenhuma informação útil — melhor não enviar nada quebrado
+    return null;
+  }
+
+  const partes: string[] = ["Prontinho, agendamento confirmado ✅"];
+  if (servico) partes.push(`Serviço: ${servico}`);
+  if (prof) partes.push(`Profissional: ${prof}`);
+  if (quando) partes.push(`Quando: ${quando}`);
+  partes.push("Te espero! 😊");
+  return partes.join("\n");
+}
+
+
 // ===================== ID RESOLUTION LAYER =====================
+
 
 interface IdResolutionResult {
   resolvedArgs: any;
@@ -5511,6 +5602,19 @@ async function callAIAgent(
           ].join(" ");
           messages.push({ role: "system", content: guardMsg });
           logErrors.push(`[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`);
+        } else {
+          // ✅ SUCESSO: força a IA a PARAR de chamar ferramentas e responder agora.
+          // Sem isso, em alguns casos a IA chama listar_horarios/listar_agendamentos
+          // depois do agendar bem-sucedido, estoura o limite de rounds e acaba
+          // entregando uma resposta vazia ao cliente — mesmo com a reserva criada.
+          const successMsg = [
+            "✅ AGENDAMENTO CRIADO COM SUCESSO.",
+            "PARE imediatamente de chamar ferramentas — NÃO chame listar_horarios, listar_agendamentos, buscar_agendamento, agendar de novo, nem qualquer outra. NADA.",
+            "Sua PRÓXIMA ação OBRIGATÓRIA é responder ao cliente em PORTUGUÊS, em UMA mensagem curta de WhatsApp, confirmando:",
+            "(1) que o agendamento foi feito; (2) data e horário; (3) serviço; (4) profissional. Use os dados do último resultado da ferramenta.",
+            "Não invente preço nem nada que não esteja no resultado. Termine com uma despedida curta (ex: 'até lá!' ou um emoji).",
+          ].join(" ");
+          messages.push({ role: "system", content: successMsg });
         }
       }
     }
@@ -5571,9 +5675,21 @@ async function callAIAgent(
   }
 
   if (!finalResponse) {
-    // Last-resort fallback: stay completely silent rather than send a generic line that
-    // breaks character. Returning empty string prevents the webhook from sending a message.
-    finalResponse = "";
+    // 🛟 Última rede de segurança: se um AGENDAMENTO foi efetivamente criado
+    // nesta rodada mas a IA não conseguiu produzir uma resposta (estourou o
+    // limite de rounds, devolveu vazio, etc.), montamos uma confirmação
+    // determinística a partir do resultado da própria tool. Evita o pior
+    // cenário: reserva criada na agenda + cliente sem nenhuma resposta no WhatsApp.
+    const bookingFallback = buildDeterministicBookingConfirmation(logToolCalls);
+    if (bookingFallback) {
+      console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
+      logErrors.push(`Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`);
+      finalResponse = bookingFallback;
+    } else {
+      // Last-resort fallback: stay completely silent rather than send a generic line that
+      // breaks character. Returning empty string prevents the webhook from sending a message.
+      finalResponse = "";
+    }
   }
 
   // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
