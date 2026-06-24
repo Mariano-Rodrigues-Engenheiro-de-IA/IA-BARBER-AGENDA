@@ -9588,7 +9588,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
 
         // Helper: busca horários livres do profissional naquele dia (valida/devolve opções).
-        const fetchHorariosLivres = async (): Promise<string[]> => {
+        const fetchHorariosLivres = async (): Promise<{ checked: boolean; horariosLivres: string[]; outrosDias: Array<{ dia: string; horariosLivres: string[] }> }> => {
           try {
             const hRes = await frizzarFetch(`/listar/horarios/${args.profissionalId}/${args.dia}`, {
               method: "POST",
@@ -9599,18 +9599,38 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             const hParsed = JSON.parse(hTxt);
             if (Array.isArray(hParsed)) {
               const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia)) ?? hParsed[0];
-              return Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [];
+              return {
+                checked: true,
+                horariosLivres: Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [],
+                outrosDias: hParsed
+                  .filter((d: any) => d !== entry)
+                  .map((d: any) => ({
+                    dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : String(d?.dia ?? ""),
+                    horariosLivres: Array.isArray(d?.horariosLivres) ? d.horariosLivres : [],
+                  })),
+              };
             }
           } catch { /* ignore */ }
-          return [];
+          return { checked: false, horariosLivres: [], outrosDias: [] };
         };
 
         // Pré-validação: evita 500 quando o horário não está na grade livre.
-        const horariosLivresPre = await fetchHorariosLivres();
-        if (horariosLivresPre.length > 0 && !horariosLivresPre.includes(args.hora)) {
+        const disponibilidadePre = await fetchHorariosLivres();
+        const horariosLivresPre = disponibilidadePre.horariosLivres;
+        if (disponibilidadePre.checked && horariosLivresPre.length === 0) {
+          return {
+            error: `Sem vagas disponíveis em ${args.dia} para este profissional. NÃO peça confirmação e NÃO tente agendar nessa data. Ofereça outro dia ou opções de outrosDias.`,
+            horariosLivres: [],
+            outrosDias: disponibilidadePre.outrosDias,
+            dia: args.dia,
+            profissionalId: args.profissionalId,
+          };
+        }
+        if (disponibilidadePre.checked && !horariosLivresPre.includes(args.hora)) {
           return {
             error: `Horário ${args.hora} indisponível em ${args.dia} para o profissional. Escolha um dos horários livres abaixo e tente novamente.`,
             horariosLivres: horariosLivresPre,
+            outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
@@ -9630,10 +9650,11 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         }
         // 500 / corpo vazio normalmente = slot indisponível ou conflito — devolve opções.
         if (!res.ok || !text.trim()) {
-          const livres = horariosLivresPre.length > 0 ? horariosLivresPre : await fetchHorariosLivres();
+          const disponibilidadeAtual = horariosLivresPre.length > 0 ? disponibilidadePre : await fetchHorariosLivres();
           return {
             error: `Frizzar recusou o agendamento (status ${res.status}). Provavelmente o horário ${args.hora} acabou de ser ocupado ou é inválido. Ofereça um dos horários livres abaixo.`,
-            horariosLivres: livres,
+            horariosLivres: disponibilidadeAtual.horariosLivres,
+            outrosDias: disponibilidadeAtual.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
