@@ -2801,7 +2801,12 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((r: any) => r && typeof r.text === "string" && typeof r.norm === "string" && typeof r.at === "string")
             .slice(-6)
         : [],
-    };
+      // Trinks service-lock (carrega entre mensagens)
+      ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
+      trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
+      trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
+      trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
+    } as AgentSessionState;
   } catch {
     return defaultState;
   }
@@ -2833,6 +2838,13 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
       recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
       recentAssistantReplies: (state.recentAssistantReplies || []).slice(-6),
+      // Trinks service-lock (sobrevive entre mensagens; impede troca silenciosa de serviço)
+      trinksServiceCatalog: Array.isArray((state as any).trinksServiceCatalog)
+        ? (state as any).trinksServiceCatalog.slice(0, 200)
+        : [],
+      trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
+      trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
+      trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
     };
 
     await supabase
@@ -5033,9 +5045,57 @@ async function callAIAgent(
                 function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
               };
               console.log(`[IDResolver] ${toolCall.function.name} corrected: ${correctionReason}`);
+          }
+        }
+
+        }
+
+        // ===== TRINKS SERVICE-LOCK LAYER =====
+        // Impede que a IA troque o serviço escolhido no meio da conversa sem o
+        // cliente ter pedido. Bloqueia listar_horarios e criar_agendamento com
+        // servicoDuracao/duracaoEmMinutos diferente do travado.
+        if (provider === "trinks") {
+          const tName = toolCall.function.name;
+          const lockedDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
+          const lockedName = (sessionState as any).trinksSelectedServiceName as string | null;
+          const lockedSvcId = (sessionState as any).trinksSelectedServiceId as number | null;
+          // Intenção explícita do cliente de trocar/adicionar serviço.
+          const SWITCH_INTENT = /\b(barba|cabelo|combo|tamb[eé]m|incluir|adicionar?|junto|os\s?dois|ambos|trocar|mudar|na\s+verdade|prefiro|outro\s+servi[cç]o|s[oó]\s+(corte|barba|cabelo))\b/i;
+          const lastUser = String(userMessage || "");
+          const userWantsChange = SWITCH_INTENT.test(lastUser);
+
+          if (!toolResult && tName === "listar_horarios" && lockedDur) {
+            const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
+            if (reqDur && reqDur !== lockedDur && !userWantsChange) {
+              console.log(`[TrinksLock] listar_horarios BLOCKED: servicoDuracao=${reqDur} ≠ locked=${lockedDur} (svcId=${lockedSvcId}, name=${lockedName}) — sem intenção de troca`);
+              toolResult = {
+                error: `Serviço da conversa: ${lockedName || `(duração ${lockedDur}min)`}. NÃO troque o serviço sozinho. Refaça listar_horarios com servicoDuracao=${lockedDur}. Se quiser sugerir outro serviço, PERGUNTE ao cliente ANTES e aguarde resposta.`,
+                blocked: true,
+                locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            }
+          }
+
+          if (!toolResult && tName === "criar_agendamento" && lockedDur) {
+            const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
+            const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
+            const svcMismatch = lockedSvcId && reqSvc && reqSvc !== lockedSvcId;
+            const durMismatch = reqDur && reqDur !== lockedDur;
+            if ((durMismatch || svcMismatch) && !userWantsChange) {
+              console.log(`[TrinksLock] criar_agendamento BLOCKED: tentou svcId=${reqSvc}/dur=${reqDur}, travado svcId=${lockedSvcId}/dur=${lockedDur}`);
+              toolResult = {
+                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar um serviço diferente. Volte ao serviço travado OU pergunte ao cliente se ele quer mudar/adicionar antes.`,
+                blocked: true,
+                locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
             }
           }
         }
+
 
         // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
@@ -5443,6 +5503,45 @@ async function callAIAgent(
           if (serviceId) sessionState.selectedZayloServiceId = serviceId;
           if (date) sessionState.selectedDate = date;
         }
+
+        // ===== TRINKS: catálogo + service lock tracking =====
+        if (provider === "trinks" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
+          const catalog = toolResult
+            .map((s: any) => ({
+              id: toPositiveInteger(s?.id) ?? null,
+              nome: typeof s?.nome === "string" ? s.nome : "",
+              duracao: toPositiveInteger(s?.duracaoEmMinutos) ?? null,
+            }))
+            .filter((s: any) => s.id && s.duracao);
+          (sessionState as any).trinksServiceCatalog = catalog;
+          console.log(`[TrinksLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
+          if (reqDur) {
+            const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+            const match = catalog.find((s) => s.duracao === reqDur);
+            const prevDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
+            (sessionState as any).trinksSelectedServiceDuration = reqDur;
+            if (match) {
+              (sessionState as any).trinksSelectedServiceId = match.id;
+              (sessionState as any).trinksSelectedServiceName = match.nome;
+            }
+            if (prevDur !== reqDur) {
+              console.log(`[TrinksLock] service locked → dur=${reqDur} svcId=${match?.id ?? "?"} name="${match?.nome ?? "?"}"`);
+            }
+          }
+        }
+
+        if (provider === "trinks" && toolCall.function.name === "criar_agendamento" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
+          const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
+          if (reqSvc) (sessionState as any).trinksSelectedServiceId = reqSvc;
+          if (reqDur) (sessionState as any).trinksSelectedServiceDuration = reqDur;
+        }
+
+
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
           sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
@@ -7368,6 +7467,23 @@ Execute criar_agendamento com todos os IDs obtidos das ferramentas.
 
 🚨 NUNCA diga "✅ Agendado" sem retorno com "id".
 🚨 NUNCA execute criar_agendamento mais de uma vez para o MESMO serviço. Para serviços DIFERENTES (ex: corte e barba em horários separados), pode executar uma vez para cada serviço.
+
+------------------------------------------
+
+## 🔒 TRAVA DE SERVIÇO (regra crítica anti-troca)
+
+Uma vez que o cliente escolheu um serviço (ex.: "corte"), você NÃO pode trocar o serviço sozinha durante a conversa.
+
+Regras obrigatórias:
+- Se você já chamou `listar_horarios` com `servicoDuracao=X`, TODA chamada seguinte de `listar_horarios` e `criar_agendamento` nessa mesma conversa DEVE usar o MESMO `servicoDuracao=X` e o MESMO `servicoId`.
+- Só pode mudar o serviço se o cliente pedir explicitamente (ex.: "quero barba também", "muda pra combo", "na verdade só corte", "adiciona barba", "troca o serviço").
+- Se o cliente NÃO pediu para mudar e você sentir vontade de "tentar outro serviço para achar horário": PARE. Volte ao serviço original e ofereça outro DIA ou outro PROFISSIONAL.
+- Se quiser sugerir adicionar serviço (ex.: oferecer combo): PERGUNTE primeiro e AGUARDE a resposta. NUNCA chame uma tool com serviço novo antes do "sim" do cliente.
+
+❌ ERRADO: cliente pediu corte → você lista corte → não acha bom horário → você lista corte+barba sozinha → diz "não tem vaga"
+✅ CORRETO: cliente pediu corte → você lista corte → se não tiver bom horário, ofereça outro DIA/PROFISSIONAL com o mesmo serviço, ou pergunte "quer que eu veja com outra duração/combinação?"
+
+
 
 ------------------------------------------
 
