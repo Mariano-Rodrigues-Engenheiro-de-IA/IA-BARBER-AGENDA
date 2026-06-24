@@ -5045,8 +5045,55 @@ async function callAIAgent(
                 function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
               };
               console.log(`[IDResolver] ${toolCall.function.name} corrected: ${correctionReason}`);
+          }
+        }
+
+        // ===== TRINKS SERVICE-LOCK LAYER =====
+        // Impede que a IA troque o serviço escolhido no meio da conversa sem o
+        // cliente ter pedido. Bloqueia listar_horarios e criar_agendamento com
+        // servicoDuracao/duracaoEmMinutos diferente do travado.
+        if (provider === "trinks") {
+          const tName = toolCall.function.name;
+          const lockedDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
+          const lockedName = (sessionState as any).trinksSelectedServiceName as string | null;
+          const lockedSvcId = (sessionState as any).trinksSelectedServiceId as number | null;
+          // Intenção explícita do cliente de trocar/adicionar serviço.
+          const SWITCH_INTENT = /\b(barba|cabelo|combo|tamb[eé]m|incluir|adicionar?|junto|os\s?dois|ambos|trocar|mudar|na\s+verdade|prefiro|outro\s+servi[cç]o|s[oó]\s+(corte|barba|cabelo))\b/i;
+          const lastUser = String(userMessage || "");
+          const userWantsChange = SWITCH_INTENT.test(lastUser);
+
+          if (tName === "listar_horarios" && lockedDur) {
+            const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
+            if (reqDur && reqDur !== lockedDur && !userWantsChange) {
+              console.log(`[TrinksLock] listar_horarios BLOCKED: servicoDuracao=${reqDur} ≠ locked=${lockedDur} (svcId=${lockedSvcId}, name=${lockedName}) — sem intenção de troca`);
+              toolResult = {
+                error: `Serviço da conversa: ${lockedName || `(duração ${lockedDur}min)`}. NÃO troque o serviço sozinho. Refaça listar_horarios com servicoDuracao=${lockedDur}. Se quiser sugerir outro serviço, PERGUNTE ao cliente ANTES e aguarde resposta.`,
+                blocked: true,
+                locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
             }
           }
+
+          if (!toolResult && tName === "criar_agendamento" && lockedDur) {
+            const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
+            const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
+            const svcMismatch = lockedSvcId && reqSvc && reqSvc !== lockedSvcId;
+            const durMismatch = reqDur && reqDur !== lockedDur;
+            if ((durMismatch || svcMismatch) && !userWantsChange) {
+              console.log(`[TrinksLock] criar_agendamento BLOCKED: tentou svcId=${reqSvc}/dur=${reqDur}, travado svcId=${lockedSvcId}/dur=${lockedDur}`);
+              toolResult = {
+                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar um serviço diferente. Volte ao serviço travado OU pergunte ao cliente se ele quer mudar/adicionar antes.`,
+                blocked: true,
+                locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
+              };
+              wasBlocked = true;
+              sessionBlocked = true;
+            }
+          }
+        }
+
         }
 
         // Auto-correct desmarcar/confirmar agendasId
