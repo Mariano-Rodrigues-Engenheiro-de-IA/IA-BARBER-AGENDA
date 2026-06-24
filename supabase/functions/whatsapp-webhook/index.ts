@@ -4896,6 +4896,23 @@ async function callAIAgent(
           sessionBlocked = true;
         }
 
+          const lastFrizzarListedForProfessional = frizzarLastListed.get(`${tenant.id}:${phoneNumber || ""}:${parsedArgs?.profissionalId}`);
+          const hasRecentFrizzarList = !!lastFrizzarListedForProfessional && Date.now() - lastFrizzarListedForProfessional.listedAt < 30 * 60 * 1000;
+          if (
+            !toolResult &&
+            (!hasRecentFrizzarList || lastFrizzarListedForProfessional?.dia !== parsedArgs?.dia)
+          ) {
+            toolResult = {
+              error: hasRecentFrizzarList
+                ? `Data divergente: você listou horários para ${lastFrizzarListedForProfessional?.dia}, mas tentou agendar em ${parsedArgs?.dia}.`
+                : "Antes de agendar na Frizzar, execute listar_horarios nesta conversa para este profissional/data/serviços e use exatamente um horário retornado.",
+              blocked: true,
+              message: "Não chame agendar ainda. Liste horários reais primeiro; se o horário pedido não aparecer em horariosLivres, ofereça alternativas em vez de escalar humano.",
+            };
+            wasBlocked = true;
+            sessionBlocked = true;
+          }
+
         const lastAssistantMessage = getLastAssistantMessage(history);
         const lastOfferedTime = extractSingleTimeReference(lastAssistantMessage || "");
         if (
