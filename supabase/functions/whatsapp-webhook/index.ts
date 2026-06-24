@@ -2801,7 +2801,12 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((r: any) => r && typeof r.text === "string" && typeof r.norm === "string" && typeof r.at === "string")
             .slice(-6)
         : [],
-    };
+      // Trinks service-lock (carrega entre mensagens)
+      ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
+      trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
+      trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
+      trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
+    } as AgentSessionState;
   } catch {
     return defaultState;
   }
@@ -2833,6 +2838,13 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
       recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
       recentAssistantReplies: (state.recentAssistantReplies || []).slice(-6),
+      // Trinks service-lock (sobrevive entre mensagens; impede troca silenciosa de serviço)
+      trinksServiceCatalog: Array.isArray((state as any).trinksServiceCatalog)
+        ? (state as any).trinksServiceCatalog.slice(0, 200)
+        : [],
+      trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
+      trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
+      trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
     };
 
     await supabase
