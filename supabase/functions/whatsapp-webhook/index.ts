@@ -5504,6 +5504,45 @@ async function callAIAgent(
           if (date) sessionState.selectedDate = date;
         }
 
+        // ===== TRINKS: catálogo + service lock tracking =====
+        if (provider === "trinks" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
+          const catalog = toolResult
+            .map((s: any) => ({
+              id: toPositiveInteger(s?.id) ?? null,
+              nome: typeof s?.nome === "string" ? s.nome : "",
+              duracao: toPositiveInteger(s?.duracaoEmMinutos) ?? null,
+            }))
+            .filter((s: any) => s.id && s.duracao);
+          (sessionState as any).trinksServiceCatalog = catalog;
+          console.log(`[TrinksLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
+          if (reqDur) {
+            const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+            const match = catalog.find((s) => s.duracao === reqDur);
+            const prevDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
+            (sessionState as any).trinksSelectedServiceDuration = reqDur;
+            if (match) {
+              (sessionState as any).trinksSelectedServiceId = match.id;
+              (sessionState as any).trinksSelectedServiceName = match.nome;
+            }
+            if (prevDur !== reqDur) {
+              console.log(`[TrinksLock] service locked → dur=${reqDur} svcId=${match?.id ?? "?"} name="${match?.nome ?? "?"}"`);
+            }
+          }
+        }
+
+        if (provider === "trinks" && toolCall.function.name === "criar_agendamento" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
+          const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
+          if (reqSvc) (sessionState as any).trinksSelectedServiceId = reqSvc;
+          if (reqDur) (sessionState as any).trinksSelectedServiceDuration = reqDur;
+        }
+
+
+
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
           sessionState.oneBelezaServiceOptions = extractOneBelezaServiceOptions(toolResult);
           sessionState.allowedServiceIds = dedupeByKey(
