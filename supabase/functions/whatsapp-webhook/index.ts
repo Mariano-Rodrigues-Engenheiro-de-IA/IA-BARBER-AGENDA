@@ -5048,6 +5048,8 @@ async function callAIAgent(
           }
         }
 
+        }
+
         // ===== TRINKS SERVICE-LOCK LAYER =====
         // Impede que a IA troque o serviço escolhido no meio da conversa sem o
         // cliente ter pedido. Bloqueia listar_horarios e criar_agendamento com
@@ -5062,7 +5064,7 @@ async function callAIAgent(
           const lastUser = String(userMessage || "");
           const userWantsChange = SWITCH_INTENT.test(lastUser);
 
-          if (tName === "listar_horarios" && lockedDur) {
+          if (!toolResult && tName === "listar_horarios" && lockedDur) {
             const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
             if (reqDur && reqDur !== lockedDur && !userWantsChange) {
               console.log(`[TrinksLock] listar_horarios BLOCKED: servicoDuracao=${reqDur} ≠ locked=${lockedDur} (svcId=${lockedSvcId}, name=${lockedName}) — sem intenção de troca`);
@@ -5094,7 +5096,6 @@ async function callAIAgent(
           }
         }
 
-        }
 
         // Auto-correct desmarcar/confirmar agendasId
         const isAgendaIdTool = ["desmarcar_agendamento", "confirmar_agendamento"].includes(toolCall.function.name);
