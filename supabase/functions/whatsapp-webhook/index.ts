@@ -5743,6 +5743,11 @@ async function callAIAgent(
           && !(Array.isArray(r.Errors) && r.Errors.length > 0)
           && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
         if (!succeeded) {
+          if (provider === "frizzar" && toolCall.function.name === "agendar" && isRecoverableFrizzarScheduleResult(r)) {
+            messages.push({ role: "system", content: buildFrizzarScheduleRecoveryInstruction(r, parsedArgs) });
+            logErrors.push(`[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`);
+            continue;
+          }
           const escalateTool = (getEnabledCustomTools(tenant) || []).find(
             (t: any) => t?.type === "escalate_human",
           );
