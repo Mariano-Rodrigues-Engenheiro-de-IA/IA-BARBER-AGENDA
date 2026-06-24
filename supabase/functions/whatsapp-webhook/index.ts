@@ -7475,7 +7475,7 @@ Execute criar_agendamento com todos os IDs obtidos das ferramentas.
 Uma vez que o cliente escolheu um serviço (ex.: "corte"), você NÃO pode trocar o serviço sozinha durante a conversa.
 
 Regras obrigatórias:
-- Se você já chamou `listar_horarios` com `servicoDuracao=X`, TODA chamada seguinte de `listar_horarios` e `criar_agendamento` nessa mesma conversa DEVE usar o MESMO `servicoDuracao=X` e o MESMO `servicoId`.
+- Se você já chamou \`listar_horarios\` com \`servicoDuracao=X\`, TODA chamada seguinte de \`listar_horarios\` e \`criar_agendamento\` nessa mesma conversa DEVE usar o MESMO \`servicoDuracao=X\` e o MESMO \`servicoId\`.
 - Só pode mudar o serviço se o cliente pedir explicitamente (ex.: "quero barba também", "muda pra combo", "na verdade só corte", "adiciona barba", "troca o serviço").
 - Se o cliente NÃO pediu para mudar e você sentir vontade de "tentar outro serviço para achar horário": PARE. Volte ao serviço original e ofereça outro DIA ou outro PROFISSIONAL.
 - Se quiser sugerir adicionar serviço (ex.: oferecer combo): PERGUNTE primeiro e AGUARDE a resposta. NUNCA chame uma tool com serviço novo antes do "sim" do cliente.
@@ -9107,8 +9107,10 @@ O campo \`dia\` em **agendar** DEVE ser EXATAMENTE igual à data usada na últim
 ❌ ERRO COMUM: listar horários para 2026-04-27 e chamar agendar com dia: 2026-04-28.
 ✅ CORRETO: se o cliente trocar de data depois de você listar, rode \`listar_horarios\` NOVAMENTE para a nova data ANTES de chamar agendar.
 
-ANTES de chamar agendar, SEMPRE confirme em voz alta com o cliente:
+ANTES de chamar agendar, confirme em voz alta com o cliente SOMENTE se o horário existir literalmente em \`horariosLivres\`:
 → "Posso confirmar para [DD/MM] (dia da semana) às [HH:mm]?"
+
+Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e ofereça buscar outro dia ou opções de \`outrosDias\`.
 
 O sistema bloqueia automaticamente qualquer tentativa de agendar com data divergente da última listada — você receberá um erro \`Data divergente\` e terá que refazer \`listar_horarios\` antes.
 
@@ -9137,7 +9139,7 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + serviços no body.
    - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
    - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
-   - Se \`horariosLivres\` estiver vazio, sugira outra data (use \`outrosDias\` se houver).
+   - Se \`horariosLivres\` estiver vazio, NÃO peça confirmação e NÃO chame \`agendar\`. Diga: "Para [data] não tenho vagas disponíveis. Posso ver outro dia?" e, se \`outrosDias\` tiver horários, ofereça 2-3 alternativas desses dias.
  5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
    - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
     - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
@@ -9161,6 +9163,7 @@ Antes de **propor** OU **chamar agendar** com um horário X para o profissional 
 1. Você PRECISA ter os \`horariosLivres\` mais recentes de P para D (rode \`listar_horarios\` se ainda não tem).
 2. Confira se X está **literalmente** dentro de \`horariosLivres\` daquele profissional. Strings idênticas ("10:00" === "10:00").
 3. Se NÃO estiver: NUNCA proponha, NUNCA chame \`agendar\`. Ofereça os mais próximos da grade dele (ex.: "Para o Gabriel o 10:00 não tem, mas tem 09:20 ou 10:30. Prefere algum?").
+4. Se \`horariosLivres\` vier vazio para D, trate como SEM VAGA NA DATA: não existe horário a confirmar. NUNCA responda "Posso confirmar?" para D; ofereça outro dia.
 
 ❌ ERRADO: cliente pede "10h", você lista, vê que Gabriel só tem 09:20 e 10:30, mas chama \`agendar\` com 10:00 mesmo assim.
 ✅ CORRETO: cliente pede "10h" e você vê que Gabriel não tem 10:00 → ofereça 09:20/10:30 OU sugira o Ikaro que tem 10:00.
@@ -9585,7 +9588,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
 
         // Helper: busca horários livres do profissional naquele dia (valida/devolve opções).
-        const fetchHorariosLivres = async (): Promise<string[]> => {
+        const fetchHorariosLivres = async (): Promise<{ checked: boolean; horariosLivres: string[]; outrosDias: Array<{ dia: string; horariosLivres: string[] }> }> => {
           try {
             const hRes = await frizzarFetch(`/listar/horarios/${args.profissionalId}/${args.dia}`, {
               method: "POST",
@@ -9596,18 +9599,38 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             const hParsed = JSON.parse(hTxt);
             if (Array.isArray(hParsed)) {
               const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia)) ?? hParsed[0];
-              return Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [];
+              return {
+                checked: true,
+                horariosLivres: Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [],
+                outrosDias: hParsed
+                  .filter((d: any) => d !== entry)
+                  .map((d: any) => ({
+                    dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : String(d?.dia ?? ""),
+                    horariosLivres: Array.isArray(d?.horariosLivres) ? d.horariosLivres : [],
+                  })),
+              };
             }
           } catch { /* ignore */ }
-          return [];
+          return { checked: false, horariosLivres: [], outrosDias: [] };
         };
 
         // Pré-validação: evita 500 quando o horário não está na grade livre.
-        const horariosLivresPre = await fetchHorariosLivres();
-        if (horariosLivresPre.length > 0 && !horariosLivresPre.includes(args.hora)) {
+        const disponibilidadePre = await fetchHorariosLivres();
+        const horariosLivresPre = disponibilidadePre.horariosLivres;
+        if (disponibilidadePre.checked && horariosLivresPre.length === 0) {
+          return {
+            error: `Sem vagas disponíveis em ${args.dia} para este profissional. NÃO peça confirmação e NÃO tente agendar nessa data. Ofereça outro dia ou opções de outrosDias.`,
+            horariosLivres: [],
+            outrosDias: disponibilidadePre.outrosDias,
+            dia: args.dia,
+            profissionalId: args.profissionalId,
+          };
+        }
+        if (disponibilidadePre.checked && !horariosLivresPre.includes(args.hora)) {
           return {
             error: `Horário ${args.hora} indisponível em ${args.dia} para o profissional. Escolha um dos horários livres abaixo e tente novamente.`,
             horariosLivres: horariosLivresPre,
+            outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
@@ -9627,10 +9650,11 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         }
         // 500 / corpo vazio normalmente = slot indisponível ou conflito — devolve opções.
         if (!res.ok || !text.trim()) {
-          const livres = horariosLivresPre.length > 0 ? horariosLivresPre : await fetchHorariosLivres();
+          const disponibilidadeAtual = horariosLivresPre.length > 0 ? disponibilidadePre : await fetchHorariosLivres();
           return {
             error: `Frizzar recusou o agendamento (status ${res.status}). Provavelmente o horário ${args.hora} acabou de ser ocupado ou é inválido. Ofereça um dos horários livres abaixo.`,
-            horariosLivres: livres,
+            horariosLivres: disponibilidadeAtual.horariosLivres,
+            outrosDias: disponibilidadeAtual.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
