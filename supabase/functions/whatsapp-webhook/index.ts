@@ -3162,9 +3162,10 @@ function buildDeterministicBookingConfirmation(
 function isRecoverableFrizzarScheduleResult(result: any): boolean {
   if (!result || typeof result !== "object" || !result.error) return false;
   const errorText = String(result.error || "");
+  if (/cliente bloqueado|limite de agendamentos/i.test(errorText)) return false;
   const hasSameDaySlots = Array.isArray(result.horariosLivres);
   const hasOtherDaySlots = Array.isArray(result.outrosDias);
-  return hasSameDaySlots || hasOtherDaySlots || /hor[aá]rio.*indispon[ií]vel|sem vagas|hor[aá]rios livres|ofere[cç]a um dos hor[aá]rios/i.test(errorText);
+  return hasSameDaySlots || hasOtherDaySlots || /hor[aá]rio.*indispon[ií]vel|sem vagas|hor[aá]rios livres|ofere[cç]a um dos hor[aá]rios|antes de agendar|data divergente/i.test(errorText);
 }
 
 function buildFrizzarScheduleRecoveryInstruction(result: any, args: any = {}): string {
