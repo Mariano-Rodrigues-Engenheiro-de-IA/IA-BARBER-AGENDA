@@ -5597,6 +5597,20 @@ async function callAIAgent(
           if (reqDur) (sessionState as any).trinksSelectedServiceDuration = reqDur;
         }
 
+        // ===== FRIZZAR: rastreia última grade real consultada =====
+        // Usado pelo pre-guard de `agendar` para impedir que a IA tente marcar
+        // um horário que não veio de uma `listar_horarios` recente.
+        if (provider === "frizzar" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const profId = toPositiveInteger(parsedArgs?.profissionalId);
+          const data = typeof parsedArgs?.data === "string" ? parsedArgs.data.slice(0, 10) : null;
+          if (profId && data) {
+            frizzarLastListed.set(`${tenant.id}:${phoneNumber || ""}:${profId}`, { dia: data, listedAt: Date.now() });
+            sessionState.selectedProfessionalId = profId;
+            sessionState.selectedDate = data;
+            console.log(`[FrizzarGuard] tracked listar_horarios prof=${profId} data=${data}`);
+          }
+        }
+
 
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
