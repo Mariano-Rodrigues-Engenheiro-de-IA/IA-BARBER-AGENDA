@@ -3171,6 +3171,7 @@ function isRecoverableFrizzarScheduleResult(result: any): boolean {
 function buildFrizzarScheduleRecoveryInstruction(result: any, args: any = {}): string {
   const requestedTime = typeof args?.hora === "string" ? args.hora : "o horário pedido";
   const requestedDay = typeof args?.dia === "string" ? args.dia : "a data solicitada";
+  const shouldListFirst = result?.blocked === true && !Array.isArray(result?.horariosLivres) && !Array.isArray(result?.outrosDias);
   const sameDaySlots = Array.isArray(result?.horariosLivres)
     ? result.horariosLivres.filter((h: unknown) => typeof h === "string").slice(0, 5)
     : [];
@@ -3184,18 +3185,22 @@ function buildFrizzarScheduleRecoveryInstruction(result: any, args: any = {}): s
         }))
     : [];
 
-  const alternatives = sameDaySlots.length > 0
-    ? `Horários disponíveis no mesmo dia: ${sameDaySlots.join(", ")}.`
-    : otherDayOptions.length > 0
-      ? `Sem vaga nesse dia. Alternativas em outros dias: ${JSON.stringify(otherDayOptions)}.`
-      : "Não há horários livres úteis na resposta; peça outro dia ao cliente.";
+  const alternatives = shouldListFirst
+    ? "Antes de responder ao cliente, chame listar_horarios para esse profissional/data/serviços e use somente horariosLivres."
+    : sameDaySlots.length > 0
+      ? `Horários disponíveis no mesmo dia: ${sameDaySlots.join(", ")}.`
+      : otherDayOptions.length > 0
+        ? `Sem vaga nesse dia. Alternativas em outros dias: ${JSON.stringify(otherDayOptions)}.`
+        : "Não há horários livres úteis na resposta; peça outro dia ao cliente.";
 
   return [
     "⚠️ FALHA RECUPERÁVEL DE HORÁRIO NA FRIZZAR.",
     `O cliente tentou ${requestedTime} em ${requestedDay}, mas esse horário NÃO está disponível.`,
     "É PROIBIDO escalar humano por esse motivo e é PROIBIDO dizer que agendou.",
     alternatives,
-    "Responda agora em português, curto e natural, dizendo que esse horário não está disponível e oferecendo 2-3 alternativas. Só chame agendar depois que o cliente escolher uma alternativa exata.",
+    shouldListFirst
+      ? "Não responda ainda e não escale humano: execute listar_horarios agora."
+      : "Responda agora em português, curto e natural, dizendo que esse horário não está disponível e oferecendo 2-3 alternativas. Só chame agendar depois que o cliente escolher uma alternativa exata.",
   ].join(" ");
 }
 
