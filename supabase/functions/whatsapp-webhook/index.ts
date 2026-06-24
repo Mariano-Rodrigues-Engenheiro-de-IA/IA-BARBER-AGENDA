@@ -9107,8 +9107,10 @@ O campo \`dia\` em **agendar** DEVE ser EXATAMENTE igual à data usada na últim
 ❌ ERRO COMUM: listar horários para 2026-04-27 e chamar agendar com dia: 2026-04-28.
 ✅ CORRETO: se o cliente trocar de data depois de você listar, rode \`listar_horarios\` NOVAMENTE para a nova data ANTES de chamar agendar.
 
-ANTES de chamar agendar, SEMPRE confirme em voz alta com o cliente:
+ANTES de chamar agendar, confirme em voz alta com o cliente SOMENTE se o horário existir literalmente em \`horariosLivres\`:
 → "Posso confirmar para [DD/MM] (dia da semana) às [HH:mm]?"
+
+Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e ofereça buscar outro dia ou opções de \`outrosDias\`.
 
 O sistema bloqueia automaticamente qualquer tentativa de agendar com data divergente da última listada — você receberá um erro \`Data divergente\` e terá que refazer \`listar_horarios\` antes.
 
@@ -9137,7 +9139,7 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + serviços no body.
    - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
    - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
-   - Se \`horariosLivres\` estiver vazio, sugira outra data (use \`outrosDias\` se houver).
+   - Se \`horariosLivres\` estiver vazio, NÃO peça confirmação e NÃO chame \`agendar\`. Diga: "Para [data] não tenho vagas disponíveis. Posso ver outro dia?" e, se \`outrosDias\` tiver horários, ofereça 2-3 alternativas desses dias.
  5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
    - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
     - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
@@ -9161,6 +9163,7 @@ Antes de **propor** OU **chamar agendar** com um horário X para o profissional 
 1. Você PRECISA ter os \`horariosLivres\` mais recentes de P para D (rode \`listar_horarios\` se ainda não tem).
 2. Confira se X está **literalmente** dentro de \`horariosLivres\` daquele profissional. Strings idênticas ("10:00" === "10:00").
 3. Se NÃO estiver: NUNCA proponha, NUNCA chame \`agendar\`. Ofereça os mais próximos da grade dele (ex.: "Para o Gabriel o 10:00 não tem, mas tem 09:20 ou 10:30. Prefere algum?").
+4. Se \`horariosLivres\` vier vazio para D, trate como SEM VAGA NA DATA: não existe horário a confirmar. NUNCA responda "Posso confirmar?" para D; ofereça outro dia.
 
 ❌ ERRADO: cliente pede "10h", você lista, vê que Gabriel só tem 09:20 e 10:30, mas chama \`agendar\` com 10:00 mesmo assim.
 ✅ CORRETO: cliente pede "10h" e você vê que Gabriel não tem 10:00 → ofereça 09:20/10:30 OU sugira o Ikaro que tem 10:00.
