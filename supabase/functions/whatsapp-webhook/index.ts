@@ -3159,6 +3159,51 @@ function buildDeterministicBookingConfirmation(
   return partes.join("\n");
 }
 
+function isRecoverableFrizzarScheduleResult(result: any): boolean {
+  if (!result || typeof result !== "object" || !result.error) return false;
+  const errorText = String(result.error || "");
+  if (/cliente bloqueado|limite de agendamentos/i.test(errorText)) return false;
+  const hasSameDaySlots = Array.isArray(result.horariosLivres);
+  const hasOtherDaySlots = Array.isArray(result.outrosDias);
+  return hasSameDaySlots || hasOtherDaySlots || /hor[aá]rio.*indispon[ií]vel|sem vagas|hor[aá]rios livres|ofere[cç]a um dos hor[aá]rios|antes de agendar|data divergente/i.test(errorText);
+}
+
+function buildFrizzarScheduleRecoveryInstruction(result: any, args: any = {}): string {
+  const requestedTime = typeof args?.hora === "string" ? args.hora : "o horário pedido";
+  const requestedDay = typeof args?.dia === "string" ? args.dia : "a data solicitada";
+  const shouldListFirst = result?.blocked === true && !Array.isArray(result?.horariosLivres) && !Array.isArray(result?.outrosDias);
+  const sameDaySlots = Array.isArray(result?.horariosLivres)
+    ? result.horariosLivres.filter((h: unknown) => typeof h === "string").slice(0, 5)
+    : [];
+  const otherDayOptions = Array.isArray(result?.outrosDias)
+    ? result.outrosDias
+        .filter((d: any) => Array.isArray(d?.horariosLivres) && d.horariosLivres.length > 0)
+        .slice(0, 3)
+        .map((d: any) => ({
+          dia: String(d?.dia || ""),
+          horariosLivres: d.horariosLivres.filter((h: unknown) => typeof h === "string").slice(0, 3),
+        }))
+    : [];
+
+  const alternatives = shouldListFirst
+    ? "Antes de responder ao cliente, chame listar_horarios para esse profissional/data/serviços e use somente horariosLivres."
+    : sameDaySlots.length > 0
+      ? `Horários disponíveis no mesmo dia: ${sameDaySlots.join(", ")}.`
+      : otherDayOptions.length > 0
+        ? `Sem vaga nesse dia. Alternativas em outros dias: ${JSON.stringify(otherDayOptions)}.`
+        : "Não há horários livres úteis na resposta; peça outro dia ao cliente.";
+
+  return [
+    "⚠️ FALHA RECUPERÁVEL DE HORÁRIO NA FRIZZAR.",
+    `O cliente tentou ${requestedTime} em ${requestedDay}, mas esse horário NÃO está disponível.`,
+    "É PROIBIDO escalar humano por esse motivo e é PROIBIDO dizer que agendou.",
+    alternatives,
+    shouldListFirst
+      ? "Não responda ainda e não escale humano: execute listar_horarios agora."
+      : "Responda agora em português, curto e natural, dizendo que esse horário não está disponível e oferecendo 2-3 alternativas. Só chame agendar depois que o cliente escolher uma alternativa exata.",
+  ].join(" ");
+}
+
 
 // ===================== ID RESOLUTION LAYER =====================
 
@@ -4857,6 +4902,23 @@ async function callAIAgent(
           sessionBlocked = true;
         }
 
+          const lastFrizzarListedForProfessional = frizzarLastListed.get(`${tenant.id}:${phoneNumber || ""}:${parsedArgs?.profissionalId}`);
+          const hasRecentFrizzarList = !!lastFrizzarListedForProfessional && Date.now() - lastFrizzarListedForProfessional.listedAt < 30 * 60 * 1000;
+          if (
+            !toolResult &&
+            (!hasRecentFrizzarList || lastFrizzarListedForProfessional?.dia !== parsedArgs?.dia)
+          ) {
+            toolResult = {
+              error: hasRecentFrizzarList
+                ? `Data divergente: você listou horários para ${lastFrizzarListedForProfessional?.dia}, mas tentou agendar em ${parsedArgs?.dia}.`
+                : "Antes de agendar na Frizzar, execute listar_horarios nesta conversa para este profissional/data/serviços e use exatamente um horário retornado.",
+              blocked: true,
+              message: "Não chame agendar ainda. Liste horários reais primeiro; se o horário pedido não aparecer em horariosLivres, ofereça alternativas em vez de escalar humano.",
+            };
+            wasBlocked = true;
+            sessionBlocked = true;
+          }
+
         const lastAssistantMessage = getLastAssistantMessage(history);
         const lastOfferedTime = extractSingleTimeReference(lastAssistantMessage || "");
         if (
@@ -5541,6 +5603,20 @@ async function callAIAgent(
           if (reqDur) (sessionState as any).trinksSelectedServiceDuration = reqDur;
         }
 
+        // ===== FRIZZAR: rastreia última grade real consultada =====
+        // Usado pelo pre-guard de `agendar` para impedir que a IA tente marcar
+        // um horário que não veio de uma `listar_horarios` recente.
+        if (provider === "frizzar" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
+          const profId = toPositiveInteger(parsedArgs?.profissionalId);
+          const data = typeof parsedArgs?.data === "string" ? parsedArgs.data.slice(0, 10) : null;
+          if (profId && data) {
+            frizzarLastListed.set(`${tenant.id}:${phoneNumber || ""}:${profId}`, { dia: data, listedAt: Date.now() });
+            sessionState.selectedProfessionalId = profId;
+            sessionState.selectedDate = data;
+            console.log(`[FrizzarGuard] tracked listar_horarios prof=${profId} data=${data}`);
+          }
+        }
+
 
 
         if (provider === "onebeleza" && toolCall.function.name === "buscar_servicos") {
@@ -5687,6 +5763,11 @@ async function callAIAgent(
           && !(Array.isArray(r.Errors) && r.Errors.length > 0)
           && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
         if (!succeeded) {
+          if (provider === "frizzar" && toolCall.function.name === "agendar" && isRecoverableFrizzarScheduleResult(r)) {
+            messages.push({ role: "system", content: buildFrizzarScheduleRecoveryInstruction(r, parsedArgs) });
+            logErrors.push(`[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`);
+            continue;
+          }
           const escalateTool = (getEnabledCustomTools(tenant) || []).find(
             (t: any) => t?.type === "escalate_human",
           );
