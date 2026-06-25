@@ -1014,6 +1014,53 @@ export default function TenantFormPage() {
                 </div>
               )}
 
+              {provider === "appbarber" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais AppBarber</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_api_key">x-api-key <span className="text-destructive">*</span></Label>
+                    <div className="relative">
+                      <Input
+                        id="appbarber_api_key"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).appbarber_api_key || ""}
+                        onChange={(e) => handleChange("appbarber_api_key" as any, e.target.value)}
+                        placeholder="Chave da API AppBarber"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_establishment_code">establishment_code <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="appbarber_establishment_code"
+                      value={(form as any).appbarber_establishment_code || ""}
+                      onChange={(e) => handleChange("appbarber_establishment_code" as any, e.target.value)}
+                      placeholder="Ex: 6923305"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_base_url">URL base (proxy)</Label>
+                    <Input
+                      id="appbarber_base_url"
+                      value={(form as any).appbarber_base_url || ""}
+                      onChange={(e) => handleChange("appbarber_base_url" as any, e.target.value)}
+                      placeholder="https://proxy.zayloia.com"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Em branco usa o padrão <code>https://proxy.zayloia.com</code>. O proxy possui IP fixo <code>31.97.40.237</code> que deve estar liberado na whitelist do AppBarber.
+                    </p>
+                  </div>
+                  {id && <AppBarberTestButton tenantId={id} />}
+                </div>
+              )}
 
               {provider === "none" && (
                 <div className="space-y-2 pt-4 border-t border-border">
