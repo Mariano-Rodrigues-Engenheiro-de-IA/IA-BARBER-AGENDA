@@ -704,6 +704,9 @@ export type Database = {
           agent_settings: Json | null
           agent_system_prompt: string | null
           api_provider: Database["public"]["Enums"]["api_provider"]
+          appbarber_api_key: string | null
+          appbarber_base_url: string | null
+          appbarber_establishment_code: string | null
           bemp_domain: string | null
           bemp_token: string | null
           booking_link: string | null
@@ -741,6 +744,9 @@ export type Database = {
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
+          appbarber_api_key?: string | null
+          appbarber_base_url?: string | null
+          appbarber_establishment_code?: string | null
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null
@@ -778,6 +784,9 @@ export type Database = {
           agent_settings?: Json | null
           agent_system_prompt?: string | null
           api_provider?: Database["public"]["Enums"]["api_provider"]
+          appbarber_api_key?: string | null
+          appbarber_base_url?: string | null
+          appbarber_establishment_code?: string | null
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null
@@ -861,6 +870,7 @@ export type Database = {
         | "frizzar"
         | "bemp"
         | "zaylo"
+        | "appbarber"
       app_role: "admin" | "client"
       tenant_status: "active" | "inactive" | "suspended"
     }
@@ -990,7 +1000,15 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      api_provider: ["trinks", "onebeleza", "none", "frizzar", "bemp", "zaylo"],
+      api_provider: [
+        "trinks",
+        "onebeleza",
+        "none",
+        "frizzar",
+        "bemp",
+        "zaylo",
+        "appbarber",
+      ],
       app_role: ["admin", "client"],
       tenant_status: ["active", "inactive", "suspended"],
     },
