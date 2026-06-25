@@ -248,6 +248,50 @@ function CelCashTestButton({ tenantId }: { tenantId: string }) {
   );
 }
 
+function AppBarberTestButton({ tenantId }: { tenantId: string }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke("test-appbarber-connection", {
+        body: { tenant_id: tenantId },
+      });
+      if (error) throw error;
+      setResult(data);
+      if (data?.success) toast.success(data.message);
+      else toast.error(data?.message || "Falha na conexão");
+    } catch (err: any) {
+      setResult({ success: false, message: err.message || "Erro ao testar conexão" });
+      toast.error(err.message || "Erro ao testar conexão");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div className="pt-2 space-y-3">
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
+        {testing ? "Testando..." : "Testar Conexão AppBarber"}
+      </Button>
+      {result && (
+        <div className={`flex flex-col gap-1 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
+          <div className="flex items-center gap-2">
+            {result.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
+            <span>{result.message}</span>
+          </div>
+          {result.details && (
+            <pre className="text-xs text-muted-foreground mt-1 p-2 bg-muted/30 rounded overflow-auto max-h-32">{result.details}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UazapiTestButton({ url, token }: { url: string; token: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -355,6 +399,9 @@ export default function TenantFormPage() {
     onebeleza_celular: "",
     frizzar_token: "",
     frizzar_base_url: "",
+    appbarber_api_key: "",
+    appbarber_establishment_code: "",
+    appbarber_base_url: "",
     bemp_domain: "",
     bemp_token: "",
     zaylo_barbershop_id: "",
@@ -385,6 +432,9 @@ export default function TenantFormPage() {
         onebeleza_celular: (existing as any).onebeleza_celular ?? "",
         frizzar_token: (existing as any).frizzar_token ?? "",
         frizzar_base_url: (existing as any).frizzar_base_url ?? "",
+        appbarber_api_key: (existing as any).appbarber_api_key ?? "",
+        appbarber_establishment_code: (existing as any).appbarber_establishment_code ?? "",
+        appbarber_base_url: (existing as any).appbarber_base_url ?? "",
         bemp_domain: (existing as any).bemp_domain ?? "",
         bemp_token: (existing as any).bemp_token ?? "",
         zaylo_barbershop_id: (existing as any).zaylo_barbershop_id ?? "",
@@ -747,6 +797,7 @@ export default function TenantFormPage() {
                     <SelectItem value="frizzar">Frizzar</SelectItem>
                     <SelectItem value="bemp">Bemp</SelectItem>
                     <SelectItem value="zaylo">Zaylo</SelectItem>
+                    <SelectItem value="appbarber">AppBarber</SelectItem>
                     <SelectItem value="none">Nenhum (link direto)</SelectItem>
                   </SelectContent>
                 </Select>
@@ -963,6 +1014,53 @@ export default function TenantFormPage() {
                 </div>
               )}
 
+              {provider === "appbarber" && (
+                <div className="space-y-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-medium text-foreground">Credenciais AppBarber</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_api_key">x-api-key <span className="text-destructive">*</span></Label>
+                    <div className="relative">
+                      <Input
+                        id="appbarber_api_key"
+                        type={showApiKey ? "text" : "password"}
+                        value={(form as any).appbarber_api_key || ""}
+                        onChange={(e) => handleChange("appbarber_api_key" as any, e.target.value)}
+                        placeholder="Chave da API AppBarber"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_establishment_code">establishment_code <span className="text-destructive">*</span></Label>
+                    <Input
+                      id="appbarber_establishment_code"
+                      value={(form as any).appbarber_establishment_code || ""}
+                      onChange={(e) => handleChange("appbarber_establishment_code" as any, e.target.value)}
+                      placeholder="Ex: 6923305"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="appbarber_base_url">URL base (proxy)</Label>
+                    <Input
+                      id="appbarber_base_url"
+                      value={(form as any).appbarber_base_url || ""}
+                      onChange={(e) => handleChange("appbarber_base_url" as any, e.target.value)}
+                      placeholder="https://proxy.zayloia.com"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Em branco usa o padrão <code>https://proxy.zayloia.com</code>. O proxy possui IP fixo <code>31.97.40.237</code> que deve estar liberado na whitelist do AppBarber.
+                    </p>
+                  </div>
+                  {id && <AppBarberTestButton tenantId={id} />}
+                </div>
+              )}
 
               {provider === "none" && (
                 <div className="space-y-2 pt-4 border-t border-border">
