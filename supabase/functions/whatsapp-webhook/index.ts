@@ -5142,13 +5142,14 @@ async function callAIAgent(
 
           if (!toolResult && tName === "criar_agendamento" && lockedDur) {
             const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
-            const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
-            const svcMismatch = lockedSvcId && reqSvc && reqSvc !== lockedSvcId;
+            // Só bloqueia se a DURAÇÃO mudou (ex.: corte 40 → combo 90).
+            // Trocas de svcId com mesma duração são legítimas — vários serviços
+            // Trinks compartilham a mesma duração (Corte, Barba, Barbaterapia = 40min).
             const durMismatch = reqDur && reqDur !== lockedDur;
-            if ((durMismatch || svcMismatch) && !userWantsChange) {
-              console.log(`[TrinksLock] criar_agendamento BLOCKED: tentou svcId=${reqSvc}/dur=${reqDur}, travado svcId=${lockedSvcId}/dur=${lockedDur}`);
+            if (durMismatch && !userWantsChange) {
+              console.log(`[TrinksLock] criar_agendamento BLOCKED: dur=${reqDur} ≠ travado=${lockedDur}`);
               toolResult = {
-                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar um serviço diferente. Volte ao serviço travado OU pergunte ao cliente se ele quer mudar/adicionar antes.`,
+                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar com duração diferente (${reqDur}min). Volte à duração travada OU pergunte ao cliente antes de mudar.`,
                 blocked: true,
                 locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
               };
