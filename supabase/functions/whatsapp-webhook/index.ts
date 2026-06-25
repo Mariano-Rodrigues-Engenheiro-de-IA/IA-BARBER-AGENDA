@@ -5142,13 +5142,14 @@ async function callAIAgent(
 
           if (!toolResult && tName === "criar_agendamento" && lockedDur) {
             const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
-            const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
-            const svcMismatch = lockedSvcId && reqSvc && reqSvc !== lockedSvcId;
+            // Só bloqueia se a DURAÇÃO mudou (ex.: corte 40 → combo 90).
+            // Trocas de svcId com mesma duração são legítimas — vários serviços
+            // Trinks compartilham a mesma duração (Corte, Barba, Barbaterapia = 40min).
             const durMismatch = reqDur && reqDur !== lockedDur;
-            if ((durMismatch || svcMismatch) && !userWantsChange) {
-              console.log(`[TrinksLock] criar_agendamento BLOCKED: tentou svcId=${reqSvc}/dur=${reqDur}, travado svcId=${lockedSvcId}/dur=${lockedDur}`);
+            if (durMismatch && !userWantsChange) {
+              console.log(`[TrinksLock] criar_agendamento BLOCKED: dur=${reqDur} ≠ travado=${lockedDur}`);
               toolResult = {
-                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar um serviço diferente. Volte ao serviço travado OU pergunte ao cliente se ele quer mudar/adicionar antes.`,
+                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar com duração diferente (${reqDur}min). Volte à duração travada OU pergunte ao cliente antes de mudar.`,
                 blocked: true,
                 locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
               };
@@ -5583,15 +5584,20 @@ async function callAIAgent(
           const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
           if (reqDur) {
             const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
-            const match = catalog.find((s) => s.duracao === reqDur);
+            const matches = catalog.filter((s) => s.duracao === reqDur);
             const prevDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
             (sessionState as any).trinksSelectedServiceDuration = reqDur;
-            if (match) {
-              (sessionState as any).trinksSelectedServiceId = match.id;
-              (sessionState as any).trinksSelectedServiceName = match.nome;
+            // Só trava nome/id quando há UM único serviço para essa duração.
+            // Caso contrário (ambíguo), mantém apenas a duração travada.
+            if (matches.length === 1) {
+              (sessionState as any).trinksSelectedServiceId = matches[0].id;
+              (sessionState as any).trinksSelectedServiceName = matches[0].nome;
+            } else {
+              (sessionState as any).trinksSelectedServiceId = null;
+              (sessionState as any).trinksSelectedServiceName = null;
             }
             if (prevDur !== reqDur) {
-              console.log(`[TrinksLock] service locked → dur=${reqDur} svcId=${match?.id ?? "?"} name="${match?.nome ?? "?"}"`);
+              console.log(`[TrinksLock] dur locked=${reqDur} (${matches.length} serviço(s) compatíveis)`);
             }
           }
         }
