@@ -5584,15 +5584,20 @@ async function callAIAgent(
           const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
           if (reqDur) {
             const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
-            const match = catalog.find((s) => s.duracao === reqDur);
+            const matches = catalog.filter((s) => s.duracao === reqDur);
             const prevDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
             (sessionState as any).trinksSelectedServiceDuration = reqDur;
-            if (match) {
-              (sessionState as any).trinksSelectedServiceId = match.id;
-              (sessionState as any).trinksSelectedServiceName = match.nome;
+            // Só trava nome/id quando há UM único serviço para essa duração.
+            // Caso contrário (ambíguo), mantém apenas a duração travada.
+            if (matches.length === 1) {
+              (sessionState as any).trinksSelectedServiceId = matches[0].id;
+              (sessionState as any).trinksSelectedServiceName = matches[0].nome;
+            } else {
+              (sessionState as any).trinksSelectedServiceId = null;
+              (sessionState as any).trinksSelectedServiceName = null;
             }
             if (prevDur !== reqDur) {
-              console.log(`[TrinksLock] service locked → dur=${reqDur} svcId=${match?.id ?? "?"} name="${match?.nome ?? "?"}"`);
+              console.log(`[TrinksLock] dur locked=${reqDur} (${matches.length} serviço(s) compatíveis)`);
             }
           }
         }
