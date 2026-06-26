@@ -10936,6 +10936,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
     return tel;
   };
 
+  const appBarberPhoneVariants = (raw: string): string[] => {
+    const full = normalizePhoneDigits(raw);
+    const variants = new Set<string>();
+    const add = (value: string) => {
+      const digits = String(value || "").replace(/\D/g, "");
+      if (digits) variants.add(digits);
+    };
+    add(full);
+    const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
+    add(local);
+    // AppBarber documenta /invoice/search como DDD+número, sem DDI, e bases antigas
+    // podem ter celular com ou sem o 9 após o DDD. Testamos as duas formas.
+    if (local.length === 10) add(`${local.slice(0, 2)}9${local.slice(2)}`);
+    if (local.length === 11 && local[2] === "9") add(`${local.slice(0, 2)}${local.slice(3)}`);
+    for (const v of Array.from(variants)) {
+      if (!v.startsWith("55") && (v.length === 10 || v.length === 11)) add(`55${v}`);
+    }
+    return Array.from(variants);
+  };
+
   try {
     switch (funcName) {
       case "listar_servicos": {
@@ -11070,6 +11090,61 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const startDate = args.start_date || fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
         const endDate = args.end_date || fmt(new Date(nowBrt.getTime() + 31 * 24 * 60 * 60 * 1000));
         const statusType = args.status_type ?? 1;
+        const phoneVariants = appBarberPhoneVariants(args.customer_phone || phoneNumber || "");
+        const searchVariants = phoneVariants.filter((v) => !v.startsWith("55") && (v.length === 10 || v.length === 11));
+        const invoiceItems: any[] = [];
+        const triedInvoicePhones: string[] = [];
+        for (const customerPhone of searchVariants.length ? searchVariants : phoneVariants) {
+          triedInvoicePhones.push(customerPhone);
+          const invoiceResult = await callGet("/v1/invoice/search", { customer_phone: customerPhone });
+          if (invoiceResult?.error) {
+            console.log(`[AppBarber] invoice/search failed for ${customerPhone}: ${JSON.stringify(invoiceResult).slice(0, 300)}`);
+            continue;
+          }
+          const data = Array.isArray(invoiceResult?.data) ? invoiceResult.data : [];
+          invoiceItems.push(...data);
+          if (data.length > 0) break;
+        }
+
+        const openInvoices = invoiceItems.filter((it: any) => {
+          const status = String(it?.invoice_status || "").toUpperCase();
+          return !status || status.includes("ABERTA") || status.includes("AGEND") || status.includes("PEND");
+        });
+        if (openInvoices.length > 0) {
+          const appointments = openInvoices.flatMap((invoice: any) => {
+            const items = Array.isArray(invoice?.items) && invoice.items.length > 0 ? invoice.items : [null];
+            return items.map((item: any) => ({
+              source: "invoice_search",
+              invoice_code: invoice.invoice_code,
+              invoice_item_code: item?.invoice_item_code ?? null,
+              client_name: invoice.client_name,
+              client_phone: invoice.client_phone,
+              service_description: item?.item_description || invoice.service_description || "Comanda AppBarber",
+              employee_name: invoice.employee_name || null,
+              scheduling_start: invoice.invoice_date,
+              scheduling_status: invoice.invoice_status,
+              service_value: item?.item_value ?? invoice.total_value,
+              items: Array.isArray(invoice?.items) ? invoice.items.map((entry: any) => ({
+                invoice_item_code: entry?.invoice_item_code,
+                item_description: entry?.item_description,
+                item_quantity: entry?.item_quantity,
+                item_value: entry?.item_value,
+                item_type: entry?.item_type,
+              })) : [],
+            }));
+          });
+          console.log(`[AppBarber] listar_agendamentos via invoice/search: tried=${JSON.stringify(triedInvoicePhones)}, found=${appointments.length}`);
+          return {
+            source: "invoice_search",
+            period: { start_date: startDate, end_date: endDate, status_type: statusType },
+            customer_phone: phoneDigits || null,
+            searched_customer_phones: triedInvoicePhones,
+            appointments,
+            total: appointments.length,
+          };
+        }
+
+        // Fallback: histórico de agendamentos por período, útil quando a comanda não aparece em /invoice/search.
         const r = await callGet("/v1/appointments/history", {
           start_date: startDate,
           end_date: endDate,
@@ -11090,11 +11165,15 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           : items;
         console.log(`[AppBarber] listar_agendamentos: total API=${items.length}, match telefone=${filtered.length}, phoneCore=${phoneCore}, allPhones=${JSON.stringify(items.map((it: any) => it?.client_phone))}`);
         return {
+          source: "appointments_history",
           period: { start_date: startDate, end_date: endDate, status_type: statusType },
           customer_phone: phoneDigits || null,
+          searched_customer_phones: triedInvoicePhones,
           appointments: filtered.map((it: any) => ({
+            source: "appointments_history",
             scheduling_code: it.scheduling_code,
             invoice_code: it.invoice_code,
+            invoice_item_code: null,
             client_name: it.client_name,
             client_phone: it.client_phone,
             service_description: it.service_description,
