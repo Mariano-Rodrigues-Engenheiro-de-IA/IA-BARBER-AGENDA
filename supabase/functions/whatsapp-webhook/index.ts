@@ -11130,19 +11130,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
-        const time = String(args.start_time).length === 5 ? `${args.start_time}:00` : args.start_time;
+        const startDateTime = normalizeAppBarberStartDateTime(args.start_date, args.start_time);
+        if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
+          return { error: "start_date/start_time inválidos. Use start_date YYYY-MM-DD e start_time HH:MM.", recoverable: true };
+        }
+        const serviceDuration = await resolveAppBarberServiceDuration(args.service_code, args.service_duration_minutes);
+        if (!serviceDuration) {
+          return { error: "Duração do serviço não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.", recoverable: true };
+        }
         const url = buildUrl("/v1/appointments", {});
         const customerName = String(args.customer_name || "Cliente").trim();
         // Schema real do AppBarber (validado via erro 400):
-        // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM:SS"
-        // professionals: [{ professional_code }] | services: [{ service_code }]
+        // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
+        // professionals: [{ professional_code }] | services: [{ service_code, duration }]
         const body: Record<string, unknown> = {
           establishment_code: Number(estCode),
           customer_phone: Number(phoneDigits),
           customer_name: customerName,
-          start_date: `${args.start_date} ${time}`,
+          start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
-          services: [{ service_code: Number(args.service_code) }],
+          services: [{ service_code: Number(args.service_code), duration: serviceDuration }],
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
