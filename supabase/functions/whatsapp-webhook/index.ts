@@ -11202,17 +11202,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (openInvoices.length > 0) {
           const appointments = openInvoices.flatMap((invoice: any) => {
             const items = extractAppBarberInvoiceItems(invoice);
+            const invoiceObservation = firstValue(
+              invoice.scheduling_observation,
+              invoice.observation,
+              invoice.notes,
+              invoice.description,
+              invoice.customer_observation,
+            );
+            const observationPhone = extractPhonesFromText(invoiceObservation)[0];
             return items.map((item: any) => ({
               source: "invoice_search",
               invoice_code: firstValue(invoice.invoice_code, invoice.invoice_id, invoice.invoiceCode, invoice.comanda_code, invoice.command_code, invoice.code, invoice.id),
               invoice_item_code: firstValue(item?.invoice_item_code, item?.invoiceItemCode, item?.item_code, item?.code, item?.id, null),
               client_name: firstValue(invoice.client_name, invoice.customer_name, invoice.name),
-              client_phone: firstValue(invoice.client_phone, invoice.customer_phone, invoice.phone),
+              client_phone: firstValue(invoice.client_phone, invoice.customer_phone, invoice.phone, observationPhone),
               service_description: firstValue(item?.item_description, item?.service_description, item?.description, item?.name, invoice.service_description, invoice.description, "Comanda AppBarber"),
               employee_name: firstValue(invoice.employee_name, invoice.professional_name, invoice.barber_name, item?.employee_name, null),
               scheduling_start: firstValue(invoice.scheduling_start, invoice.start_date, invoice.appointment_date, invoice.invoice_date, invoice.created_at),
               scheduling_status: firstValue(invoice.invoice_status, invoice.status, invoice.status_description, invoice.invoiceStatus),
               service_value: firstValue(item?.item_value, item?.service_value, item?.value, invoice.total_value, invoice.value),
+              scheduling_observation: invoiceObservation,
               items: extractAppBarberInvoiceItems(invoice).filter(Boolean).map((entry: any) => ({
                 invoice_item_code: firstValue(entry?.invoice_item_code, entry?.invoiceItemCode, entry?.item_code, entry?.code, entry?.id),
                 item_description: firstValue(entry?.item_description, entry?.service_description, entry?.description, entry?.name),
@@ -11249,9 +11258,16 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const phoneCore = phoneDigits ? tail(phoneDigits, 8) : "";
         const filtered = phoneCore
           ? items.filter((it: any) => {
-              const p = String(it?.client_phone || "").replace(/\D/g, "");
-              if (!p) return false;
-              return tail(p, 8) === phoneCore;
+              return phoneCoreMatches(
+                phoneDigits,
+                it?.client_phone,
+                it?.customer_phone,
+                it?.phone,
+                it?.scheduling_observation,
+                it?.observation,
+                it?.notes,
+                it?.description,
+              );
             })
           : items;
         const mapHistoryItem = (it: any) => ({
@@ -11265,6 +11281,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           employee_name: it.employee_name,
           scheduling_start: it.scheduling_start,
           scheduling_status: it.scheduling_status,
+          scheduling_observation: firstValue(it.scheduling_observation, it.observation, it.notes, it.description),
           service_value: it.service_value,
         });
         let canceledAppointments: any[] = [];
@@ -11272,7 +11289,16 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           const canceledResult = await callHistory(3);
           const canceledItems = Array.isArray(canceledResult?.data) ? canceledResult.data : [];
           canceledAppointments = canceledItems
-            .filter((it: any) => tail(String(it?.client_phone || "").replace(/\D/g, ""), 8) === phoneCore)
+            .filter((it: any) => phoneCoreMatches(
+              phoneDigits,
+              it?.client_phone,
+              it?.customer_phone,
+              it?.phone,
+              it?.scheduling_observation,
+              it?.observation,
+              it?.notes,
+              it?.description,
+            ))
             .map(mapHistoryItem);
           if (canceledAppointments.length > 0) {
             console.log(`[AppBarber] listar_agendamentos: found canceled/manual matches=${canceledAppointments.length}`);
@@ -11300,6 +11326,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
                 client_phone: it.client_phone,
                 service_description: it.service_description,
                 scheduling_start: it.scheduling_start,
+                scheduling_observation: firstValue(it.scheduling_observation, it.observation, it.notes, it.description),
               }))
             : undefined,
         };
