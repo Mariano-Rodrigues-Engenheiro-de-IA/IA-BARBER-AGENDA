@@ -10884,7 +10884,7 @@ function buildAppBarberTools(tenant: any) {
             customer_phone: { type: "string", description: "Telefone do cliente (só dígitos). Padrão: telefone da conversa." },
             reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
           },
-          required: ["invoice_code"],
+          required: [],
         },
       },
     },
@@ -10904,7 +10904,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
 
   const baseUrl = ((tenant.appbarber_base_url || "").trim().replace(/\/+$/, "")) || APPBARBER_DEFAULT_BASE_URL;
   const headers: Record<string, string> = {
-    "x-api-key": apiKey,
+    "X-API-Key": apiKey,
     "Accept": "application/json",
     "Content-Type": "application/json",
   };
@@ -11108,7 +11108,6 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
         const time = String(args.start_time).length === 5 ? `${args.start_time}:00` : args.start_time;
-        const duration = Number(args.service_duration_minutes) > 0 ? Number(args.service_duration_minutes) : 30;
         const url = buildUrl("/v1/appointments", {});
         const body = {
           establishment_code: estCode,
