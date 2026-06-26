@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
       res = await fetch(url, {
         method: "GET",
         headers: {
-          "x-api-key": apiKey,
+          "X-API-Key": apiKey,
           "Accept": "application/json",
         },
       });
