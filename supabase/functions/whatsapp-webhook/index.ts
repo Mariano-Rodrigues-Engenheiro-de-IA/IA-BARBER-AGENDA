@@ -10851,19 +10851,6 @@ function buildAppBarberTools(tenant: any) {
         },
       },
     },
-  ];
-}
-
-async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
-  const funcName = toolCall.function.name;
-  let args: any = {};
-  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
-
-  const apiKey = (tenant.appbarber_api_key || "").trim();
-  const estCodeRaw = (tenant.appbarber_establishment_code || "").trim();
-  const estCode = Number(estCodeRaw);
-  if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
-
     {
       type: "function",
       function: {
@@ -10909,6 +10896,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
   const estCodeRaw = (tenant.appbarber_establishment_code || "").trim();
   const estCode = Number(estCodeRaw);
   if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
+
 
   const baseUrl = ((tenant.appbarber_base_url || "").trim().replace(/\/+$/, "")) || APPBARBER_DEFAULT_BASE_URL;
   const headers: Record<string, string> = {
