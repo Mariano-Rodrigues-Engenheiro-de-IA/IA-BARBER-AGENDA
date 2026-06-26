@@ -11009,6 +11009,29 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
     return false;
   };
 
+  const toPositiveNumber = (value: any): number | null => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const normalizeAppBarberStartDateTime = (date: any, time: any): string => {
+    const day = String(date || "").trim().slice(0, 10);
+    const rawTime = String(time || "").trim();
+    const hhmm = rawTime.match(/^(\d{2}:\d{2})/)?.[1] || rawTime.slice(0, 5);
+    return `${day} ${hhmm}`;
+  };
+
+  const resolveAppBarberServiceDuration = async (serviceCode: any, explicitDuration: any): Promise<number | null> => {
+    const direct = toPositiveNumber(explicitDuration);
+    if (direct) return direct;
+
+    const r = await callGet("/v1/services", {});
+    if (r?.error) return null;
+    const items = Array.isArray(r?.data) ? r.data : [];
+    const service = items.find((s: any) => Number(firstValue(s.service_code, s.code, s.id)) === Number(serviceCode));
+    return toPositiveNumber(firstValue(service?.service_interval, service?.duration_minutes, service?.duration));
+  };
+
   try {
     switch (funcName) {
       case "listar_servicos": {
