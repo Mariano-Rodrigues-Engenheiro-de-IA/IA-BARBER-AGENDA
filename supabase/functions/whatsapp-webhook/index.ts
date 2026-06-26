@@ -10963,7 +10963,20 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         console.log(`[AppBarber] criar_agendamento (${res.status}):`, text.slice(0, 600));
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
-          return { error: parsed?.message || parsed?.error || `HTTP ${res.status}`, status: res.status, details: parsed?.details };
+          const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+          if (res.status === 422) {
+            return {
+              error: `Horário indisponível ou conflito de regra de negócio: ${baseErr}`,
+              status: 422,
+              recoverable: true,
+              hint: "Chame listar_horarios novamente para o mesmo serviço/profissional e ofereça outro horário ao cliente. NÃO escale humano.",
+              details: parsed?.data ?? parsed?.details,
+            };
+          }
+          if (res.status === 429) {
+            return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+          }
+          return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
         }
         return {
           ok: true,
