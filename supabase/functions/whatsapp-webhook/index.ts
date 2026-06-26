@@ -10990,6 +10990,24 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
   };
 
   const firstValue = (...values: any[]) => values.find((value) => value !== undefined && value !== null && value !== "");
+  const digitsOnly = (value: any): string => String(value || "").replace(/\D/g, "");
+  const extractPhonesFromText = (value: any): string[] => {
+    const text = String(value || "");
+    if (!text) return [];
+    const matches = text.match(/(?:\+?55\s*)?(?:\(?\d{2}\)?\s*)?9?\d{4}[-\s]?\d{4}/g) || [];
+    return matches.map(digitsOnly).filter((phone) => phone.length >= 8);
+  };
+  const phoneCoreMatches = (targetPhone: string, ...recordValues: any[]): boolean => {
+    const targetCore = digitsOnly(targetPhone).slice(-8);
+    if (!targetCore) return false;
+    for (const value of recordValues) {
+      const candidates = [digitsOnly(value), ...extractPhonesFromText(value)];
+      for (const candidate of candidates) {
+        if (candidate && candidate.slice(-8) === targetCore) return true;
+      }
+    }
+    return false;
+  };
 
   try {
     switch (funcName) {
@@ -11094,11 +11112,15 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const url = buildUrl("/v1/appointments", {});
         const body = {
           establishment_code: estCode,
-          customer_phone: Number(phoneDigits),
-          customer_name: String(args.customer_name || "Cliente").trim(),
-          start_date: `${args.start_date} ${time.slice(0, 5)}`,
-          professionals: [{ professional_code: Number(args.professional_code) }],
-          services: [{ service_code: Number(args.service_code), duration }],
+          professional_code: Number(args.professional_code),
+          service_code: Number(args.service_code),
+          scheduling_date: args.start_date,
+          scheduling_time: time,
+          client_name: String(args.customer_name || "Cliente").trim(),
+          client_phone: phoneDigits,
+          scheduling_observation: String(args.scheduling_observation || "").trim()
+            ? `${String(args.scheduling_observation).trim()} | Cliente: ${String(args.customer_name || "Cliente").trim()} | WhatsApp: ${phoneDigits}`
+            : `Cliente: ${String(args.customer_name || "Cliente").trim()} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
         const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
@@ -11123,10 +11145,10 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         return {
           ok: true,
-          appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || null,
-          start_date: body.start_date,
-          service_code: body.services[0].service_code,
-          professional_code: body.professionals[0].professional_code,
+          appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
+          start_date: `${body.scheduling_date} ${body.scheduling_time}`,
+          service_code: body.service_code,
+          professional_code: body.professional_code,
           raw: parsed?.data ?? parsed,
         };
       }
