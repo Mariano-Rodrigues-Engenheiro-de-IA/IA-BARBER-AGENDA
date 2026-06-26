@@ -6055,7 +6055,7 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
 }
 
 // Heuristic: any tool that mutates external state must be blocked in simulator mode.
-const WRITE_TOOL_NAME_RE = /^(criar_|cadastrar_|agendar$|agendar_|cancelar_|desmarcar_|editar_|confirmar_|atualizar_|enviar_|send_|escalate)/i;
+const WRITE_TOOL_NAME_RE = /^(criar_|cadastrar_|agendar$|agendar_|cancelar_|desmarcar_|editar_|confirmar_|atualizar_|enviar_|send_|escalate|debug_)/i;
 function isWriteToolName(name: string): boolean {
   return WRITE_TOOL_NAME_RE.test(name);
 }
@@ -10547,7 +10547,7 @@ async function executeZayloTool(tenant: any, toolCall: any, phoneNumber?: string
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Accept": "application/json",
-    "x-api-key": apiKey,
+    "X-API-Key": apiKey,
     "apikey": apiKey,
     "Authorization": `Bearer ${apiKey}`,
   };
@@ -10750,15 +10750,15 @@ function buildAppBarberPromptSection(_tenant: any): string {
 
 ## 🛑 OVERRIDE TÉCNICO — LEIA ANTES DE TUDO (APPBARBER)
 
-Você TEM 4 FERRAMENTAS (functions) reais conectadas à API AppBarber via proxy. **VOCÊ DEVE USÁ-LAS** via tool-calling. NUNCA escreva JSON, NUNCA descreva HTTP, NUNCA chame endpoint manualmente.
+Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE USÁ-LAS** via tool-calling. NUNCA escreva JSON, NUNCA descreva HTTP, NUNCA chame endpoint manualmente.
 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
 - **listar_profissionais** — profissionais que atendem um serviço (precisa de service_code).
 - **listar_horarios** — horários LIVRES para um service_code + start_date (YYYY-MM-DD). Opcional: professional_code.
 - **criar_agendamento** — cria o agendamento real (service_code + professional_code + start_date + start_time + nome + telefone).
-- **listar_agendamentos** — busca os agendamentos do cliente (telefone) em um período. Retorna scheduling_code, invoice_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
-- **cancelar_agendamento** — cancela a comanda (invoice_code) de um agendamento. Requer invoice_code (obtido em listar_agendamentos) + motivo.
+- **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
+- **cancelar_agendamento** — cancela a comanda inteira pelo invoice_code ou, quando explicitamente necessário, remove um item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
 
 ------------------------------------------
 
@@ -10773,9 +10773,9 @@ Ferramentas (nomes exatos):
 6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`customer_name\`, \`customer_phone\`.
 
 ### Cancelar agendamento
-1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele e um período cobrindo hoje em diante (status_type=1 = Agendado).
+1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele. A ferramenta busca COMANDAS por telefone antes de usar histórico.
 2. Se houver mais de um agendamento futuro, confirme com o cliente QUAL (cite serviço, dia e hora).
-3. Chame **cancelar_agendamento** com o \`invoice_code\` do agendamento escolhido e um \`reason\` curto (ex: "Cancelamento solicitado pelo cliente via WhatsApp").
+3. Chame **cancelar_agendamento** com o \`invoice_code\` do agendamento escolhido e um \`reason\` curto (ex: "Cancelamento solicitado pelo cliente via WhatsApp"). Se o cliente pediu para remover apenas um serviço de uma comanda com vários itens, use \`invoice_item_code\` + \`cancel_scope="item"\`.
 4. Confirme ao cliente que foi cancelado. NÃO escale humano.
 
 ------------------------------------------
@@ -10855,7 +10855,7 @@ function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_agendamentos",
-        description: "Lista os agendamentos do cliente em um período (até 31 dias). Use ANTES de cancelar para obter o invoice_code do agendamento. Filtra pelo telefone do cliente após buscar no estabelecimento.",
+        description: "Lista comandas/agendamentos do cliente. Use ANTES de cancelar para obter invoice_code ou invoice_item_code. Primeiro consulta /v1/invoice/search por telefone; histórico é só fallback.",
         parameters: {
           type: "object",
           properties: {
@@ -10872,11 +10872,13 @@ function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "cancelar_agendamento",
-        description: "Cancela o agendamento (via comanda/invoice_code) no AppBarber. SEMPRE chame listar_agendamentos primeiro para obter o invoice_code certo.",
+        description: "Cancela o agendamento no AppBarber. SEMPRE chame listar_agendamentos primeiro. Use invoice_code para cancelar a comanda inteira; use invoice_item_code + cancel_scope=item só para remover um serviço específico da comanda.",
         parameters: {
           type: "object",
           properties: {
             invoice_code: { type: "number", description: "invoice_code do agendamento (obtido em listar_agendamentos)." },
+            invoice_item_code: { type: "number", description: "Opcional — invoice_item_code obtido em listar_agendamentos para remover apenas um item da comanda." },
+            cancel_scope: { type: "string", enum: ["invoice", "item"], description: "Padrão invoice. Use item apenas quando for remover um item específico da comanda." },
             customer_phone: { type: "string", description: "Telefone do cliente (só dígitos). Padrão: telefone da conversa." },
             reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
           },
@@ -10955,6 +10957,37 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
     }
     return Array.from(variants);
   };
+
+  const extractAppBarberInvoiceList = (payload: any): any[] => {
+    const looksLikeInvoice = (value: any) => value && typeof value === "object" && !Array.isArray(value) && (
+      value.invoice_code != null || value.invoice_id != null || value.invoiceCode != null ||
+      value.comanda_code != null || value.command_code != null ||
+      (value.code != null && (value.customer_phone != null || value.client_phone != null || value.invoice_status != null || value.total_value != null || Array.isArray(value.items)))
+    );
+    const direct = [payload?.data, payload?.result, payload?.invoice, payload];
+    for (const candidate of direct) {
+      if (Array.isArray(candidate)) return candidate;
+      if (looksLikeInvoice(candidate)) return [candidate];
+    }
+    const containers = [payload?.data, payload?.result, payload];
+    const keys = ["invoices", "items", "records", "results", "appointments", "schedules", "data"];
+    for (const container of containers) {
+      if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+      for (const key of keys) {
+        if (Array.isArray(container[key])) return container[key];
+      }
+    }
+    return [];
+  };
+
+  const extractAppBarberInvoiceItems = (invoice: any): any[] => {
+    for (const key of ["items", "invoice_items", "invoiceItems", "services", "service_items", "details"]) {
+      if (Array.isArray(invoice?.[key]) && invoice[key].length > 0) return invoice[key];
+    }
+    return [null];
+  };
+
+  const firstValue = (...values: any[]) => values.find((value) => value !== undefined && value !== null && value !== "");
 
   try {
     switch (funcName) {
@@ -11084,53 +11117,72 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
 
       case "listar_agendamentos": {
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
-        // Datas padrão: -7 dias e +31 dias em Brasília (cobre agendamentos recentes do mesmo dia/anteriores)
+        // Datas padrão: -7 até +24 dias em Brasília. Cobre agendamentos recém-criados/cancelados
+        // e respeita o limite de 31 dias da API AppBarber.
         const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        const startDate = args.start_date || fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
-        const endDate = args.end_date || fmt(new Date(nowBrt.getTime() + 31 * 24 * 60 * 60 * 1000));
+        const defaultStartDate = fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
+        const requestedStartDate = args.start_date || defaultStartDate;
+        const startDate = requestedStartDate > defaultStartDate ? defaultStartDate : requestedStartDate;
+        const maxEndFromStart = new Date(new Date(`${startDate}T00:00:00Z`).getTime() + 31 * 24 * 60 * 60 * 1000);
+        const requestedEnd = args.end_date ? new Date(`${args.end_date}T00:00:00Z`) : new Date(nowBrt.getTime() + 24 * 24 * 60 * 60 * 1000);
+        const endDate = fmt(requestedEnd.getTime() > maxEndFromStart.getTime() ? maxEndFromStart : requestedEnd);
         const statusType = args.status_type ?? 1;
         const phoneVariants = appBarberPhoneVariants(args.customer_phone || phoneNumber || "");
-        const searchVariants = phoneVariants.filter((v) => !v.startsWith("55") && (v.length === 10 || v.length === 11));
+        const searchVariants = phoneVariants;
         const invoiceItems: any[] = [];
         const triedInvoicePhones: string[] = [];
+        const invoiceSearchDiagnostics: any[] = [];
         for (const customerPhone of searchVariants.length ? searchVariants : phoneVariants) {
           triedInvoicePhones.push(customerPhone);
           const invoiceResult = await callGet("/v1/invoice/search", { customer_phone: customerPhone });
           if (invoiceResult?.error) {
             console.log(`[AppBarber] invoice/search failed for ${customerPhone}: ${JSON.stringify(invoiceResult).slice(0, 300)}`);
+            invoiceSearchDiagnostics.push({ customer_phone: customerPhone, error: invoiceResult.error, status: invoiceResult.status });
             continue;
           }
-          const data = Array.isArray(invoiceResult?.data) ? invoiceResult.data : [];
+          const data = extractAppBarberInvoiceList(invoiceResult);
+          invoiceSearchDiagnostics.push({
+            customer_phone: customerPhone,
+            count: data.length,
+            top_level_keys: invoiceResult && typeof invoiceResult === "object" ? Object.keys(invoiceResult).slice(0, 8) : [],
+            data_keys: invoiceResult?.data && typeof invoiceResult.data === "object" && !Array.isArray(invoiceResult.data) ? Object.keys(invoiceResult.data).slice(0, 8) : [],
+          });
           invoiceItems.push(...data);
-          if (data.length > 0) break;
         }
 
-        const openInvoices = invoiceItems.filter((it: any) => {
-          const status = String(it?.invoice_status || "").toUpperCase();
-          return !status || status.includes("ABERTA") || status.includes("AGEND") || status.includes("PEND");
+        const dedupedInvoiceItems = Array.from(new Map(invoiceItems.map((invoice: any, idx) => {
+          const invoiceCode = firstValue(invoice?.invoice_code, invoice?.invoice_id, invoice?.invoiceCode, invoice?.comanda_code, invoice?.command_code, invoice?.code, invoice?.id, `idx:${idx}`);
+          return [String(invoiceCode), invoice];
+        })).values());
+
+        const openInvoices = dedupedInvoiceItems.filter((it: any) => {
+          const status = String(firstValue(it?.invoice_status, it?.status, it?.status_description, it?.invoiceStatus, ""))
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+          const closed = /CANCEL|REALIZ|CONCL|FINALIZ|FECHAD|CLOSED/.test(status);
+          return !closed;
         });
         if (openInvoices.length > 0) {
           const appointments = openInvoices.flatMap((invoice: any) => {
-            const items = Array.isArray(invoice?.items) && invoice.items.length > 0 ? invoice.items : [null];
+            const items = extractAppBarberInvoiceItems(invoice);
             return items.map((item: any) => ({
               source: "invoice_search",
-              invoice_code: invoice.invoice_code,
-              invoice_item_code: item?.invoice_item_code ?? null,
-              client_name: invoice.client_name,
-              client_phone: invoice.client_phone,
-              service_description: item?.item_description || invoice.service_description || "Comanda AppBarber",
-              employee_name: invoice.employee_name || null,
-              scheduling_start: invoice.invoice_date,
-              scheduling_status: invoice.invoice_status,
-              service_value: item?.item_value ?? invoice.total_value,
-              items: Array.isArray(invoice?.items) ? invoice.items.map((entry: any) => ({
-                invoice_item_code: entry?.invoice_item_code,
-                item_description: entry?.item_description,
-                item_quantity: entry?.item_quantity,
-                item_value: entry?.item_value,
-                item_type: entry?.item_type,
-              })) : [],
+              invoice_code: firstValue(invoice.invoice_code, invoice.invoice_id, invoice.invoiceCode, invoice.comanda_code, invoice.command_code, invoice.code, invoice.id),
+              invoice_item_code: firstValue(item?.invoice_item_code, item?.invoiceItemCode, item?.item_code, item?.code, item?.id, null),
+              client_name: firstValue(invoice.client_name, invoice.customer_name, invoice.name),
+              client_phone: firstValue(invoice.client_phone, invoice.customer_phone, invoice.phone),
+              service_description: firstValue(item?.item_description, item?.service_description, item?.description, item?.name, invoice.service_description, invoice.description, "Comanda AppBarber"),
+              employee_name: firstValue(invoice.employee_name, invoice.professional_name, invoice.barber_name, item?.employee_name, null),
+              scheduling_start: firstValue(invoice.scheduling_start, invoice.start_date, invoice.appointment_date, invoice.invoice_date, invoice.created_at),
+              scheduling_status: firstValue(invoice.invoice_status, invoice.status, invoice.status_description, invoice.invoiceStatus),
+              service_value: firstValue(item?.item_value, item?.service_value, item?.value, invoice.total_value, invoice.value),
+              items: extractAppBarberInvoiceItems(invoice).filter(Boolean).map((entry: any) => ({
+                invoice_item_code: firstValue(entry?.invoice_item_code, entry?.invoiceItemCode, entry?.item_code, entry?.code, entry?.id),
+                item_description: firstValue(entry?.item_description, entry?.service_description, entry?.description, entry?.name),
+                item_quantity: firstValue(entry?.item_quantity, entry?.quantity),
+                item_value: firstValue(entry?.item_value, entry?.service_value, entry?.value),
+                item_type: firstValue(entry?.item_type, entry?.type),
+              })),
             }));
           });
           console.log(`[AppBarber] listar_agendamentos via invoice/search: tried=${JSON.stringify(triedInvoicePhones)}, found=${appointments.length}`);
@@ -11139,17 +11191,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
             period: { start_date: startDate, end_date: endDate, status_type: statusType },
             customer_phone: phoneDigits || null,
             searched_customer_phones: triedInvoicePhones,
+            invoice_search_diagnostics: invoiceSearchDiagnostics,
             appointments,
             total: appointments.length,
           };
         }
 
         // Fallback: histórico de agendamentos por período, útil quando a comanda não aparece em /invoice/search.
-        const r = await callGet("/v1/appointments/history", {
+        const callHistory = (historyStatusType: number) => callGet("/v1/appointments/history", {
           start_date: startDate,
           end_date: endDate,
-          status_type: statusType,
+          status_type: historyStatusType,
         });
+        const r = await callHistory(statusType);
         if (r?.error) return r;
         const items = Array.isArray(r?.data) ? r.data : [];
         // Match por sufixo do telefone. Compara últimos 8 dígitos (núcleo do número),
@@ -11163,26 +11217,42 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
               return tail(p, 8) === phoneCore;
             })
           : items;
+        const mapHistoryItem = (it: any) => ({
+          source: "appointments_history",
+          scheduling_code: it.scheduling_code,
+          invoice_code: it.invoice_code,
+          invoice_item_code: null,
+          client_name: it.client_name,
+          client_phone: it.client_phone,
+          service_description: it.service_description,
+          employee_name: it.employee_name,
+          scheduling_start: it.scheduling_start,
+          scheduling_status: it.scheduling_status,
+          service_value: it.service_value,
+        });
+        let canceledAppointments: any[] = [];
+        if (filtered.length === 0 && Number(statusType) === 1 && phoneCore) {
+          const canceledResult = await callHistory(3);
+          const canceledItems = Array.isArray(canceledResult?.data) ? canceledResult.data : [];
+          canceledAppointments = canceledItems
+            .filter((it: any) => tail(String(it?.client_phone || "").replace(/\D/g, ""), 8) === phoneCore)
+            .map(mapHistoryItem);
+          if (canceledAppointments.length > 0) {
+            console.log(`[AppBarber] listar_agendamentos: found canceled/manual matches=${canceledAppointments.length}`);
+          }
+        }
         console.log(`[AppBarber] listar_agendamentos: total API=${items.length}, match telefone=${filtered.length}, phoneCore=${phoneCore}, allPhones=${JSON.stringify(items.map((it: any) => it?.client_phone))}`);
         return {
           source: "appointments_history",
           period: { start_date: startDate, end_date: endDate, status_type: statusType },
           customer_phone: phoneDigits || null,
           searched_customer_phones: triedInvoicePhones,
-          appointments: filtered.map((it: any) => ({
-            source: "appointments_history",
-            scheduling_code: it.scheduling_code,
-            invoice_code: it.invoice_code,
-            invoice_item_code: null,
-            client_name: it.client_name,
-            client_phone: it.client_phone,
-            service_description: it.service_description,
-            employee_name: it.employee_name,
-            scheduling_start: it.scheduling_start,
-            scheduling_status: it.scheduling_status,
-            service_value: it.service_value,
-          })),
+          invoice_search_diagnostics: invoiceSearchDiagnostics,
+          appointments: filtered.map(mapHistoryItem),
           total: filtered.length,
+          canceled_appointments: canceledAppointments,
+          found_canceled: canceledAppointments.length > 0,
+          note: canceledAppointments.length > 0 ? "Não há agendamento ativo para cancelar; encontrei registro cancelado para este telefone." : undefined,
           // Quando nada bate, devolve a lista bruta pra IA poder confirmar visualmente com o cliente
           // (útil se o cadastro AppBarber estiver com outro telefone)
           unmatched_sample: filtered.length === 0 && items.length > 0
@@ -11201,13 +11271,37 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
 
       case "cancelar_agendamento": {
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        const cancelScope = String(args.cancel_scope || "invoice").toLowerCase();
+        const reason = String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp");
+        const removingItem = cancelScope === "item" && args.invoice_item_code;
+        if (removingItem) {
+          const url = buildUrl(`/v1/invoice/item/${encodeURIComponent(String(args.invoice_item_code))}`, {});
+          const body = { reason };
+          console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
+          const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+          const text = await res.text();
+          console.log(`[AppBarber] remover_item_comanda (${res.status}):`, text.slice(0, 600));
+          let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+          if (!res.ok) {
+            const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+            if (res.status === 422) return { error: `Não foi possível remover o item da comanda: ${baseErr}`, status: 422, recoverable: true, details: parsed?.data ?? parsed?.details };
+            if (res.status === 429) return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+            return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+          }
+          return {
+            ok: true,
+            invoice_item_code: args.invoice_item_code,
+            result: parsed?.data?.result || parsed?.message || "Item removido da comanda com sucesso",
+          };
+        }
+
         if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
         if (!phoneDigits) return { error: "customer_phone é obrigatório." };
         const url = `${baseUrl}/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`;
         const body = {
           customer_phone: String(phoneDigits),
           establishment_code: estCode,
-          reason: String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp"),
+          reason,
         };
         console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
         const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
