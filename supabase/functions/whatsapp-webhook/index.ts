@@ -8249,10 +8249,21 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
       case "cadastrar_cliente": {
         let tel = (args.telefone || "").replace(/\D/g, "");
-        if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
+        // Remove DDI 55 repetidamente (cobre casos com "55" duplicado vindos do WhatsApp/AI)
+        while (tel.startsWith("55") && tel.length > 11) tel = tel.substring(2);
+        // Remove zero à esquerda do DDD (ex.: "035...")
+        while (tel.startsWith("0") && tel.length > 11) tel = tel.substring(1);
+
         const ddd = tel.substring(0, 2);
         let numero = tel.substring(2);
+        // Garante 9º dígito para celulares brasileiros
         if (numero.length === 8) numero = "9" + numero;
+
+        if (!ddd || ddd.length !== 2 || numero.length !== 9) {
+          const err = `Telefone inválido após normalização: original="${args.telefone}", ddd="${ddd}", numero="${numero}". Esperado DDD(2) + numero(9, iniciando em 9).`;
+          console.error(`cadastrar_cliente ${err}`);
+          return { error: err };
+        }
 
         const body = {
           nome: args.nome,
