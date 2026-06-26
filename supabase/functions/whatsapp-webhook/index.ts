@@ -11146,9 +11146,9 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         return {
           ok: true,
           appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
-          start_date: `${body.scheduling_date} ${body.scheduling_time}`,
-          service_code: body.service_code,
-          professional_code: body.professional_code,
+          start_date: body.start_date,
+          service_code: Number(args.service_code),
+          professional_code: Number(args.professional_code),
           raw: parsed?.data ?? parsed,
         };
       }
