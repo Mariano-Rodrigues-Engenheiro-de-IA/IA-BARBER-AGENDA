@@ -11010,23 +11010,23 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "listar_profissionais": {
-        if (!args.service_code) return { error: "service_code é obrigatório." };
-        const r = await callGet("/v1/professionals", { service_code: args.service_code });
+        const r = await callGet("/v1/professional-list", {});
         if (r?.error) return r;
         const items = Array.isArray(r?.data) ? r.data : [];
         return {
           professionals: items.map((p: any) => ({
-            professional_code: p.employee_code,
-            name: p.employee_name || p.employee_nickname,
-            service_duration_minutes: p.service_interval,
+            professional_code: firstValue(p.professional_code, p.employee_code, p.code, p.id),
+            employee_code: firstValue(p.employee_code, p.professional_code, p.code, p.id),
+            name: firstValue(p.professional_name, p.employee_name, p.employee_nickname, p.name),
+            service_duration_minutes: firstValue(p.service_interval, p.professional_interval),
             rating: p.employee_evaluation,
-            image: p.employee_image,
+            image: firstValue(p.employee_image, p.professional_image, p.image),
           })),
         };
       }
 
       case "listar_horarios": {
-        if (!args.service_code || !args.start_date) return { error: "service_code e start_date são obrigatórios." };
+        if (!args.service_code || !args.professional_code || !args.start_date) return { error: "service_code, professional_code e start_date são obrigatórios." };
         const r = await callGet("/v1/availability", {
           service_code: args.service_code,
           start_date: args.start_date,
@@ -11039,17 +11039,31 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         // e a resposta vem com blocos de TODOS os profissionais. Precisamos filtrar
         // localmente pelo employee_code, senão oferecemos horário de outro barbeiro
         // e o POST /appointments retorna 422 "Choque de Horário".
-        const filteredBlocks = wantedProf != null
-          ? blocks.filter((b: any) => Number(b?.employee_code) === wantedProf)
-          : blocks;
+        const filteredBlocks = blocks.filter((b: any) => {
+          const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
+          return prof == null || Number(prof) === wantedProf;
+        });
         const seen = new Set<string>();
         const times: string[] = [];
-        for (const block of filteredBlocks) {
-          const list = Array.isArray(block?.avaliable) ? block.avaliable : (Array.isArray(block?.available) ? block.available : []);
-          for (const slot of list) {
-            const raw = String(slot?.scheduling_time || "").slice(0, 5);
-            if (raw && !seen.has(raw)) { seen.add(raw); times.push(raw); }
+        const collectSlots = (value: any) => {
+          if (!value) return;
+          if (Array.isArray(value)) { value.forEach(collectSlots); return; }
+          if (typeof value !== "object") return;
+          const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
+          if (rawTime) {
+            const str = String(rawTime).trim();
+            const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
+            if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
+              seen.add(normalized);
+              times.push(normalized);
+            }
           }
+          for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
+            if (Array.isArray(value[key])) collectSlots(value[key]);
+          }
+        };
+        for (const block of filteredBlocks) {
+          collectSlots(block);
         }
         times.sort();
         if (wantedProf != null && filteredBlocks.length === 0 && blocks.length > 0) {
