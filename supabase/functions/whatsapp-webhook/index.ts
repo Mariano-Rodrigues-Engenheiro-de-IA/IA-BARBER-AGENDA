@@ -5994,6 +5994,9 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     case "zaylo":
       providerTools = buildZayloTools(tenant);
       break;
+    case "appbarber":
+      providerTools = buildAppBarberTools(tenant);
+      break;
     case "none":
       providerTools = buildNoneTools(tenant);
       break;
