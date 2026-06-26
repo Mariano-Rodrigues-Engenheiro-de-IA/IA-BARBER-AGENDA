@@ -10726,3 +10726,261 @@ async function executeZayloTool(tenant: any, toolCall: any, phoneNumber?: string
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
+
+// ===================== APPBARBER PROVIDER =====================
+
+const APPBARBER_DEFAULT_BASE_URL = "https://proxy.zayloia.com";
+
+function buildAppBarberPromptSection(_tenant: any): string {
+  return `
+------------------------------------------
+
+## 🛑 OVERRIDE TÉCNICO — LEIA ANTES DE TUDO (APPBARBER)
+
+Você TEM 4 FERRAMENTAS (functions) reais conectadas à API AppBarber via proxy. **VOCÊ DEVE USÁ-LAS** via tool-calling. NUNCA escreva JSON, NUNCA descreva HTTP, NUNCA chame endpoint manualmente.
+
+Ferramentas (nomes exatos):
+- **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
+- **listar_profissionais** — profissionais que atendem um serviço (precisa de service_code).
+- **listar_horarios** — horários LIVRES para um service_code + start_date (YYYY-MM-DD). Opcional: professional_code.
+- **criar_agendamento** — cria o agendamento real (service_code + professional_code + start_date + start_time + nome + telefone).
+
+------------------------------------------
+
+## 🔷 FLUXO OBRIGATÓRIO (APPBARBER — sequencial)
+
+1. Na 1ª intenção de agendar / preço / serviço / profissional / disponibilidade → chame **listar_servicos** silenciosamente.
+2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
+3. Chame **listar_profissionais** com \`service_code\` → memorize \`employee_code\` do escolhido (ou ofereça as opções reais).
+4. Chame **listar_horarios** com \`service_code\` + \`start_date\` (+ \`professional_code\` quando o cliente escolheu profissional específico). Use APENAS os valores de \`available_times\` (HH:MM) retornados.
+5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
+6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`customer_name\`, \`customer_phone\`.
+
+------------------------------------------
+
+## 🚨 REGRAS ABSOLUTAS
+
+- NUNCA invente service_code, employee_code ou horários. Tudo vem das tools.
+- NUNCA cite horário sem antes ter chamado **listar_horarios** nessa interação.
+- Se \`available_times\` vier vazio, ofereça outra data — NÃO escale humano por isso.
+- Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
+- Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h.
+`;
+}
+
+function buildAppBarberTools(tenant: any) {
+  if (!tenant?.appbarber_api_key || !tenant?.appbarber_establishment_code) return undefined;
+  return [
+    {
+      type: "function",
+      function: {
+        name: "listar_servicos",
+        description: "OBRIGATÓRIA no primeiro sinal de agendar/preço/serviço. Retorna o catálogo real de serviços do estabelecimento (service_code, service_description, service_interval em minutos, service_value).",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_profissionais",
+        description: "Lista os profissionais que atendem um serviço específico (employee_code, employee_name, service_interval).",
+        parameters: {
+          type: "object",
+          properties: {
+            service_code: { type: "number", description: "service_code obtido em listar_servicos" },
+          },
+          required: ["service_code"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_horarios",
+        description: "Lista horários LIVRES para um serviço em uma data. Pode filtrar por profissional. Use APENAS os horários retornados em available_times.",
+        parameters: {
+          type: "object",
+          properties: {
+            service_code: { type: "number" },
+            start_date: { type: "string", description: "Data YYYY-MM-DD" },
+            professional_code: { type: "number", description: "Opcional — employee_code retornado por listar_profissionais" },
+          },
+          required: ["service_code", "start_date"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "criar_agendamento",
+        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço, profissional, dia e horário EXATO de listar_horarios.",
+        parameters: {
+          type: "object",
+          properties: {
+            service_code: { type: "number" },
+            professional_code: { type: "number" },
+            start_date: { type: "string", description: "YYYY-MM-DD" },
+            start_time: { type: "string", description: "HH:MM (exato de available_times)" },
+            customer_name: { type: "string" },
+            customer_phone: { type: "string", description: "Telefone com DDI (ex: 5561999998888 ou +55...)" },
+            service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval). Passe sempre que souber." },
+          },
+          required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone"],
+        },
+      },
+    },
+  ];
+}
+
+async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+  let args: any = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const apiKey = (tenant.appbarber_api_key || "").trim();
+  const estCodeRaw = (tenant.appbarber_establishment_code || "").trim();
+  const estCode = Number(estCodeRaw);
+  if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
+
+  const baseUrl = ((tenant.appbarber_base_url || "").trim().replace(/\/+$/, "")) || APPBARBER_DEFAULT_BASE_URL;
+  const headers: Record<string, string> = {
+    "x-api-key": apiKey,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+  };
+
+  const buildUrl = (path: string, qs: Record<string, any>): string => {
+    const params = new URLSearchParams();
+    params.set("establishment_code", estCodeRaw);
+    for (const [k, v] of Object.entries(qs)) {
+      if (v === undefined || v === null || v === "") continue;
+      params.set(k, String(v));
+    }
+    return `${baseUrl}${path}?${params.toString()}`;
+  };
+
+  const callGet = async (path: string, qs: Record<string, any>): Promise<any> => {
+    const url = buildUrl(path, qs);
+    console.log(`[AppBarber] GET ${url}`);
+    const res = await fetch(url, { method: "GET", headers });
+    const text = await res.text();
+    console.log(`[AppBarber] ${path} (${res.status}):`, text.slice(0, 500));
+    let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+    if (!res.ok) {
+      return { error: parsed?.message || parsed?.error || `HTTP ${res.status}`, status: res.status, details: parsed?.details };
+    }
+    return parsed ?? { raw: text.slice(0, 300) };
+  };
+
+  const normalizePhoneDigits = (raw: string): string => {
+    let tel = (raw || "").trim().replace(/[^\d]/g, "");
+    if (!tel) return "";
+    // garante DDI 55 quando for telefone brasileiro sem DDI
+    if (tel.length === 10 || tel.length === 11) tel = `55${tel}`;
+    return tel;
+  };
+
+  try {
+    switch (funcName) {
+      case "listar_servicos": {
+        const r = await callGet("/v1/services", {});
+        if (r?.error) return r;
+        const items = Array.isArray(r?.data) ? r.data : [];
+        return {
+          services: items.map((s: any) => ({
+            service_code: s.service_code,
+            name: s.service_description,
+            duration_minutes: s.service_interval,
+            price: s.service_value,
+            category_code: s.category_code,
+            has_subscription: !!s.has_subscription,
+          })),
+        };
+      }
+
+      case "listar_profissionais": {
+        if (!args.service_code) return { error: "service_code é obrigatório." };
+        const r = await callGet("/v1/professionals", { service_code: args.service_code });
+        if (r?.error) return r;
+        const items = Array.isArray(r?.data) ? r.data : [];
+        return {
+          professionals: items.map((p: any) => ({
+            professional_code: p.employee_code,
+            name: p.employee_name || p.employee_nickname,
+            service_duration_minutes: p.service_interval,
+            rating: p.employee_evaluation,
+            image: p.employee_image,
+          })),
+        };
+      }
+
+      case "listar_horarios": {
+        if (!args.service_code || !args.start_date) return { error: "service_code e start_date são obrigatórios." };
+        const r = await callGet("/v1/availability", {
+          service_code: args.service_code,
+          start_date: args.start_date,
+          professional_code: args.professional_code,
+        });
+        if (r?.error) return r;
+        const blocks = Array.isArray(r?.data) ? r.data : [];
+        const seen = new Set<string>();
+        const times: string[] = [];
+        for (const block of blocks) {
+          const list = Array.isArray(block?.avaliable) ? block.avaliable : (Array.isArray(block?.available) ? block.available : []);
+          for (const slot of list) {
+            const raw = String(slot?.scheduling_time || "").slice(0, 5);
+            if (raw && !seen.has(raw)) { seen.add(raw); times.push(raw); }
+          }
+        }
+        times.sort();
+        return {
+          date: args.start_date,
+          service_code: args.service_code,
+          professional_code: args.professional_code,
+          available_times: times,
+        };
+      }
+
+      case "criar_agendamento": {
+        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
+        if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
+        if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
+        const time = String(args.start_time).length === 5 ? `${args.start_time}:00` : args.start_time;
+        const duration = Number(args.service_duration_minutes) > 0 ? Number(args.service_duration_minutes) : 30;
+        const url = buildUrl("/v1/appointments", {});
+        const body = {
+          establishment_code: estCode,
+          customer_phone: Number(phoneDigits),
+          customer_name: String(args.customer_name || "Cliente").trim(),
+          start_date: `${args.start_date} ${time.slice(0, 5)}`,
+          professionals: [{ professional_code: Number(args.professional_code) }],
+          services: [{ service_code: Number(args.service_code), duration }],
+        };
+        console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
+        const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+        const text = await res.text();
+        console.log(`[AppBarber] criar_agendamento (${res.status}):`, text.slice(0, 600));
+        let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+        if (!res.ok) {
+          return { error: parsed?.message || parsed?.error || `HTTP ${res.status}`, status: res.status, details: parsed?.details };
+        }
+        return {
+          ok: true,
+          appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || null,
+          start_date: body.start_date,
+          service_code: body.services[0].service_code,
+          professional_code: body.professionals[0].professional_code,
+          raw: parsed?.data ?? parsed,
+        };
+      }
+
+      default:
+        return { error: `Ferramenta AppBarber desconhecida: ${funcName}` };
+    }
+  } catch (error) {
+    console.error(`[AppBarber] tool error (${funcName}):`, error);
+    const msg = error instanceof Error ? error.message : String(error);
+    return { error: `Erro ao executar ${funcName}: ${msg}` };
+  }
+}
