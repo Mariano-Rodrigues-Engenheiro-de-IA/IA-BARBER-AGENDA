@@ -7439,6 +7439,8 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     providerPrompt = buildBempPromptSection(tenant);
   } else if (provider === "zaylo") {
     providerPrompt = buildZayloPromptSection(tenant);
+  } else if (provider === "appbarber") {
+    providerPrompt = buildAppBarberPromptSection(tenant);
   } else if (provider === "none") {
     providerPrompt = buildNonePromptSection(tenant);
   }
