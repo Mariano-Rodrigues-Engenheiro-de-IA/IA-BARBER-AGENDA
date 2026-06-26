@@ -10757,17 +10757,26 @@ Ferramentas (nomes exatos):
 - **listar_profissionais** — profissionais que atendem um serviço (precisa de service_code).
 - **listar_horarios** — horários LIVRES para um service_code + start_date (YYYY-MM-DD). Opcional: professional_code.
 - **criar_agendamento** — cria o agendamento real (service_code + professional_code + start_date + start_time + nome + telefone).
+- **listar_agendamentos** — busca os agendamentos do cliente (telefone) em um período. Retorna scheduling_code, invoice_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
+- **cancelar_agendamento** — cancela a comanda (invoice_code) de um agendamento. Requer invoice_code (obtido em listar_agendamentos) + motivo.
 
 ------------------------------------------
 
 ## 🔷 FLUXO OBRIGATÓRIO (APPBARBER — sequencial)
 
+### Criar agendamento
 1. Na 1ª intenção de agendar / preço / serviço / profissional / disponibilidade → chame **listar_servicos** silenciosamente.
 2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
 3. Chame **listar_profissionais** com \`service_code\` → memorize \`employee_code\` do escolhido (ou ofereça as opções reais).
 4. Chame **listar_horarios** com \`service_code\` + \`start_date\` (+ \`professional_code\` quando o cliente escolheu profissional específico). Use APENAS os valores de \`available_times\` (HH:MM) retornados.
 5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
 6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`customer_name\`, \`customer_phone\`.
+
+### Cancelar agendamento
+1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele e um período cobrindo hoje em diante (status_type=1 = Agendado).
+2. Se houver mais de um agendamento futuro, confirme com o cliente QUAL (cite serviço, dia e hora).
+3. Chame **cancelar_agendamento** com o \`invoice_code\` do agendamento escolhido e um \`reason\` curto (ex: "Cancelamento solicitado pelo cliente via WhatsApp").
+4. Confirme ao cliente que foi cancelado. NÃO escale humano.
 
 ------------------------------------------
 
@@ -10842,6 +10851,39 @@ function buildAppBarberTools(tenant: any) {
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "listar_agendamentos",
+        description: "Lista os agendamentos do cliente em um período (até 31 dias). Use ANTES de cancelar para obter o invoice_code do agendamento. Filtra pelo telefone do cliente após buscar no estabelecimento.",
+        parameters: {
+          type: "object",
+          properties: {
+            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos, com ou sem DDI 55). Padrão: telefone da conversa." },
+            start_date: { type: "string", description: "YYYY-MM-DD — início do período. Padrão: hoje (Brasília)." },
+            end_date: { type: "string", description: "YYYY-MM-DD — fim do período (máx 31 dias após start_date). Padrão: hoje + 31 dias." },
+            status_type: { type: "number", description: "1=Agendado, 2=Realizado, 3=Cancelado, 4=Bloqueado, 5=Ausente. Padrão: 1 (Agendado)." },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cancelar_agendamento",
+        description: "Cancela o agendamento (via comanda/invoice_code) no AppBarber. SEMPRE chame listar_agendamentos primeiro para obter o invoice_code certo.",
+        parameters: {
+          type: "object",
+          properties: {
+            invoice_code: { type: "number", description: "invoice_code do agendamento (obtido em listar_agendamentos)." },
+            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos). Padrão: telefone da conversa." },
+            reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
+          },
+          required: ["invoice_code"],
+        },
+      },
+    },
   ];
 }
 
@@ -10854,6 +10896,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
   const estCodeRaw = (tenant.appbarber_establishment_code || "").trim();
   const estCode = Number(estCodeRaw);
   if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
+
 
   const baseUrl = ((tenant.appbarber_base_url || "").trim().replace(/\/+$/, "")) || APPBARBER_DEFAULT_BASE_URL;
   const headers: Record<string, string> = {
@@ -11016,6 +11059,79 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           service_code: body.services[0].service_code,
           professional_code: body.professionals[0].professional_code,
           raw: parsed?.data ?? parsed,
+        };
+      }
+
+      case "listar_agendamentos": {
+        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // Datas padrão: hoje e hoje+31d em Brasília
+        const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        const startDate = args.start_date || fmt(nowBrt);
+        const endDate = args.end_date || fmt(new Date(nowBrt.getTime() + 31 * 24 * 60 * 60 * 1000));
+        const statusType = args.status_type ?? 1;
+        const r = await callGet("/v1/appointments/history", {
+          start_date: startDate,
+          end_date: endDate,
+          status_type: statusType,
+        });
+        if (r?.error) return r;
+        const items = Array.isArray(r?.data) ? r.data : [];
+        const filtered = phoneDigits
+          ? items.filter((it: any) => {
+              const p = String(it?.client_phone || "").replace(/\D/g, "");
+              if (!p) return false;
+              // bate por sufixo (com ou sem DDI 55)
+              return p.endsWith(phoneDigits) || phoneDigits.endsWith(p);
+            })
+          : items;
+        return {
+          period: { start_date: startDate, end_date: endDate, status_type: statusType },
+          customer_phone: phoneDigits || null,
+          appointments: filtered.map((it: any) => ({
+            scheduling_code: it.scheduling_code,
+            invoice_code: it.invoice_code,
+            client_name: it.client_name,
+            client_phone: it.client_phone,
+            service_description: it.service_description,
+            employee_name: it.employee_name,
+            scheduling_start: it.scheduling_start,
+            scheduling_status: it.scheduling_status,
+            service_value: it.service_value,
+          })),
+          total: filtered.length,
+        };
+      }
+
+      case "cancelar_agendamento": {
+        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
+        if (!phoneDigits) return { error: "customer_phone é obrigatório." };
+        const url = `${baseUrl}/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`;
+        const body = {
+          customer_phone: String(phoneDigits),
+          establishment_code: estCode,
+          reason: String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp"),
+        };
+        console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
+        const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+        const text = await res.text();
+        console.log(`[AppBarber] cancelar_agendamento (${res.status}):`, text.slice(0, 600));
+        let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+        if (!res.ok) {
+          const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+          if (res.status === 422) {
+            return { error: `Não foi possível cancelar: ${baseErr}`, status: 422, recoverable: true, details: parsed?.data ?? parsed?.details };
+          }
+          if (res.status === 429) {
+            return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+          }
+          return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+        }
+        return {
+          ok: true,
+          invoice_code: args.invoice_code,
+          result: parsed?.data?.result || "Comanda cancelada com sucesso",
         };
       }
 
