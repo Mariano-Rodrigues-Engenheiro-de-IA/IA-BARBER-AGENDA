@@ -10754,7 +10754,7 @@ Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE 
 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
-- **listar_profissionais** — profissionais que atendem um serviço (precisa de service_code).
+- **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para disponibilidade e criação.
 - **listar_horarios** — horários LIVRES para um service_code + start_date (YYYY-MM-DD). Opcional: professional_code.
 - **criar_agendamento** — cria o agendamento real (service_code + professional_code + start_date + start_time + nome + telefone).
 - **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
