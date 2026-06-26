@@ -11064,10 +11064,10 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
 
       case "listar_agendamentos": {
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
-        // Datas padrão: hoje e hoje+31d em Brasília
+        // Datas padrão: -7 dias e +31 dias em Brasília (cobre agendamentos recentes do mesmo dia/anteriores)
         const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        const startDate = args.start_date || fmt(nowBrt);
+        const startDate = args.start_date || fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
         const endDate = args.end_date || fmt(new Date(nowBrt.getTime() + 31 * 24 * 60 * 60 * 1000));
         const statusType = args.status_type ?? 1;
         const r = await callGet("/v1/appointments/history", {
@@ -11077,14 +11077,18 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         });
         if (r?.error) return r;
         const items = Array.isArray(r?.data) ? r.data : [];
-        const filtered = phoneDigits
+        // Match por sufixo do telefone. Compara últimos 8 dígitos (núcleo do número),
+        // ignorando DDI, DDD e o "9" extra que varia entre cadastros.
+        const tail = (s: string, n: number) => s.slice(-n);
+        const phoneCore = phoneDigits ? tail(phoneDigits, 8) : "";
+        const filtered = phoneCore
           ? items.filter((it: any) => {
               const p = String(it?.client_phone || "").replace(/\D/g, "");
               if (!p) return false;
-              // bate por sufixo (com ou sem DDI 55)
-              return p.endsWith(phoneDigits) || phoneDigits.endsWith(p);
+              return tail(p, 8) === phoneCore;
             })
           : items;
+        console.log(`[AppBarber] listar_agendamentos: total API=${items.length}, match telefone=${filtered.length}, phoneCore=${phoneCore}, allPhones=${JSON.stringify(items.map((it: any) => it?.client_phone))}`);
         return {
           period: { start_date: startDate, end_date: endDate, status_type: statusType },
           customer_phone: phoneDigits || null,
@@ -11100,8 +11104,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
             service_value: it.service_value,
           })),
           total: filtered.length,
+          // Quando nada bate, devolve a lista bruta pra IA poder confirmar visualmente com o cliente
+          // (útil se o cadastro AppBarber estiver com outro telefone)
+          unmatched_sample: filtered.length === 0 && items.length > 0
+            ? items.slice(0, 5).map((it: any) => ({
+                scheduling_code: it.scheduling_code,
+                invoice_code: it.invoice_code,
+                client_name: it.client_name,
+                client_phone: it.client_phone,
+                service_description: it.service_description,
+                scheduling_start: it.scheduling_start,
+              }))
+            : undefined,
         };
       }
+
 
       case "cancelar_agendamento": {
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
