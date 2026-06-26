@@ -10806,13 +10806,13 @@ function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_profissionais",
-        description: "Lista os profissionais que atendem um serviço específico (employee_code, employee_name, service_interval).",
+        description: "Lista todos os profissionais reais do estabelecimento via /v1/professional-list (professional_code/employee_code e nome). Use antes de consultar disponibilidade.",
         parameters: {
           type: "object",
           properties: {
-            service_code: { type: "number", description: "service_code obtido em listar_servicos" },
+            service_code: { type: "number", description: "Opcional — service_code obtido em listar_servicos, mantido apenas para compatibilidade." },
           },
-          required: ["service_code"],
+          required: [],
         },
       },
     },
@@ -10820,15 +10820,15 @@ function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios",
-        description: "Lista horários LIVRES para um serviço em uma data. Pode filtrar por profissional. Use APENAS os horários retornados em available_times.",
+        description: "Lista horários LIVRES para um serviço, profissional e data. professional_code é obrigatório; use APENAS os horários retornados em available_times.",
         parameters: {
           type: "object",
           properties: {
             service_code: { type: "number" },
             start_date: { type: "string", description: "Data YYYY-MM-DD" },
-            professional_code: { type: "number", description: "Opcional — employee_code retornado por listar_profissionais" },
+            professional_code: { type: "number", description: "professional_code/employee_code retornado por listar_profissionais" },
           },
-          required: ["service_code", "start_date"],
+          required: ["service_code", "professional_code", "start_date"],
         },
       },
     },
@@ -10847,6 +10847,7 @@ function buildAppBarberTools(tenant: any) {
             customer_name: { type: "string" },
             customer_phone: { type: "string", description: "Telefone com DDI (ex: 5561999998888 ou +55...)" },
             service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval). Passe sempre que souber." },
+            scheduling_observation: { type: "string", description: "Observação opcional. O sistema sempre acrescenta nome e telefone para facilitar busca/cancelamento." },
           },
           required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone"],
         },
