@@ -10936,9 +10936,17 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         });
         if (r?.error) return r;
         const blocks = Array.isArray(r?.data) ? r.data : [];
+        const wantedProf = args.professional_code != null ? Number(args.professional_code) : null;
+        // ⚠️ Bug conhecido da API: o filtro professional_code é IGNORADO no servidor
+        // e a resposta vem com blocos de TODOS os profissionais. Precisamos filtrar
+        // localmente pelo employee_code, senão oferecemos horário de outro barbeiro
+        // e o POST /appointments retorna 422 "Choque de Horário".
+        const filteredBlocks = wantedProf != null
+          ? blocks.filter((b: any) => Number(b?.employee_code) === wantedProf)
+          : blocks;
         const seen = new Set<string>();
         const times: string[] = [];
-        for (const block of blocks) {
+        for (const block of filteredBlocks) {
           const list = Array.isArray(block?.avaliable) ? block.avaliable : (Array.isArray(block?.available) ? block.available : []);
           for (const slot of list) {
             const raw = String(slot?.scheduling_time || "").slice(0, 5);
@@ -10946,6 +10954,16 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           }
         }
         times.sort();
+        if (wantedProf != null && filteredBlocks.length === 0 && blocks.length > 0) {
+          // O profissional pedido não aparece na resposta → não trabalha nesse dia
+          return {
+            date: args.start_date,
+            service_code: args.service_code,
+            professional_code: wantedProf,
+            available_times: [],
+            note: "Esse profissional não tem horários nesse dia. Ofereça outra data ou outro profissional.",
+          };
+        }
         return {
           date: args.start_date,
           service_code: args.service_code,
