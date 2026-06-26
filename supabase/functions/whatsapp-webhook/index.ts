@@ -6137,6 +6137,8 @@ async function executeToolForProvider(
       return executeBempTool(tenant, toolCall, phoneNumber);
     case "zaylo":
       return executeZayloTool(tenant, toolCall, phoneNumber);
+    case "appbarber":
+      return executeAppBarberTool(tenant, toolCall, phoneNumber);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
