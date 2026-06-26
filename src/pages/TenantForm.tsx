@@ -251,8 +251,6 @@ function CelCashTestButton({ tenantId }: { tenantId: string }) {
 function AppBarberTestButton({ tenantId }: { tenantId: string }) {
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; message: string; details?: string } | null>(null);
-  const [flowTesting, setFlowTesting] = useState(false);
-  const [flowResult, setFlowResult] = useState<{ success: boolean; message: string; steps?: any[] } | null>(null);
 
   const handleTest = async () => {
     setTesting(true);
@@ -273,38 +271,12 @@ function AppBarberTestButton({ tenantId }: { tenantId: string }) {
     }
   };
 
-  const handleFlowTest = async () => {
-    if (!confirm("Este modo de teste vai criar uma comanda real no AppBarber e cancelá-la em seguida. Confirma?")) return;
-    setFlowTesting(true);
-    setFlowResult(null);
-    try {
-      const { data, error } = await supabase.functions.invoke("test-appbarber-booking-flow", {
-        body: { tenant_id: tenantId },
-      });
-      if (error) throw error;
-      setFlowResult(data);
-      if (data?.success) toast.success("Fluxo completo OK (criou e cancelou).");
-      else toast.error(data?.message || "Fluxo falhou");
-    } catch (err: any) {
-      setFlowResult({ success: false, message: err.message || "Erro ao testar fluxo" });
-      toast.error(err.message || "Erro ao testar fluxo");
-    } finally {
-      setFlowTesting(false);
-    }
-  };
-
   return (
     <div className="pt-2 space-y-3">
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
-          {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
-          {testing ? "Testando..." : "Testar Conexão AppBarber"}
-        </Button>
-        <Button type="button" variant="outline" onClick={handleFlowTest} disabled={flowTesting}>
-          {flowTesting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
-          {flowTesting ? "Executando fluxo..." : "Testar Fluxo (criar + cancelar)"}
-        </Button>
-      </div>
+      <Button type="button" variant="outline" onClick={handleTest} disabled={testing}>
+        {testing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plug className="w-4 h-4 mr-2" />}
+        {testing ? "Testando..." : "Testar Conexão AppBarber"}
+      </Button>
       {result && (
         <div className={`flex flex-col gap-1 text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
           <div className="flex items-center gap-2">
@@ -316,31 +288,10 @@ function AppBarberTestButton({ tenantId }: { tenantId: string }) {
           )}
         </div>
       )}
-      {flowResult && (
-        <div className={`flex flex-col gap-2 text-sm ${flowResult.success ? "text-emerald-400" : "text-red-400"}`}>
-          <div className="flex items-center gap-2">
-            {flowResult.success ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-            <span>{flowResult.message}</span>
-          </div>
-          {Array.isArray(flowResult.steps) && flowResult.steps.length > 0 && (
-            <div className="text-xs text-muted-foreground p-2 bg-muted/30 rounded space-y-1 max-h-64 overflow-auto">
-              {flowResult.steps.map((s: any, i: number) => (
-                <div key={i} className="flex gap-2">
-                  <span className={s.ok ? "text-emerald-400" : "text-red-400"}>{s.ok ? "✓" : "✗"}</span>
-                  <span className="flex-1">
-                    <strong>{s.name}</strong>
-                    {typeof s.http_status === "number" && <span className="opacity-70"> [{s.http_status}{typeof s.elapsed_ms === "number" ? ` · ${s.elapsed_ms}ms` : ""}]</span>}
-                    : {s.detail}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
+
 
 function UazapiTestButton({ url, token }: { url: string; token: string }) {
   const [testing, setTesting] = useState(false);
