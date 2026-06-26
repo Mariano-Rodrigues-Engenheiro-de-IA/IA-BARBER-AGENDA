@@ -10864,6 +10864,52 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
   const estCode = Number(estCodeRaw);
   if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
 
+    {
+      type: "function",
+      function: {
+        name: "listar_agendamentos",
+        description: "Lista os agendamentos do cliente em um período (até 31 dias). Use ANTES de cancelar para obter o invoice_code do agendamento. Filtra pelo telefone do cliente após buscar no estabelecimento.",
+        parameters: {
+          type: "object",
+          properties: {
+            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos, com ou sem DDI 55). Padrão: telefone da conversa." },
+            start_date: { type: "string", description: "YYYY-MM-DD — início do período. Padrão: hoje (Brasília)." },
+            end_date: { type: "string", description: "YYYY-MM-DD — fim do período (máx 31 dias após start_date). Padrão: hoje + 31 dias." },
+            status_type: { type: "number", description: "1=Agendado, 2=Realizado, 3=Cancelado, 4=Bloqueado, 5=Ausente. Padrão: 1 (Agendado)." },
+          },
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "cancelar_agendamento",
+        description: "Cancela o agendamento (via comanda/invoice_code) no AppBarber. SEMPRE chame listar_agendamentos primeiro para obter o invoice_code certo.",
+        parameters: {
+          type: "object",
+          properties: {
+            invoice_code: { type: "number", description: "invoice_code do agendamento (obtido em listar_agendamentos)." },
+            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos). Padrão: telefone da conversa." },
+            reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
+          },
+          required: ["invoice_code"],
+        },
+      },
+    },
+  ];
+}
+
+async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+  const funcName = toolCall.function.name;
+  let args: any = {};
+  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  const apiKey = (tenant.appbarber_api_key || "").trim();
+  const estCodeRaw = (tenant.appbarber_establishment_code || "").trim();
+  const estCode = Number(estCodeRaw);
+  if (!apiKey || !estCodeRaw) return { error: "Credenciais AppBarber não configuradas." };
+
   const baseUrl = ((tenant.appbarber_base_url || "").trim().replace(/\/+$/, "")) || APPBARBER_DEFAULT_BASE_URL;
   const headers: Record<string, string> = {
     "x-api-key": apiKey,
