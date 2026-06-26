@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
     }
 
     // Try listing services as a smoke test
-    const url = `${baseUrl}/v1/services`;
+    const url = `${baseUrl}/v1/services?establishment_code=${encodeURIComponent(estCode)}`;
     const started = Date.now();
     let res: Response;
     try {
@@ -84,7 +84,6 @@ Deno.serve(async (req) => {
         method: "GET",
         headers: {
           "x-api-key": apiKey,
-          "establishment_code": estCode,
           "Accept": "application/json",
         },
       });
