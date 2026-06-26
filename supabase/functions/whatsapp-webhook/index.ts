@@ -10755,8 +10755,8 @@ Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
 - **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para disponibilidade e criação.
-- **listar_horarios** — horários LIVRES para um service_code + start_date (YYYY-MM-DD). Opcional: professional_code.
-- **criar_agendamento** — cria o agendamento real (service_code + professional_code + start_date + start_time + nome + telefone).
+- **listar_horarios** — horários LIVRES para service_code + professional_code + start_date (YYYY-MM-DD), via /v1/availability. Use exatamente as strings retornadas.
+- **criar_agendamento** — cria o agendamento real com service_code + professional_code + scheduling_date + scheduling_time + nome + telefone.
 - **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
 - **cancelar_agendamento** — cancela a comanda inteira pelo invoice_code ou, quando explicitamente necessário, remove um item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
 
@@ -10767,8 +10767,8 @@ Ferramentas (nomes exatos):
 ### Criar agendamento
 1. Na 1ª intenção de agendar / preço / serviço / profissional / disponibilidade → chame **listar_servicos** silenciosamente.
 2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
-3. Chame **listar_profissionais** com \`service_code\` → memorize \`employee_code\` do escolhido (ou ofereça as opções reais).
-4. Chame **listar_horarios** com \`service_code\` + \`start_date\` (+ \`professional_code\` quando o cliente escolheu profissional específico). Use APENAS os valores de \`available_times\` (HH:MM) retornados.
+3. Chame **listar_profissionais** → memorize \`professional_code\`/\`employee_code\` do escolhido (ou ofereça as opções reais).
+4. Chame **listar_horarios** com \`service_code\` + \`professional_code\` + \`start_date\`. Use APENAS os valores de \`available_times\` retornados, sem arredondar.
 5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
 6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`customer_name\`, \`customer_phone\`.
 
@@ -10782,11 +10782,12 @@ Ferramentas (nomes exatos):
 
 ## 🚨 REGRAS ABSOLUTAS
 
-- NUNCA invente service_code, employee_code ou horários. Tudo vem das tools.
+- NUNCA invente service_code, professional_code/employee_code ou horários. Tudo vem das tools.
 - NUNCA cite horário sem antes ter chamado **listar_horarios** nessa interação.
 - Se \`available_times\` vier vazio, ofereça outra data — NÃO escale humano por isso.
 - Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
 - Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h.
+- A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }
 
