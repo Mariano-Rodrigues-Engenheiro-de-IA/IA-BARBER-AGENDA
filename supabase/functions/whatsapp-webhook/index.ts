@@ -11340,7 +11340,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const removingItem = cancelScope === "item" && args.invoice_item_code;
         if (removingItem) {
           const url = buildUrl(`/v1/invoice/item/${encodeURIComponent(String(args.invoice_item_code))}`, {});
-          const body = { reason };
+          const body = { establishment_code: estCode, reason };
           console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
           const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
           const text = await res.text();
@@ -11361,7 +11361,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
 
         if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
         if (!phoneDigits) return { error: "customer_phone é obrigatório." };
-        const url = `${baseUrl}/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`;
+        const url = buildUrl(`/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`, {});
         const body = {
           customer_phone: String(phoneDigits),
           establishment_code: estCode,
