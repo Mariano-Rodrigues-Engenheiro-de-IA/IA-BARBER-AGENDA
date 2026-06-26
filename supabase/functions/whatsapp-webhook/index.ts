@@ -11109,17 +11109,18 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
         const time = String(args.start_time).length === 5 ? `${args.start_time}:00` : args.start_time;
         const url = buildUrl("/v1/appointments", {});
-        const body = {
-          establishment_code: estCode,
-          professional_code: Number(args.professional_code),
-          service_code: Number(args.service_code),
-          scheduling_date: args.start_date,
-          scheduling_time: time,
-          client_name: String(args.customer_name || "Cliente").trim(),
-          client_phone: phoneDigits,
-          scheduling_observation: String(args.scheduling_observation || "").trim()
-            ? `${String(args.scheduling_observation).trim()} | Cliente: ${String(args.customer_name || "Cliente").trim()} | WhatsApp: ${phoneDigits}`
-            : `Cliente: ${String(args.customer_name || "Cliente").trim()} | WhatsApp: ${phoneDigits}`,
+        const customerName = String(args.customer_name || "Cliente").trim();
+        // Schema real do AppBarber (validado via erro 400):
+        // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM:SS"
+        // professionals: [{ professional_code }] | services: [{ service_code }]
+        const body: Record<string, unknown> = {
+          establishment_code: Number(estCode),
+          customer_phone: Number(phoneDigits),
+          customer_name: customerName,
+          start_date: `${args.start_date} ${time}`,
+          professionals: [{ professional_code: Number(args.professional_code) }],
+          services: [{ service_code: Number(args.service_code) }],
+          scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
         const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
