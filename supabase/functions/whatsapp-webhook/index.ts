@@ -11121,7 +11121,9 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         // e respeita o limite de 31 dias da API AppBarber.
         const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
         const fmt = (d: Date) => d.toISOString().slice(0, 10);
-        const startDate = args.start_date || fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
+        const defaultStartDate = fmt(new Date(nowBrt.getTime() - 7 * 24 * 60 * 60 * 1000));
+        const requestedStartDate = args.start_date || defaultStartDate;
+        const startDate = requestedStartDate > defaultStartDate ? defaultStartDate : requestedStartDate;
         const maxEndFromStart = new Date(new Date(`${startDate}T00:00:00Z`).getTime() + 31 * 24 * 60 * 60 * 1000);
         const requestedEnd = args.end_date ? new Date(`${args.end_date}T00:00:00Z`) : new Date(nowBrt.getTime() + 24 * 24 * 60 * 60 * 1000);
         const endDate = fmt(requestedEnd.getTime() > maxEndFromStart.getTime() ? maxEndFromStart : requestedEnd);
@@ -11196,11 +11198,12 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         }
 
         // Fallback: histórico de agendamentos por período, útil quando a comanda não aparece em /invoice/search.
-        const r = await callGet("/v1/appointments/history", {
+        const callHistory = (historyStatusType: number) => callGet("/v1/appointments/history", {
           start_date: startDate,
           end_date: endDate,
-          status_type: statusType,
+          status_type: historyStatusType,
         });
+        const r = await callHistory(statusType);
         if (r?.error) return r;
         const items = Array.isArray(r?.data) ? r.data : [];
         // Match por sufixo do telefone. Compara últimos 8 dígitos (núcleo do número),
@@ -11214,6 +11217,30 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
               return tail(p, 8) === phoneCore;
             })
           : items;
+        const mapHistoryItem = (it: any) => ({
+          source: "appointments_history",
+          scheduling_code: it.scheduling_code,
+          invoice_code: it.invoice_code,
+          invoice_item_code: null,
+          client_name: it.client_name,
+          client_phone: it.client_phone,
+          service_description: it.service_description,
+          employee_name: it.employee_name,
+          scheduling_start: it.scheduling_start,
+          scheduling_status: it.scheduling_status,
+          service_value: it.service_value,
+        });
+        let canceledAppointments: any[] = [];
+        if (filtered.length === 0 && Number(statusType) === 1 && phoneCore) {
+          const canceledResult = await callHistory(3);
+          const canceledItems = Array.isArray(canceledResult?.data) ? canceledResult.data : [];
+          canceledAppointments = canceledItems
+            .filter((it: any) => tail(String(it?.client_phone || "").replace(/\D/g, ""), 8) === phoneCore)
+            .map(mapHistoryItem);
+          if (canceledAppointments.length > 0) {
+            console.log(`[AppBarber] listar_agendamentos: found canceled/manual matches=${canceledAppointments.length}`);
+          }
+        }
         console.log(`[AppBarber] listar_agendamentos: total API=${items.length}, match telefone=${filtered.length}, phoneCore=${phoneCore}, allPhones=${JSON.stringify(items.map((it: any) => it?.client_phone))}`);
         return {
           source: "appointments_history",
@@ -11221,20 +11248,11 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           customer_phone: phoneDigits || null,
           searched_customer_phones: triedInvoicePhones,
           invoice_search_diagnostics: invoiceSearchDiagnostics,
-          appointments: filtered.map((it: any) => ({
-            source: "appointments_history",
-            scheduling_code: it.scheduling_code,
-            invoice_code: it.invoice_code,
-            invoice_item_code: null,
-            client_name: it.client_name,
-            client_phone: it.client_phone,
-            service_description: it.service_description,
-            employee_name: it.employee_name,
-            scheduling_start: it.scheduling_start,
-            scheduling_status: it.scheduling_status,
-            service_value: it.service_value,
-          })),
+          appointments: filtered.map(mapHistoryItem),
           total: filtered.length,
+          canceled_appointments: canceledAppointments,
+          found_canceled: canceledAppointments.length > 0,
+          note: canceledAppointments.length > 0 ? "Não há agendamento ativo para cancelar; encontrei registro cancelado para este telefone." : undefined,
           // Quando nada bate, devolve a lista bruta pra IA poder confirmar visualmente com o cliente
           // (útil se o cadastro AppBarber estiver com outro telefone)
           unmatched_sample: filtered.length === 0 && items.length > 0
