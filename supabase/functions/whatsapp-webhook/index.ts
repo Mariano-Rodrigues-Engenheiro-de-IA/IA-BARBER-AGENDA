@@ -10756,7 +10756,7 @@ Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
 - **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para disponibilidade e criação.
 - **listar_horarios** — horários LIVRES para service_code + professional_code + start_date (YYYY-MM-DD), via /v1/availability. Use exatamente as strings retornadas.
-- **criar_agendamento** — cria o agendamento real com service_code + professional_code + scheduling_date + scheduling_time + nome + telefone.
+- **criar_agendamento** — cria o agendamento real com service_code + professional_code + start_date/start_time + duração + nome + telefone.
 - **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
 - **cancelar_agendamento** — cancela a comanda inteira pelo invoice_code ou, quando explicitamente necessário, remove um item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
 
@@ -10770,7 +10770,7 @@ Ferramentas (nomes exatos):
 3. Chame **listar_profissionais** → memorize \`professional_code\`/\`employee_code\` do escolhido (ou ofereça as opções reais).
 4. Chame **listar_horarios** com \`service_code\` + \`professional_code\` + \`start_date\`. Use APENAS os valores de \`available_times\` retornados, sem arredondar.
 5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
-6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`customer_name\`, \`customer_phone\`.
+6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`service_duration_minutes\` (o \`service_interval\` de listar_servicos), \`customer_name\`, \`customer_phone\`.
 
 ### Cancelar agendamento
 1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele. A ferramenta busca COMANDAS por telefone antes de usar histórico.
@@ -10786,7 +10786,7 @@ Ferramentas (nomes exatos):
 - NUNCA cite horário sem antes ter chamado **listar_horarios** nessa interação.
 - Se \`available_times\` vier vazio, ofereça outra data — NÃO escale humano por isso.
 - Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
-- Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h.
+- Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
 - A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }
@@ -10846,10 +10846,10 @@ function buildAppBarberTools(tenant: any) {
             start_time: { type: "string", description: "HH:MM (exato de available_times)" },
             customer_name: { type: "string" },
             customer_phone: { type: "string", description: "Telefone com DDI (ex: 5561999998888 ou +55...)" },
-            service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval). Passe sempre que souber." },
+            service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval retornado por listar_servicos). Obrigatório para evitar rejeição da API." },
             scheduling_observation: { type: "string", description: "Observação opcional. O sistema sempre acrescenta nome e telefone para facilitar busca/cancelamento." },
           },
-          required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone"],
+          required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone", "service_duration_minutes"],
         },
       },
     },
@@ -11009,6 +11009,29 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
     return false;
   };
 
+  const toPositiveNumber = (value: any): number | null => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const normalizeAppBarberStartDateTime = (date: any, time: any): string => {
+    const day = String(date || "").trim().slice(0, 10);
+    const rawTime = String(time || "").trim();
+    const hhmm = rawTime.match(/^(\d{2}:\d{2})/)?.[1] || rawTime.slice(0, 5);
+    return `${day} ${hhmm}`;
+  };
+
+  const resolveAppBarberServiceDuration = async (serviceCode: any, explicitDuration: any): Promise<number | null> => {
+    const direct = toPositiveNumber(explicitDuration);
+    if (direct) return direct;
+
+    const r = await callGet("/v1/services", {});
+    if (r?.error) return null;
+    const items = Array.isArray(r?.data) ? r.data : [];
+    const service = items.find((s: any) => Number(firstValue(s.service_code, s.code, s.id)) === Number(serviceCode));
+    return toPositiveNumber(firstValue(service?.service_interval, service?.duration_minutes, service?.duration));
+  };
+
   try {
     switch (funcName) {
       case "listar_servicos": {
@@ -11107,19 +11130,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
-        const time = String(args.start_time).length === 5 ? `${args.start_time}:00` : args.start_time;
+        const startDateTime = normalizeAppBarberStartDateTime(args.start_date, args.start_time);
+        if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
+          return { error: "start_date/start_time inválidos. Use start_date YYYY-MM-DD e start_time HH:MM.", recoverable: true };
+        }
+        const serviceDuration = await resolveAppBarberServiceDuration(args.service_code, args.service_duration_minutes);
+        if (!serviceDuration) {
+          return { error: "Duração do serviço não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.", recoverable: true };
+        }
         const url = buildUrl("/v1/appointments", {});
         const customerName = String(args.customer_name || "Cliente").trim();
         // Schema real do AppBarber (validado via erro 400):
-        // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM:SS"
-        // professionals: [{ professional_code }] | services: [{ service_code }]
+        // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
+        // professionals: [{ professional_code }] | services: [{ service_code, duration }]
         const body: Record<string, unknown> = {
           establishment_code: Number(estCode),
           customer_phone: Number(phoneDigits),
           customer_name: customerName,
-          start_date: `${args.start_date} ${time}`,
+          start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
-          services: [{ service_code: Number(args.service_code) }],
+          services: [{ service_code: Number(args.service_code), duration: serviceDuration }],
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
