@@ -11062,6 +11062,79 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         };
       }
 
+      case "listar_agendamentos": {
+        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // Datas padrão: hoje e hoje+31d em Brasília
+        const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        const fmt = (d: Date) => d.toISOString().slice(0, 10);
+        const startDate = args.start_date || fmt(nowBrt);
+        const endDate = args.end_date || fmt(new Date(nowBrt.getTime() + 31 * 24 * 60 * 60 * 1000));
+        const statusType = args.status_type ?? 1;
+        const r = await callGet("/v1/appointments/history", {
+          start_date: startDate,
+          end_date: endDate,
+          status_type: statusType,
+        });
+        if (r?.error) return r;
+        const items = Array.isArray(r?.data) ? r.data : [];
+        const filtered = phoneDigits
+          ? items.filter((it: any) => {
+              const p = String(it?.client_phone || "").replace(/\D/g, "");
+              if (!p) return false;
+              // bate por sufixo (com ou sem DDI 55)
+              return p.endsWith(phoneDigits) || phoneDigits.endsWith(p);
+            })
+          : items;
+        return {
+          period: { start_date: startDate, end_date: endDate, status_type: statusType },
+          customer_phone: phoneDigits || null,
+          appointments: filtered.map((it: any) => ({
+            scheduling_code: it.scheduling_code,
+            invoice_code: it.invoice_code,
+            client_name: it.client_name,
+            client_phone: it.client_phone,
+            service_description: it.service_description,
+            employee_name: it.employee_name,
+            scheduling_start: it.scheduling_start,
+            scheduling_status: it.scheduling_status,
+            service_value: it.service_value,
+          })),
+          total: filtered.length,
+        };
+      }
+
+      case "cancelar_agendamento": {
+        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
+        if (!phoneDigits) return { error: "customer_phone é obrigatório." };
+        const url = `${baseUrl}/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`;
+        const body = {
+          customer_phone: String(phoneDigits),
+          establishment_code: estCode,
+          reason: String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp"),
+        };
+        console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
+        const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+        const text = await res.text();
+        console.log(`[AppBarber] cancelar_agendamento (${res.status}):`, text.slice(0, 600));
+        let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+        if (!res.ok) {
+          const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+          if (res.status === 422) {
+            return { error: `Não foi possível cancelar: ${baseErr}`, status: 422, recoverable: true, details: parsed?.data ?? parsed?.details };
+          }
+          if (res.status === 429) {
+            return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+          }
+          return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+        }
+        return {
+          ok: true,
+          invoice_code: args.invoice_code,
+          result: parsed?.data?.result || "Comanda cancelada com sucesso",
+        };
+      }
+
       default:
         return { error: `Ferramenta AppBarber desconhecida: ${funcName}` };
     }
