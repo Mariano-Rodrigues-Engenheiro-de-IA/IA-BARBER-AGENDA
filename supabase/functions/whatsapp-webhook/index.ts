@@ -9800,8 +9800,8 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         };
       }
 
+      case "agendar": {
 
-        const body = Array.isArray(args.servicos) ? args.servicos : [];
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
