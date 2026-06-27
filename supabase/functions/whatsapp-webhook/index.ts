@@ -7543,20 +7543,32 @@ Execute buscar_cliente silenciosamente com o telefone do cliente.
 - Cliente encontrado → use o clienteId retornado
 - Cliente não encontrado → pergunte o nome e execute cadastrar_cliente
 
-### PASSO 1 — COLETAR DADOS (serviço + barbeiro + dia)
+### PASSO 1 — COLETAR DADOS MÍNIMOS (serviço + dia)
 
-Pergunte APENAS o que falta, nesta ordem:
+Pergunte APENAS o que falta, nesta ordem (NÃO pergunte barbeiro ainda):
 1. **Serviço** — "Seria corte, barba ou os dois?"
-2. **Barbeiro** — "Tem preferência por algum barbeiro?"
-3. **Dia** — "Pra qual dia?"
+2. **Dia** — "Pra qual dia?"
 
-### PASSO 2 — LISTAR E OFERECER HORÁRIOS
+⚠️ NUNCA pergunte "tem preferência de barbeiro?" antes do PASSO 2. A disponibilidade real é que decide.
 
-Execute listar_horarios com: data + servicoDuracao (e opcionalmente profissionalId)
+### PASSO 2 — LISTAR HORÁRIOS (agendamento inteligente)
 
-Use APENAS horariosVagos. Ignore intervalosVagos.
+Execute listar_horarios com APENAS: data + servicoDuracao (SEM profissionalId).
+A ferramenta retorna TODOS os profissionais da data em uma única chamada, mais 3 campos auxiliares:
+- \`profissionaisLivres\` — lista resumida dos barbeiros com vagas
+- \`horariosConsolidados\` — mapa horário → barbeiros livres naquele horário
+- \`dica\` — instrução curta sobre o próximo passo
 
-**Se for hoje:** filtre e descarte horários ≤ hora atual.
+Use \`horariosVagos\` de cada profissional (IGNORE \`intervalosVagos\`).
+**Se for hoje:** os horários passados já vêm filtrados.
+
+### PASSO 2.1 — DECIDIR SEM ATRITO
+
+- **0 barbeiros livres** → "Esse dia tá lotado. Quer ver outro dia?" (NÃO pergunte barbeiro)
+- **1 barbeiro livre** → ofereça DIRETO os horários desse barbeiro: "Pra esse dia só o [Nome] tá com agenda aberta. Tem esses horários: [..]. Qual fica melhor?"
+- **2+ barbeiros livres**:
+  - Se o cliente JÁ mencionou um horário específico → escolha automaticamente um barbeiro disponível naquele horário usando \`horariosConsolidados\` (sem perguntar).
+  - Se não mencionou horário → ofereça os horários consolidados OU pergunte "Tem preferência por algum barbeiro? Temos [Nome1], [Nome2]...".
 
 ### PASSO 3 — CONFIRMAÇÃO
 
