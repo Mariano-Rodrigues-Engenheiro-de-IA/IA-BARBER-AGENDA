@@ -9731,7 +9731,76 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
-      case "agendar": {
+      case "listar_horarios_geral": {
+        const body = Array.isArray(args.servicos) ? args.servicos : [];
+        const profs = Array.isArray(args.profissionais) ? args.profissionais : [];
+        if (profs.length === 0 || !args.data || body.length === 0) {
+          return { error: "Faltam parâmetros: profissionais (array com codigo), data (yyyy-MM-dd) e servicos." };
+        }
+        console.log(`[Frizzar] listar_horarios_geral data=${args.data} profs=${profs.map((p: any) => p.codigo).join(",")}`);
+
+        const consultaUm = async (prof: any) => {
+          const profissionalId = prof?.codigo;
+          const nome = prof?.nome ?? null;
+          if (!profissionalId) return { profissionalId: null, nome, erro: "codigo ausente", horariosLivres: [], outrosDias: [] };
+          try {
+            const res = await frizzarFetch(`/listar/horarios/${profissionalId}/${args.data}`, {
+              method: "POST",
+              headers: jsonHeaders,
+              body: JSON.stringify(body),
+            });
+            const text = await res.text();
+            if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], outrosDias: [] };
+            const parsed = JSON.parse(text);
+            if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], outrosDias: [], raw: parsed };
+            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data)) ?? parsed[0];
+            const diaRegistrado = (typeof exato?.dia === "string" ? exato.dia.slice(0, 10) : args.data);
+            // Mantém a trava de data viva para CADA profissional consultado.
+            if (diaRegistrado) {
+              frizzarLastListed.set(lastListedKey(profissionalId), { dia: diaRegistrado, listedAt: Date.now() });
+            }
+            return {
+              profissionalId,
+              nome,
+              horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
+              outrosDias: parsed
+                .filter((d: any) => d !== exato)
+                .map((d: any) => ({
+                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
+                  horariosLivres: Array.isArray(d?.horariosLivres) ? d.horariosLivres : [],
+                })),
+            };
+          } catch (e: any) {
+            return { profissionalId, nome, erro: String(e?.message || e), horariosLivres: [], outrosDias: [] };
+          }
+        };
+
+        const resultados = await Promise.all(profs.map(consultaUm));
+        const comHorario = resultados.filter((r: any) => Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0);
+        // Horários únicos consolidados (qualquer profissional) para a IA reconhecer o pool total.
+        const horariosConsolidados = Array.from(new Set(
+          comHorario.flatMap((r: any) => r.horariosLivres)
+        )).sort();
+
+        let resumo: string;
+        if (comHorario.length === 0) {
+          resumo = `Nenhum profissional com vaga em ${args.data}. Ofereça outro dia (veja outrosDias de cada profissional).`;
+        } else if (comHorario.length === 1) {
+          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.`;
+        } else {
+          resumo = `${comHorario.length} profissionais livres em ${args.data}. Se a agenda estiver cheia de opções, pergunte se há preferência; se o cliente já disse o horário desejado, escolha sem perguntar.`;
+        }
+
+        return {
+          data: args.data,
+          resumo,
+          totalProfissionaisLivres: comHorario.length,
+          horariosConsolidados,
+          profissionais: resultados,
+        };
+      }
+
+
         const body = Array.isArray(args.servicos) ? args.servicos : [];
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
