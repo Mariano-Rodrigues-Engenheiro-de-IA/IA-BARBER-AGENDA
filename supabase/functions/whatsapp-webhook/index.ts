@@ -9445,6 +9445,41 @@ function buildFrizzarTools(tenant: any) {
     {
       type: "function",
       function: {
+        name: "listar_horarios_geral",
+        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo (executa as consultas em paralelo). Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Retorna { resumo, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            profissionais: {
+              type: "array",
+              description: "Lista de profissionais a consultar. Use os retornados por listar_profissionais.",
+              items: {
+                type: "object",
+                properties: {
+                  codigo: { type: "number", description: "ID (codigo) do profissional" },
+                  nome: { type: "string", description: "Nome do profissional (opcional, ajuda na resposta)" },
+                },
+                required: ["codigo"],
+              },
+            },
+            data: { type: "string", description: "Data inicial no formato yyyy-MM-dd" },
+            servicos: {
+              type: "array",
+              description: "Lista de serviços escolhidos pelo cliente",
+              items: {
+                type: "object",
+                properties: { codigo: { type: "number" } },
+                required: ["codigo"],
+              },
+            },
+          },
+          required: ["profissionais", "data", "servicos"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "agendar",
         description: "Cria o agendamento. Cada serviço gera um agendamento sequencial. Sempre confirme dia/hora/serviço com o cliente ANTES de chamar.",
         parameters: {
