@@ -2846,6 +2846,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
+      trinksLockUpdatedAt: (state as any).trinksLockUpdatedAt ?? 0,
     };
 
     await supabase
