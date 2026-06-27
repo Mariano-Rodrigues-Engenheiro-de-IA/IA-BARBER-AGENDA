@@ -2801,11 +2801,12 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((r: any) => r && typeof r.text === "string" && typeof r.norm === "string" && typeof r.at === "string")
             .slice(-6)
         : [],
-      // Trinks service-lock (carrega entre mensagens)
+      // Trinks service-lock (carrega entre mensagens, com TTL curto de 20min)
       ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
+      trinksLockUpdatedAt: typeof s.trinksLockUpdatedAt === "number" ? s.trinksLockUpdatedAt : 0,
     } as AgentSessionState;
   } catch {
     return defaultState;
