@@ -5115,20 +5115,34 @@ async function callAIAgent(
         }
 
         // ===== TRINKS SERVICE-LOCK LAYER =====
-        // Impede que a IA troque o serviço escolhido no meio da conversa sem o
-        // cliente ter pedido. Bloqueia listar_horarios e criar_agendamento com
-        // servicoDuracao/duracaoEmMinutos diferente do travado.
+        // Impede que a IA troque o serviço escolhido no meio da MESMA tentativa
+        // de agendamento sem o cliente ter pedido. TTL curto (20min) e auto-
+        // limpeza após criar_agendamento bem-sucedido evitam que travas antigas
+        // bloqueiem novos agendamentos.
         if (provider === "trinks") {
           const tName = toolCall.function.name;
           const lockedDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
           const lockedName = (sessionState as any).trinksSelectedServiceName as string | null;
           const lockedSvcId = (sessionState as any).trinksSelectedServiceId as number | null;
+          const lockUpdatedAt = ((sessionState as any).trinksLockUpdatedAt as number) || 0;
+          const LOCK_TTL_MS = 20 * 60 * 1000; // 20min
+          const lockExpired = lockUpdatedAt > 0 && (Date.now() - lockUpdatedAt) > LOCK_TTL_MS;
+
+          if (lockExpired && lockedDur) {
+            console.log(`[TrinksLock] expirado (${Math.round((Date.now() - lockUpdatedAt) / 60000)}min), limpando trava`);
+            (sessionState as any).trinksSelectedServiceDuration = null;
+            (sessionState as any).trinksSelectedServiceId = null;
+            (sessionState as any).trinksSelectedServiceName = null;
+            (sessionState as any).trinksLockUpdatedAt = 0;
+          }
+
+          const stillLocked = !lockExpired && lockedDur;
           // Intenção explícita do cliente de trocar/adicionar serviço.
-          const SWITCH_INTENT = /\b(barba|cabelo|combo|tamb[eé]m|incluir|adicionar?|junto|os\s?dois|ambos|trocar|mudar|na\s+verdade|prefiro|outro\s+servi[cç]o|s[oó]\s+(corte|barba|cabelo))\b/i;
+          const SWITCH_INTENT = /\b(barba|cabelo|combo|tamb[eé]m|incluir|adicionar?|junto|os\s?dois|ambos|trocar|mudar|na\s+verdade|prefiro|outro\s+servi[cç]o|s[oó]\s+(corte|barba|cabelo)|corte)\b/i;
           const lastUser = String(userMessage || "");
           const userWantsChange = SWITCH_INTENT.test(lastUser);
 
-          if (!toolResult && tName === "listar_horarios" && lockedDur) {
+          if (!toolResult && stillLocked && tName === "listar_horarios") {
             const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
             if (reqDur && reqDur !== lockedDur && !userWantsChange) {
               console.log(`[TrinksLock] listar_horarios BLOCKED: servicoDuracao=${reqDur} ≠ locked=${lockedDur} (svcId=${lockedSvcId}, name=${lockedName}) — sem intenção de troca`);
@@ -5142,21 +5156,13 @@ async function callAIAgent(
             }
           }
 
-          if (!toolResult && tName === "criar_agendamento" && lockedDur) {
+          // criar_agendamento NÃO é mais bloqueado pela trava — apenas registra
+          // aviso em log. Travar a criação causava agendamentos legítimos a
+          // falharem quando a duração mudava entre listar_horarios e criar.
+          if (!toolResult && stillLocked && tName === "criar_agendamento") {
             const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
-            // Só bloqueia se a DURAÇÃO mudou (ex.: corte 40 → combo 90).
-            // Trocas de svcId com mesma duração são legítimas — vários serviços
-            // Trinks compartilham a mesma duração (Corte, Barba, Barbaterapia = 40min).
-            const durMismatch = reqDur && reqDur !== lockedDur;
-            if (durMismatch && !userWantsChange) {
-              console.log(`[TrinksLock] criar_agendamento BLOCKED: dur=${reqDur} ≠ travado=${lockedDur}`);
-              toolResult = {
-                error: `Você travou o serviço "${lockedName || lockedSvcId}" (${lockedDur}min) nesta conversa, mas tentou agendar com duração diferente (${reqDur}min). Volte à duração travada OU pergunte ao cliente antes de mudar.`,
-                blocked: true,
-                locked_service: { id: lockedSvcId, nome: lockedName, duracao: lockedDur },
-              };
-              wasBlocked = true;
-              sessionBlocked = true;
+            if (reqDur && reqDur !== lockedDur) {
+              console.log(`[TrinksLock] criar_agendamento dur mismatch (req=${reqDur}, locked=${lockedDur}) — permitindo prosseguir (lock é só sinal, não trava criação)`);
             }
           }
         }
