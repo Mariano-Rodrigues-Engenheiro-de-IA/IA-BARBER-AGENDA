@@ -8388,6 +8388,48 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             }
           } catch (e) { console.warn("[Trinks] falha ao cachear horários:", (e as Error).message); }
 
+          // ===== AGENDAMENTO INTELIGENTE (consolidação) =====
+          // Enriquecemos o retorno com uma visão consolidada para a IA decidir
+          // sem perguntar "tem preferência de barbeiro?" quando não for necessário.
+          try {
+            const profissionais = (parsed?.data || parsed) as any[];
+            if (Array.isArray(profissionais)) {
+              const profsLivres = profissionais
+                .filter((p) => Array.isArray(p?.horariosVagos) && p.horariosVagos.length > 0)
+                .map((p) => ({
+                  id: Number(p?.id || p?.Id),
+                  nome: p?.nome || p?.Nome || "",
+                  qtdHorarios: p.horariosVagos.length,
+                  primeirosHorarios: p.horariosVagos.slice(0, 6),
+                }));
+
+              const consolidado: Record<string, Array<{ id: number; nome: string }>> = {};
+              for (const p of profissionais) {
+                if (!Array.isArray(p?.horariosVagos)) continue;
+                const pid = Number(p?.id || p?.Id);
+                const pnome = p?.nome || p?.Nome || "";
+                for (const h of p.horariosVagos) {
+                  const slot = String(h).slice(0, 5);
+                  if (!consolidado[slot]) consolidado[slot] = [];
+                  consolidado[slot].push({ id: pid, nome: pnome });
+                }
+              }
+
+              let dica = "";
+              if (profsLivres.length === 0) {
+                dica = "NENHUM profissional livre nessa data. Ofereça outro dia — NÃO pergunte preferência de barbeiro.";
+              } else if (profsLivres.length === 1) {
+                dica = `APENAS 1 profissional livre (${profsLivres[0].nome}). NÃO pergunte preferência — ofereça direto os horários desse barbeiro.`;
+              } else {
+                dica = "Múltiplos profissionais livres. Se o cliente JÁ mencionou um horário, escolha automaticamente um barbeiro disponível naquele horário (sem perguntar). Se não mencionou horário, ofereça opções consolidadas OU pergunte preferência.";
+              }
+
+              (parsed as any).profissionaisLivres = profsLivres;
+              (parsed as any).horariosConsolidados = consolidado;
+              (parsed as any).dica = dica;
+            }
+          } catch (e) { console.warn("[Trinks] falha ao consolidar horários:", (e as Error).message); }
+
           return parsed;
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
