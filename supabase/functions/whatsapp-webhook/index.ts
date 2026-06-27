@@ -9322,7 +9322,7 @@ Se \`agendar\` retornar erro com \`horariosLivres\` (ex.: "Horário X indisponí
 
 Se você já tem \`horariosLivres\` de um profissional + dia + serviço obtido há menos de 5 minutos NESSA conversa, USE o resultado anterior. NÃO chame \`listar_horarios\` de novo para o mesmo trio. Reconsulte apenas se: a data mudou, o serviço mudou, o profissional mudou, ou o cliente pediu uma nova checagem.
 
-Quando o cliente diz "qualquer barbeiro", consulte de forma direcionada (1 por vez, começando pelo de \`proximoHorario\` mais cedo) — não dispare \`listar_horarios\` para todos em paralelo.
+Quando o cliente diz "qualquer barbeiro" ou ainda não escolheu profissional, use **listar_horarios_geral** (uma chamada só — o servidor já consulta todos em paralelo). NÃO faça loop de \`listar_horarios\` profissional por profissional.
 
 ------------------------------------------
 
