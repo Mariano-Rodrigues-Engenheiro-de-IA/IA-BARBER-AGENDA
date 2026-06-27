@@ -5595,6 +5595,7 @@ async function callAIAgent(
             const matches = catalog.filter((s) => s.duracao === reqDur);
             const prevDur = (sessionState as any).trinksSelectedServiceDuration as number | null;
             (sessionState as any).trinksSelectedServiceDuration = reqDur;
+            (sessionState as any).trinksLockUpdatedAt = Date.now();
             // Só trava nome/id quando há UM único serviço para essa duração.
             // Caso contrário (ambíguo), mantém apenas a duração travada.
             if (matches.length === 1) {
@@ -5611,10 +5612,12 @@ async function callAIAgent(
         }
 
         if (provider === "trinks" && toolCall.function.name === "criar_agendamento" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
-          const reqSvc = toPositiveInteger(parsedArgs?.servicoId);
-          const reqDur = toPositiveInteger(parsedArgs?.duracaoEmMinutos);
-          if (reqSvc) (sessionState as any).trinksSelectedServiceId = reqSvc;
-          if (reqDur) (sessionState as any).trinksSelectedServiceDuration = reqDur;
+          // Agendamento concluído → limpa a trava para não bloquear o próximo agendamento.
+          console.log(`[TrinksLock] criar_agendamento OK — limpando trava de serviço`);
+          (sessionState as any).trinksSelectedServiceId = null;
+          (sessionState as any).trinksSelectedServiceDuration = null;
+          (sessionState as any).trinksSelectedServiceName = null;
+          (sessionState as any).trinksLockUpdatedAt = 0;
         }
 
         // ===== FRIZZAR: rastreia última grade real consultada =====
