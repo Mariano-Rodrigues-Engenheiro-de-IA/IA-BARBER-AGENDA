@@ -9256,7 +9256,7 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
 
 ------------------------------------------
 
-## 🔷 FLUXO DE AGENDAMENTO (FRIZZAR — sequencial)
+## 🔷 FLUXO DE AGENDAMENTO (FRIZZAR — OTIMIZADO)
 
 1. **buscar_cliente** pelo telefone do cliente.
    - Se a resposta vier com \`notFound: true\` (404), peça o nome e use **cadastrar_cliente**.
@@ -9265,13 +9265,21 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
    - Cada serviço tem \`codigo\`, \`nome\`, \`preco\` e \`duracao\` (HH:mm).
 3. **listar_profissionais** com a lista de serviços escolhidos no formato \`[{ "codigo": 67511 }, { "codigo": 67510 }]\`.
    - Cada profissional retorna com \`codigo\` e \`nome\`. Use \`codigo\` como \`profissionalId\`.
-4. **listar_horarios** com profissionalId + data (yyyy-MM-dd) + serviços no body.
-   - A resposta já vem normalizada: \`{ data, horariosLivres: ["08:00", "08:15", ...], outrosDias: [...] }\`.
-   - Ofereça APENAS valores que estão dentro de \`horariosLivres\`. NUNCA invente nem arredonde.
-   - Se \`horariosLivres\` estiver vazio, NÃO peça confirmação e NÃO chame \`agendar\`. Diga: "Para [data] não tenho vagas disponíveis. Posso ver outro dia?" e, se \`outrosDias\` tiver horários, ofereça 2-3 alternativas desses dias.
- 5. **agendar** com clienteId + dia (yyyy-MM-dd) + hora (HH:mm exato vindo de horariosLivres) + profissionalId + serviços no body.
+4. 🔥 **PERGUNTE A DATA AO CLIENTE** (ex.: "Pra qual dia você quer?"). NÃO pergunte preferência de profissional ainda.
+5. 🚀 **listar_horarios_geral** passando TODOS os profissionais retornados no passo 3 + a data + os serviços.
+   - Resposta vem com \`{ resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }\`.
+   - **Use o \`resumo\` para decidir o próximo passo automaticamente**:
+     - \`totalProfissionaisLivres === 0\` → "Para [data] não tenho vagas. Quer ver outro dia?" (use \`outrosDias\` para sugerir 2-3 alternativas).
+     - \`totalProfissionaisLivres === 1\` → NÃO pergunte preferência. Diga "Tenho horário com [nome]. Opções: [horariosLivres]. Qual fica melhor?".
+     - \`totalProfissionaisLivres >= 2\` →
+       - Se o cliente JÁ mencionou um horário específico (ex.: "queria 10h") → escolha o profissional que tem aquele horário e proponha direto.
+       - Se o cliente NÃO mencionou horário → ofereça os \`horariosConsolidados\` ("Tenho [horários]. Qual prefere?") OU pergunte "Tem preferência por algum profissional? Tenho [nomes] livres."
+6. Quando o cliente escolher o horário (e profissional, se houver mais de um livre naquele slot), **agendar** com clienteId + dia + hora (cópia EXATA de \`horariosLivres\`) + profissionalId + serviços.
    - Sucesso retorna \`{ ok: true, agendamentoId, inicioFormatado, profissional, servico, total }\`.
-    - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
+   - Confirme com o cliente usando \`inicioFormatado\` (ex: "29/04 16:00") e \`profissional\`.
+
+⚠️ \`listar_horarios\` (singular) ainda existe para casos pontuais (ex.: cliente já especificou 1 profissional desde o início ou você precisa rechecar). No fluxo padrão, prefira SEMPRE \`listar_horarios_geral\` para evitar perguntas desnecessárias.
+
 
 ## 👥 MAIS DE UMA PESSOA NO MESMO ATENDIMENTO
 
@@ -9314,7 +9322,7 @@ Se \`agendar\` retornar erro com \`horariosLivres\` (ex.: "Horário X indisponí
 
 Se você já tem \`horariosLivres\` de um profissional + dia + serviço obtido há menos de 5 minutos NESSA conversa, USE o resultado anterior. NÃO chame \`listar_horarios\` de novo para o mesmo trio. Reconsulte apenas se: a data mudou, o serviço mudou, o profissional mudou, ou o cliente pediu uma nova checagem.
 
-Quando o cliente diz "qualquer barbeiro", consulte de forma direcionada (1 por vez, começando pelo de \`proximoHorario\` mais cedo) — não dispare \`listar_horarios\` para todos em paralelo.
+Quando o cliente diz "qualquer barbeiro" ou ainda não escolheu profissional, use **listar_horarios_geral** (uma chamada só — o servidor já consulta todos em paralelo). NÃO faça loop de \`listar_horarios\` profissional por profissional.
 
 ------------------------------------------
 
@@ -9439,6 +9447,41 @@ function buildFrizzarTools(tenant: any) {
             },
           },
           required: ["profissionalId", "data", "servicos"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_horarios_geral",
+        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo (executa as consultas em paralelo). Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Retorna { resumo, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            profissionais: {
+              type: "array",
+              description: "Lista de profissionais a consultar. Use os retornados por listar_profissionais.",
+              items: {
+                type: "object",
+                properties: {
+                  codigo: { type: "number", description: "ID (codigo) do profissional" },
+                  nome: { type: "string", description: "Nome do profissional (opcional, ajuda na resposta)" },
+                },
+                required: ["codigo"],
+              },
+            },
+            data: { type: "string", description: "Data inicial no formato yyyy-MM-dd" },
+            servicos: {
+              type: "array",
+              description: "Lista de serviços escolhidos pelo cliente",
+              items: {
+                type: "object",
+                properties: { codigo: { type: "number" } },
+                required: ["codigo"],
+              },
+            },
+          },
+          required: ["profissionais", "data", "servicos"],
         },
       },
     },
@@ -9696,8 +9739,78 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
+      case "listar_horarios_geral": {
+        const body = Array.isArray(args.servicos) ? args.servicos : [];
+        const profs = Array.isArray(args.profissionais) ? args.profissionais : [];
+        if (profs.length === 0 || !args.data || body.length === 0) {
+          return { error: "Faltam parâmetros: profissionais (array com codigo), data (yyyy-MM-dd) e servicos." };
+        }
+        console.log(`[Frizzar] listar_horarios_geral data=${args.data} profs=${profs.map((p: any) => p.codigo).join(",")}`);
+
+        const consultaUm = async (prof: any) => {
+          const profissionalId = prof?.codigo;
+          const nome = prof?.nome ?? null;
+          if (!profissionalId) return { profissionalId: null, nome, erro: "codigo ausente", horariosLivres: [], outrosDias: [] };
+          try {
+            const res = await frizzarFetch(`/listar/horarios/${profissionalId}/${args.data}`, {
+              method: "POST",
+              headers: jsonHeaders,
+              body: JSON.stringify(body),
+            });
+            const text = await res.text();
+            if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], outrosDias: [] };
+            const parsed = JSON.parse(text);
+            if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], outrosDias: [], raw: parsed };
+            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data)) ?? parsed[0];
+            const diaRegistrado = (typeof exato?.dia === "string" ? exato.dia.slice(0, 10) : args.data);
+            // Mantém a trava de data viva para CADA profissional consultado.
+            if (diaRegistrado) {
+              frizzarLastListed.set(lastListedKey(profissionalId), { dia: diaRegistrado, listedAt: Date.now() });
+            }
+            return {
+              profissionalId,
+              nome,
+              horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
+              outrosDias: parsed
+                .filter((d: any) => d !== exato)
+                .map((d: any) => ({
+                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
+                  horariosLivres: Array.isArray(d?.horariosLivres) ? d.horariosLivres : [],
+                })),
+            };
+          } catch (e: any) {
+            return { profissionalId, nome, erro: String(e?.message || e), horariosLivres: [], outrosDias: [] };
+          }
+        };
+
+        const resultados = await Promise.all(profs.map(consultaUm));
+        const comHorario = resultados.filter((r: any) => Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0);
+        // Horários únicos consolidados (qualquer profissional) para a IA reconhecer o pool total.
+        const horariosConsolidados = Array.from(new Set(
+          comHorario.flatMap((r: any) => r.horariosLivres)
+        )).sort();
+
+        let resumo: string;
+        if (comHorario.length === 0) {
+          resumo = `Nenhum profissional com vaga em ${args.data}. Ofereça outro dia (veja outrosDias de cada profissional).`;
+        } else if (comHorario.length === 1) {
+          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.`;
+        } else {
+          resumo = `${comHorario.length} profissionais livres em ${args.data}. Se a agenda estiver cheia de opções, pergunte se há preferência; se o cliente já disse o horário desejado, escolha sem perguntar.`;
+        }
+
+        return {
+          data: args.data,
+          resumo,
+          totalProfissionaisLivres: comHorario.length,
+          horariosConsolidados,
+          profissionais: resultados,
+        };
+      }
+
       case "agendar": {
         const body = Array.isArray(args.servicos) ? args.servicos : [];
+
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
