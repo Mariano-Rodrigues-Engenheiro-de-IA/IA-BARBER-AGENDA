@@ -10943,39 +10943,47 @@ Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE 
 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
-- **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para disponibilidade e criação.
-- **listar_horarios** — horários LIVRES para service_code + professional_code + start_date (YYYY-MM-DD), via /v1/availability. Use exatamente as strings retornadas.
+- **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para criação.
+- **listar_horarios_geral** — 🚀 ATALHO PADRÃO. Consulta a agenda de TODOS os profissionais ao mesmo tempo para um serviço + data. Retorna \`{ resumo, totalProfissionaisLivres, horariosConsolidados: [{ time, professionals: [{ professional_code, name }] }], profissionais: [{ professional_code, name, available_times }] }\`. Use ANTES de perguntar preferência de profissional.
+- **listar_horarios** — horários LIVRES para 1 profissional específico (caso o cliente já tenha escolhido). Use apenas quando precisar rechecar 1 profissional pontual.
 - **criar_agendamento** — cria o agendamento real com service_code + professional_code + start_date/start_time + duração + nome + telefone.
-- **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
-- **cancelar_agendamento** — cancela a comanda inteira pelo invoice_code ou, quando explicitamente necessário, remove um item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
+- **listar_agendamentos** — busca COMANDAS do cliente por telefone em /invoice/search. USE para localizar o agendamento antes de cancelar.
+- **cancelar_agendamento** — cancela a comanda pelo invoice_code ou item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
 
 ------------------------------------------
 
 ## 🔷 FLUXO OBRIGATÓRIO (APPBARBER — sequencial)
 
-### Criar agendamento
-1. Na 1ª intenção de agendar / preço / serviço / profissional / disponibilidade → chame **listar_servicos** silenciosamente.
+### Criar agendamento (FLUXO OTIMIZADO)
+1. Na 1ª intenção de agendar / preço / serviço / disponibilidade → chame **listar_servicos** silenciosamente.
 2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
-3. Chame **listar_profissionais** → memorize \`professional_code\`/\`employee_code\` do escolhido (ou ofereça as opções reais).
-4. Chame **listar_horarios** com \`service_code\` + \`professional_code\` + \`start_date\`. Use APENAS os valores de \`available_times\` retornados, sem arredondar.
-5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
-6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`service_duration_minutes\` (o \`service_interval\` de listar_servicos), \`customer_name\`, \`customer_phone\`.
+3. Pergunte/colete a **data** desejada (NÃO pergunte preferência de profissional ainda).
+4. 🚀 Chame **listar_horarios_geral** com \`service_code\` + \`start_date\` (deixe \`professionals\` vazio — o servidor busca todos).
+5. Use a resposta para decidir SEM ATRITO:
+   - \`totalProfissionaisLivres === 0\` → "Esse dia tá lotado. Quer ver outro dia?" (NÃO pergunte preferência).
+   - \`totalProfissionaisLivres === 1\` → Proponha direto os \`available_times\` desse profissional, sem perguntar preferência.
+   - \`totalProfissionaisLivres >= 2\`:
+     - Se o cliente JÁ disse um horário → escolha automaticamente um \`professional_code\` disponível naquele horário usando \`horariosConsolidados\` (sem perguntar).
+     - Se NÃO disse horário → ofereça os \`horariosConsolidados\` ("Tenho [horários] disponíveis. Qual prefere?") OU pergunte "Tem preferência por algum profissional? Tenho [nomes] livres."
+6. Confirme com o cliente serviço, profissional, dia e hora EXATA.
+7. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM exato de \`available_times\`), \`service_duration_minutes\`, \`customer_name\`, \`customer_phone\`.
 
 ### Cancelar agendamento
-1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele. A ferramenta busca COMANDAS por telefone antes de usar histórico.
-2. Se houver mais de um agendamento futuro, confirme com o cliente QUAL (cite serviço, dia e hora).
-3. Chame **cancelar_agendamento** com o \`invoice_code\` do agendamento escolhido e um \`reason\` curto (ex: "Cancelamento solicitado pelo cliente via WhatsApp"). Se o cliente pediu para remover apenas um serviço de uma comanda com vários itens, use \`invoice_item_code\` + \`cancel_scope="item"\`.
-4. Confirme ao cliente que foi cancelado. NÃO escale humano.
+1. Cliente pede cancelar → **listar_agendamentos** com o telefone.
+2. Se houver mais de um, confirme QUAL (cite serviço, dia e hora).
+3. **cancelar_agendamento** com \`invoice_code\` + \`reason\` (ou \`invoice_item_code\` + \`cancel_scope="item"\` para 1 item).
+4. Confirme ao cliente. NÃO escale humano.
 
 ------------------------------------------
 
 ## 🚨 REGRAS ABSOLUTAS
 
 - NUNCA invente service_code, professional_code/employee_code ou horários. Tudo vem das tools.
-- NUNCA cite horário sem antes ter chamado **listar_horarios** nessa interação.
-- Se \`available_times\` vier vazio, ofereça outra data — NÃO escale humano por isso.
+- NUNCA cite horário sem antes ter chamado **listar_horarios_geral** (ou **listar_horarios**) nessa interação.
+- Se a agenda vier vazia, ofereça outra data — NÃO escale humano por isso.
 - Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
-- Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
+- Datas: **YYYY-MM-DD** (Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
+- Em caso de 422 "Choque de Horário" em criar_agendamento, refaça **listar_horarios_geral** para o mesmo dia e ofereça outro horário/profissional. NÃO escale humano.
 - A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }
