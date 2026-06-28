@@ -10968,11 +10968,15 @@ Ferramentas (nomes exatos):
 6. Confirme com o cliente serviço, profissional, dia e hora EXATA.
 7. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM exato de \`available_times\`), \`service_duration_minutes\`, \`customer_name\`, \`customer_phone\`.
 
-### Cancelar agendamento
+### Cancelar agendamento (DECISÃO DETERMINÍSTICA)
 1. Cliente pede cancelar → **listar_agendamentos** com o telefone.
-2. Se houver mais de um, confirme QUAL (cite serviço, dia e hora).
-3. **cancelar_agendamento** com \`invoice_code\` + \`reason\` (ou \`invoice_item_code\` + \`cancel_scope="item"\` para 1 item).
-4. Confirme ao cliente. NÃO escale humano.
+2. Se houver mais de uma COMANDA, confirme QUAL (cite serviço, dia e hora).
+3. Olhe a quantidade de itens da comanda escolhida (campo `items` / `invoice_items` retornado):
+   - **Comanda com 1 item só** → cancele a COMANDA INTEIRA: \`cancelar_agendamento\` com \`invoice_code\` + \`reason\` (NÃO mande \`invoice_item_code\`, NÃO mande \`cancel_scope\`).
+   - **Comanda com 2+ itens** E o cliente pediu cancelar TUDO / a comanda toda → cancele a COMANDA INTEIRA (mesmo formato acima).
+   - **Comanda com 2+ itens** E o cliente quer cancelar APENAS 1 serviço específico → cancele só o ITEM: \`cancelar_agendamento\` com \`invoice_item_code\` + \`cancel_scope="item"\` + \`reason\`.
+   - **Comanda com 2+ itens** E o cliente foi ambíguo ("cancela meu horário") → pergunte UMA vez: "Quer cancelar tudo ou só um dos serviços?" e siga a regra acima.
+4. Confirme ao cliente. NÃO escale humano. NUNCA tente cancelar item quando a comanda só tem 1 serviço — vai falhar.
 
 ------------------------------------------
 
