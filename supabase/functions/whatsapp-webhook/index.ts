@@ -10968,11 +10968,15 @@ Ferramentas (nomes exatos):
 6. Confirme com o cliente serviço, profissional, dia e hora EXATA.
 7. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM exato de \`available_times\`), \`service_duration_minutes\`, \`customer_name\`, \`customer_phone\`.
 
-### Cancelar agendamento
+### Cancelar agendamento (DECISÃO DETERMINÍSTICA)
 1. Cliente pede cancelar → **listar_agendamentos** com o telefone.
-2. Se houver mais de um, confirme QUAL (cite serviço, dia e hora).
-3. **cancelar_agendamento** com \`invoice_code\` + \`reason\` (ou \`invoice_item_code\` + \`cancel_scope="item"\` para 1 item).
-4. Confirme ao cliente. NÃO escale humano.
+2. Se houver mais de uma COMANDA, confirme QUAL (cite serviço, dia e hora).
+3. Olhe a quantidade de itens da comanda escolhida (campo \`items\` / \`invoice_items\` retornado):
+   - **Comanda com 1 item só** → cancele a COMANDA INTEIRA: \`cancelar_agendamento\` com \`invoice_code\` + \`reason\` (NÃO mande \`invoice_item_code\`, NÃO mande \`cancel_scope\`).
+   - **Comanda com 2+ itens** E o cliente pediu cancelar TUDO / a comanda toda → cancele a COMANDA INTEIRA (mesmo formato acima).
+   - **Comanda com 2+ itens** E o cliente quer cancelar APENAS 1 serviço específico → cancele só o ITEM: \`cancelar_agendamento\` com \`invoice_item_code\` + \`cancel_scope="item"\` + \`reason\`.
+   - **Comanda com 2+ itens** E o cliente foi ambíguo ("cancela meu horário") → pergunte UMA vez: "Quer cancelar tudo ou só um dos serviços?" e siga a regra acima.
+4. Confirme ao cliente. NÃO escale humano. NUNCA tente cancelar item quando a comanda só tem 1 serviço — vai falhar.
 
 ------------------------------------------
 
@@ -11706,7 +11710,30 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
         const cancelScope = String(args.cancel_scope || "invoice").toLowerCase();
         const reason = String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp");
-        const removingItem = cancelScope === "item" && args.invoice_item_code;
+        let removingItem = cancelScope === "item" && args.invoice_item_code;
+
+        // Guard-rail: se for cancelar ITEM mas a comanda só tem 1 serviço, força cancelar comanda inteira.
+        // Isso evita o fluxo "tenta item → falha → tenta comanda" observado em produção.
+        if (removingItem && args.invoice_code && phoneDigits) {
+          try {
+            const searchUrl = buildUrl(`/v1/invoice/search`, { customer_phone: phoneDigits });
+            const sRes = await fetch(searchUrl, { method: "GET", headers });
+            const sText = await sRes.text();
+            let sParsed: any = null; try { sParsed = JSON.parse(sText); } catch { /* keep null */ }
+            const invoices = sParsed?.data?.invoices || sParsed?.data || sParsed?.invoices || [];
+            const target = Array.isArray(invoices)
+              ? invoices.find((inv: any) => String(inv?.invoice_code ?? inv?.code ?? inv?.id) === String(args.invoice_code))
+              : null;
+            const items = target?.items || target?.invoice_items || target?.services || [];
+            if (Array.isArray(items) && items.length <= 1) {
+              console.log(`[AppBarber] cancelar_agendamento: invoice ${args.invoice_code} tem ${items.length} item(s) — forçando cancelar COMANDA inteira em vez de item.`);
+              removingItem = false;
+            }
+          } catch (e) {
+            console.log(`[AppBarber] cancelar_agendamento: falha ao pré-checar itens da comanda:`, e instanceof Error ? e.message : e);
+          }
+        }
+
         if (removingItem) {
           const url = buildUrl(`/v1/invoice/item/${encodeURIComponent(String(args.invoice_item_code))}`, {});
           const body = { establishment_code: estCode, reason };
@@ -11715,17 +11742,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           const text = await res.text();
           console.log(`[AppBarber] remover_item_comanda (${res.status}):`, text.slice(0, 600));
           let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
-          if (!res.ok) {
-            const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
-            if (res.status === 422) return { error: `Não foi possível remover o item da comanda: ${baseErr}`, status: 422, recoverable: true, details: parsed?.data ?? parsed?.details };
-            if (res.status === 429) return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
-            return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+          if (res.ok) {
+            return {
+              ok: true,
+              invoice_item_code: args.invoice_item_code,
+              result: parsed?.data?.result || parsed?.message || "Item removido da comanda com sucesso",
+            };
           }
-          return {
-            ok: true,
-            invoice_item_code: args.invoice_item_code,
-            result: parsed?.data?.result || parsed?.message || "Item removido da comanda com sucesso",
-          };
+          // Fallback automático: se item-cancel falhar (422/404) e tivermos invoice_code, cancela a comanda inteira.
+          if (args.invoice_code && phoneDigits && (res.status === 422 || res.status === 404)) {
+            console.log(`[AppBarber] item cancel falhou (${res.status}) — fallback para cancelar comanda inteira.`);
+          } else {
+            const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+            if (res.status === 429) return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+            return { error: baseErr, status: res.status, recoverable: res.status === 422, details: parsed?.data ?? parsed?.details };
+          }
         }
 
         if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
@@ -11757,6 +11788,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           result: parsed?.data?.result || "Comanda cancelada com sucesso",
         };
       }
+
 
       default:
         return { error: `Ferramenta AppBarber desconhecida: ${funcName}` };
