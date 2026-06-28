@@ -11341,6 +11341,120 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         };
       }
 
+      case "listar_horarios_geral": {
+        if (!args.service_code || !args.start_date) {
+          return { error: "service_code e start_date são obrigatórios." };
+        }
+
+        // Resolve lista de profissionais: usa o array recebido ou busca via /v1/professional-list
+        let profs: Array<{ professional_code: number; name: string | null }> = [];
+        if (Array.isArray(args.professionals) && args.professionals.length > 0) {
+          profs = args.professionals
+            .map((p: any) => ({
+              professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
+              name: firstValue(p?.name, p?.professional_name, p?.employee_name) ?? null,
+            }))
+            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+        } else {
+          const listRes = await callGet("/v1/professional-list", {});
+          if (listRes?.error) return listRes;
+          const items = Array.isArray(listRes?.data) ? listRes.data : [];
+          profs = items
+            .map((p: any) => ({
+              professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
+              name: firstValue(p?.professional_name, p?.employee_name, p?.employee_nickname, p?.name) ?? null,
+            }))
+            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+        }
+
+        if (profs.length === 0) {
+          return { error: "Nenhum profissional disponível para consultar disponibilidade." };
+        }
+
+        console.log(`[AppBarber] listar_horarios_geral data=${args.start_date} svc=${args.service_code} profs=${profs.map((p) => p.professional_code).join(",")}`);
+
+        const collectTimes = (blocks: any[], wantedProf: number): string[] => {
+          const seen = new Set<string>();
+          const times: string[] = [];
+          const filtered = blocks.filter((b: any) => {
+            const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
+            return prof == null || Number(prof) === wantedProf;
+          });
+          const walk = (value: any) => {
+            if (!value) return;
+            if (Array.isArray(value)) { value.forEach(walk); return; }
+            if (typeof value !== "object") return;
+            const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
+            if (rawTime) {
+              const str = String(rawTime).trim();
+              const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
+              if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
+                seen.add(normalized);
+                times.push(normalized);
+              }
+            }
+            for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
+              if (Array.isArray(value[key])) walk(value[key]);
+            }
+          };
+          for (const block of filtered) walk(block);
+          times.sort();
+          return times;
+        };
+
+        const consultaUm = async (prof: { professional_code: number; name: string | null }) => {
+          try {
+            const r = await callGet("/v1/availability", {
+              service_code: args.service_code,
+              start_date: args.start_date,
+              professional_code: prof.professional_code,
+            });
+            if (r?.error) {
+              return { professional_code: prof.professional_code, name: prof.name, available_times: [], erro: r.error };
+            }
+            const blocks = Array.isArray(r?.data) ? r.data : [];
+            const available_times = collectTimes(blocks, prof.professional_code);
+            return { professional_code: prof.professional_code, name: prof.name, available_times };
+          } catch (e: any) {
+            return { professional_code: prof.professional_code, name: prof.name, available_times: [], erro: String(e?.message || e) };
+          }
+        };
+
+        const resultados = await Promise.all(profs.map(consultaUm));
+        const comHorario = resultados.filter((r) => Array.isArray(r.available_times) && r.available_times.length > 0);
+
+        // Horários consolidados → mapa hora → profissionais livres naquele horário
+        const horariosMap = new Map<string, Array<{ professional_code: number; name: string | null }>>();
+        for (const r of comHorario) {
+          for (const t of r.available_times) {
+            const hhmm = t.slice(0, 5);
+            if (!horariosMap.has(hhmm)) horariosMap.set(hhmm, []);
+            horariosMap.get(hhmm)!.push({ professional_code: r.professional_code, name: r.name });
+          }
+        }
+        const horariosConsolidados = Array.from(horariosMap.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([time, professionals]) => ({ time, professionals }));
+
+        let resumo: string;
+        if (comHorario.length === 0) {
+          resumo = `Nenhum profissional com vaga em ${args.start_date}. Ofereça outro dia — NÃO pergunte preferência de profissional.`;
+        } else if (comHorario.length === 1) {
+          resumo = `Apenas 1 profissional livre em ${args.start_date}: ${comHorario[0].name || comHorario[0].professional_code}. NÃO pergunte preferência — proponha direto os horários dele.`;
+        } else {
+          resumo = `${comHorario.length} profissionais livres em ${args.start_date}. Se o cliente já disse o horário, escolha um profissional disponível sem perguntar; senão ofereça os horariosConsolidados.`;
+        }
+
+        return {
+          date: args.start_date,
+          service_code: Number(args.service_code),
+          resumo,
+          totalProfissionaisLivres: comHorario.length,
+          horariosConsolidados,
+          profissionais: resultados,
+        };
+      }
+
       case "criar_agendamento": {
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
