@@ -10943,39 +10943,47 @@ Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE 
 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
-- **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para disponibilidade e criação.
-- **listar_horarios** — horários LIVRES para service_code + professional_code + start_date (YYYY-MM-DD), via /v1/availability. Use exatamente as strings retornadas.
+- **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para criação.
+- **listar_horarios_geral** — 🚀 ATALHO PADRÃO. Consulta a agenda de TODOS os profissionais ao mesmo tempo para um serviço + data. Retorna \`{ resumo, totalProfissionaisLivres, horariosConsolidados: [{ time, professionals: [{ professional_code, name }] }], profissionais: [{ professional_code, name, available_times }] }\`. Use ANTES de perguntar preferência de profissional.
+- **listar_horarios** — horários LIVRES para 1 profissional específico (caso o cliente já tenha escolhido). Use apenas quando precisar rechecar 1 profissional pontual.
 - **criar_agendamento** — cria o agendamento real com service_code + professional_code + start_date/start_time + duração + nome + telefone.
-- **listar_agendamentos** — busca primeiro as COMANDAS do cliente por telefone em /invoice/search. Retorna invoice_code, invoice_item_code, serviço, profissional, data/hora e status. USE para localizar o agendamento antes de cancelar.
-- **cancelar_agendamento** — cancela a comanda inteira pelo invoice_code ou, quando explicitamente necessário, remove um item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
+- **listar_agendamentos** — busca COMANDAS do cliente por telefone em /invoice/search. USE para localizar o agendamento antes de cancelar.
+- **cancelar_agendamento** — cancela a comanda pelo invoice_code ou item pelo invoice_item_code. Requer ID obtido em listar_agendamentos + motivo.
 
 ------------------------------------------
 
 ## 🔷 FLUXO OBRIGATÓRIO (APPBARBER — sequencial)
 
-### Criar agendamento
-1. Na 1ª intenção de agendar / preço / serviço / profissional / disponibilidade → chame **listar_servicos** silenciosamente.
+### Criar agendamento (FLUXO OTIMIZADO)
+1. Na 1ª intenção de agendar / preço / serviço / disponibilidade → chame **listar_servicos** silenciosamente.
 2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
-3. Chame **listar_profissionais** → memorize \`professional_code\`/\`employee_code\` do escolhido (ou ofereça as opções reais).
-4. Chame **listar_horarios** com \`service_code\` + \`professional_code\` + \`start_date\`. Use APENAS os valores de \`available_times\` retornados, sem arredondar.
-5. Confirme com o cliente serviço, profissional, dia e hora EXATA.
-6. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM), \`service_duration_minutes\` (o \`service_interval\` de listar_servicos), \`customer_name\`, \`customer_phone\`.
+3. Pergunte/colete a **data** desejada (NÃO pergunte preferência de profissional ainda).
+4. 🚀 Chame **listar_horarios_geral** com \`service_code\` + \`start_date\` (deixe \`professionals\` vazio — o servidor busca todos).
+5. Use a resposta para decidir SEM ATRITO:
+   - \`totalProfissionaisLivres === 0\` → "Esse dia tá lotado. Quer ver outro dia?" (NÃO pergunte preferência).
+   - \`totalProfissionaisLivres === 1\` → Proponha direto os \`available_times\` desse profissional, sem perguntar preferência.
+   - \`totalProfissionaisLivres >= 2\`:
+     - Se o cliente JÁ disse um horário → escolha automaticamente um \`professional_code\` disponível naquele horário usando \`horariosConsolidados\` (sem perguntar).
+     - Se NÃO disse horário → ofereça os \`horariosConsolidados\` ("Tenho [horários] disponíveis. Qual prefere?") OU pergunte "Tem preferência por algum profissional? Tenho [nomes] livres."
+6. Confirme com o cliente serviço, profissional, dia e hora EXATA.
+7. Chame **criar_agendamento** com \`service_code\`, \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM exato de \`available_times\`), \`service_duration_minutes\`, \`customer_name\`, \`customer_phone\`.
 
 ### Cancelar agendamento
-1. Quando o cliente pedir para cancelar/desmarcar → chame **listar_agendamentos** com o telefone dele. A ferramenta busca COMANDAS por telefone antes de usar histórico.
-2. Se houver mais de um agendamento futuro, confirme com o cliente QUAL (cite serviço, dia e hora).
-3. Chame **cancelar_agendamento** com o \`invoice_code\` do agendamento escolhido e um \`reason\` curto (ex: "Cancelamento solicitado pelo cliente via WhatsApp"). Se o cliente pediu para remover apenas um serviço de uma comanda com vários itens, use \`invoice_item_code\` + \`cancel_scope="item"\`.
-4. Confirme ao cliente que foi cancelado. NÃO escale humano.
+1. Cliente pede cancelar → **listar_agendamentos** com o telefone.
+2. Se houver mais de um, confirme QUAL (cite serviço, dia e hora).
+3. **cancelar_agendamento** com \`invoice_code\` + \`reason\` (ou \`invoice_item_code\` + \`cancel_scope="item"\` para 1 item).
+4. Confirme ao cliente. NÃO escale humano.
 
 ------------------------------------------
 
 ## 🚨 REGRAS ABSOLUTAS
 
 - NUNCA invente service_code, professional_code/employee_code ou horários. Tudo vem das tools.
-- NUNCA cite horário sem antes ter chamado **listar_horarios** nessa interação.
-- Se \`available_times\` vier vazio, ofereça outra data — NÃO escale humano por isso.
+- NUNCA cite horário sem antes ter chamado **listar_horarios_geral** (ou **listar_horarios**) nessa interação.
+- Se a agenda vier vazia, ofereça outra data — NÃO escale humano por isso.
 - Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
-- Datas: **YYYY-MM-DD** (fuso de Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
+- Datas: **YYYY-MM-DD** (Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
+- Em caso de 422 "Choque de Horário" em criar_agendamento, refaça **listar_horarios_geral** para o mesmo dia e ofereça outro horário/profissional. NÃO escale humano.
 - A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }
@@ -11018,6 +11026,33 @@ function buildAppBarberTools(tenant: any) {
             professional_code: { type: "number", description: "professional_code/employee_code retornado por listar_profissionais" },
           },
           required: ["service_code", "professional_code", "start_date"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "listar_horarios_geral",
+        description: "ATALHO RECOMENDADO: consulta horários LIVRES de TODOS os profissionais ao mesmo tempo (executa /v1/availability em paralelo) para um serviço e data. Use logo após listar_servicos para já ter a agenda consolidada ANTES de perguntar preferência de profissional. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ professional_code, name, available_times }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            service_code: { type: "number" },
+            start_date: { type: "string", description: "Data YYYY-MM-DD" },
+            professionals: {
+              type: "array",
+              description: "Opcional. Lista de profissionais a consultar [{ professional_code, name }]. Se omitido, o servidor busca automaticamente todos via /v1/professional-list.",
+              items: {
+                type: "object",
+                properties: {
+                  professional_code: { type: "number" },
+                  name: { type: "string" },
+                },
+                required: ["professional_code"],
+              },
+            },
+          },
+          required: ["service_code", "start_date"],
         },
       },
     },
@@ -11311,6 +11346,120 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           service_code: args.service_code,
           professional_code: args.professional_code,
           available_times: times,
+        };
+      }
+
+      case "listar_horarios_geral": {
+        if (!args.service_code || !args.start_date) {
+          return { error: "service_code e start_date são obrigatórios." };
+        }
+
+        // Resolve lista de profissionais: usa o array recebido ou busca via /v1/professional-list
+        let profs: Array<{ professional_code: number; name: string | null }> = [];
+        if (Array.isArray(args.professionals) && args.professionals.length > 0) {
+          profs = args.professionals
+            .map((p: any) => ({
+              professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
+              name: firstValue(p?.name, p?.professional_name, p?.employee_name) ?? null,
+            }))
+            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+        } else {
+          const listRes = await callGet("/v1/professional-list", {});
+          if (listRes?.error) return listRes;
+          const items = Array.isArray(listRes?.data) ? listRes.data : [];
+          profs = items
+            .map((p: any) => ({
+              professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
+              name: firstValue(p?.professional_name, p?.employee_name, p?.employee_nickname, p?.name) ?? null,
+            }))
+            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+        }
+
+        if (profs.length === 0) {
+          return { error: "Nenhum profissional disponível para consultar disponibilidade." };
+        }
+
+        console.log(`[AppBarber] listar_horarios_geral data=${args.start_date} svc=${args.service_code} profs=${profs.map((p) => p.professional_code).join(",")}`);
+
+        const collectTimes = (blocks: any[], wantedProf: number): string[] => {
+          const seen = new Set<string>();
+          const times: string[] = [];
+          const filtered = blocks.filter((b: any) => {
+            const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
+            return prof == null || Number(prof) === wantedProf;
+          });
+          const walk = (value: any) => {
+            if (!value) return;
+            if (Array.isArray(value)) { value.forEach(walk); return; }
+            if (typeof value !== "object") return;
+            const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
+            if (rawTime) {
+              const str = String(rawTime).trim();
+              const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
+              if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
+                seen.add(normalized);
+                times.push(normalized);
+              }
+            }
+            for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
+              if (Array.isArray(value[key])) walk(value[key]);
+            }
+          };
+          for (const block of filtered) walk(block);
+          times.sort();
+          return times;
+        };
+
+        const consultaUm = async (prof: { professional_code: number; name: string | null }) => {
+          try {
+            const r = await callGet("/v1/availability", {
+              service_code: args.service_code,
+              start_date: args.start_date,
+              professional_code: prof.professional_code,
+            });
+            if (r?.error) {
+              return { professional_code: prof.professional_code, name: prof.name, available_times: [], erro: r.error };
+            }
+            const blocks = Array.isArray(r?.data) ? r.data : [];
+            const available_times = collectTimes(blocks, prof.professional_code);
+            return { professional_code: prof.professional_code, name: prof.name, available_times };
+          } catch (e: any) {
+            return { professional_code: prof.professional_code, name: prof.name, available_times: [], erro: String(e?.message || e) };
+          }
+        };
+
+        const resultados = await Promise.all(profs.map(consultaUm));
+        const comHorario = resultados.filter((r) => Array.isArray(r.available_times) && r.available_times.length > 0);
+
+        // Horários consolidados → mapa hora → profissionais livres naquele horário
+        const horariosMap = new Map<string, Array<{ professional_code: number; name: string | null }>>();
+        for (const r of comHorario) {
+          for (const t of r.available_times) {
+            const hhmm = t.slice(0, 5);
+            if (!horariosMap.has(hhmm)) horariosMap.set(hhmm, []);
+            horariosMap.get(hhmm)!.push({ professional_code: r.professional_code, name: r.name });
+          }
+        }
+        const horariosConsolidados = Array.from(horariosMap.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([time, professionals]) => ({ time, professionals }));
+
+        let resumo: string;
+        if (comHorario.length === 0) {
+          resumo = `Nenhum profissional com vaga em ${args.start_date}. Ofereça outro dia — NÃO pergunte preferência de profissional.`;
+        } else if (comHorario.length === 1) {
+          resumo = `Apenas 1 profissional livre em ${args.start_date}: ${comHorario[0].name || comHorario[0].professional_code}. NÃO pergunte preferência — proponha direto os horários dele.`;
+        } else {
+          resumo = `${comHorario.length} profissionais livres em ${args.start_date}. Se o cliente já disse o horário, escolha um profissional disponível sem perguntar; senão ofereça os horariosConsolidados.`;
+        }
+
+        return {
+          date: args.start_date,
+          service_code: Number(args.service_code),
+          resumo,
+          totalProfissionaisLivres: comHorario.length,
+          horariosConsolidados,
+          profissionais: resultados,
         };
       }
 
