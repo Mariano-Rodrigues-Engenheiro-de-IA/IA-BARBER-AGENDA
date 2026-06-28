@@ -11024,6 +11024,33 @@ function buildAppBarberTools(tenant: any) {
     {
       type: "function",
       function: {
+        name: "listar_horarios_geral",
+        description: "ATALHO RECOMENDADO: consulta horários LIVRES de TODOS os profissionais ao mesmo tempo (executa /v1/availability em paralelo) para um serviço e data. Use logo após listar_servicos para já ter a agenda consolidada ANTES de perguntar preferência de profissional. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ professional_code, name, available_times }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            service_code: { type: "number" },
+            start_date: { type: "string", description: "Data YYYY-MM-DD" },
+            professionals: {
+              type: "array",
+              description: "Opcional. Lista de profissionais a consultar [{ professional_code, name }]. Se omitido, o servidor busca automaticamente todos via /v1/professional-list.",
+              items: {
+                type: "object",
+                properties: {
+                  professional_code: { type: "number" },
+                  name: { type: "string" },
+                },
+                required: ["professional_code"],
+              },
+            },
+          },
+          required: ["service_code", "start_date"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "criar_agendamento",
         description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço, profissional, dia e horário EXATO de listar_horarios.",
         parameters: {
