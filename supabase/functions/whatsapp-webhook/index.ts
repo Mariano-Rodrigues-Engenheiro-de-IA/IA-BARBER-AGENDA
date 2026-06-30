@@ -9330,7 +9330,7 @@ O campo \`dia\` em **agendar** DEVE ser EXATAMENTE igual à data usada na últim
 ANTES de chamar agendar, confirme em voz alta com o cliente SOMENTE se o horário existir literalmente em \`horariosLivres\`:
 → "Posso confirmar para [DD/MM] (dia da semana) às [HH:mm]?"
 
-Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e ofereça buscar outro dia ou opções de \`outrosDias\`.
+Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e pergunte qual outro dia o cliente quer consultar.
 
 O sistema bloqueia automaticamente qualquer tentativa de agendar com data divergente da última listada — você receberá um erro \`Data divergente\` e terá que refazer \`listar_horarios\` antes.
 
@@ -9358,9 +9358,10 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
    - Cada profissional retorna com \`codigo\` e \`nome\`. Use \`codigo\` como \`profissionalId\`.
 4. 🔥 **PERGUNTE A DATA AO CLIENTE** (ex.: "Pra qual dia você quer?"). NÃO pergunte preferência de profissional ainda.
 5. 🚀 **listar_horarios_geral** passando TODOS os profissionais retornados no passo 3 + a data + os serviços.
-   - Resposta vem com \`{ resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }\`.
+   - Resposta vem com \`{ data, resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ profissionalId, nome, horariosLivres }] }\`.
+   - A ferramenta retorna SOMENTE a data solicitada. Se precisar consultar outro dia, chame a ferramenta novamente com a nova data.
    - **Use o \`resumo\` para decidir o próximo passo automaticamente**:
-     - \`totalProfissionaisLivres === 0\` → "Para [data] não tenho vagas. Quer ver outro dia?" (use \`outrosDias\` para sugerir 2-3 alternativas).
+     - \`totalProfissionaisLivres === 0\` → "Para [data] não tenho vagas. Qual outro dia você quer que eu consulte?".
      - \`totalProfissionaisLivres === 1\` → NÃO pergunte preferência. Diga "Tenho horário com [nome]. Opções: [horariosLivres]. Qual fica melhor?".
      - \`totalProfissionaisLivres >= 2\` →
        - Se o cliente JÁ mencionou um horário específico (ex.: "queria 10h") → escolha o profissional que tem aquele horário e proponha direto.
