@@ -8048,7 +8048,8 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "buscar_agendamento": {
-        let clienteId = args.clienteId;
+        const clienteIds: number[] = [];
+        if (args.clienteId) clienteIds.push(Number(args.clienteId));
 
         const resolvePhone = phoneNumber || args.telefone || "";
         if (resolvePhone) {
@@ -8064,40 +8065,60 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           const clienteData = await clienteRes.json();
           const clientes = clienteData?.data || clienteData;
           if (Array.isArray(clientes) && clientes.length > 0) {
-            clienteId = clientes[0].id || clientes[0].Id;
-            console.log(`buscar_agendamento: resolved clienteId=${clienteId} from telefone`);
+            // Coletar TODOS os clienteIds (cadastros duplicados com mesmo telefone)
+            for (const c of clientes) {
+              const cid = Number(c.id || c.Id);
+              if (Number.isFinite(cid) && !clienteIds.includes(cid)) clienteIds.push(cid);
+            }
+            console.log(`buscar_agendamento: resolved ${clienteIds.length} clienteId(s) from telefone: ${clienteIds.join(",")}`);
           }
         }
 
-        if (!clienteId) {
+        if (clienteIds.length === 0) {
           return { data: [], message: "Cliente não encontrado" };
         }
 
-        const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${clienteId}`, { headers });
-        const agData = await agRes.json();
-        const allList = Array.isArray(agData?.data) ? agData.data : [];
         const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
+        const allActive: any[] = [];
+        const seenIds = new Set<number>();
 
-        const activeAgendamentos = allList
-          .filter((a: any) => {
+        // Buscar agendamentos de TODOS os clienteIds em paralelo
+        const results = await Promise.all(clienteIds.map(async (cid) => {
+          try {
+            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${cid}`, { headers });
+            const agData = await agRes.json();
+            return Array.isArray(agData?.data) ? agData.data : [];
+          } catch (e) {
+            console.warn(`buscar_agendamento: falha clienteId=${cid}:`, (e as Error).message);
+            return [];
+          }
+        }));
+
+        for (const list of results) {
+          for (const a of list) {
             const statusName = String(a.status?.nome || "").toLowerCase();
-            return activeStatuses.some((status) => statusName === status || statusName.includes(status));
-          })
-          .map((a: any) => ({
-            id: a.id,
-            status: a.status?.nome,
-            servico: a.servico?.nome,
-            profissional: a.profissional?.nome,
-            clienteId: a.cliente?.id,
-            dataHoraInicio: a.dataHoraInicio,
-            duracaoEmMinutos: a.duracaoEmMinutos,
-            valor: a.valor,
-            servicoId: a.servico?.id,
-            profissionalId: a.profissional?.id,
-          }));
+            const isActive = activeStatuses.some((s) => statusName === s || statusName.includes(s));
+            if (!isActive) continue;
+            if (seenIds.has(a.id)) continue;
+            seenIds.add(a.id);
+            allActive.push({
+              id: a.id,
+              status: a.status?.nome,
+              servico: a.servico?.nome,
+              profissional: a.profissional?.nome,
+              clienteId: a.cliente?.id,
+              dataHoraInicio: a.dataHoraInicio,
+              duracaoEmMinutos: a.duracaoEmMinutos,
+              valor: a.valor,
+              servicoId: a.servico?.id,
+              profissionalId: a.profissional?.id,
+            });
+          }
+        }
 
-        return { data: activeAgendamentos, totalRecords: activeAgendamentos.length };
+        return { data: allActive, totalRecords: allActive.length, clienteIdsConsultados: clienteIds };
       }
+
 
       case "criar_agendamento": {
         // 🚨 TRAVA 0 — campos obrigatórios vazios. Evita 400/500 silencioso na Trinks
