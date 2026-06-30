@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildZayloPromptSection, buildAppBarberPromptSection } from "../_shared/provider-prompts.ts";
+import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildZayloPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
@@ -4440,17 +4440,19 @@ async function callAIAgent(
     }
   }
 
-  // Fetch admin-editable provider prompt override (if any) from DB.
+  // Fetch admin-editable provider prompt override + GLOBAL override from DB.
   let providerPromptOverride: string | null = null;
+  let globalPromptOverride: string | null = null;
   try {
-    const { data: ppRow } = await supabase
+    const { data: ppRows } = await supabase
       .from("provider_prompts")
-      .select("content")
-      .eq("provider", provider)
-      .maybeSingle();
-    const c = (ppRow as any)?.content;
-    if (typeof c === "string" && c.trim().length > 0) {
-      providerPromptOverride = c;
+      .select("provider, content")
+      .in("provider", [provider, "global"]);
+    for (const row of (ppRows || []) as any[]) {
+      const c = row?.content;
+      if (typeof c !== "string" || c.trim().length === 0) continue;
+      if (row.provider === "global") globalPromptOverride = c;
+      else if (row.provider === provider) providerPromptOverride = c;
     }
   } catch (e) {
     console.warn("[ProviderPrompts] override fetch failed:", (e as any)?.message);
@@ -4463,7 +4465,7 @@ async function callAIAgent(
     lastClientGapMinutes,
     lastAssistantGapMinutes,
     lastHumanGapMinutes,
-  }, providerPromptOverride);
+  }, providerPromptOverride, globalPromptOverride);
 
   // CelCash context injection — só para provider Bemp com celcash_enabled
   if (tenant?.celcash_enabled && provider === "bemp") {
@@ -7108,6 +7110,7 @@ function buildSystemPrompt(
     lastHumanGapMinutes?: number | null;
   },
   providerPromptOverride?: string | null,
+  globalPromptOverride?: string | null,
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
@@ -7343,6 +7346,7 @@ ${recentActionsBlock}
 ${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
+${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : buildGlobalPromptSection(tenant)}
 ------------------------------------------
 
 
