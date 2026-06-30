@@ -7346,6 +7346,7 @@ ${recentActionsBlock}
 ${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
+${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : buildGlobalPromptSection(tenant)}
 ------------------------------------------
 
 
