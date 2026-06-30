@@ -5524,6 +5524,44 @@ async function callAIAgent(
           console.log(`Tracked Bemp slot options: ${sessionState.bempSlotOptions.length}`);
         }
 
+        if (provider === "bemp" && toolCall.function.name === "listar_horarios_geral" && toolResult && Array.isArray((toolResult as any).horariosConsolidados)) {
+          const salonId = toPositiveInteger(parsedArgs?.salonId);
+          const serviceId = toPositiveInteger(parsedArgs?.serviceId);
+          const date = typeof parsedArgs?.data === "string" ? parsedArgs.data : null;
+          const newSlots: any[] = [];
+          const newProfs: any[] = [];
+          for (const entry of (toolResult as any).horariosConsolidados as any[]) {
+            for (const prof of (entry.professionals || [])) {
+              newSlots.push({
+                salonId: salonId ?? null,
+                serviceId: serviceId ?? null,
+                professionalId: Number(prof.professionalId),
+                date,
+                start: String(entry.start || ""),
+                end: String(entry.end || ""),
+                start_text: entry.start_text,
+                end_text: entry.end_text,
+              });
+            }
+          }
+          for (const p of ((toolResult as any).profissionais || [])) {
+            const id = Number(p.professionalId);
+            if (id > 0) newProfs.push({ salonId: salonId ?? null, serviceId: serviceId ?? null, professionalId: id, name: String(p.name || "") });
+          }
+          sessionState.bempSlotOptions = dedupeByKey(
+            [...sessionState.bempSlotOptions, ...newSlots.filter((s) => s.start && s.end)],
+            (slot) => `${slot.salonId ?? "any"}:${slot.serviceId ?? "any"}:${slot.professionalId ?? "any"}:${slot.start}:${slot.end}`,
+          );
+          sessionState.bempProfessionalOptions = dedupeByKey(
+            [...sessionState.bempProfessionalOptions, ...newProfs],
+            (p) => `${p.salonId ?? "any"}:${p.serviceId ?? "any"}:${p.professionalId}`,
+          );
+          if (salonId) sessionState.selectedSalonId = salonId;
+          if (serviceId) sessionState.selectedServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
+          console.log(`Tracked Bemp horarios_geral: slots=${sessionState.bempSlotOptions.length} profs=${sessionState.bempProfessionalOptions.length}`);
+        }
+
         if (provider === "zaylo" && toolCall.function.name === "obter_info" && toolResult && !toolResult?.error) {
           const barberOptions = Array.isArray(toolResult?.barbers)
             ? toolResult.barbers
