@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildZayloPromptSection, buildAppBarberPromptSection } from "../_shared/provider-prompts.ts";
+import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildZayloPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
