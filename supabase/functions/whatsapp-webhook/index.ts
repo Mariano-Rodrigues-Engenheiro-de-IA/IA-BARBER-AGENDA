@@ -9330,7 +9330,7 @@ O campo \`dia\` em **agendar** DEVE ser EXATAMENTE igual à data usada na últim
 ANTES de chamar agendar, confirme em voz alta com o cliente SOMENTE se o horário existir literalmente em \`horariosLivres\`:
 → "Posso confirmar para [DD/MM] (dia da semana) às [HH:mm]?"
 
-Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e ofereça buscar outro dia ou opções de \`outrosDias\`.
+Se \`horariosLivres\` estiver vazio para a data solicitada, é PROIBIDO dizer "posso confirmar", "vou confirmar", "confirmo" ou pedir confirmação daquele dia/horário. Nesse caso diga claramente que não há vaga naquela data e pergunte qual outro dia o cliente quer consultar.
 
 O sistema bloqueia automaticamente qualquer tentativa de agendar com data divergente da última listada — você receberá um erro \`Data divergente\` e terá que refazer \`listar_horarios\` antes.
 
@@ -9358,9 +9358,10 @@ Cada ID tem uma fonte obrigatória — NUNCA invente:
    - Cada profissional retorna com \`codigo\` e \`nome\`. Use \`codigo\` como \`profissionalId\`.
 4. 🔥 **PERGUNTE A DATA AO CLIENTE** (ex.: "Pra qual dia você quer?"). NÃO pergunte preferência de profissional ainda.
 5. 🚀 **listar_horarios_geral** passando TODOS os profissionais retornados no passo 3 + a data + os serviços.
-   - Resposta vem com \`{ resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }\`.
+   - Resposta vem com \`{ data, resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ profissionalId, nome, horariosLivres }] }\`.
+   - A ferramenta retorna SOMENTE a data solicitada. Se precisar consultar outro dia, chame a ferramenta novamente com a nova data.
    - **Use o \`resumo\` para decidir o próximo passo automaticamente**:
-     - \`totalProfissionaisLivres === 0\` → "Para [data] não tenho vagas. Quer ver outro dia?" (use \`outrosDias\` para sugerir 2-3 alternativas).
+     - \`totalProfissionaisLivres === 0\` → "Para [data] não tenho vagas. Qual outro dia você quer que eu consulte?".
      - \`totalProfissionaisLivres === 1\` → NÃO pergunte preferência. Diga "Tenho horário com [nome]. Opções: [horariosLivres]. Qual fica melhor?".
      - \`totalProfissionaisLivres >= 2\` →
        - Se o cliente JÁ mencionou um horário específico (ex.: "queria 10h") → escolha o profissional que tem aquele horário e proponha direto.
@@ -9521,7 +9522,7 @@ function buildFrizzarTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios",
-        description: "Lista horários LIVRES do profissional a partir de uma data (cobre 14 dias). Use APENAS o campo horariosLivres da resposta.",
+        description: "Lista horários LIVRES do profissional somente para a data solicitada. Use APENAS o campo horariosLivres da resposta. Para outro dia, faça uma nova chamada com a nova data.",
         parameters: {
           type: "object",
           properties: {
@@ -9545,7 +9546,7 @@ function buildFrizzarTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios_geral",
-        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo (executa as consultas em paralelo). Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Retorna { resumo, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }.",
+        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo, somente para a data solicitada. Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Para outro dia, faça uma nova chamada com a nova data. Retorna { data, resumo, profissionais: [{ profissionalId, nome, horariosLivres }] }.",
         parameters: {
           type: "object",
           properties: {
@@ -9804,26 +9805,23 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         console.log(`[Frizzar] listar_horarios response (${res.status}):`, text.slice(0, 600));
         try {
           const parsed = JSON.parse(text);
-          // A Frizzar devolve um array com uma entrada por dia: [{dia, horariosLivres: ["08:00", ...]}, ...]
-          // Normalizamos pra o agente: priorizamos a entrada da data solicitada e expomos
-          // horariosLivres direto, evitando que ele se perca na estrutura aninhada.
+          // A Frizzar devolve um array com vários dias: [{dia, horariosLivres: ["08:00", ...]}, ...]
+          // Normalizamos de forma ESTRITA: expomos somente a data solicitada.
+          // Não enviamos outros dias para o modelo para evitar confusão/fabricação de horários.
           if (Array.isArray(parsed)) {
             // 🚨 Match EXATO da data pedida. Se a Frizzar não retornar o dia solicitado,
-            // NÃO assuma parsed[0] (geralmente é o próximo dia disponível) — devolva vazio
-            // e empurre tudo pra outrosDias, senão a IA oferece horário de outro dia.
+            // NÃO assuma parsed[0] (geralmente é o próximo dia disponível) — devolva vazio.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato && args.profissionalId) {
               frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: args.data, listedAt: Date.now() });
             }
             return {
               data: args.data,
-              horariosLivres: exato?.horariosLivres ?? [],
-              outrosDias: parsed
-                .filter((d: any) => d !== exato)
-                .map((d: any) => ({
-                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
-                  horariosLivres: d?.horariosLivres ?? [],
-                })),
+              diaSolicitadoEncontrado: Boolean(exato),
+              horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
+              aviso: exato
+                ? undefined
+                : `A API não retornou a data ${args.data}; trate como sem horários nessa data e pergunte qual outro dia consultar.`,
             };
           }
           return parsed;
@@ -9841,7 +9839,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         const consultaUm = async (prof: any) => {
           const profissionalId = prof?.codigo;
           const nome = prof?.nome ?? null;
-          if (!profissionalId) return { profissionalId: null, nome, erro: "codigo ausente", horariosLivres: [], outrosDias: [] };
+          if (!profissionalId) return { profissionalId: null, nome, erro: "codigo ausente", horariosLivres: [], diaSolicitadoEncontrado: false };
           try {
             const res = await frizzarFetch(`/listar/horarios/${profissionalId}/${args.data}`, {
               method: "POST",
@@ -9849,10 +9847,11 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
               body: JSON.stringify(body),
             });
             const text = await res.text();
-            if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], outrosDias: [] };
+            if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], diaSolicitadoEncontrado: false };
             const parsed = JSON.parse(text);
-            if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], outrosDias: [], raw: parsed };
-            // 🚨 Match EXATO. Sem fallback pra parsed[0] (que vira o próximo dia disponível).
+            if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], diaSolicitadoEncontrado: false, raw: parsed };
+            // 🚨 Match EXATO. Sem fallback pra parsed[0] (que vira o próximo dia disponível)
+            // e sem expor outros dias ao modelo.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato) {
               frizzarLastListed.set(lastListedKey(profissionalId), { dia: args.data, listedAt: Date.now() });
@@ -9860,16 +9859,12 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             return {
               profissionalId,
               nome,
+              data: args.data,
+              diaSolicitadoEncontrado: Boolean(exato),
               horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
-              outrosDias: parsed
-                .filter((d: any) => d !== exato)
-                .map((d: any) => ({
-                  dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
-                  horariosLivres: Array.isArray(d?.horariosLivres) ? d.horariosLivres : [],
-                })),
             };
           } catch (e: any) {
-            return { profissionalId, nome, erro: String(e?.message || e), horariosLivres: [], outrosDias: [] };
+            return { profissionalId, nome, erro: String(e?.message || e), horariosLivres: [], diaSolicitadoEncontrado: false };
           }
         };
 
@@ -9882,7 +9877,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
         let resumo: string;
         if (comHorario.length === 0) {
-          resumo = `Nenhum profissional com vaga em ${args.data}. Ofereça outro dia (veja outrosDias de cada profissional).`;
+          resumo = `Nenhum profissional com vaga em ${args.data}. Pergunte qual outro dia o cliente quer consultar; não sugira horários de outra data sem nova busca.`;
         } else if (comHorario.length === 1) {
           resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.`;
         } else {
