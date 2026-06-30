@@ -9930,7 +9930,8 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             const hTxt = await hRes.text();
             const hParsed = JSON.parse(hTxt);
             if (Array.isArray(hParsed)) {
-              const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia)) ?? hParsed[0];
+              // 🚨 Match EXATO — sem fallback pra parsed[0].
+              const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia));
               return {
                 checked: true,
                 horariosLivres: Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [],
