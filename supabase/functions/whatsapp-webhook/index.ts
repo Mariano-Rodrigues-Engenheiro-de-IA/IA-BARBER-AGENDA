@@ -9852,11 +9852,10 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], outrosDias: [] };
             const parsed = JSON.parse(text);
             if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], outrosDias: [], raw: parsed };
-            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data)) ?? parsed[0];
-            const diaRegistrado = (typeof exato?.dia === "string" ? exato.dia.slice(0, 10) : args.data);
-            // Mantém a trava de data viva para CADA profissional consultado.
-            if (diaRegistrado) {
-              frizzarLastListed.set(lastListedKey(profissionalId), { dia: diaRegistrado, listedAt: Date.now() });
+            // 🚨 Match EXATO. Sem fallback pra parsed[0] (que vira o próximo dia disponível).
+            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            if (exato) {
+              frizzarLastListed.set(lastListedKey(profissionalId), { dia: args.data, listedAt: Date.now() });
             }
             return {
               profissionalId,
