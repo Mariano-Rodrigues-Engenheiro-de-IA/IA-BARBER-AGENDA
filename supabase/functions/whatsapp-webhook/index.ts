@@ -7110,6 +7110,7 @@ function buildSystemPrompt(
     lastHumanGapMinutes?: number | null;
   },
   providerPromptOverride?: string | null,
+  globalPromptOverride?: string | null,
 ): string {
   const br = getBrasiliaDate();
   const dateComplete = br.dateComplete;
