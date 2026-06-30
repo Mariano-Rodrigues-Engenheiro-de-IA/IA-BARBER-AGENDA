@@ -8381,6 +8381,43 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             }
           }
 
+          // ===== FILTRO ANTI-BURACO (greedy slot packing) =====
+          // Para cada profissional, mantém um slot e descarta os próximos que
+          // cairiam dentro da janela [inicio, inicio+duracao). Isso evita que
+          // a IA ofereça 9:00 + 9:20 (que criariam um buraco órfão de 20min
+          // quando o cliente escolher um dos dois). Aplicado SEMPRE — se um
+          // slot intermediário é o único disponível, ele continua sendo o
+          // primeiro da lista e portanto é preservado.
+          try {
+            const dur = Number(args.servicoDuracao);
+            const profissionais = parsed?.data || parsed;
+            if (Array.isArray(profissionais) && Number.isFinite(dur) && dur > 0) {
+              const toMin = (h: string) => {
+                const [hh, mm] = String(h).slice(0, 5).split(":").map(Number);
+                return hh * 60 + mm;
+              };
+              for (const prof of profissionais) {
+                if (!Array.isArray(prof.horariosVagos) || prof.horariosVagos.length === 0) continue;
+                const sorted = [...prof.horariosVagos]
+                  .map((h: string) => String(h).slice(0, 5))
+                  .filter((h: string) => /^\d{2}:\d{2}$/.test(h))
+                  .sort();
+                const kept: string[] = [];
+                let nextAllowed = -Infinity;
+                for (const h of sorted) {
+                  const m = toMin(h);
+                  if (m >= nextAllowed) {
+                    kept.push(h);
+                    nextAllowed = m + dur;
+                  }
+                }
+                const before = prof.horariosVagos.length;
+                prof.horariosVagos = kept;
+                console.log(`[AntiBuraco] ${prof.nome || prof.id}: ${before} → ${kept.length} slots (dur=${dur}min)`);
+              }
+            }
+          } catch (e) { console.warn("[AntiBuraco] falha:", (e as Error).message); }
+
           // Popula cache de slots reais por profissional para travar criar_agendamento alucinado.
           try {
             const profissionais = parsed?.data || parsed;
