@@ -9808,18 +9808,18 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           // Normalizamos pra o agente: priorizamos a entrada da data solicitada e expomos
           // horariosLivres direto, evitando que ele se perca na estrutura aninhada.
           if (Array.isArray(parsed)) {
+            // 🚨 Match EXATO da data pedida. Se a Frizzar não retornar o dia solicitado,
+            // NÃO assuma parsed[0] (geralmente é o próximo dia disponível) — devolva vazio
+            // e empurre tudo pra outrosDias, senão a IA oferece horário de outro dia.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
-            const escolhido = exato ?? parsed[0];
-            // Registra a data efetivamente consultada para esta conversa/profissional.
-            const diaRegistrado = (typeof escolhido?.dia === "string" ? escolhido.dia.slice(0, 10) : args.data);
-            if (diaRegistrado && args.profissionalId) {
-              frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: diaRegistrado, listedAt: Date.now() });
+            if (exato && args.profissionalId) {
+              frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: args.data, listedAt: Date.now() });
             }
             return {
               data: args.data,
-              horariosLivres: escolhido?.horariosLivres ?? [],
+              horariosLivres: exato?.horariosLivres ?? [],
               outrosDias: parsed
-                .filter((d: any) => d !== escolhido)
+                .filter((d: any) => d !== exato)
                 .map((d: any) => ({
                   dia: typeof d?.dia === "string" ? d.dia.slice(0, 10) : d?.dia,
                   horariosLivres: d?.horariosLivres ?? [],
