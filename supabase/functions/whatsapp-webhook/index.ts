@@ -9552,6 +9552,27 @@ function buildBempTools(tenant: any) {
     {
       type: "function",
       function: {
+        name: "listar_horarios_geral",
+        description: "🚀 ATALHO. Consulta horários disponíveis de TODOS os profissionais habilitados para o serviço + data ao mesmo tempo (fanout paralelo). Use ANTES de perguntar preferência de profissional. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados: [{ start, end, start_text, end_text, professionals: [{ professionalId, name }] }], profissionais: [{ professionalId, name, available_slots }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number" },
+            serviceId: { type: "number" },
+            data: { type: "string", description: "Data no formato yyyy-MM-dd" },
+            professionalIds: {
+              type: "array",
+              items: { type: "number" },
+              description: "Opcional. Se vazio, busca todos os profissionais habilitados para o serviço.",
+            },
+          },
+          required: ["salonId", "serviceId", "data"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "consultar_cliente",
         description: "Verifica se o telefone do cliente atual já tem cadastro Bemp. Retorna nome e dados se existir.",
         parameters: { type: "object", properties: {} },
