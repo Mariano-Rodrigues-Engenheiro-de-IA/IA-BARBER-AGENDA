@@ -5524,6 +5524,44 @@ async function callAIAgent(
           console.log(`Tracked Bemp slot options: ${sessionState.bempSlotOptions.length}`);
         }
 
+        if (provider === "bemp" && toolCall.function.name === "listar_horarios_geral" && toolResult && Array.isArray((toolResult as any).horariosConsolidados)) {
+          const salonId = toPositiveInteger(parsedArgs?.salonId);
+          const serviceId = toPositiveInteger(parsedArgs?.serviceId);
+          const date = typeof parsedArgs?.data === "string" ? parsedArgs.data : null;
+          const newSlots: any[] = [];
+          const newProfs: any[] = [];
+          for (const entry of (toolResult as any).horariosConsolidados as any[]) {
+            for (const prof of (entry.professionals || [])) {
+              newSlots.push({
+                salonId: salonId ?? null,
+                serviceId: serviceId ?? null,
+                professionalId: Number(prof.professionalId),
+                date,
+                start: String(entry.start || ""),
+                end: String(entry.end || ""),
+                start_text: entry.start_text,
+                end_text: entry.end_text,
+              });
+            }
+          }
+          for (const p of ((toolResult as any).profissionais || [])) {
+            const id = Number(p.professionalId);
+            if (id > 0) newProfs.push({ salonId: salonId ?? null, serviceId: serviceId ?? null, professionalId: id, name: String(p.name || "") });
+          }
+          sessionState.bempSlotOptions = dedupeByKey(
+            [...sessionState.bempSlotOptions, ...newSlots.filter((s) => s.start && s.end)],
+            (slot) => `${slot.salonId ?? "any"}:${slot.serviceId ?? "any"}:${slot.professionalId ?? "any"}:${slot.start}:${slot.end}`,
+          );
+          sessionState.bempProfessionalOptions = dedupeByKey(
+            [...sessionState.bempProfessionalOptions, ...newProfs],
+            (p) => `${p.salonId ?? "any"}:${p.serviceId ?? "any"}:${p.professionalId}`,
+          );
+          if (salonId) sessionState.selectedSalonId = salonId;
+          if (serviceId) sessionState.selectedServiceId = serviceId;
+          if (date) sessionState.selectedDate = date;
+          console.log(`Tracked Bemp horarios_geral: slots=${sessionState.bempSlotOptions.length} profs=${sessionState.bempProfessionalOptions.length}`);
+        }
+
         if (provider === "zaylo" && toolCall.function.name === "obter_info" && toolResult && !toolResult?.error) {
           const barberOptions = Array.isArray(toolResult?.barbers)
             ? toolResult.barbers
@@ -9552,6 +9590,27 @@ function buildBempTools(tenant: any) {
     {
       type: "function",
       function: {
+        name: "listar_horarios_geral",
+        description: "🚀 ATALHO. Consulta horários disponíveis de TODOS os profissionais habilitados para o serviço + data ao mesmo tempo (fanout paralelo). Use ANTES de perguntar preferência de profissional. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados: [{ start, end, start_text, end_text, professionals: [{ professionalId, name }] }], profissionais: [{ professionalId, name, available_slots }] }.",
+        parameters: {
+          type: "object",
+          properties: {
+            salonId: { type: "number" },
+            serviceId: { type: "number" },
+            data: { type: "string", description: "Data no formato yyyy-MM-dd" },
+            professionalIds: {
+              type: "array",
+              items: { type: "number" },
+              description: "Opcional. Se vazio, busca todos os profissionais habilitados para o serviço.",
+            },
+          },
+          required: ["salonId", "serviceId", "data"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "consultar_cliente",
         description: "Verifica se o telefone do cliente atual já tem cadastro Bemp. Retorna nome e dados se existir.",
         parameters: { type: "object", properties: {} },
@@ -9781,6 +9840,107 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         const text = await res.text();
         console.log(`[Bemp] listar_horarios (${res.status}):`, text.slice(0, 600));
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+      }
+
+      case "listar_horarios_geral": {
+        const salonResolution = await resolveBempSalonId(args.salonId);
+        if (!salonResolution.salonId) return salonResolution;
+        args.salonId = salonResolution.salonId;
+        if (!args.serviceId || !args.data) {
+          return { error: "Faltam salonId, serviceId e/ou data (yyyy-MM-dd)." };
+        }
+
+        // 1) Resolve profissionais: usa lista informada OU busca todos do serviço.
+        let profs: Array<{ id: number; name: string }> = [];
+        const requestedIds = Array.isArray(args.professionalIds)
+          ? args.professionalIds.map((v: any) => toPositiveInteger(v)).filter((v: any): v is number => !!v)
+          : [];
+        try {
+          const profRes = await bempFetch(`${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals`, { headers });
+          const profText = await profRes.text();
+          const profData = JSON.parse(profText);
+          if (Array.isArray(profData)) {
+            profs = profData
+              .map((p: any) => ({ id: Number(p?.id), name: String(p?.name || "") }))
+              .filter((p) => p.id > 0);
+          }
+        } catch (e) {
+          return { error: "Falha ao listar profissionais para o serviço.", details: String(e) };
+        }
+        if (requestedIds.length > 0) {
+          profs = profs.filter((p) => requestedIds.includes(p.id));
+        }
+        if (profs.length === 0) {
+          return { error: "Nenhum profissional disponível para este serviço.", profissionais: [] };
+        }
+
+        console.log(`[Bemp] listar_horarios_geral salon=${args.salonId} svc=${args.serviceId} data=${args.data} profs=${profs.map((p) => p.id).join(",")}`);
+
+        // 2) Fanout paralelo de slots por profissional.
+        const results = await Promise.all(profs.map(async (p) => {
+          try {
+            const url = `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${p.id}/slots/${args.data}`;
+            const res = await bempFetch(url, { headers });
+            const text = await res.text();
+            const data = JSON.parse(text);
+            const slots = Array.isArray(data) ? data : [];
+            return { prof: p, slots };
+          } catch (e) {
+            console.log(`[Bemp] horarios_geral falha prof=${p.id}:`, String(e));
+            return { prof: p, slots: [] as any[] };
+          }
+        }));
+
+        // 3) Consolida por start.
+        const consolidatedMap = new Map<string, {
+          start: string;
+          end: string;
+          start_text?: string;
+          end_text?: string;
+          professionals: Array<{ professionalId: number; name: string }>;
+        }>();
+        const profissionais: any[] = [];
+        for (const { prof, slots } of results) {
+          const availableSlots: any[] = [];
+          for (const slot of slots) {
+            const start = String(slot?.start || "");
+            const end = String(slot?.end || "");
+            if (!start || !end) continue;
+            const start_text = typeof slot?.start_text === "string" ? slot.start_text : undefined;
+            const end_text = typeof slot?.end_text === "string" ? slot.end_text : undefined;
+            availableSlots.push({ start, end, start_text, end_text });
+            const key = start;
+            if (!consolidatedMap.has(key)) {
+              consolidatedMap.set(key, { start, end, start_text, end_text, professionals: [] });
+            }
+            const entry = consolidatedMap.get(key)!;
+            if (!entry.professionals.some((x) => x.professionalId === prof.id)) {
+              entry.professionals.push({ professionalId: prof.id, name: prof.name });
+            }
+          }
+          profissionais.push({
+            professionalId: prof.id,
+            name: prof.name,
+            total: availableSlots.length,
+            available_slots: availableSlots,
+          });
+        }
+
+        const horariosConsolidados = Array.from(consolidatedMap.values())
+          .sort((a, b) => a.start.localeCompare(b.start));
+        const totalProfissionaisLivres = profissionais.filter((p) => p.total > 0).length;
+
+        return {
+          salonId: args.salonId,
+          serviceId: args.serviceId,
+          data: args.data,
+          resumo: totalProfissionaisLivres === 0
+            ? `Nenhum profissional disponível em ${args.data}.`
+            : `${totalProfissionaisLivres} profissional(is) com horários em ${args.data}: ${horariosConsolidados.length} horário(s) únicos.`,
+          totalProfissionaisLivres,
+          horariosConsolidados,
+          profissionais,
+        };
       }
 
       case "consultar_cliente": {
