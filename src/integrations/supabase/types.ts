@@ -648,6 +648,27 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_prompts: {
+        Row: {
+          content: string
+          provider: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          content?: string
+          provider: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          content?: string
+          provider?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
       tenant_permissions: {
         Row: {
           created_at: string
