@@ -19,6 +19,7 @@ import FollowUpsDashboardPage from "@/pages/FollowUpsDashboard";
 import TenantDashboardPage from "@/pages/TenantDashboard";
 import TenantKanbanPage from "@/pages/TenantKanban";
 import AuditPage from "@/pages/Audit";
+import PromptsPage from "@/pages/Prompts";
 import ClientOverview from "@/pages/client/Overview";
 import ClientConversations from "@/pages/client/Conversations";
 import ClientFollowUps from "@/pages/client/FollowUps";
@@ -76,6 +77,7 @@ function AppRoutes() {
       <Route path="/follow-ups" element={<AdminRoute><FollowUpsDashboardPage /></AdminRoute>} />
       <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
       <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
+      <Route path="/prompts" element={<AdminRoute><PromptsPage /></AdminRoute>} />
       <Route path="/agent-logs" element={<AdminRoute><AgentLogsPage /></AdminRoute>} />
 
       {/* Client */}
