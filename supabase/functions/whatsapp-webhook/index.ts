@@ -4440,17 +4440,19 @@ async function callAIAgent(
     }
   }
 
-  // Fetch admin-editable provider prompt override (if any) from DB.
+  // Fetch admin-editable provider prompt override + GLOBAL override from DB.
   let providerPromptOverride: string | null = null;
+  let globalPromptOverride: string | null = null;
   try {
-    const { data: ppRow } = await supabase
+    const { data: ppRows } = await supabase
       .from("provider_prompts")
-      .select("content")
-      .eq("provider", provider)
-      .maybeSingle();
-    const c = (ppRow as any)?.content;
-    if (typeof c === "string" && c.trim().length > 0) {
-      providerPromptOverride = c;
+      .select("provider, content")
+      .in("provider", [provider, "global"]);
+    for (const row of (ppRows || []) as any[]) {
+      const c = row?.content;
+      if (typeof c !== "string" || c.trim().length === 0) continue;
+      if (row.provider === "global") globalPromptOverride = c;
+      else if (row.provider === provider) providerPromptOverride = c;
     }
   } catch (e) {
     console.warn("[ProviderPrompts] override fetch failed:", (e as any)?.message);
@@ -4463,7 +4465,7 @@ async function callAIAgent(
     lastClientGapMinutes,
     lastAssistantGapMinutes,
     lastHumanGapMinutes,
-  }, providerPromptOverride);
+  }, providerPromptOverride, globalPromptOverride);
 
   // CelCash context injection — só para provider Bemp com celcash_enabled
   if (tenant?.celcash_enabled && provider === "bemp") {
