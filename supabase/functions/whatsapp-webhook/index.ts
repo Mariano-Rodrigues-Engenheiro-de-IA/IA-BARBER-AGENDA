@@ -10814,92 +10814,20 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           };
         }
 
-        // Fallback: histórico de agendamentos por período, útil quando a comanda não aparece em /invoice/search.
-        const callHistory = (historyStatusType: number) => callGet("/v1/appointments/history", {
-          start_date: startDate,
-          end_date: endDate,
-          status_type: historyStatusType,
-        });
-        const r = await callHistory(statusType);
-        if (r?.error) return r;
-        const items = Array.isArray(r?.data) ? r.data : [];
-        // Match por sufixo do telefone. Compara últimos 8 dígitos (núcleo do número),
-        // ignorando DDI, DDD e o "9" extra que varia entre cadastros.
-        const tail = (s: string, n: number) => s.slice(-n);
-        const phoneCore = phoneDigits ? tail(phoneDigits, 8) : "";
-        const filtered = phoneCore
-          ? items.filter((it: any) => {
-              return phoneCoreMatches(
-                phoneDigits,
-                it?.client_phone,
-                it?.customer_phone,
-                it?.phone,
-                it?.scheduling_observation,
-                it?.observation,
-                it?.notes,
-                it?.description,
-              );
-            })
-          : items;
-        const mapHistoryItem = (it: any) => ({
-          source: "appointments_history",
-          scheduling_code: it.scheduling_code,
-          invoice_code: it.invoice_code,
-          invoice_item_code: null,
-          client_name: it.client_name,
-          client_phone: it.client_phone,
-          service_description: it.service_description,
-          employee_name: it.employee_name,
-          scheduling_start: it.scheduling_start,
-          scheduling_status: it.scheduling_status,
-          scheduling_observation: firstValue(it.scheduling_observation, it.observation, it.notes, it.description),
-          service_value: it.service_value,
-        });
-        let canceledAppointments: any[] = [];
-        if (filtered.length === 0 && Number(statusType) === 1 && phoneCore) {
-          const canceledResult = await callHistory(3);
-          const canceledItems = Array.isArray(canceledResult?.data) ? canceledResult.data : [];
-          canceledAppointments = canceledItems
-            .filter((it: any) => phoneCoreMatches(
-              phoneDigits,
-              it?.client_phone,
-              it?.customer_phone,
-              it?.phone,
-              it?.scheduling_observation,
-              it?.observation,
-              it?.notes,
-              it?.description,
-            ))
-            .map(mapHistoryItem);
-          if (canceledAppointments.length > 0) {
-            console.log(`[AppBarber] listar_agendamentos: found canceled/manual matches=${canceledAppointments.length}`);
-          }
-        }
-        console.log(`[AppBarber] listar_agendamentos: total API=${items.length}, match telefone=${filtered.length}, phoneCore=${phoneCore}, allPhones=${JSON.stringify(items.map((it: any) => it?.client_phone))}`);
+        // ⚠️ Fallback /v1/appointments/history REMOVIDO intencionalmente.
+        // Esse endpoint devolve a agenda inteira do estabelecimento (todos os clientes)
+        // e a equipe técnica do AppBarber sinalizou isso como "acesso a arquivos restritos".
+        // Se /v1/invoice/search não acha pelo telefone, devolvemos vazio — sem dump global.
+        console.log(`[AppBarber] listar_agendamentos: invoice/search não retornou comandas abertas para ${JSON.stringify(triedInvoicePhones)} — NÃO consultando /appointments/history (acesso restrito).`);
         return {
-          source: "appointments_history",
+          source: "invoice_search",
           period: { start_date: startDate, end_date: endDate, status_type: statusType },
           customer_phone: phoneDigits || null,
           searched_customer_phones: triedInvoicePhones,
           invoice_search_diagnostics: invoiceSearchDiagnostics,
-          appointments: filtered.map(mapHistoryItem),
-          total: filtered.length,
-          canceled_appointments: canceledAppointments,
-          found_canceled: canceledAppointments.length > 0,
-          note: canceledAppointments.length > 0 ? "Não há agendamento ativo para cancelar; encontrei registro cancelado para este telefone." : undefined,
-          // Quando nada bate, devolve a lista bruta pra IA poder confirmar visualmente com o cliente
-          // (útil se o cadastro AppBarber estiver com outro telefone)
-          unmatched_sample: filtered.length === 0 && items.length > 0
-            ? items.slice(0, 5).map((it: any) => ({
-                scheduling_code: it.scheduling_code,
-                invoice_code: it.invoice_code,
-                client_name: it.client_name,
-                client_phone: it.client_phone,
-                service_description: it.service_description,
-                scheduling_start: it.scheduling_start,
-                scheduling_observation: firstValue(it.scheduling_observation, it.observation, it.notes, it.description),
-              }))
-            : undefined,
+          appointments: [],
+          total: 0,
+          note: "Nenhuma comanda ativa encontrada para este telefone no AppBarber. Confirme com o cliente o número usado no cadastro da barbearia.",
         };
       }
 
