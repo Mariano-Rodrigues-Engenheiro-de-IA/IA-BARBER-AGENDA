@@ -608,8 +608,9 @@ Você está conectada à API **Bemp**. Os nomes de ferramenta que você TEM aces
 - **listar_unidades** — lista os salões/unidades.
 - **consultar_cliente** — verifica se o telefone do cliente já tem cadastro (retorna o nome).
 - **listar_servicos** — lista os serviços do salão.
-- **listar_profissionais** — lista profissionais do serviço (**obrigatório** antes de listar_horarios e agendar).
-- **listar_horarios** — lista horários disponíveis em um dia.
+- **listar_profissionais** — lista profissionais do serviço.
+- **listar_horarios_geral** — 🚀 ATALHO PADRÃO. Consulta horários de TODOS os profissionais para um serviço + data em uma chamada só (fanout paralelo). Retorna \`{ resumo, totalProfissionaisLivres, horariosConsolidados: [{ start, end, start_text, end_text, professionals: [{ professionalId, name }] }], profissionais: [...] }\`. Use ANTES de perguntar preferência de profissional.
+- **listar_horarios** — horários de UM profissional específico (use só quando o cliente já escolheu antes ou precisa rechecar 1 profissional).
 - **listar_agendamentos** — lista os agendamentos abertos do cliente.
 - **agendar** — cria o agendamento.
 - **cancelar_agendamento** — cancela um agendamento existente.
