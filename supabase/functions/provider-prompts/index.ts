@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
         return {
           provider: p,
           label: PROVIDER_LABELS[p],
-          default_content: PROVIDER_PROMPT_DEFAULTS[p] || "",
+          default_content: getDefaultProviderPrompt(p),
           override_content: row?.content || "",
           has_override: !!(row?.content && String(row.content).trim().length > 0),
           updated_at: row?.updated_at || null,
