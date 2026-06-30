@@ -5080,19 +5080,36 @@ async function callAIAgent(
               wasBlocked = true;
               sessionBlocked = true;
             } else if (!matchingSlots.some((slot) => slot.start === requestedStart && slot.end === requestedEnd)) {
-              toolResult = {
-                error: "O horário informado não bate com os slots válidos retornados pela Bemp.",
-                blocked: true,
-                message: "Rode listar_horarios novamente com professionalId e use exatamente start/end de um slot retornado.",
-                horarios_validos: matchingSlots.slice(0, 20).map((slot) => ({
-                  start: slot.start,
-                  end: slot.end,
-                  start_text: slot.start_text,
-                  end_text: slot.end_text,
-                })),
-              };
-              wasBlocked = true;
-              sessionBlocked = true;
+              // Auto-correct: if start matches a known slot, use that slot's end (avoid blocking on calculated end times)
+              const startMatch = matchingSlots.find((slot) => slot.start === requestedStart);
+              if (startMatch) {
+                parsedArgs.end = startMatch.end;
+                if (startMatch.professionalId && !requestedProfessionalId) {
+                  parsedArgs.professionalId = startMatch.professionalId;
+                }
+                if (startMatch.serviceId && !requestedServiceId) {
+                  parsedArgs.serviceId = startMatch.serviceId;
+                }
+                if (startMatch.salonId && !requestedSalonId) {
+                  parsedArgs.salonId = startMatch.salonId;
+                }
+                corrections.push(`end auto-corrigido de ${requestedEnd} para ${startMatch.end} (slot Bemp oficial)`);
+                console.log(`[BempResolver] agendar auto-corrected end: ${requestedEnd} -> ${startMatch.end}`);
+              } else {
+                toolResult = {
+                  error: "O horário informado não bate com os slots válidos retornados pela Bemp.",
+                  blocked: true,
+                  message: "Use exatamente um start/end retornado por listar_horarios_geral ou listar_horarios.",
+                  horarios_validos: matchingSlots.slice(0, 20).map((slot) => ({
+                    start: slot.start,
+                    end: slot.end,
+                    start_text: slot.start_text,
+                    end_text: slot.end_text,
+                  })),
+                };
+                wasBlocked = true;
+                sessionBlocked = true;
+              }
             }
           }
 
