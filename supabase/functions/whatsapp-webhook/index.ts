@@ -9522,7 +9522,7 @@ function buildFrizzarTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios",
-        description: "Lista horários LIVRES do profissional a partir de uma data (cobre 14 dias). Use APENAS o campo horariosLivres da resposta.",
+        description: "Lista horários LIVRES do profissional somente para a data solicitada. Use APENAS o campo horariosLivres da resposta. Para outro dia, faça uma nova chamada com a nova data.",
         parameters: {
           type: "object",
           properties: {
@@ -9546,7 +9546,7 @@ function buildFrizzarTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios_geral",
-        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo (executa as consultas em paralelo). Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Retorna { resumo, profissionais: [{ profissionalId, nome, horariosLivres, outrosDias }] }.",
+        description: "ATALHO RECOMENDADO: lista horários LIVRES de VÁRIOS profissionais ao mesmo tempo, somente para a data solicitada. Use logo após listar_profissionais para já ter a agenda consolidada antes de perguntar preferência ao cliente. Para outro dia, faça uma nova chamada com a nova data. Retorna { data, resumo, profissionais: [{ profissionalId, nome, horariosLivres }] }.",
         parameters: {
           type: "object",
           properties: {
