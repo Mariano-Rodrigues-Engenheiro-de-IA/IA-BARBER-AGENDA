@@ -5498,8 +5498,10 @@ async function callAIAgent(
           const mutInfo2 = isMutatingToolName(toolCall.function.name, tenant);
           if (mutInfo2.mutating && !wasBlocked) {
             const r: any = toolResult || {};
+            const httpStatus = typeof r.status === "number" ? r.status : null;
             const succeeded = !r.error && !r.blocked && r.success !== false
-              && !(Array.isArray(r.Errors) && r.Errors.length > 0);
+              && !(Array.isArray(r.Errors) && r.Errors.length > 0)
+              && !(httpStatus !== null && httpStatus >= 400);
             if (succeeded) {
               const dedupeKey = buildDedupeKey(toolCall.function.name, parsedArgs);
               const summary = buildActionSummary(toolCall.function.name, parsedArgs, r);
