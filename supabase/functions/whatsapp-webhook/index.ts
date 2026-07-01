@@ -8503,17 +8503,39 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           motivo: args.motivo || "Cancelado pelo cliente via WhatsApp",
         };
         console.log(`cancelar_agendamento URL: ${url}`, JSON.stringify(body));
-        const res = await fetch(url, {
-          method: "PATCH",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`cancelar_agendamento response (${res.status}):`, text.slice(0, 500));
+
+        // Retry loop: Trinks costuma retornar 429 quando 2 cancels chegam quase juntos.
+        // Fazemos até 3 tentativas com backoff antes de devolver o 429 pra IA.
+        let res: Response;
+        let text = "";
+        let attempt = 0;
+        const maxAttempts = 3;
+        while (true) {
+          attempt++;
+          res = await fetch(url, {
+            method: "PATCH",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          text = await res.text();
+          console.log(`cancelar_agendamento response (${res.status}, attempt ${attempt}):`, text.slice(0, 500));
+          if (res.status !== 429 || attempt >= maxAttempts) break;
+          const backoff = 800 * attempt; // 800ms, 1600ms
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+
         if (res.status === 200 || res.status === 204) {
           return { success: true, message: "Agendamento cancelado com sucesso" };
         }
-        try { return { status: res.status, ...JSON.parse(text) }; } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        if (res.status === 429) {
+          return {
+            error: "RATE_LIMIT_TRINKS",
+            status: 429,
+            recoverable: true,
+            message: "Trinks limitou as requisições (429). Aguarde alguns segundos e chame cancelar_agendamento novamente para este mesmo agendamentoId — a ação NÃO foi concluída.",
+          };
+        }
+        try { return { status: res.status, error: `Status ${res.status}`, ...JSON.parse(text) }; } catch { return { error: `Status ${res.status}`, status: res.status, raw: text.slice(0, 200) }; }
       }
 
       case "editar_agendamento": {
