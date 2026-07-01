@@ -8184,30 +8184,88 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "buscar_agendamento": {
+        // Helper: gera variantes brasileiras de telefone (com/sem 55, com/sem 9º dígito)
+        const trinksPhoneVariants = (raw: string): string[] => {
+          const digits = String(raw || "").replace(/\D/g, "");
+          if (!digits) return [];
+          const variants = new Set<string>();
+          const add = (v: string) => { const d = v.replace(/\D/g, ""); if (d.length >= 10 && d.length <= 13) variants.add(d); };
+          let local = digits;
+          if (local.startsWith("55") && (local.length === 12 || local.length === 13)) local = local.slice(2);
+          while (local.startsWith("0") && local.length > 10) local = local.slice(1);
+          add(local);
+          if (local.length === 10) add(`${local.slice(0, 2)}9${local.slice(2)}`); // adiciona 9º
+          if (local.length === 11 && local[2] === "9") add(`${local.slice(0, 2)}${local.slice(3)}`); // remove 9º
+          for (const v of Array.from(variants)) add(`55${v}`);
+          return Array.from(variants);
+        };
+
         const clienteIds: number[] = [];
         if (args.clienteId) clienteIds.push(Number(args.clienteId));
 
         const resolvePhone = phoneNumber || args.telefone || "";
-        if (resolvePhone) {
-          let tel = resolvePhone.replace(/\D/g, "");
-          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-          const ddd = tel.substring(0, 2);
-          let rest = tel.substring(2);
-          if (rest.length === 8) rest = "9" + rest;
-          tel = ddd + rest;
+        const clienteIdToRecord = new Map<number, any>();
 
-          console.log(`buscar_agendamento: resolving clienteId from telefone ${tel}`);
-          const clienteRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-          const clienteData = await clienteRes.json();
-          const clientes = clienteData?.data || clienteData;
-          if (Array.isArray(clientes) && clientes.length > 0) {
-            // Coletar TODOS os clienteIds (cadastros duplicados com mesmo telefone)
-            for (const c of clientes) {
+        if (resolvePhone) {
+          // 1) Busca inicial com todas variantes do telefone do WhatsApp
+          const variants = trinksPhoneVariants(resolvePhone);
+          console.log(`buscar_agendamento: tentando variantes de telefone: ${variants.join(",")}`);
+
+          const initialResults = await Promise.all(variants.map(async (tel) => {
+            try {
+              const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+              const j = await r.json();
+              const list = j?.data || j;
+              return Array.isArray(list) ? list : [];
+            } catch { return []; }
+          }));
+
+          for (const list of initialResults) {
+            for (const c of list) {
               const cid = Number(c.id || c.Id);
-              if (Number.isFinite(cid) && !clienteIds.includes(cid)) clienteIds.push(cid);
+              if (Number.isFinite(cid) && !clienteIds.includes(cid)) {
+                clienteIds.push(cid);
+                clienteIdToRecord.set(cid, c);
+              }
             }
-            console.log(`buscar_agendamento: resolved ${clienteIds.length} clienteId(s) from telefone: ${clienteIds.join(",")}`);
           }
+
+          // 2) Para cada cliente encontrado, extrair telefones cadastrados na Trinks
+          //    e refazer busca (pode revelar cadastros duplicados com telefone diferente).
+          const trinksStoredPhones = new Set<string>();
+          for (const c of clienteIdToRecord.values()) {
+            const tels = Array.isArray(c.telefones) ? c.telefones : (Array.isArray(c.Telefones) ? c.Telefones : []);
+            for (const t of tels) {
+              const ddd = String(t.ddd || t.Ddd || "");
+              const num = String(t.numero || t.Numero || "");
+              if (ddd && num) {
+                for (const v of trinksPhoneVariants(`${ddd}${num}`)) trinksStoredPhones.add(v);
+              }
+            }
+          }
+          const extraPhones = [...trinksStoredPhones].filter((p) => !variants.includes(p));
+          if (extraPhones.length > 0) {
+            console.log(`buscar_agendamento: telefones adicionais do cadastro Trinks: ${extraPhones.join(",")}`);
+            const extraResults = await Promise.all(extraPhones.map(async (tel) => {
+              try {
+                const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
+                const j = await r.json();
+                const list = j?.data || j;
+                return Array.isArray(list) ? list : [];
+              } catch { return []; }
+            }));
+            for (const list of extraResults) {
+              for (const c of list) {
+                const cid = Number(c.id || c.Id);
+                if (Number.isFinite(cid) && !clienteIds.includes(cid)) {
+                  clienteIds.push(cid);
+                  clienteIdToRecord.set(cid, c);
+                }
+              }
+            }
+          }
+
+          console.log(`buscar_agendamento: total ${clienteIds.length} clienteId(s): ${clienteIds.join(",")}`);
         }
 
         if (clienteIds.length === 0) {
@@ -8218,7 +8276,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const allActive: any[] = [];
         const seenIds = new Set<number>();
 
-        // Buscar agendamentos de TODOS os clienteIds em paralelo
+        // Buscar agendamentos de TODOS os clienteIds em paralelo (cobre cadastros duplicados)
         const results = await Promise.all(clienteIds.map(async (cid) => {
           try {
             const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${cid}`, { headers });
