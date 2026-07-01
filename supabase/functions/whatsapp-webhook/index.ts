@@ -4963,20 +4963,101 @@ async function callAIAgent(
         }
       }
 
-      const exactSlotAlreadyBooked =
+      let exactSlotAlreadyBooked =
         isSchedulingTool &&
         attemptedSlotSignature !== "" &&
         attemptedServiceIds.length > 0 &&
         sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature);
 
+      // ===== DB-LEVEL DUPLICATE BOOKING GUARD (race-condition safe) =====
+      // O snapshot de sessionState pode estar desatualizado quando duas mensagens
+      // do mesmo cliente entram em janelas de debounce paralelas. Consultamos
+      // agent_logs em tempo real por qualquer booking bem-sucedido nos últimos
+      // 20 min com a MESMA assinatura de slot (serviços+data+hora+profissional)
+      // ou, se a assinatura estiver vazia (provedor sem args normalizáveis),
+      // por qualquer booking bem-sucedido no mesmo minuto — barra tentativa duplicada.
+      if (isSchedulingTool && !exactSlotAlreadyBooked && phoneNumber) {
+        try {
+          const sinceIso = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+          const { data: recentLogs } = await supabase
+            .from("agent_logs")
+            .select("tool_calls, created_at")
+            .eq("tenant_id", tenant.id)
+            .eq("phone_number", phoneNumber)
+            .gte("created_at", sinceIso)
+            .order("created_at", { ascending: false })
+            .limit(6);
+
+          const bookingNamesSet = new Set(["criar_agendamento", "agendar"]);
+          const computeSig = (args: any): { sig: string; svc: number[] } => {
+            const ids: number[] = [];
+            for (const v of [args?.serviceId, args?.servicoId, args?.servicoid, args?.servicosId]) {
+              const n = toPositiveInteger(v);
+              if (typeof n === "number") ids.push(n);
+            }
+            if (Array.isArray(args?.servicos)) {
+              for (const s of args.servicos) {
+                for (const v of [s?.codigo, s?.servicoId, s?.servicosId]) {
+                  const n = toPositiveInteger(v);
+                  if (typeof n === "number") ids.push(n);
+                }
+              }
+            }
+            const dt: string =
+              (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio) ||
+              (typeof args?.start === "string" && args.start) || "";
+            const date =
+              (typeof args?.dia === "string" && args.dia) ||
+              (typeof args?.data === "string" && args.data) ||
+              (typeof args?.date === "string" && args.date) ||
+              (dt ? dt.slice(0, 10) : "");
+            const time =
+              (typeof args?.hora === "string" && args.hora) ||
+              (typeof args?.horario === "string" && args.horario) ||
+              (typeof args?.time === "string" && args.time) ||
+              (dt && dt.length >= 16 ? dt.slice(11, 16) : "");
+            const prof =
+              toPositiveInteger(args?.profissionalId) ??
+              toPositiveInteger(args?.professionalId) ?? "";
+            return { sig: `${[...ids].sort((a, b) => a - b).join(",")}|${date}|${time}|${prof}`, svc: ids };
+          };
+
+          for (const row of (recentLogs || [])) {
+            const calls = Array.isArray(row?.tool_calls) ? row.tool_calls : [];
+            for (const tc of calls) {
+              if (!tc || !bookingNamesSet.has(tc?.name)) continue;
+              if (tc?.blocked) continue;
+              const r = tc?.result;
+              const succeeded = r && typeof r === "object" && !r.error && !r.blocked &&
+                (r.id || r.ok || r.agendamentoId || r.success || r.appointmentId);
+              if (!succeeded) continue;
+              const priorSig = computeSig(tc?.args || {});
+              if (priorSig.sig && priorSig.svc.length > 0 && priorSig.sig === attemptedSlotSignature) {
+                exactSlotAlreadyBooked = true;
+                console.log(`[DupBookingGuard] DB match — prior successful booking at ${row.created_at} sig=${priorSig.sig}`);
+                break;
+              }
+            }
+            if (exactSlotAlreadyBooked) break;
+          }
+        } catch (e) {
+          console.error("[DupBookingGuard] lookup error:", e);
+        }
+      }
+
       if (isSchedulingTool && exactSlotAlreadyBooked) {
         console.log(`${toolCall.function.name} BLOCKED: exact slot already booked (${attemptedSlotSignature})`);
         toolResult = {
-          message: "Esse agendamento exato (mesmos serviços, data, hora e profissional) já foi criado nesta conversa. Não chame a ferramenta novamente para o mesmo slot.",
+          message: "Esse agendamento exato (mesmos serviços, data, hora e profissional) JÁ FOI CRIADO nesta conversa há poucos minutos. NÃO tente agendar de novo. Apenas responda ao cliente confirmando que o agendamento já está registrado — sem chamar mais ferramentas de agendamento.",
           blocked: true,
+          alreadyBooked: true,
         };
         wasBlocked = true;
         sessionBlocked = true;
+        // garante persistência da assinatura no state para próximas mensagens
+        if (attemptedSlotSignature && !sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature)) {
+          sessionState.scheduledSlotSignatures.push(attemptedSlotSignature);
+        }
       } else {
         // ===== BEMP STATE-BASED RESOLUTION LAYER =====
         if (provider === "bemp") {
