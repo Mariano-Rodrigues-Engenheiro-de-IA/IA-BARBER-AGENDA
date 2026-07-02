@@ -4783,10 +4783,11 @@ async function callAIAgent(
               });
             } catch { /* ignore */ }
             toolResult = {
-              error: "ACAO_JA_CONCLUIDA",
+              status: "SUCESSO_ANTERIOR_JA_REGISTRADO",
+              alreadyDone: true,
               blocked: true,
-              message: `Você JÁ executou esta ação nesta conversa há ${ageMin} minuto(s): ${prior.summary}. NÃO chame a ferramenta de novo. Apenas responda ao cliente naturalmente (ex: confirme o que já foi feito, agradeça, ou peça a próxima informação). Só repita a ação se o cliente PEDIR EXPLICITAMENTE algo DIFERENTE (outro horário, outro serviço, outra pessoa).`,
-              priorAction: { at: prior.completedAt, summary: prior.summary, resultId: prior.resultId ?? null },
+              priorAction: { at: prior.completedAt, summary: prior.summary, resultId: prior.resultId ?? null, minutesAgo: ageMin },
+              instruction_pt: `Esta ação JÁ FOI CONCLUÍDA COM SUCESSO nesta conversa há ${ageMin} minuto(s): ${prior.summary}. Isto NÃO é um erro — a operação está feita. AÇÃO OBRIGATÓRIA: responda ao cliente confirmando que já está tudo certo (ex: "Perfeito! Seu agendamento já está confirmado para <data/hora>. Te esperamos!"). PROIBIDO: (1) chamar novamente qualquer ferramenta de agendamento/cancelamento/edição para esta mesma ação; (2) escalar para atendente humano; (3) dizer ao cliente que vai chamar a equipe, verificar com o responsável ou pedir para aguardar. Só repita a ação se o cliente PEDIR EXPLICITAMENTE algo DIFERENTE (outro horário, outro serviço, outra pessoa).`,
             };
             wasBlocked = true;
             sessionBlocked = true;
