@@ -8279,10 +8279,20 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         const allActive: any[] = [];
         const seenIds = new Set<number>();
 
+        // Trinks EXIGE dataInicio + dataFim em /agendamentos. Sem isso, retorna vazio.
+        // Janela ampla: ontem → +120 dias (cobre remarcações e agendamentos futuros).
+        const _today = new Date();
+        const _from = new Date(_today.getTime() - 24 * 60 * 60 * 1000);
+        const _to = new Date(_today.getTime() + 120 * 24 * 60 * 60 * 1000);
+        const _fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        const dataInicio = _fmt(_from);
+        const dataFim = _fmt(_to);
+
         // Buscar agendamentos de TODOS os clienteIds em paralelo (cobre cadastros duplicados)
         const results = await Promise.all(clienteIds.map(async (cid) => {
           try {
-            const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${cid}`, { headers });
+            const url = `${baseUrl}/agendamentos?clienteId=${cid}&dataInicio=${dataInicio}&dataFim=${dataFim}`;
+            const agRes = await fetch(url, { headers });
             const agData = await agRes.json();
             return Array.isArray(agData?.data) ? agData.data : [];
           } catch (e) {
@@ -8290,6 +8300,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             return [];
           }
         }));
+
 
         for (const list of results) {
           for (const a of list) {
