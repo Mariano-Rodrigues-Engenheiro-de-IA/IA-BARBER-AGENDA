@@ -8301,87 +8301,13 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
       case "buscar_agendamento": {
-        // Helper: gera variantes brasileiras de telefone (com/sem 55, com/sem 9º dígito)
-        const trinksPhoneVariants = (raw: string): string[] => {
-          const digits = String(raw || "").replace(/\D/g, "");
-          if (!digits) return [];
-          const variants = new Set<string>();
-          const add = (v: string) => { const d = v.replace(/\D/g, ""); if (d.length >= 10 && d.length <= 13) variants.add(d); };
-          let local = digits;
-          if (local.startsWith("55") && (local.length === 12 || local.length === 13)) local = local.slice(2);
-          while (local.startsWith("0") && local.length > 10) local = local.slice(1);
-          add(local);
-          if (local.length === 10) add(`${local.slice(0, 2)}9${local.slice(2)}`); // adiciona 9º
-          if (local.length === 11 && local[2] === "9") add(`${local.slice(0, 2)}${local.slice(3)}`); // remove 9º
-          for (const v of Array.from(variants)) add(`55${v}`);
-          return Array.from(variants);
-        };
-
         const clienteIds: number[] = [];
         if (args.clienteId) clienteIds.push(Number(args.clienteId));
 
         const resolvePhone = phoneNumber || args.telefone || "";
-        const clienteIdToRecord = new Map<number, any>();
-
         if (resolvePhone) {
-          // 1) Busca inicial com todas variantes do telefone do WhatsApp
-          const variants = trinksPhoneVariants(resolvePhone);
-          console.log(`buscar_agendamento: tentando variantes de telefone: ${variants.join(",")}`);
-
-          const initialResults = await Promise.all(variants.map(async (tel) => {
-            try {
-              const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-              const j = await r.json();
-              const list = j?.data || j;
-              return Array.isArray(list) ? list : [];
-            } catch { return []; }
-          }));
-
-          for (const list of initialResults) {
-            for (const c of list) {
-              const cid = Number(c.id || c.Id);
-              if (Number.isFinite(cid) && !clienteIds.includes(cid)) {
-                clienteIds.push(cid);
-                clienteIdToRecord.set(cid, c);
-              }
-            }
-          }
-
-          // 2) Para cada cliente encontrado, extrair telefones cadastrados na Trinks
-          //    e refazer busca (pode revelar cadastros duplicados com telefone diferente).
-          const trinksStoredPhones = new Set<string>();
-          for (const c of clienteIdToRecord.values()) {
-            const tels = Array.isArray(c.telefones) ? c.telefones : (Array.isArray(c.Telefones) ? c.Telefones : []);
-            for (const t of tels) {
-              const ddd = String(t.ddd || t.Ddd || "");
-              const num = String(t.numero || t.Numero || "");
-              if (ddd && num) {
-                for (const v of trinksPhoneVariants(`${ddd}${num}`)) trinksStoredPhones.add(v);
-              }
-            }
-          }
-          const extraPhones = [...trinksStoredPhones].filter((p) => !variants.includes(p));
-          if (extraPhones.length > 0) {
-            console.log(`buscar_agendamento: telefones adicionais do cadastro Trinks: ${extraPhones.join(",")}`);
-            const extraResults = await Promise.all(extraPhones.map(async (tel) => {
-              try {
-                const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-                const j = await r.json();
-                const list = j?.data || j;
-                return Array.isArray(list) ? list : [];
-              } catch { return []; }
-            }));
-            for (const list of extraResults) {
-              for (const c of list) {
-                const cid = Number(c.id || c.Id);
-                if (Number.isFinite(cid) && !clienteIds.includes(cid)) {
-                  clienteIds.push(cid);
-                  clienteIdToRecord.set(cid, c);
-                }
-              }
-            }
-          }
-
+          const resolved = await trinksResolveClienteIds(baseUrl, headers, resolvePhone);
+          for (const cid of resolved) if (!clienteIds.includes(cid)) clienteIds.push(cid);
           console.log(`buscar_agendamento: total ${clienteIds.length} clienteId(s): ${clienteIds.join(",")}`);
         }
 
@@ -8389,54 +8315,21 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           return { data: [], message: "Cliente não encontrado" };
         }
 
-        const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
-        const allActive: any[] = [];
-        const seenIds = new Set<number>();
-
-        // Trinks EXIGE dataInicio + dataFim em /agendamentos. Sem isso, retorna vazio.
-        // Janela ampla: ontem → +120 dias (cobre remarcações e agendamentos futuros).
-        const _today = new Date();
-        const _from = new Date(_today.getTime() - 24 * 60 * 60 * 1000);
-        const _to = new Date(_today.getTime() + 120 * 24 * 60 * 60 * 1000);
-        const _fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const dataInicio = _fmt(_from);
-        const dataFim = _fmt(_to);
-
-        // Buscar agendamentos de TODOS os clienteIds em paralelo (cobre cadastros duplicados)
-        const results = await Promise.all(clienteIds.map(async (cid) => {
-          try {
-            const url = `${baseUrl}/agendamentos?clienteId=${cid}&dataInicio=${dataInicio}&dataFim=${dataFim}`;
-            const agRes = await fetch(url, { headers });
-            const agData = await agRes.json();
-            return Array.isArray(agData?.data) ? agData.data : [];
-          } catch (e) {
-            console.warn(`buscar_agendamento: falha clienteId=${cid}:`, (e as Error).message);
-            return [];
-          }
+        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+        const allActive = activeRaw.map((a: any) => ({
+          id: a.id,
+          status: a.status?.nome,
+          servico: a.servico?.nome,
+          profissional: a.profissional?.nome,
+          clienteId: a.cliente?.id,
+          dataHoraInicio: a.dataHoraInicio,
+          duracaoEmMinutos: a.duracaoEmMinutos,
+          valor: a.valor,
+          servicoId: a.servico?.id,
+          profissionalId: a.profissional?.id,
         }));
 
 
-        for (const list of results) {
-          for (const a of list) {
-            const statusName = String(a.status?.nome || "").toLowerCase();
-            const isActive = activeStatuses.some((s) => statusName === s || statusName.includes(s));
-            if (!isActive) continue;
-            if (seenIds.has(a.id)) continue;
-            seenIds.add(a.id);
-            allActive.push({
-              id: a.id,
-              status: a.status?.nome,
-              servico: a.servico?.nome,
-              profissional: a.profissional?.nome,
-              clienteId: a.cliente?.id,
-              dataHoraInicio: a.dataHoraInicio,
-              duracaoEmMinutos: a.duracaoEmMinutos,
-              valor: a.valor,
-              servicoId: a.servico?.id,
-              profissionalId: a.profissional?.id,
-            });
-          }
-        }
 
         return { data: allActive, totalRecords: allActive.length, clienteIdsConsultados: clienteIds };
       }
