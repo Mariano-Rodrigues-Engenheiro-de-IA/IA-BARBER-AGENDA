@@ -6988,36 +6988,23 @@ async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) 
   };
 
   try {
-    const tel = normalizePhoneForTrinks(phoneNumber);
-    const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-    const cliData = await cliRes.json();
-    const cliList = cliData?.data || cliData;
-    if (!Array.isArray(cliList) || cliList.length === 0) return [];
-
-    const ownerId = cliList[0].id || cliList[0].Id;
-    const agRes = await fetch(`${baseUrl}/agendamentos?clienteId=${ownerId}`, { headers });
-    const agData = await agRes.json();
-    const agList = Array.isArray(agData?.data) ? agData.data : [];
-    const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
-
-    return agList
-      .filter((a: any) => {
-        const statusName = String(a.status?.nome || "").toLowerCase();
-        return activeStatuses.some((status) => statusName === status || statusName.includes(status));
-      })
-      .map((a: any) => ({
-        id: a.id,
-        status: a.status?.nome,
-        servico: a.servico?.nome,
-        profissional: a.profissional?.nome,
-        clienteId: a.cliente?.id,
-        dataHoraInicio: a.dataHoraInicio,
-      }));
+    const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
+    if (clienteIds.length === 0) return [];
+    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+    return activeRaw.map((a: any) => ({
+      id: a.id,
+      status: a.status?.nome,
+      servico: a.servico?.nome,
+      profissional: a.profissional?.nome,
+      clienteId: a.cliente?.id,
+      dataHoraInicio: a.dataHoraInicio,
+    }));
   } catch (error) {
     console.error("fetchActiveAppointmentsByPhone error:", error);
     return [];
   }
 }
+
 
 async function maybeHandleDirectCancellationConfirmation(
   tenant: any,
