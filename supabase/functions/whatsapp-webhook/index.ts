@@ -6989,7 +6989,6 @@ async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) 
 
   try {
     const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-    if (clienteIds.length === 0) return [];
     const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
     return activeRaw.map((a: any) => ({
       id: a.id,
@@ -8348,7 +8347,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           console.log(`buscar_agendamento: total ${clienteIds.length} clienteId(s): ${clienteIds.join(",")}`);
         }
 
-        if (clienteIds.length === 0) {
+        if (clienteIds.length === 0 && !resolvePhone) {
           return { data: [], message: "Cliente não encontrado" };
         }
 
@@ -8503,7 +8502,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       case "cancelar_agendamento": {
         if (phoneNumber) {
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-          if (clienteIds.length > 0) {
+          {
             const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
               id: a.id,
@@ -8585,7 +8584,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         let editClienteId = args.clienteId;
         if (phoneNumber) {
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-          if (clienteIds.length > 0) {
+          {
             editClienteId = editClienteId || clienteIds[0];
             const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
