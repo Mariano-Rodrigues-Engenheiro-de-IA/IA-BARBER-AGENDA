@@ -7121,7 +7121,6 @@ function buildSystemPrompt(
   const todayName = br.todayName;
   const todayDate = br.todayDate;
   const customPrompt = tenant.agent_system_prompt || "";
-  const knowledgeBase = tenant.agent_knowledge_base || "";
 
   // ===== CLIENT IDENTITY — explicit > CRM > (pushName as weak hint only) =====
   // WhatsApp pushName is just display metadata and must never be used for cadastro
@@ -7261,7 +7260,6 @@ Regras de uso do nome:
 
 ## 🌐 IDIOMA E FORMATO DA RESPOSTA (REGRA ABSOLUTA)
 - TODA resposta enviada ao cliente DEVE ser em PORTUGUÊS BRASILEIRO. NUNCA responda em inglês ou em qualquer outro idioma.
-- NUNCA escreva texto de raciocínio, planejamento ou notas internas no campo de resposta. Frases como "Vou proceed", "Need next user input", "Let me check", "I will now", "Thinking:", "Okay,", "Plan:", "Step 1" são PROIBIDAS.
 - 🚫 NUNCA escreva meta-comentários, observações de status ou notas entre parênteses sobre a própria conversa. Frases como "(Mensagem duplicada acima)", "(Sem resposta)", "(Repetido)", "(Aguardando cliente)", "(Sem alteração)", "(Continua igual)", "(Mesma mensagem)", "(Já enviado)", "(Sem novidades)" são ABSOLUTAMENTE PROIBIDAS. Se não tiver nada novo a dizer, NÃO ENVIE NADA — devolva uma string vazia.
 - NUNCA comente sobre mensagens anteriores, repetições ou estado da conversa. Apenas converse naturalmente como uma pessoa real no WhatsApp.
 - Sempre que você for responder ao cliente, escreva uma mensagem natural, curta e em português, como se fosse uma pessoa real conversando no WhatsApp.
@@ -7295,15 +7293,9 @@ Antes de QUALQUER resposta, compare "Agora" do bloco "ESTADO TEMPORAL DESTA INTE
 - A saudação "${br.greeting}" indicada acima existe APENAS para garantir o período correto QUANDO saudar for permitido. Ela NÃO é uma ordem para saudar.
 
 🚨 REGRA DE USO DE CONTEXTO (CRÍTICA — LEIA COM ATENÇÃO):
-As informações acima (hora atual, período do dia, data, dia da semana, saudação adequada) E as informações da base de conhecimento (horário de funcionamento, nome do estabelecimento, endereço, etc.) são CONTEXTO INTERNO PARA VOCÊ — NÃO são roteiro de mensagem.
-- ⛔ NUNCA informe horário de funcionamento, endereço, telefone, nome do estabelecimento, hora atual ou data de hoje de forma PROATIVA. Só mencione quando o cliente PERGUNTAR explicitamente ou quando for ESTRITAMENTE necessário para responder.
-- ⛔ NUNCA diga frases como "hoje funcionamos das 9 às 19", "estamos abertos até X", "nosso horário é..." a menos que o cliente tenha PERGUNTADO sobre horário de funcionamento.
-- ✅ Use o horário de funcionamento INTERNAMENTE para decidir se aceita/recusa um horário pedido pelo cliente, mas sem citá-lo se não foi perguntado. Ex: cliente pede "20h", se fecha às 19h, responda algo como "20h a gente já não pega, posso te encaixar mais cedo?" — não precisa recitar a tabela inteira.
-- ✅ Só diga "já fechamos / estamos fechados / ainda abertos" se o cliente perguntar isso diretamente. Caso contrário, apenas conduza o atendimento normalmente.
+As informações acima (hora atual, período do dia, data, dia da semana, saudação adequada) são CONTEXTO INTERNO PARA VOCÊ — NÃO são roteiro de mensagem (ver também regra de horário de funcionamento no bloco de regras globais).
 - Comparação interna: se AGORA < fechamento de hoje → ainda está aberto. Se cliente pedir horário FUTURO de hoje, só recuse se for DEPOIS do fechamento.
 - Se o "Status da sessão" for 🆕 NOVA SESSÃO, releia o histórico (cada mensagem traz prefixo \`[DD/MM HH:MM]\`) e siga a "REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA" antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
-
-REGRA GERAL: dados de contexto (nome do cliente, hora, período, horário de funcionamento) servem para VOCÊ entender a situação. Use só o mínimo necessário na resposta — fale como uma pessoa real no WhatsApp, não como um robô recitando informações.
 
 
 
@@ -7496,7 +7488,6 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   }
 
   const customSection = customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : "";
-  const knowledgeSection = knowledgeBase ? `\nBASE DE CONHECIMENTO:\n${knowledgeBase}` : "";
 
   // Inject custom tools instructions
   const enabledCustomTools = getEnabledCustomTools(tenant);
@@ -7509,7 +7500,7 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   }
 
   // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
-  return basePrompt + "\n\n" + customSection + knowledgeSection + customToolsSection + "\n\n" + providerPrompt;
+  return basePrompt + "\n\n" + customSection + customToolsSection + "\n\n" + providerPrompt;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================

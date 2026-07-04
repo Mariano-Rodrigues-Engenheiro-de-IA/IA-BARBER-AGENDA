@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { toast } from "sonner";
-import { Loader2, RotateCcw, Save, Eye } from "lucide-react";
+import { Loader2, Save } from "lucide-react";
 
 type ProviderPrompt = {
   provider: string;
@@ -20,7 +20,6 @@ export default function PromptsPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [providers, setProviders] = useState<ProviderPrompt[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [showDefault, setShowDefault] = useState<Record<string, boolean>>({});
 
   async function load() {
     setLoading(true);
@@ -46,19 +45,6 @@ export default function PromptsPage() {
     setSaving(null);
     if (error) return toast.error("Erro ao salvar: " + error.message);
     toast.success("Prompt salvo. A IA já está usando a nova versão.");
-    load();
-  }
-
-  async function resetToDefault(provider: string) {
-    if (!confirm("Restaurar o prompt padrão deste provedor? A versão editada será apagada.")) return;
-    setSaving(provider);
-    const { error } = await supabase.functions.invoke("provider-prompts", {
-      method: "DELETE",
-      body: { provider },
-    });
-    setSaving(null);
-    if (error) return toast.error("Erro: " + error.message);
-    toast.success("Prompt restaurado ao padrão do código.");
     load();
   }
 
@@ -95,58 +81,21 @@ export default function PromptsPage() {
           const draft = drafts[p.provider] ?? "";
           const baseline = p.override_content || p.default_content;
           const dirty = draft !== baseline;
-          const isShowingDefault = !!showDefault[p.provider];
           return (
             <TabsContent key={p.provider} value={p.provider} className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 justify-between">
                 <div className="text-sm text-muted-foreground">
-                  {p.has_override
-                    ? `Editado em ${p.updated_at ? new Date(p.updated_at).toLocaleString("pt-BR") : "—"}`
-                    : "Usando o prompt padrão do código"}
+                  {p.updated_at ? `Editado em ${new Date(p.updated_at).toLocaleString("pt-BR")}` : "Ainda não editado"}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowDefault((s) => ({ ...s, [p.provider]: !isShowingDefault }))}
-                  >
-                    <Eye className="w-4 h-4 mr-1" />
-                    {isShowingDefault ? "Ocultar padrão" : "Ver padrão do código"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDrafts((d) => ({ ...d, [p.provider]: p.default_content }))}
-                  >
-                    Carregar padrão no editor
-                  </Button>
-                  {p.has_override && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => resetToDefault(p.provider)}
-                      disabled={saving === p.provider}
-                    >
-                      <RotateCcw className="w-4 h-4 mr-1" /> Restaurar padrão
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={() => save(p.provider)}
-                    disabled={!dirty || saving === p.provider}
-                  >
-                    {saving === p.provider ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
-                    Salvar
-                  </Button>
-                </div>
+                <Button
+                  size="sm"
+                  onClick={() => save(p.provider)}
+                  disabled={!dirty || saving === p.provider}
+                >
+                  {saving === p.provider ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Save className="w-4 h-4 mr-1" />}
+                  Salvar
+                </Button>
               </div>
-
-              {isShowingDefault && (
-                <div className="glass-card p-3">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground mb-2">Prompt padrão do código (somente leitura)</p>
-                  <pre className="text-xs whitespace-pre-wrap font-mono max-h-96 overflow-auto">{p.default_content}</pre>
-                </div>
-              )}
 
               <Textarea
                 value={draft}
