@@ -7945,6 +7945,23 @@ function trinksPhoneVariants(raw: string): string[] {
   return Array.from(variants);
 }
 
+async function trinksFetchClientesByTelefone(baseUrl: string, headers: Record<string, string>, telefone: string): Promise<any[]> {
+  const search = new URLSearchParams({ telefone, pageSize: "100" });
+  try {
+    const r = await fetch(`${baseUrl}/clientes?${search.toString()}`, { headers });
+    const j = await r.json();
+    if (!r.ok) {
+      console.warn(`[Trinks] falha /clientes ${search.toString()}: status=${r.status} body=${JSON.stringify(j).slice(0, 300)}`);
+      return [];
+    }
+    const list = Array.isArray(j?.data) ? j.data : (Array.isArray(j) ? j : []);
+    return list;
+  } catch (e) {
+    console.warn(`[Trinks] falha /clientes ${search.toString()}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 // Formata data YYYY-MM-DD (local).
 function trinksFmtDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -7969,10 +7986,7 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
 
   const initial = await Promise.all(variants.map(async (tel) => {
     try {
-      const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-      const j = await r.json();
-      const list = j?.data || j;
-      return Array.isArray(list) ? list : [];
+      return await trinksFetchClientesByTelefone(baseUrl, headers, tel);
     } catch { return []; }
   }));
   for (const list of initial) {
@@ -7996,10 +8010,7 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
   if (extras.length > 0) {
     const extraResults = await Promise.all(extras.map(async (tel) => {
       try {
-        const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-        const j = await r.json();
-        const list = j?.data || j;
-        return Array.isArray(list) ? list : [];
+        return await trinksFetchClientesByTelefone(baseUrl, headers, tel);
       } catch { return []; }
     }));
     for (const list of extraResults) {
