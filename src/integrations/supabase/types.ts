@@ -754,9 +754,6 @@ export type Database = {
           uazapi_url: string | null
           updated_at: string
           whatsapp_number: string | null
-          zaylo_barbershop_id: string | null
-          zaylo_base_url: string | null
-          zaylo_publishable_key: string | null
         }
         Insert: {
           address?: string | null
@@ -794,9 +791,6 @@ export type Database = {
           uazapi_url?: string | null
           updated_at?: string
           whatsapp_number?: string | null
-          zaylo_barbershop_id?: string | null
-          zaylo_base_url?: string | null
-          zaylo_publishable_key?: string | null
         }
         Update: {
           address?: string | null
@@ -834,9 +828,6 @@ export type Database = {
           uazapi_url?: string | null
           updated_at?: string
           whatsapp_number?: string | null
-          zaylo_barbershop_id?: string | null
-          zaylo_base_url?: string | null
-          zaylo_publishable_key?: string | null
         }
         Relationships: []
       }
@@ -887,11 +878,10 @@ export type Database = {
       api_provider:
         | "trinks"
         | "onebeleza"
-        | "none"
         | "frizzar"
         | "bemp"
-        | "zaylo"
         | "appbarber"
+        | "none"
       app_role: "admin" | "client"
       tenant_status: "active" | "inactive" | "suspended"
     }
@@ -1024,11 +1014,10 @@ export const Constants = {
       api_provider: [
         "trinks",
         "onebeleza",
-        "none",
         "frizzar",
         "bemp",
-        "zaylo",
         "appbarber",
+        "none",
       ],
       app_role: ["admin", "client"],
       tenant_status: ["active", "inactive", "suspended"],
