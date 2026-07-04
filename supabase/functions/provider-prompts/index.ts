@@ -7,7 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-const PROVIDERS = ["global", "trinks", "onebeleza", "frizzar", "bemp", "zaylo", "appbarber", "none"];
+const PROVIDERS = ["global", "trinks", "onebeleza", "frizzar", "bemp", "appbarber", "none"];
 
 const PROVIDER_LABELS: Record<string, string> = {
   global: "🌐 Global (todas as IAs)",
@@ -15,7 +15,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   onebeleza: "One Beleza",
   frizzar: "Frizzar",
   bemp: "Bemp",
-  zaylo: "Zaylo (n8n-appointments)",
   appbarber: "AppBarber",
   none: "Sem API (link de agendamento)",
 };

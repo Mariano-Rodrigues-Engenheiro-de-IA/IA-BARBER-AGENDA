@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildZayloPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
+import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
@@ -2669,28 +2669,11 @@ interface AgentSessionState {
     start_text?: string;
     end_text?: string;
   }>;
-  zayloBarberOptions?: Array<{
-    barberId: string;
-    name: string;
-  }>;
-  zayloServiceOptions?: Array<{
-    serviceId: string;
-    name: string;
-    price: number | null;
-  }>;
-  zayloSlotOptions?: Array<{
-    barberId: string | null;
-    serviceId: string | null;
-    date: string | null;
-    time: string;
-  }>;
   selectedSalonId: number | null;
   // Persistent selections (survive across messages)
   selectedServiceId: number | null;
   selectedProfessionalId: number | null;
   selectedDate: string | null;
-  selectedZayloBarberId?: string | null;
-  selectedZayloServiceId?: string | null;
   executedToolNames: string[];
   explicitClientName: string | null;
   nameRejectionCount?: number;
@@ -2734,15 +2717,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     bempSalonOptions: [],
     bempProfessionalOptions: [],
     bempSlotOptions: [],
-    zayloBarberOptions: [],
-    zayloServiceOptions: [],
-    zayloSlotOptions: [],
     selectedSalonId: null,
     selectedServiceId: null,
     selectedProfessionalId: null,
     selectedDate: null,
-    selectedZayloBarberId: null,
-    selectedZayloServiceId: null,
     executedToolNames: [],
     explicitClientName: null,
     awaitingNameForRegistration: false,
@@ -2780,15 +2758,10 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: Array.isArray(s.bempSalonOptions) ? s.bempSalonOptions : [],
       bempProfessionalOptions: Array.isArray(s.bempProfessionalOptions) ? s.bempProfessionalOptions : [],
       bempSlotOptions: Array.isArray(s.bempSlotOptions) ? s.bempSlotOptions : [],
-      zayloBarberOptions: Array.isArray(s.zayloBarberOptions) ? s.zayloBarberOptions : [],
-      zayloServiceOptions: Array.isArray(s.zayloServiceOptions) ? s.zayloServiceOptions : [],
-      zayloSlotOptions: Array.isArray(s.zayloSlotOptions) ? s.zayloSlotOptions : [],
       selectedSalonId: s.selectedSalonId ?? null,
       selectedServiceId: s.selectedServiceId ?? null,
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
-      selectedZayloBarberId: typeof s.selectedZayloBarberId === "string" ? s.selectedZayloBarberId : null,
-      selectedZayloServiceId: typeof s.selectedZayloServiceId === "string" ? s.selectedZayloServiceId : null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
@@ -2826,16 +2799,11 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       bempSalonOptions: state.bempSalonOptions,
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
-      zayloBarberOptions: state.zayloBarberOptions,
-      zayloServiceOptions: state.zayloServiceOptions,
-      zayloSlotOptions: state.zayloSlotOptions,
       executedToolNames: state.executedToolNames,
       selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
       selectedDate: state.selectedDate,
-      selectedZayloBarberId: state.selectedZayloBarberId,
-      selectedZayloServiceId: state.selectedZayloServiceId,
       explicitClientName: state.explicitClientName,
       awaitingNameForRegistration: state.awaitingNameForRegistration ?? false,
       recentCompletedActions: (state.recentCompletedActions || []).slice(-12),
@@ -2856,7 +2824,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         { tenant_id: tenantId, phone_number: phoneNumber, state: stateToSave },
         { onConflict: "tenant_id,phone_number" }
       );
-    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, zayloBarbers=${state.zayloBarberOptions?.length || 0}, zayloServices=${state.zayloServiceOptions?.length || 0}, zayloSlots=${state.zayloSlotOptions?.length || 0}, tools=${state.executedToolNames.length}, recentActions=${(state.recentCompletedActions || []).length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}/${state.selectedZayloBarberId || "null"}/${state.selectedZayloServiceId || "null"}`);
+    console.log(`[State] Saved for ${phoneNumber}: services=${state.oneBelezaServiceOptions.length}, allowed=${state.allowedServiceIds.length}, profs=${state.oneBelezaProfessionalOptions.length}, slots=${state.oneBelezaSlotOptions.length}, bempSalons=${state.bempSalonOptions.length}, tools=${state.executedToolNames.length}, recentActions=${(state.recentCompletedActions || []).length}, sel=${state.selectedSalonId}/${state.selectedServiceId}/${state.selectedProfessionalId}/${state.selectedDate}`);
   } catch (err) {
     console.error("[State] Save failed:", err);
   }
@@ -3076,7 +3044,7 @@ function recordAssistantReply(state: AgentSessionState, text: string): void {
 // Constrói uma mensagem determinística de confirmação de agendamento a partir
 // dos tool_calls da rodada. Usada como rede de segurança quando a IA cria a
 // reserva mas falha em produzir resposta textual ao cliente (estouro de rounds,
-// content vazio, etc.). Cobre Frizzar / Trinks / One Beleza / Bemp / Zaylo.
+// content vazio, etc.). Cobre Frizzar / Trinks / One Beleza / Bemp.
 function buildDeterministicBookingConfirmation(
   logToolCalls: Array<{ name: string; args: any; result: any; blocked?: boolean }>,
 ): string | null {
@@ -4504,20 +4472,6 @@ async function callAIAgent(
     })),
   ];
 
-  if (provider === "zaylo") {
-    const normalizedUserMessage = normalizeUserFacingText(userMessage || "");
-    const zayloIntentDetected = /(agend|agenda|marcar|marcação|marcacao|hor[áa]rio|horario|dispon[ií]vel|disponibilidade|pre[çc]o|valor|quanto custa|servi[çc]o|procedimento|profissional|especialista|esteticista|limpeza|botox|drenagem|depila)/i.test(normalizedUserMessage);
-    const alreadyLoadedZayloCatalog = (sessionState.zayloBarberOptions?.length || 0) > 0 || (sessionState.zayloServiceOptions?.length || 0) > 0;
-    const lastAssistantWasForcedZayloCatalogPrompt = /\[ZAYLO_TOOL_ENFORCER\]/.test(previousAssistantMessage || "");
-
-    if (zayloIntentDetected && !alreadyLoadedZayloCatalog && !lastAssistantWasForcedZayloCatalogPrompt) {
-      messages.push({
-        role: "assistant",
-        content: "[ZAYLO_TOOL_ENFORCER] Intenção de agenda/preço/serviço detectada. Antes de responder ao cliente, chame obrigatoriamente a ferramenta obter_info agora. Não faça perguntas antes disso.",
-      });
-    }
-  }
-
   // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
   const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
@@ -5663,76 +5617,6 @@ async function callAIAgent(
           console.log(`Tracked Bemp horarios_geral: slots=${sessionState.bempSlotOptions.length} profs=${sessionState.bempProfessionalOptions.length}`);
         }
 
-        if (provider === "zaylo" && toolCall.function.name === "obter_info" && toolResult && !toolResult?.error) {
-          const barberOptions = Array.isArray(toolResult?.barbers)
-            ? toolResult.barbers
-                .map((barber: any) => ({
-                  barberId: String(barber?.id || "").trim(),
-                  name: String(barber?.name || "").trim(),
-                }))
-                .filter((option: any) => option.barberId && option.name)
-            : [];
-
-          const serviceOptions = Array.isArray(toolResult?.services)
-            ? toolResult.services
-                .map((service: any) => ({
-                  serviceId: String(service?.id || "").trim(),
-                  name: String(service?.name || "").trim(),
-                  price: typeof service?.price === "number" ? service.price : null,
-                }))
-                .filter((option: any) => option.serviceId && option.name)
-            : [];
-
-          sessionState.zayloBarberOptions = dedupeByKey(
-            [...(sessionState.zayloBarberOptions || []), ...barberOptions],
-            (option) => option.barberId,
-          );
-          sessionState.zayloServiceOptions = dedupeByKey(
-            [...(sessionState.zayloServiceOptions || []), ...serviceOptions],
-            (option) => option.serviceId,
-          );
-
-          console.log(`Tracked Zaylo barbers: [${(sessionState.zayloBarberOptions || []).map((option) => option.barberId).join(", ")}]`);
-          console.log(`Tracked Zaylo services: [${(sessionState.zayloServiceOptions || []).map((option) => option.serviceId).join(", ")}]`);
-        }
-
-        if (provider === "zaylo" && toolCall.function.name === "obter_horarios_disponiveis" && toolResult && !toolResult?.error) {
-          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : (sessionState.selectedZayloBarberId || null);
-          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : (sessionState.selectedZayloServiceId || null);
-          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
-          const slotOptions = Array.isArray(toolResult?.available_times)
-            ? toolResult.available_times
-                .map((time: any) => ({
-                  barberId,
-                  serviceId,
-                  date,
-                  time: String(time || "").trim(),
-                }))
-                .filter((option: any) => option.time)
-            : [];
-
-          sessionState.zayloSlotOptions = dedupeByKey(
-            [...(sessionState.zayloSlotOptions || []), ...slotOptions],
-            (option) => `${option.barberId ?? "any"}:${option.serviceId ?? "any"}:${option.date ?? "any"}:${option.time}`,
-          );
-
-          if (barberId) sessionState.selectedZayloBarberId = barberId;
-          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
-          if (date) sessionState.selectedDate = date;
-
-          console.log(`Tracked Zaylo slot options: ${(sessionState.zayloSlotOptions || []).length}`);
-        }
-
-        if (provider === "zaylo") {
-          const barberId = typeof parsedArgs?.barber_id === "string" ? parsedArgs.barber_id : null;
-          const serviceId = typeof parsedArgs?.service_id === "string" ? parsedArgs.service_id : null;
-          const date = typeof parsedArgs?.date === "string" ? parsedArgs.date : null;
-
-          if (barberId) sessionState.selectedZayloBarberId = barberId;
-          if (serviceId) sessionState.selectedZayloServiceId = serviceId;
-          if (date) sessionState.selectedDate = date;
-        }
-
         // ===== TRINKS: catálogo + service lock tracking =====
         if (provider === "trinks" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
           const catalog = toolResult
@@ -6173,9 +6057,6 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     case "bemp":
       providerTools = buildBempTools(tenant);
       break;
-    case "zaylo":
-      providerTools = buildZayloTools(tenant);
-      break;
     case "appbarber":
       providerTools = buildAppBarberTools(tenant);
       break;
@@ -6317,8 +6198,6 @@ async function executeToolForProvider(
       return executeFrizzarTool(tenant, toolCall, phoneNumber);
     case "bemp":
       return executeBempTool(tenant, toolCall, phoneNumber);
-    case "zaylo":
-      return executeZayloTool(tenant, toolCall, phoneNumber);
     case "appbarber":
       return executeAppBarberTool(tenant, toolCall, phoneNumber);
     case "none":
@@ -7610,8 +7489,6 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     providerPrompt = buildFrizzarPromptSection(tenant);
   } else if (provider === "bemp") {
     providerPrompt = buildBempPromptSection(tenant);
-  } else if (provider === "zaylo") {
-    providerPrompt = buildZayloPromptSection(tenant);
   } else if (provider === "appbarber") {
     providerPrompt = buildAppBarberPromptSection(tenant);
   } else if (provider === "none") {
@@ -10250,314 +10127,6 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
     }
   } catch (error) {
     console.error(`[Bemp] tool error (${funcName}):`, error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
-  }
-}
-
-// ===================== ZAYLO (API ZAYLO) =====================
-
-const ZAYLO_DEFAULT_BASE_URL = "https://fimdhqjzdyktzdijfoub.supabase.co/functions/v1/n8n-appointments";
-const ZAYLO_DEFAULT_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZpbWRocWp6ZHlrdHpkaWpmb3ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3MDY5MTgsImV4cCI6MjA4MDI4MjkxOH0.bN2RmxR4KbD4RozQ2AB-PHzUaQYKEoYvmKNn3QO9vNQ";
-
-
-function buildZayloTools(tenant: any) {
-  if (!tenant?.zaylo_barbershop_id) return undefined;
-  return [
-    {
-      type: "function",
-      function: {
-        name: "obter_info",
-        description: "OBRIGATÓRIA no primeiro sinal de agenda, preço, serviço, profissional ou disponibilidade. Retorna o catálogo real da clínica na Zaylo: dados, profissionais ativos (barbers) e serviços ativos (services) com UUIDs. Use esta tool ANTES de responder quando o cliente disser algo como 'quero agendar', 'Limpeza', 'quanto custa', 'tem horário'.",
-        parameters: { type: "object", properties: {} },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "obter_horarios_disponiveis",
-        description: "Lista horários LIVRES do profissional para a data informada. Só use depois de já ter barber_id e service_id reais vindos de obter_info. Use APENAS os valores do campo available_times da resposta.",
-        parameters: {
-          type: "object",
-          properties: {
-            barber_id: { type: "string", description: "UUID do profissional (de obter_info → barbers[].id)" },
-            service_id: { type: "string", description: "UUID do serviço (de obter_info → services[].id)" },
-            date: { type: "string", description: "Data YYYY-MM-DD (fuso de Brasília)" },
-            service_duration_minutes: { type: "number", description: "Duração do serviço em minutos (de obter_info → services[].duration_minutes). Passe sempre que souber." },
-          },
-          required: ["barber_id", "service_id", "date"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "criar_agendamento",
-        description: "Cria um novo agendamento real na Zaylo. Só use depois de confirmar serviço, profissional, data e um horário EXATO retornado por obter_horarios_disponiveis. O sistema cria/identifica o cliente automaticamente pelo client_phone+client_name.",
-        parameters: {
-          type: "object",
-          properties: {
-            barber_id: { type: "string" },
-            service_id: { type: "string" },
-            date: { type: "string", description: "YYYY-MM-DD" },
-            time: { type: "string", description: "HH:MM (exato de available_times)" },
-            client_name: { type: "string" },
-            client_phone: { type: "string", description: "Telefone com DDI (ex: +5511999998888)" },
-            observacoes: { type: "string", description: "Observações opcionais para a clínica" },
-          },
-          required: ["barber_id", "service_id", "date", "time", "client_name", "client_phone"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "listar_agendamentos",
-        description: "Lista agendamentos reais do cliente pelo telefone. Use para consultar, remarcar, confirmar ou cancelar.",
-        parameters: {
-          type: "object",
-          properties: {
-            client_phone: { type: "string", description: "Telefone com DDI (ex: +5511999998888)" },
-          },
-          required: ["client_phone"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "confirmar_agendamento",
-        description: "Confirma um agendamento real na Zaylo. Use o appointment_id retornado por listar_agendamentos ou por criar_agendamento.",
-        parameters: {
-          type: "object",
-          properties: {
-            appointment_id: { type: "string" },
-          },
-          required: ["appointment_id"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "cancelar_agendamento",
-        description: "Cancela um agendamento real na Zaylo pelo appointment_id retornado por listar_agendamentos.",
-        parameters: {
-          type: "object",
-          properties: {
-            appointment_id: { type: "string" },
-            motivo: { type: "string", description: "Motivo do cancelamento (opcional)" },
-          },
-          required: ["appointment_id"],
-        },
-      },
-    },
-  ];
-}
-
-async function executeZayloTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
-  const funcName = toolCall.function.name;
-  let args: any = {};
-  try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
-
-  const barbershopId = (tenant.zaylo_barbershop_id || "").trim();
-  if (!barbershopId) return { error: "Zaylo barbershop_id não configurado para este estabelecimento." };
-
-  const baseUrl = ((tenant.zaylo_base_url || "").trim().replace(/\/+$/, "")) || ZAYLO_DEFAULT_BASE_URL;
-  const apiKey = (tenant.zaylo_publishable_key || "").trim() || ZAYLO_DEFAULT_PUBLISHABLE_KEY;
-
-  // v2: header é x-api-key (mantém apikey/Authorization para retrocompat com servidores antigos)
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "X-API-Key": apiKey,
-    "apikey": apiKey,
-    "Authorization": `Bearer ${apiKey}`,
-  };
-
-  const normalizePhone = (raw: string): string => {
-    let tel = (raw || "").trim();
-    if (!tel) return tel;
-    tel = tel.replace(/[^\d+]/g, "");
-    if (!tel.startsWith("+")) tel = `+${tel}`;
-    return tel;
-  };
-
-  const pad2 = (n: number) => String(n).padStart(2, "0");
-  const toIsoBrasilia = (date: string, time: string): string => {
-    // date: YYYY-MM-DD, time: HH:MM → "YYYY-MM-DDTHH:MM:00-03:00"
-    const d = (date || "").trim();
-    const t = (time || "").trim();
-    if (!d || !t) return "";
-    const [h, m] = t.split(":");
-    return `${d}T${pad2(Number(h))}:${pad2(Number(m))}:00-03:00`;
-  };
-
-  const callZaylo = async (payload: Record<string, any>): Promise<any> => {
-    console.log(`[Zaylo v2] -> POST ${baseUrl} action=${payload.action}`);
-    const res = await fetch(baseUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-    const text = await res.text();
-    console.log(`[Zaylo v2] ${payload.action} (${res.status}):`, text.slice(0, 600));
-    let parsed: any = null;
-    try { parsed = JSON.parse(text); } catch { /* keep null */ }
-    if (!res.ok) {
-      return { error: parsed?.title || `Status ${res.status}`, status: res.status, detail: parsed?.detail || text.slice(0, 300) };
-    }
-    return parsed ?? { raw: text.slice(0, 300) };
-  };
-
-  // Helper: resolve clienteId via upsertClientByPhone (cria se necessário)
-  const resolveClienteId = async (phone: string, name?: string): Promise<{ clienteId: string | null; error?: any }> => {
-    const tel = normalizePhone(phone);
-    if (!tel) return { clienteId: null, error: { error: "Telefone do cliente ausente." } };
-    // Se temos nome, upsert direto
-    if (name && name.trim()) {
-      const r = await callZaylo({
-        action: "upsertClientByPhone",
-        barbershop_id: barbershopId,
-        telefone: tel.replace(/^\+/, ""),
-        nome: name.trim(),
-      });
-      if (r?.error) return { clienteId: null, error: r };
-      return { clienteId: r?.id || null };
-    }
-    // Sem nome: tenta achar via listClients
-    const r = await callZaylo({
-      action: "listClients",
-      barbershop_id: barbershopId,
-      search: tel.replace(/^\+/, ""),
-      page: 1,
-      pageSize: 1,
-    });
-    if (r?.error) return { clienteId: null, error: r };
-    const id = r?.items?.[0]?.id || null;
-    return { clienteId: id };
-  };
-
-  try {
-    switch (funcName) {
-      case "obter_info": {
-        // v2: getInfo só retorna dados da empresa. Buscamos em paralelo profissionais e serviços
-        // e montamos o shape esperado { establishment, barbers, services }.
-        const [est, profs, servs] = await Promise.all([
-          callZaylo({ action: "getInfo", barbershop_id: barbershopId }),
-          callZaylo({ action: "listProfessionals", barbershop_id: barbershopId }),
-          callZaylo({ action: "listServices", barbershop_id: barbershopId }),
-        ]);
-        const firstErr = [est, profs, servs].find((r) => r?.error);
-        if (firstErr) return firstErr;
-        return {
-          establishment: est,
-          barbers: Array.isArray(profs?.items)
-            ? profs.items.map((p: any) => ({ id: p.id, name: p.name, specialty: p.specialty }))
-            : [],
-          services: Array.isArray(servs?.items)
-            ? servs.items.map((s: any) => ({
-                id: s.id,
-                name: s.name,
-                description: s.description,
-                price: s.price,
-                duration_minutes: s.duration_minutes,
-              }))
-            : [],
-        };
-      }
-
-      case "obter_horarios_disponiveis": {
-        // v2: listProfessionalsWithAgenda (alias getAvailableTimes)
-        const duration = Number(args.service_duration_minutes) > 0 ? Number(args.service_duration_minutes) : 30;
-        const payload: Record<string, any> = {
-          action: "listProfessionalsWithAgenda",
-          barbershop_id: barbershopId,
-          data: args.date,
-          servicoDuracao: duration,
-          professionalId: args.barber_id,
-        };
-        if (args.service_id) payload.servicoId = args.service_id;
-        const r = await callZaylo(payload);
-        if (r?.error) return r;
-        // Achata: pega slots do profissional solicitado (ou o primeiro)
-        const profs = Array.isArray(r?.profissionais) ? r.profissionais : [];
-        const target = profs.find((p: any) => p?.id === args.barber_id) || profs[0];
-        const slots = Array.isArray(target?.slots) ? target.slots : [];
-        return {
-          date: r?.data || args.date,
-          barber_id: target?.id || args.barber_id,
-          blocked: !!target?.blocked,
-          available_times: slots.map((s: any) => s?.time).filter(Boolean),
-        };
-      }
-
-      case "criar_agendamento": {
-        const phone = normalizePhone(args.client_phone || phoneNumber || "");
-        const { clienteId, error: cliErr } = await resolveClienteId(phone, args.client_name);
-        if (cliErr) return cliErr;
-        if (!clienteId) return { error: "Não foi possível identificar/criar o cliente." };
-        const iso = toIsoBrasilia(args.date, args.time);
-        if (!iso) return { error: "Data/hora inválidas para criar agendamento." };
-        const r = await callZaylo({
-          action: "createAppointment",
-          barbershop_id: barbershopId,
-          clienteId,
-          dataHoraInicio: iso,
-          profissionalId: args.barber_id,
-          observacoes: args.observacoes,
-          confirmado: true,
-          source: "whatsapp",
-          servicos: [{ servicoId: args.service_id, profissionalId: args.barber_id }],
-        });
-        if (r?.error) return r;
-        return {
-          ok: true,
-          appointment_id: r?.id,
-          appointment_date: iso,
-          barber_id: args.barber_id,
-          service_id: args.service_id,
-        };
-      }
-
-      case "listar_agendamentos": {
-        const phone = normalizePhone(args.client_phone || phoneNumber || "");
-        const { clienteId, error: cliErr } = await resolveClienteId(phone);
-        if (cliErr) return cliErr;
-        if (!clienteId) return { items: [], total: 0, note: "Cliente ainda não cadastrado." };
-        const r = await callZaylo({
-          action: "listAppointments",
-          barbershop_id: barbershopId,
-          clienteId,
-          page: 1,
-          pageSize: 20,
-        });
-        if (r?.error) return r;
-        return r;
-      }
-
-      case "confirmar_agendamento": {
-        if (!args.appointment_id) return { error: "appointment_id é obrigatório." };
-        return await callZaylo({
-          action: "confirmAppointment",
-          appointment_id: args.appointment_id,
-        });
-      }
-
-      case "cancelar_agendamento": {
-        if (!args.appointment_id) return { error: "appointment_id é obrigatório." };
-        return await callZaylo({
-          action: "cancelAppointment",
-          appointment_id: args.appointment_id,
-          motivo: args.motivo || "Cancelado via WhatsApp",
-        });
-      }
-
-      default:
-        return { error: `Ferramenta Zaylo desconhecida: ${funcName}` };
-    }
-  } catch (error) {
-    console.error(`[Zaylo] tool error (${funcName}):`, error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }

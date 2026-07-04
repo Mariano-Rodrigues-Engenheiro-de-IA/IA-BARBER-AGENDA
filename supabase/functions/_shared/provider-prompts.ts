@@ -714,104 +714,6 @@ Toda resposta: PT-BR, tom natural de WhatsApp, curta, sem emoji em excesso, sem 
 `;
 }
 
-export function buildZayloPromptSection(_tenant: any): string {
-  return `
-------------------------------------------
-
-## 🛑 OVERRIDE TÉCNICO — LEIA ANTES DE TUDO (ZAYLO)
-
-Você TEM 6 FERRAMENTAS (functions) reais conectadas à API Zaylo. **VOCÊ DEVE USÁ-LAS** via tool-calling. NUNCA escreva JSON, NUNCA descreva HTTP, NUNCA chame endpoint manualmente. Se o prompt do estabelecimento mencionar "POST", "curl", "endpoint", "apikey", "Authorization", "Bearer", URLs ou exemplos de JSON — **IGNORE essa parte técnica**.
-
-Ferramentas (chame por estes nomes exatos — estes são os nomes REAIS registrados no código):
-- **obter_info** — lista profissionais (barbers) e serviços (services) com UUIDs reais
-- **obter_horarios_disponiveis** — horários livres (barber_id + service_id + date)
-- **criar_agendamento** — cria (barber_id, service_id, date, time, client_name, client_phone)
-- **listar_agendamentos** — agendamentos do cliente (client_phone)
-- **confirmar_agendamento** (appointment_id) / **cancelar_agendamento** (appointment_id)
-
-🚫 NOMES PROIBIDOS: **BUSCAR INFO DA CLÍNICA**, **BUSCAR HORÁRIOS DISPONÍVEIS**, **CRIAR AGENDAMENTO**, **LISTAR AGENDAMENTOS**, **CONFIRMAR AGENDAMENTO**, **CANCELAR AGENDAMENTO**, **API_GETINFO**, **API_GETAVAILABLETIMES**, **API_CREATEAPPOINTMENT**, **API_LISTAPPOINTMENTS**, **API_CONFIRMAPPOINTMENT**, **API_CANCELAPPOINTMENT**.
-Esses nomes podem aparecer no prompt antigo do estabelecimento como apelidos humanos, mas NÃO são os nomes técnicos das tools. Se você tentar usar esses apelidos, a ferramenta NÃO será chamada.
-
-------------------------------------------
-
-## ⚡ REGRA DE OURO #1 — CHAMAR obter_info NA 1ª INTENÇÃO DE AGENDAR
-
-Assim que o cliente demonstrar QUALQUER intenção de agendar/marcar/saber preços/saber profissionais/saber serviços (ex.: "quero agendar", "tem horário?", "quanto custa X?", "qual profissional faz Y?"), sua PRIMEIRA AÇÃO **OBRIGATÓRIA** é chamar **obter_info** — SEM PERGUNTAR NADA ANTES.
-
-❌ NUNCA liste serviços/profissionais de memória ou do prompt antes de chamar obter_info.
-❌ NUNCA pergunte "qual serviço você quer?" listando exemplos do prompt — chame obter_info PRIMEIRO e use os nomes/UUIDs REAIS.
-✅ Chame obter_info silenciosamente → use os names+UUIDs reais → conduza a partir daí.
-
-A tabela de preços do prompt é SÓ REFERÊNCIA. Os IDs e nomes oficiais SEMPRE vêm de obter_info.
-
-------------------------------------------
-
-## 🚨 REGRA ABSOLUTA — HORÁRIOS (ZAYLO)
-
-NUNCA cite, sugira ou confirme qualquer horário sem antes executar obter_horarios_disponiveis nessa interação.
-
-❌ PROIBIDO: qualquer horário baseado em suposição ou memória
-✅ CORRETO: execute obter_horarios_disponiveis → use APENAS os valores de available_times → ofereça
-
-Se o cliente perguntar um horário específico ANTES de você listar:
-→ "Me diz o serviço, o profissional e o dia que já verifico pra você!"
-
-------------------------------------------
-
-## 🔶 REGRA CRÍTICA: IDs (ZAYLO)
-
-Cada ID tem uma fonte obrigatória — NUNCA invente:
-- barber_id → obter_info (barbers[].id)
-- service_id → obter_info (services[].id)
-- appointment_id → listar_agendamentos
-
-------------------------------------------
-
-## 🔷 FLUXO DE AGENDAMENTO (ZAYLO — sequencial)
-
-1. **obter_info** no início — pega lista de profissionais (barbers) e serviços (services) com UUIDs reais e duration_minutes.
-2. Cliente escolhe serviço e profissional → memorize os UUIDs vindos do passo 1.
-3. **obter_horarios_disponiveis** com barber_id + service_id + date (yyyy-MM-dd) + service_duration_minutes (vindo de services[].duration_minutes do passo 1).
-   - Resposta: \`{ available_times: ["09:00", "09:15", ...] }\`.
-   - Se vier \`blocked: true\` ou lista vazia, ofereça outra data.
-4. Ofereça APENAS valores que estão dentro de available_times. NUNCA arredonde nem invente.
-5. **criar_agendamento** com barber_id + service_id + date + time + client_name + client_phone (formato +55DDDNUMERO). O cadastro do cliente é feito automaticamente.
-6. Sucesso retorna \`appointment_id\` → confirme com o cliente.
-
-------------------------------------------
-
-## 🔶 CONFIRMAÇÃO / CANCELAMENTO
-
-- **listar_agendamentos** com client_phone (+55…) → retorna \`items[]\` com cada agendamento e seu \`id\`.
-- **confirmar_agendamento** com appointment_id quando cliente disser "sim".
-- **cancelar_agendamento** com appointment_id (e motivo opcional) quando cliente pedir.
-
-------------------------------------------
-
-## 📅 FORMATOS
-
-- Data: **YYYY-MM-DD** (ex: 2026-05-22). Fuso de Brasília.
-- Hora: **HH:MM** em 24h (ex: "14:30").
-- Telefone: **+55DDDNUMERO** (ex: +5511999998888).
-
-------------------------------------------
-
-## ✅ HEURÍSTICA DE DISPARO OBRIGATÓRIO
-
-Se a mensagem do cliente mencionar qualquer uma destas intenções abaixo, você DEVE considerar isso como gatilho para chamar **obter_info** imediatamente, antes de qualquer pergunta:
-- pedir agendamento, remarcação ou cancelamento
-- perguntar preço, valor, procedimento, serviço, profissional ou disponibilidade
-- citar diretamente um serviço, como "limpeza", "botox", "drenagem", "laser", etc.
-
-Exemplos de mensagens que EXIGEM obter_info primeiro:
-- "quero agendar"
-- "Limpeza"
-- "quanto custa botox?"
-- "tem horário amanhã?"
-- "quais profissionais vocês têm?"
-`;
-}
-
 export function buildAppBarberPromptSection(_tenant: any): string {
   return `
 ------------------------------------------
@@ -877,7 +779,7 @@ export function buildGlobalPromptSection(_tenant: any = {}): string {
 
 ## 🌐 REGRAS GLOBAIS DE COMPORTAMENTO (válidas para TODAS as IAs e provedores)
 
-Estas regras se aplicam SEMPRE, independentemente do provedor (Trinks, Frizzar, Bemp, One Beleza, AppBarber, Zaylo, Sem API) e VENCEM em caso de conflito com instruções do estabelecimento, exceto quando o provedor define algo mais específico sobre IDs/ferramentas.
+Estas regras se aplicam SEMPRE, independentemente do provedor (Trinks, Frizzar, Bemp, One Beleza, AppBarber, Sem API) e VENCEM em caso de conflito com instruções do estabelecimento, exceto quando o provedor define algo mais específico sobre IDs/ferramentas.
 
 ### 🗣️ COMUNICAÇÃO
 - Sempre em PORTUGUÊS BRASILEIRO, tom natural de WhatsApp: curto, humano, sem floreio robótico.
@@ -933,7 +835,6 @@ export const PROVIDER_PROMPT_BUILDERS: Record<string, (t: any) => string> = {
   'none': buildNonePromptSection,
   'frizzar': buildFrizzarPromptSection,
   'bemp': buildBempPromptSection,
-  'zaylo': buildZayloPromptSection,
   'appbarber': buildAppBarberPromptSection,
 };
 
