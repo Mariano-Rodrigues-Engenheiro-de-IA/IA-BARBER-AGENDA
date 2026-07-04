@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 const corsHeaders = {
@@ -38,10 +38,26 @@ Deno.serve(async (req) => {
     if (!authHeader.startsWith("Bearer ")) return json({ error: "Unauthorized" }, 401);
     const token = authHeader.replace("Bearer ", "");
 
-    const userClient = createClient(supabaseUrl, anonKey);
-    const { data: userData, error: userErr } = await userClient.auth.getUser(token);
-    if (userErr || !userData?.user) return json({ error: "Unauthorized" }, 401);
-    const userId = userData.user.id;
+    const userClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    let userId: string | null = null;
+    const auth = userClient.auth as typeof userClient.auth & {
+      getClaims?: (jwt?: string) => Promise<{ data: { claims?: { sub?: string } } | null; error: unknown }>;
+    };
+
+    if (typeof auth.getClaims === "function") {
+      const { data: claimsData, error: claimsErr } = await auth.getClaims(token);
+      if (!claimsErr && claimsData?.claims?.sub) userId = claimsData.claims.sub;
+    }
+
+    if (!userId) {
+      const { data: userData, error: userErr } = await userClient.auth.getUser(token);
+      if (!userErr && userData?.user?.id) userId = userData.user.id;
+    }
+
+    if (!userId) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
     const { data: roleRow } = await admin
