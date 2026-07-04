@@ -6989,8 +6989,7 @@ async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) 
 
   try {
     const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-    if (clienteIds.length === 0) return [];
-    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
     return activeRaw.map((a: any) => ({
       id: a.id,
       status: a.status?.nome,
@@ -7946,6 +7945,23 @@ function trinksPhoneVariants(raw: string): string[] {
   return Array.from(variants);
 }
 
+async function trinksFetchClientesByTelefone(baseUrl: string, headers: Record<string, string>, telefone: string): Promise<any[]> {
+  const search = new URLSearchParams({ telefone, pageSize: "100" });
+  try {
+    const r = await fetch(`${baseUrl}/clientes?${search.toString()}`, { headers });
+    const j = await r.json();
+    if (!r.ok) {
+      console.warn(`[Trinks] falha /clientes ${search.toString()}: status=${r.status} body=${JSON.stringify(j).slice(0, 300)}`);
+      return [];
+    }
+    const list = Array.isArray(j?.data) ? j.data : (Array.isArray(j) ? j : []);
+    return list;
+  } catch (e) {
+    console.warn(`[Trinks] falha /clientes ${search.toString()}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 // Formata data YYYY-MM-DD (local).
 function trinksFmtDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -7970,10 +7986,7 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
 
   const initial = await Promise.all(variants.map(async (tel) => {
     try {
-      const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-      const j = await r.json();
-      const list = j?.data || j;
-      return Array.isArray(list) ? list : [];
+      return await trinksFetchClientesByTelefone(baseUrl, headers, tel);
     } catch { return []; }
   }));
   for (const list of initial) {
@@ -7997,10 +8010,7 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
   if (extras.length > 0) {
     const extraResults = await Promise.all(extras.map(async (tel) => {
       try {
-        const r = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-        const j = await r.json();
-        const list = j?.data || j;
-        return Array.isArray(list) ? list : [];
+        return await trinksFetchClientesByTelefone(baseUrl, headers, tel);
       } catch { return []; }
     }));
     for (const list of extraResults) {
@@ -8013,33 +8023,83 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
   return clienteIds;
 }
 
-// Lista agendamentos ATIVOS de todos os clienteIds passados, com janela de datas obrigatória.
-async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[]): Promise<any[]> {
-  if (clienteIds.length === 0) return [];
+function trinksAppointmentStatusName(appointment: any): string {
+  return String(appointment?.status?.nome || appointment?.status || "").trim();
+}
+
+function trinksIsActionableAppointment(appointment: any): boolean {
+  const statusName = normalizeUserFacingText(trinksAppointmentStatusName(appointment));
+  // A Trinks pode retornar variações de status por estabelecimento. Para remarcação/cancelamento,
+  // é mais seguro considerar ativo tudo que ainda não é claramente finalizado/cancelado.
+  if (!statusName) return true;
+  const finalStatuses = [
+    "cancelado",
+    "cancelada",
+    "desmarcado",
+    "desmarcada",
+    "finalizado",
+    "finalizada",
+    "concluido",
+    "concluida",
+    "realizado",
+    "realizada",
+    "atendido",
+    "atendida",
+    "faltou",
+    "ausente",
+    "nao compareceu",
+    "no show",
+  ];
+  return !finalStatuses.some((s) => statusName.includes(s));
+}
+
+async function trinksFetchAgendamentos(baseUrl: string, headers: Record<string, string>, params: Record<string, string | number>): Promise<any[]> {
   const { dataInicio, dataFim } = trinksAgendaWindow();
-  const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
-  const results = await Promise.all(clienteIds.map(async (cid) => {
-    try {
-      const r = await fetch(`${baseUrl}/agendamentos?clienteId=${cid}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers });
-      const j = await r.json();
-      return Array.isArray(j?.data) ? j.data : [];
-    } catch (e) {
-      console.warn(`[Trinks] falha /agendamentos clienteId=${cid}: ${(e as Error).message}`);
+  const search = new URLSearchParams({ dataInicio, dataFim });
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value).trim()) search.set(key, String(value));
+  }
+
+  try {
+    const r = await fetch(`${baseUrl}/agendamentos?${search.toString()}`, { headers });
+    const j = await r.json();
+    if (!r.ok) {
+      console.warn(`[Trinks] falha /agendamentos ${search.toString()}: status=${r.status} body=${JSON.stringify(j).slice(0, 300)}`);
       return [];
     }
-  }));
+    const list = Array.isArray(j?.data) ? j.data : (Array.isArray(j) ? j : []);
+    return list;
+  } catch (e) {
+    console.warn(`[Trinks] falha /agendamentos ${search.toString()}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
+// Lista agendamentos acionáveis por clienteId e, como fallback obrigatório, por telefone direto.
+// Na Trinks existem casos em que /clientes?telefone retorna um cadastro, mas /agendamentos?clienteId
+// não traz o agendamento que /agendamentos?telefone encontra. Por isso usamos os dois caminhos.
+async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[], phone?: string): Promise<any[]> {
+  const queries: Record<string, string | number>[] = [];
+  for (const cid of clienteIds) {
+    if (Number.isFinite(Number(cid))) queries.push({ clienteId: Number(cid) });
+  }
+  if (phone) {
+    for (const telefone of trinksPhoneVariants(phone)) queries.push({ telefone });
+  }
+  if (queries.length === 0) return [];
+
+  const results = await Promise.all(queries.map((params) => trinksFetchAgendamentos(baseUrl, headers, params)));
   const seen = new Set<number>();
   const out: any[] = [];
   for (const list of results) {
     for (const a of list) {
-      const statusName = String(a.status?.nome || "").toLowerCase();
-      const isActive = activeStatuses.some((s) => statusName === s || statusName.includes(s));
-      if (!isActive) continue;
+      if (!trinksIsActionableAppointment(a)) continue;
       if (seen.has(a.id)) continue;
       seen.add(a.id);
       out.push(a);
     }
   }
+  out.sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
   return out;
 }
 
@@ -8298,11 +8358,11 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           console.log(`buscar_agendamento: total ${clienteIds.length} clienteId(s): ${clienteIds.join(",")}`);
         }
 
-        if (clienteIds.length === 0) {
+        if (clienteIds.length === 0 && !resolvePhone) {
           return { data: [], message: "Cliente não encontrado" };
         }
 
-        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, resolvePhone);
         const allActive = activeRaw.map((a: any) => ({
           id: a.id,
           status: a.status?.nome,
@@ -8344,18 +8404,9 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
 
         if (phoneNumber) {
-          let tel = phoneNumber.replace(/\D/g, "");
-          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-          const ddd = tel.substring(0, 2);
-          let rest = tel.substring(2);
-          if (rest.length === 8) rest = "9" + rest;
-          tel = ddd + rest;
-
-          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-          const cliData = await cliRes.json();
-          const cliList = cliData?.data || cliData;
-          if (Array.isArray(cliList) && cliList.length > 0) {
-            resolvedClienteId = cliList[0].id || cliList[0].Id;
+          const resolvedIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
+          if (resolvedIds.length > 0) {
+            resolvedClienteId = resolvedIds[0];
             console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone`);
           }
         }
@@ -8417,7 +8468,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             const extra = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
             for (const cid of extra) if (!dedupIds.includes(cid)) dedupIds.push(cid);
           }
-          const activeAg = await trinksListActiveByClienteIds(baseUrl, headers, dedupIds);
+          const activeAg = await trinksListActiveByClienteIds(baseUrl, headers, dedupIds, phoneNumber);
           const isDuplicate = activeAg.some((a: any) => a.dataHoraInicio === dataHoraInicio);
           if (isDuplicate) {
             console.log(`criar_agendamento: DUPLICATE detected for ${dataHoraInicio}`);
@@ -8453,8 +8504,8 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       case "cancelar_agendamento": {
         if (phoneNumber) {
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-          if (clienteIds.length > 0) {
-            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+          {
+            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
               id: a.id,
               status: a.status?.nome,
@@ -8535,9 +8586,9 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         let editClienteId = args.clienteId;
         if (phoneNumber) {
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-          if (clienteIds.length > 0) {
+          {
             editClienteId = editClienteId || clienteIds[0];
-            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
               id: a.id,
               status: a.status?.nome,
