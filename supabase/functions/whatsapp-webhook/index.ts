@@ -8013,33 +8013,83 @@ async function trinksResolveClienteIds(baseUrl: string, headers: Record<string, 
   return clienteIds;
 }
 
-// Lista agendamentos ATIVOS de todos os clienteIds passados, com janela de datas obrigatória.
-async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[]): Promise<any[]> {
-  if (clienteIds.length === 0) return [];
+function trinksAppointmentStatusName(appointment: any): string {
+  return String(appointment?.status?.nome || appointment?.status || "").trim();
+}
+
+function trinksIsActionableAppointment(appointment: any): boolean {
+  const statusName = normalizeUserFacingText(trinksAppointmentStatusName(appointment));
+  // A Trinks pode retornar variações de status por estabelecimento. Para remarcação/cancelamento,
+  // é mais seguro considerar ativo tudo que ainda não é claramente finalizado/cancelado.
+  if (!statusName) return true;
+  const finalStatuses = [
+    "cancelado",
+    "cancelada",
+    "desmarcado",
+    "desmarcada",
+    "finalizado",
+    "finalizada",
+    "concluido",
+    "concluida",
+    "realizado",
+    "realizada",
+    "atendido",
+    "atendida",
+    "faltou",
+    "ausente",
+    "nao compareceu",
+    "no show",
+  ];
+  return !finalStatuses.some((s) => statusName.includes(s));
+}
+
+async function trinksFetchAgendamentos(baseUrl: string, headers: Record<string, string>, params: Record<string, string | number>): Promise<any[]> {
   const { dataInicio, dataFim } = trinksAgendaWindow();
-  const activeStatuses = ["confirmado", "aguardando confirmação", "aguardando confirmacao"];
-  const results = await Promise.all(clienteIds.map(async (cid) => {
-    try {
-      const r = await fetch(`${baseUrl}/agendamentos?clienteId=${cid}&dataInicio=${dataInicio}&dataFim=${dataFim}`, { headers });
-      const j = await r.json();
-      return Array.isArray(j?.data) ? j.data : [];
-    } catch (e) {
-      console.warn(`[Trinks] falha /agendamentos clienteId=${cid}: ${(e as Error).message}`);
+  const search = new URLSearchParams({ dataInicio, dataFim });
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value).trim()) search.set(key, String(value));
+  }
+
+  try {
+    const r = await fetch(`${baseUrl}/agendamentos?${search.toString()}`, { headers });
+    const j = await r.json();
+    if (!r.ok) {
+      console.warn(`[Trinks] falha /agendamentos ${search.toString()}: status=${r.status} body=${JSON.stringify(j).slice(0, 300)}`);
       return [];
     }
-  }));
+    const list = Array.isArray(j?.data) ? j.data : (Array.isArray(j) ? j : []);
+    return list;
+  } catch (e) {
+    console.warn(`[Trinks] falha /agendamentos ${search.toString()}: ${(e as Error).message}`);
+    return [];
+  }
+}
+
+// Lista agendamentos acionáveis por clienteId e, como fallback obrigatório, por telefone direto.
+// Na Trinks existem casos em que /clientes?telefone retorna um cadastro, mas /agendamentos?clienteId
+// não traz o agendamento que /agendamentos?telefone encontra. Por isso usamos os dois caminhos.
+async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[], phone?: string): Promise<any[]> {
+  const queries: Record<string, string | number>[] = [];
+  for (const cid of clienteIds) {
+    if (Number.isFinite(Number(cid))) queries.push({ clienteId: Number(cid) });
+  }
+  if (phone) {
+    for (const telefone of trinksPhoneVariants(phone)) queries.push({ telefone });
+  }
+  if (queries.length === 0) return [];
+
+  const results = await Promise.all(queries.map((params) => trinksFetchAgendamentos(baseUrl, headers, params)));
   const seen = new Set<number>();
   const out: any[] = [];
   for (const list of results) {
     for (const a of list) {
-      const statusName = String(a.status?.nome || "").toLowerCase();
-      const isActive = activeStatuses.some((s) => statusName === s || statusName.includes(s));
-      if (!isActive) continue;
+      if (!trinksIsActionableAppointment(a)) continue;
       if (seen.has(a.id)) continue;
       seen.add(a.id);
       out.push(a);
     }
   }
+  out.sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
   return out;
 }
 
