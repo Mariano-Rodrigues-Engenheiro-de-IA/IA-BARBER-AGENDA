@@ -6,7 +6,7 @@ export type Tenant = Tables<"tenants">;
 export type TenantInsert = TablesInsert<"tenants">;
 export type TenantUpdate = TablesUpdate<"tenants">;
 
-const TENANT_LIST_COLUMNS = "id,name,slug,phone,email,address,status,api_provider,trinks_api_key,trinks_establishment_id,onebeleza_token,onebeleza_celular,zaylo_barbershop_id,zaylo_base_url,zaylo_publishable_key,booking_link,uazapi_token,uazapi_url,whatsapp_number,created_at,updated_at" as const;
+const TENANT_LIST_COLUMNS = "id,name,slug,phone,email,address,status,api_provider,trinks_api_key,trinks_establishment_id,onebeleza_token,onebeleza_celular,booking_link,uazapi_token,uazapi_url,whatsapp_number,created_at,updated_at" as const;
 
 export function useTenants() {
   return useQuery({
