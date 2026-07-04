@@ -431,10 +431,14 @@ async function resolveIncomingMedia({
   return { base64: null, mimeType: fallbackMimeType };
 }
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
-};
+const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+function buildCorsHeaders(origin: string | null) {
+  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
+  };
+}
 
 // ===== Business hours helper for follow-up sequences =====
 // If `at` falls outside [start,end] in given tz, push to next start within window.
@@ -1222,6 +1226,7 @@ async function registerOneBelezaClient(
 
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -3285,7 +3290,7 @@ function resolveOneBelezaToolArgs(
   };
 
   const corrections: string[] = [];
-  const shouldGuardServiceId = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"].includes(toolName);
+  const shouldGuardServiceId = ["buscar_barbeiros_por_servico", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"].includes(toolName);
   const allowedServiceIds = getAllowedOneBelezaServiceIds(sessionState);
 
   if (shouldGuardServiceId && allowedServiceIds.length > 0) {
@@ -3329,22 +3334,6 @@ function resolveOneBelezaToolArgs(
     } else if (!svc.id && sessionState.oneBelezaServiceOptions.length > 0) {
       result.blocked = true;
       result.blockMessage = `servicosId ${parsedArgs?.servicosId ?? "(ausente)"} inválido. Opções válidas: ${sessionState.oneBelezaServiceOptions.map(o => `${o.servicosId} (${o.descricao})`).join(", ")}`;
-    }
-  }
-
-  if (toolName === "buscar_datas_disponiveis") {
-    const svc = resolveOneBelezaServiceId(parsedArgs, sessionState);
-    if (svc.id && svc.corrected) {
-      result.resolvedArgs.servicosId = String(svc.id);
-      corrections.push(svc.reason!);
-    }
-    const prof = resolveOneBelezaProfessionalId(parsedArgs, sessionState, svc.id);
-    if (prof.id && prof.corrected) {
-      result.resolvedArgs.profissionalid = String(prof.id);
-      corrections.push(prof.reason!);
-    } else if (!prof.id && prof.reason) {
-      result.blocked = true;
-      result.blockMessage = prof.reason;
     }
   }
 
@@ -5161,7 +5150,7 @@ async function callAIAgent(
 
         // ===== ONE BELEZA ID RESOLUTION LAYER =====
         if (provider === "onebeleza") {
-          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_datas_disponiveis", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"];
+          const resolvableTools = ["buscar_barbeiros_por_servico", "buscar_horarios", "buscar_horarios_disponiveis", "agendar"];
           if (resolvableTools.includes(toolCall.function.name)) {
             const resolution = resolveOneBelezaToolArgs(toolCall.function.name, parsedArgs, sessionState);
             
@@ -5764,14 +5753,6 @@ async function callAIAgent(
           if (resolvedSvc) {
             sessionState.selectedServiceId = resolvedSvc;
           }
-        }
-
-        // Track selections from buscar_datas_disponiveis
-        if (provider === "onebeleza" && toolCall.function.name === "buscar_datas_disponiveis") {
-          const svcId = toPositiveInteger(parsedArgs?.servicosId ?? parsedArgs?.servicoId);
-          const profId = toPositiveInteger(parsedArgs?.profissionalid ?? parsedArgs?.profissionalId);
-          if (svcId) sessionState.selectedServiceId = svcId;
-          if (profId) sessionState.selectedProfessionalId = profId;
         }
       }
 
@@ -7705,7 +7686,7 @@ function buildOneBelezaTools(tenant: any) {
       type: "function",
       function: {
         name: "buscar_horarios_disponiveis",
-        description: "🔥 FERRAMENTA OTIMIZADA: para uma data + serviço, retorna TODOS os profissionais habilitados E seus horários disponíveis em UMA ÚNICA chamada. Substitui buscar_barbeiros_por_servico + buscar_datas_disponiveis + buscar_horarios. Use SEMPRE após buscar_servicos. Resposta inclui disponibilidades[].profissionalId + disponibilidades[].horarios[].horarioInicio/horarioFinal.",
+        description: "🔥 FERRAMENTA OTIMIZADA: para uma data + serviço, retorna TODOS os profissionais habilitados E seus horários disponíveis em UMA ÚNICA chamada. Use SEMPRE após buscar_servicos. Resposta inclui disponibilidades[].profissionalId + disponibilidades[].horarios[].horarioInicio/horarioFinal.",
         parameters: {
           type: "object",
           properties: {
@@ -8774,15 +8755,6 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_barbeiros response (${res.status}):`, text.slice(0, 1000));
-        try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
-      }
-
-      case "buscar_datas_disponiveis": {
-        const url = `${baseUrl}/api/Agendamento/RetornarDatasPorServico?celular=${celular}&servicosid=${args.servicosId}&profissionalid=${args.profissionalid}`;
-        console.log(`[OneBeleza] buscar_datas URL: ${url}`);
-        const res = await fetchOneBelezaWithRetry(url, { headers: authHeaders });
-        const text = await res.text();
-        console.log(`[OneBeleza] buscar_datas response (${res.status}):`, text.slice(0, 1000));
         try { return JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
       }
 

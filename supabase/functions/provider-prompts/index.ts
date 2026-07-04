@@ -1,11 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
+const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+function buildCorsHeaders(origin: string | null) {
+  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
+}
 
 const PROVIDERS = ["global", "trinks", "onebeleza", "frizzar", "bemp", "appbarber", "none"];
 
@@ -20,6 +24,7 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 Deno.serve(async (req) => {
+  const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const json = (body: unknown, status = 200) =>
