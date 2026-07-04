@@ -6990,7 +6990,7 @@ async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) 
   try {
     const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
     if (clienteIds.length === 0) return [];
-    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
     return activeRaw.map((a: any) => ({
       id: a.id,
       status: a.status?.nome,
@@ -8352,7 +8352,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           return { data: [], message: "Cliente não encontrado" };
         }
 
-        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, resolvePhone);
         const allActive = activeRaw.map((a: any) => ({
           id: a.id,
           status: a.status?.nome,
@@ -8467,7 +8467,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             const extra = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
             for (const cid of extra) if (!dedupIds.includes(cid)) dedupIds.push(cid);
           }
-          const activeAg = await trinksListActiveByClienteIds(baseUrl, headers, dedupIds);
+          const activeAg = await trinksListActiveByClienteIds(baseUrl, headers, dedupIds, phoneNumber);
           const isDuplicate = activeAg.some((a: any) => a.dataHoraInicio === dataHoraInicio);
           if (isDuplicate) {
             console.log(`criar_agendamento: DUPLICATE detected for ${dataHoraInicio}`);
@@ -8504,7 +8504,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         if (phoneNumber) {
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
           if (clienteIds.length > 0) {
-            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
               id: a.id,
               status: a.status?.nome,
@@ -8587,7 +8587,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
           if (clienteIds.length > 0) {
             editClienteId = editClienteId || clienteIds[0];
-            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds);
+            const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
             const activeAgendamentos = activeRaw.map((a: any) => ({
               id: a.id,
               status: a.status?.nome,
