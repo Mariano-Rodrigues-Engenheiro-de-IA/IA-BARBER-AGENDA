@@ -8404,18 +8404,9 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
 
         if (phoneNumber) {
-          let tel = phoneNumber.replace(/\D/g, "");
-          if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-          const ddd = tel.substring(0, 2);
-          let rest = tel.substring(2);
-          if (rest.length === 8) rest = "9" + rest;
-          tel = ddd + rest;
-
-          const cliRes = await fetch(`${baseUrl}/clientes?telefone=${tel}`, { headers });
-          const cliData = await cliRes.json();
-          const cliList = cliData?.data || cliData;
-          if (Array.isArray(cliList) && cliList.length > 0) {
-            resolvedClienteId = cliList[0].id || cliList[0].Id;
+          const resolvedIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
+          if (resolvedIds.length > 0) {
+            resolvedClienteId = resolvedIds[0];
             console.log(`criar_agendamento: resolved clienteId=${resolvedClienteId} from phone`);
           }
         }
