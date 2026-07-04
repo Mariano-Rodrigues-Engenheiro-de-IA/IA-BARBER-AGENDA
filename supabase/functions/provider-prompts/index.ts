@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     const { data: roleRow } = await admin
       .from("user_roles")
       .select("role")
-      .eq("user_id", userData.user.id)
+      .eq("user_id", userId)
       .eq("role", "admin")
       .maybeSingle();
     if (!roleRow) return json({ error: "Forbidden" }, 403);
@@ -80,7 +80,7 @@ Deno.serve(async (req) => {
         .upsert({
           provider,
           content,
-          updated_by: userData.user.id,
+          updated_by: userId,
           updated_at: new Date().toISOString(),
         }, { onConflict: "provider" });
       if (error) return json({ error: error.message }, 500);
