@@ -5962,31 +5962,58 @@ async function callAIAgent(
     if (dupHit) {
       console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
       logErrors.push(`Reply repetida detectada (sim=${dupHit.sim.toFixed(2)}); regenerando.`);
-      const antiRepeatReminder = {
-        role: "system" as const,
-        content:
-          `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que você JÁ ENVIOU há poucos minutos. NÃO repita. Avalie: a última mensagem do cliente traz pergunta ou informação realmente NOVA? Se SIM, responda com algo DIFERENTE e que avance a conversa. Se NÃO (mensagem fragmentada, emoji, "ok", "valeu", ou repetindo o que já perguntou), devolva uma STRING VAZIA — não envie nada. Nunca reenvie a mesma resposta nem uma paráfrase do mesmo conteúdo.`,
-      };
+      // Detecta se a última mensagem do cliente é um acknowledgement puro
+      // (ok/valeu/emoji) — só nesse caso o silêncio é aceitável. Se o cliente
+      // trouxe qualquer conteúdo substantivo (nome de serviço, horário, nome
+      // próprio, dúvida), a IA DEVE responder, mesmo que precise reformular.
+      const lastUserMsg = [...messages].reverse().find((m: any) => m?.role === "user");
+      const lastUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+      const ackNorm = lastUserText.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, "").trim();
+      const isPureAck = ackNorm.length <= 3 || /^(ok|okay|blz|beleza|valeu|vlw|obg|obrigad[oa]|tmj|sim|nao|não|uhum|aham|kk+|rs+)$/.test(ackNorm);
+
       try {
+        const antiRepeatReminder = {
+          role: "system" as const,
+          content: isPureAck
+            ? `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente é apenas um "ok/valeu/emoji" sem conteúdo novo — devolva STRING VAZIA (não envie nada). Nunca reenvie a mesma resposta.`
+            : `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente TEM CONTEÚDO NOVO ("${lastUserText.slice(0, 160)}") e precisa ser respondida. NÃO repita a mensagem anterior nem uma paráfrase — avance a conversa reconhecendo o que o cliente acabou de dizer e faça a próxima pergunta ou ação. É obrigatório responder algo diferente; não devolva string vazia.`,
+        };
         const regenRaw = await requestFinalNaturalResponse([...messages, antiRepeatReminder]);
         const regen = stripInternalPrefixes(regenRaw || "").trim();
         if (regen && !isLeakedReasoningResponse(regen)) {
           const stillDup = findSimilarRecentReply(sessionState, regen);
           if (stillDup) {
-            console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}). Silenciando.`);
-            logErrors.push(`Regeneração ainda duplicada — mensagem suprimida.`);
-            finalResponse = "";
+            if (isPureAck) {
+              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack. Silenciando.`);
+              logErrors.push(`Regeneração ainda duplicada — mensagem suprimida (ack).`);
+              finalResponse = "";
+            } else {
+              // Cliente trouxe contexto novo — melhor mandar duplicado do que ficar mudo.
+              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) mas cliente trouxe contexto novo. Enviando mesmo assim.`);
+              logErrors.push(`Regeneração ainda duplicada, mas cliente trouxe contexto novo — enviado assim mesmo.`);
+              finalResponse = regen;
+            }
           } else {
             finalResponse = regen;
           }
         } else {
-          // Modelo escolheu não falar — respeita.
-          console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
-          finalResponse = "";
+          if (isPureAck) {
+            console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
+            finalResponse = "";
+          } else {
+            // Cliente trouxe contexto novo e regeneração falhou — mantém a resposta original
+            // para não deixar o cliente sem retorno.
+            console.warn(`[ReplyDedup] Regeneração vazia mas cliente trouxe contexto novo — mantendo resposta original.`);
+            logErrors.push(`Regeneração vazia com contexto novo do cliente — mantida resposta original.`);
+            // finalResponse já contém a resposta original
+          }
         }
       } catch (e) {
-        console.error("[ReplyDedup] Falha ao regenerar, silenciando:", (e as any)?.message);
-        finalResponse = "";
+        console.error("[ReplyDedup] Falha ao regenerar:", (e as any)?.message);
+        if (isPureAck) {
+          finalResponse = "";
+        }
+        // se não é ack, mantém finalResponse original
       }
     }
   }
