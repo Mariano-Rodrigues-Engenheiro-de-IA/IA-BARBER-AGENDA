@@ -4152,6 +4152,40 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
   }
   if (!lastAssistant) return Math.max(1, attempts);
 
+  const lastUser = [...visible].reverse().find((m: any) => m.role === "user")?.content || "";
+  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
+  const normalizeTimeToken = (m: RegExpExecArray): string | null => {
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) return null;
+    const mm = m[2] ? m[2].padStart(2, "0") : "00";
+    return `${h.toString().padStart(2, "0")}:${mm}`;
+  };
+
+  // Se o CLIENTE explicitamente escolheu 2+ horários na própria mensagem
+  // (ex.: "pode ser 14 e 15"), isso é promessa multi-booking mesmo sem "sim" seco.
+  const explicitUserTimes = new Set<string>();
+  let userMatch: RegExpExecArray | null;
+  timeRe.lastIndex = 0;
+  while ((userMatch = timeRe.exec(lastUser)) !== null) {
+    const token = normalizeTimeToken(userMatch);
+    if (token) explicitUserTimes.add(token);
+  }
+  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b/gi;
+  let hourOnlyMatch: RegExpExecArray | null;
+  while ((hourOnlyMatch = hourOnlyContextRe.exec(lastUser)) !== null) {
+    const h = Number(hourOnlyMatch[1]);
+    if (h >= 0 && h <= 23) explicitUserTimes.add(`${h.toString().padStart(2, "0")}:00`);
+  }
+  if (explicitUserTimes.size >= 2) {
+    return Math.max(1, attempts, explicitUserTimes.size);
+  }
+
+  // Só interpreta múltiplos horários da ÚLTIMA fala da IA como múltiplos
+  // agendamentos quando a última fala do cliente é uma confirmação curta.
+  // Caso real: cliente respondeu "Hoje, 15:20" depois de uma lista de 7 horários;
+  // a heurística contava os 7 horários ofertados e escalava humano indevidamente.
+  if (!isAffirmativeReply(lastUser)) return Math.max(1, attempts);
+
   // Quebra em frases e SÓ conta horários em frases que soam como oferta de
   // slot pra agendar. Frases sobre horário de funcionamento são explicitamente
   // excluídas (senão "funcionamos das 9h às 19h30" viraria 2 promessas).
@@ -4165,7 +4199,6 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
   const set = new Set<string>();
   for (const sent of sentences) {
     if (NON_BOOKING_CTX_RE.test(sent)) continue;
@@ -4173,10 +4206,8 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     let m: RegExpExecArray | null;
     timeRe.lastIndex = 0;
     while ((m = timeRe.exec(sent)) !== null) {
-      const h = Number(m[1]);
-      if (h < 0 || h > 23) continue;
-      const mm = m[2] ? m[2].padStart(2, "0") : "00";
-      set.add(`${h.toString().padStart(2, "0")}:${mm}`);
+      const token = normalizeTimeToken(m);
+      if (token) set.add(token);
     }
   }
   const distinct = set.size;
@@ -4264,10 +4295,19 @@ async function classifyPendingBookings(params: {
     const parsed = JSON.parse(raw);
     const n = Number(parsed?.total_bookings_requested);
     if (!Number.isFinite(n) || n < 1) return fallback();
-    const capped = Math.min(Math.floor(n), 10); // sanity cap
+    let capped = Math.min(Math.floor(n), 10); // sanity cap
     // Se o LLM disse 1 mas a heurística viu 2+ horários ofertados + resposta curta,
     // acredita na heurística. Rede de segurança contra o mesmo bug que já mordeu.
     const heuristic = heuristicPromisedFromWindow(messages, attempts);
+    const lastUserText = [...window].reverse().find((m: any) => m.role === "user")?.content || "";
+    // Proteção anti-falso-positivo: com uma única chamada de agendamento no turno,
+    // se a mensagem do cliente NÃO é confirmação curta e a heurística não viu
+    // multi-horários explícitos, não deixa o classificador inflar para 4, 7 etc.
+    // Caso real: cliente disse "Hoje, 15:20" e o LLM contou 7 horários da lista anterior.
+    if (attempts === 1 && heuristic <= 1 && !isAffirmativeReply(lastUserText) && capped > 1) {
+      console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
+      capped = 1;
+    }
     const total = Math.max(capped, heuristic);
     return {
       total,
@@ -5574,7 +5614,7 @@ async function callAIAgent(
             const fetchResult = await executeToolForProvider(provider, tenant, {
               ...toolCall,
               function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: dateToFetch }) },
-            }, phoneNumber, { supabase, simulatorMode });
+            }, phoneNumber, { supabase, simulatorMode, sessionState });
             if (Array.isArray(fetchResult)) {
               // Filter only agendamentos for this phone number
               const phoneClean = phoneNumber.replace(/^55/, "");
@@ -5653,7 +5693,7 @@ async function callAIAgent(
 
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode });
+          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode, sessionState });
         }
 
         // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
@@ -6347,7 +6387,7 @@ async function callAIAgent(
                   tenant,
                   tc,
                   phoneNumber,
-                  { supabase, simulatorMode },
+                  { supabase, simulatorMode, sessionState },
                 );
                 messages.push({
                   role: "tool",
@@ -6647,7 +6687,7 @@ async function executeToolForProvider(
   tenant: any,
   toolCall: any,
   phoneNumber?: string,
-  opts?: { supabase?: any; simulatorMode?: boolean },
+  opts?: { supabase?: any; simulatorMode?: boolean; sessionState?: AgentSessionState },
 ): Promise<any> {
   const funcName = toolCall.function.name;
   const simulator = !!opts?.simulatorMode;
@@ -6715,11 +6755,11 @@ async function executeToolForProvider(
 
   switch (provider) {
     case "trinks":
-      return executeTrinksTool(tenant, toolCall, phoneNumber);
+      return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "onebeleza":
       return executeOneBelezaTool(tenant, toolCall, phoneNumber);
     case "frizzar":
-      return executeFrizzarTool(tenant, toolCall, phoneNumber);
+      return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
       return executeBempTool(tenant, toolCall, phoneNumber);
     case "appbarber":
@@ -6727,7 +6767,7 @@ async function executeToolForProvider(
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
-      return executeTrinksTool(tenant, toolCall, phoneNumber);
+      return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
   }
 }
 
@@ -8496,7 +8536,7 @@ async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<str
 }
 
 
-async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -8801,7 +8841,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         // Aqui bloqueamos qualquer código que não tenha vindo de um listar_servicos
         // desta mesma conversa.
         {
-          const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+          const catalog = (((sessionState as any)?.trinksServiceCatalog) || []) as Array<{ id: number; nome: string; duracao: number }>;
           if (Array.isArray(catalog) && catalog.length > 0) {
             const reqSid = Number(args.servicoId);
             if (!Number.isFinite(reqSid) || !catalog.some((s) => s.id === reqSid)) {
@@ -9722,7 +9762,7 @@ function buildFrizzarTools(tenant: any) {
 // Usada por `agendar` para travar tentativa de agendar em data diferente da consultada.
 const frizzarLastListed = new Map<string, { dia: string; listedAt: number }>();
 
-async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string): Promise<any> {
+async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -10002,7 +10042,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         // existe no estabelecimento, mas o cliente recebe algo completamente diferente.
         // Bloqueia qualquer código que não tenha vindo de um listar_servicos desta conversa.
         {
-          const catalog = ((sessionState as any).frizzarServiceCatalog || []) as Array<{ codigo: number; nome: string }>;
+          const catalog = (((sessionState as any)?.frizzarServiceCatalog) || []) as Array<{ codigo: number; nome: string }>;
           if (Array.isArray(catalog) && catalog.length > 0) {
             const invalidCodes = body
               .map((s: any) => toPositiveInteger(s?.codigo))
