@@ -4063,6 +4063,43 @@ function countBookingCallAttempts(logToolCalls: any[]): number {
  * Validado contra o código real de cada execute<Provider>Tool.
  * Retorna { count, breakdown } onde breakdown lista cada booking pra montar mensagem.
  */
+// Extrai o nome real do(s) serviço(s) reservado(s) com sucesso nesta rodada.
+// Usado pelo classificador do MultiBookingGuard pra reconciliar "o cliente falou
+// X" com "o serviço que de fato foi agendado já é um combo cobrindo X sozinho"
+// (ex: cliente diz "corte e barba", mas o catálogo já vende isso como 1 serviço).
+function extractBookedServiceNames(
+  logToolCalls: Array<{ name: string; args: any; result: any; blocked?: boolean }>,
+  provider: string,
+  sessionState: any,
+): string[] {
+  const names: string[] = [];
+  for (const tc of logToolCalls || []) {
+    if (!tc || tc.blocked || !BOOKING_TOOL_NAMES.has(tc.name)) continue;
+    const r: any = tc.result || {};
+    const args: any = tc.args || {};
+    if (provider === "frizzar" && Array.isArray(r?.agendamentos)) {
+      for (const item of r.agendamentos) {
+        if (item?.servicoNome && !names.includes(item.servicoNome)) names.push(item.servicoNome);
+      }
+      continue;
+    }
+    let name: string | undefined;
+    if (provider === "bemp") {
+      name = r?.data?.service_name;
+    } else if (provider === "appbarber") {
+      name = r?.service_name ?? r?.data?.service_name;
+    } else if (provider === "trinks") {
+      const catalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
+      const sid = Number(args?.servicoId);
+      name = catalog.find((s) => s.id === sid)?.nome;
+    } else if (provider === "onebeleza") {
+      name = r?.servicoNome ?? r?.nomeServico;
+    }
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
 function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
@@ -4244,8 +4281,9 @@ async function classifyPendingBookings(params: {
   aiAuthKey: string;
   modelUsed: string;
   attempts: number;
+  bookedServiceNames?: string[];
 }): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
-  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts } = params;
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
     source: "fallback" as const,
@@ -4259,16 +4297,21 @@ async function classifyPendingBookings(params: {
 
   if (window.length === 0) return fallback();
 
+  const servicosInfo = bookedServiceNames && bookedServiceNames.length > 0
+    ? `Serviço(s) REALMENTE reservado(s) com sucesso nesta rodada (nome exato do catálogo do negócio): ${JSON.stringify(bookedServiceNames)}. Se um desses nomes já é um combo que cobre tudo que o cliente pediu numa mesma fala (ex: cliente disse "corte e barba" e o serviço reservado se chama "Corte e Barba" ou similar), conte esse serviço como 1 agendamento — não infle o número só porque o cliente usou "e"/"mais" na frase. O catálogo do negócio, não a frase do cliente, decide se é 1 serviço ou 2.`
+    : "";
+
   const sys = [
     "Você é um classificador de intenção.",
     "Dada a janela de conversa a seguir entre CLIENTE e ATENDENTE, conte quantos AGENDAMENTOS DISTINTOS o cliente pediu/confirmou nesta rodada.",
     "Regras:",
-    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3).",
+    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3), EXCETO quando o catálogo do negócio já vende essa combinação como um serviço único (ver seção de serviços reservados abaixo, se houver).",
     "- Cada pessoa distinta = +1 (ex: '2 cortes pra amanhã' = 2).",
     "- Se o atendente ofereceu opções e o cliente respondeu apenas 'sim'/'pode'/'beleza'/'fechado', considere que ele aceitou TODAS as opções ofertadas na última fala do atendente.",
     "- Se não há intenção clara de agendar, retorne 1.",
     "- Nunca retorne 0.",
-    "Responda APENAS em JSON: {\"total_bookings_requested\": <numero>, \"reasoning\": \"<curto>\"}",
+    ...(servicosInfo ? [servicosInfo.trim()] : []),
+    'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "reasoning": "<curto>"}',
   ].join("\n");
 
   const isGpt5 = modelUsed.includes("gpt-5");
@@ -6286,12 +6329,14 @@ async function callAIAgent(
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
   if (_bookingAttempts > 0 && provider !== "none") {
     const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider);
+    const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
       messages,
       aiEndpoint,
       aiAuthKey,
       modelUsed,
       attempts: _bookingAttempts,
+      bookedServiceNames,
     });
     const prometidos = cls.total;
 
