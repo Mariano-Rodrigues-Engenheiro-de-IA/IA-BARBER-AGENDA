@@ -6147,6 +6147,10 @@ async function callAIAgent(
   if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
+  // Flag: quando o MultiBookingGuard sobrescreve finalResponse, essa resposta é
+  // intencional/correta e NÃO deve ser passada pelo ReplyDedup (que poderia
+  // regenerá-la sem contexto do guard e voltar a mentir "tá tudo confirmado").
+  let guardOverrideResponse = false;
 
   // Strip leaked internal prefixes (NEVER expose to client)
   finalResponse = stripInternalPrefixes(finalResponse);
