@@ -5608,7 +5608,7 @@ async function callAIAgent(
             const fetchResult = await executeToolForProvider(provider, tenant, {
               ...toolCall,
               function: { name: "buscar_agendamentos_dia", arguments: JSON.stringify({ date: dateToFetch }) },
-            }, phoneNumber, { supabase, simulatorMode });
+            }, phoneNumber, { supabase, simulatorMode, sessionState });
             if (Array.isArray(fetchResult)) {
               // Filter only agendamentos for this phone number
               const phoneClean = phoneNumber.replace(/^55/, "");
@@ -5687,7 +5687,7 @@ async function callAIAgent(
 
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
-          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode });
+          toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode, sessionState });
         }
 
         // OneBeleza: gerenciar flag awaitingNameForRegistration baseado em buscar_cliente / cadastrar_cliente
@@ -6381,7 +6381,7 @@ async function callAIAgent(
                   tenant,
                   tc,
                   phoneNumber,
-                  { supabase, simulatorMode },
+                  { supabase, simulatorMode, sessionState },
                 );
                 messages.push({
                   role: "tool",
@@ -6681,7 +6681,7 @@ async function executeToolForProvider(
   tenant: any,
   toolCall: any,
   phoneNumber?: string,
-  opts?: { supabase?: any; simulatorMode?: boolean },
+  opts?: { supabase?: any; simulatorMode?: boolean; sessionState?: AgentSessionState },
 ): Promise<any> {
   const funcName = toolCall.function.name;
   const simulator = !!opts?.simulatorMode;
@@ -6749,7 +6749,7 @@ async function executeToolForProvider(
 
   switch (provider) {
     case "trinks":
-      return executeTrinksTool(tenant, toolCall, phoneNumber);
+      return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "onebeleza":
       return executeOneBelezaTool(tenant, toolCall, phoneNumber);
     case "frizzar":
@@ -6761,7 +6761,7 @@ async function executeToolForProvider(
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
-      return executeTrinksTool(tenant, toolCall, phoneNumber);
+      return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
   }
 }
 
