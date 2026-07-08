@@ -6384,6 +6384,7 @@ async function callAIAgent(
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
       logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
       finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
+      guardOverrideResponse = true;
     }
   }
   // ============================================================================
