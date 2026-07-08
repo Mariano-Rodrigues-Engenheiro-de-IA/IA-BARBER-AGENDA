@@ -2782,6 +2782,8 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
         : [],
       // Trinks service-lock (carrega entre mensagens, com TTL curto de 20min)
       ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
+      // Frizzar service-catalog (mesma ideia da Trinks — bloqueia servicoId alucinado)
+      ...(Array.isArray(s.frizzarServiceCatalog) ? { frizzarServiceCatalog: s.frizzarServiceCatalog } : { frizzarServiceCatalog: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
@@ -2816,6 +2818,10 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       // Trinks service-lock (sobrevive entre mensagens; impede troca silenciosa de serviço)
       trinksServiceCatalog: Array.isArray((state as any).trinksServiceCatalog)
         ? (state as any).trinksServiceCatalog.slice(0, 200)
+        : [],
+      // Frizzar service-catalog (bloqueia servicoId fora do que foi listado nesta conversa)
+      frizzarServiceCatalog: Array.isArray((state as any).frizzarServiceCatalog)
+        ? (state as any).frizzarServiceCatalog.slice(0, 200)
         : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
@@ -5879,6 +5885,18 @@ async function callAIAgent(
             .filter((s: any) => s.id && s.duracao);
           (sessionState as any).trinksServiceCatalog = catalog;
           console.log(`[TrinksLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        // ===== FRIZZAR: catálogo de serviços (bloqueia servicoId alucinado em agendar) =====
+        if (provider === "frizzar" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
+          const catalog = toolResult
+            .map((s: any) => ({
+              codigo: toPositiveInteger(s?.codigo) ?? null,
+              nome: typeof s?.nome === "string" ? s.nome : "",
+            }))
+            .filter((s: any) => s.codigo);
+          (sessionState as any).frizzarServiceCatalog = catalog;
+          console.log(`[FrizzarLock] catalog tracked: ${catalog.length} serviços`);
         }
 
         if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
@@ -9946,6 +9964,29 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
         if (!args.clienteId || !args.dia || !args.hora || !args.profissionalId || body.length === 0) {
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
+        }
+
+        // 🚨 TRAVA — servicoId fora do catálogo listado nesta conversa.
+        // Caso real: IA passou codigo=2461 ("Unha de Fibra de Vidro — Manutenção") no
+        // lugar do serviço de corte que o cliente pediu. A API aceita porque o serviço
+        // existe no estabelecimento, mas o cliente recebe algo completamente diferente.
+        // Bloqueia qualquer código que não tenha vindo de um listar_servicos desta conversa.
+        {
+          const catalog = ((sessionState as any).frizzarServiceCatalog || []) as Array<{ codigo: number; nome: string }>;
+          if (Array.isArray(catalog) && catalog.length > 0) {
+            const invalidCodes = body
+              .map((s: any) => toPositiveInteger(s?.codigo))
+              .filter((c: number | null) => c !== null && !catalog.some((s) => s.codigo === c));
+            if (invalidCodes.length > 0) {
+              console.warn(`[Frizzar] BLOQUEIO servicoId fora do catálogo listado: ${invalidCodes.join(", ")} (válidos: ${catalog.map((s) => `${s.codigo}=${s.nome}`).slice(0, 20).join(", ")})`);
+              return {
+                error: `Código(s) de serviço ${invalidCodes.join(", ")} não corresponde(m) a nenhum serviço retornado por listar_servicos nesta conversa. Escolha os códigos abaixo pelo NOME do serviço que o cliente pediu (nunca chute o código).`,
+                codigosRecebidos: body.map((s: any) => s?.codigo),
+                servicosValidos: catalog.map((s) => ({ codigo: s.codigo, nome: s.nome })).slice(0, 30),
+                blocked: true,
+              };
+            }
+          }
         }
 
         // 🚨 TRAVA DE DATA: valida que `dia` bate com a última `listar_horarios` para este profissional.
