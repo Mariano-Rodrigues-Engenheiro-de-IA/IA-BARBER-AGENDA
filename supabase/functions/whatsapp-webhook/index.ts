@@ -4122,9 +4122,44 @@ function countSuccessfulBookingsInTurn(
 }
 
 /**
+ * Fallback heurístico determinístico: se o LLM falhar, olha a ÚLTIMA fala do
+ * atendente antes da última mensagem do cliente e conta horários distintos
+ * ofertados (14h, 14:00, 15h30 etc). Cobre o caso "IA ofereceu 14h e 15h,
+ * cliente respondeu 'sim'" sem depender do classificador.
+ */
+function heuristicPromisedFromWindow(messages: any[], attempts: number): number {
+  const visible = messages.filter(
+    (m: any) =>
+      (m?.role === "user" || m?.role === "assistant") &&
+      typeof m?.content === "string" &&
+      m.content.trim(),
+  );
+  // Última fala do atendente ANTES da última mensagem do cliente.
+  let lastAssistant = "";
+  for (let i = visible.length - 1; i >= 0; i--) {
+    if (visible[i].role === "assistant") { lastAssistant = visible[i].content; break; }
+  }
+  if (!lastAssistant) return Math.max(1, attempts);
+  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
+  const set = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = timeRe.exec(lastAssistant)) !== null) {
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) continue;
+    const mm = m[2] ? m[2].padStart(2, "0") : "00";
+    set.add(`${h.toString().padStart(2, "0")}:${mm}`);
+  }
+  const distinct = set.size;
+  // Se a IA ofertou 2+ horários e o cliente respondeu curto ("sim", "pode", "fechado"),
+  // assumimos aceite de TODOS. Nunca reduz abaixo das tentativas efetivas.
+  return Math.max(1, attempts, distinct);
+}
+
+/**
  * Camada 1 lazy. Só é chamada quando gatilho estrutural disparou.
  * Retorna quantos agendamentos DISTINTOS o cliente confirmou/pediu na janela.
- * Fallback: max(1, attempts) se o LLM falhar/timeout.
+ * Fallback (LLM falhou/timeout): heurística por horários ofertados na última
+ * fala do atendente — nunca só max(1, attempts), que já mordeu no teste.
  */
 async function classifyPendingBookings(params: {
   messages: any[];
@@ -4134,7 +4169,10 @@ async function classifyPendingBookings(params: {
   attempts: number;
 }): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
   const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts } = params;
-  const fallback = { total: Math.max(1, attempts), source: "fallback" as const };
+  const fallback = () => ({
+    total: heuristicPromisedFromWindow(messages, attempts),
+    source: "fallback" as const,
+  });
 
   // Janela: últimas ~6 mensagens do histórico visível (só role/content, sem tool_calls).
   const window = messages
@@ -4142,7 +4180,7 @@ async function classifyPendingBookings(params: {
     .slice(-6)
     .map((m: any) => ({ role: m.role, content: m.content.slice(0, 800) }));
 
-  if (window.length === 0) return fallback;
+  if (window.length === 0) return fallback();
 
   const sys = [
     "Você é um classificador de intenção.",
@@ -4156,20 +4194,23 @@ async function classifyPendingBookings(params: {
     "Responda APENAS em JSON: {\"total_bookings_requested\": <numero>, \"reasoning\": \"<curto>\"}",
   ].join("\n");
 
+  const isGpt5 = modelUsed.includes("gpt-5");
   const body = JSON.stringify({
     model: modelUsed,
     messages: [
       { role: "system", content: sys },
       { role: "user", content: JSON.stringify(window) },
     ],
-    max_completion_tokens: 200,
+    // gpt-5 conta tokens de reasoning dentro de max_completion_tokens; 200 zerava
+    // o content e caía no fallback. Damos folga generosa (é JSON curto de saída).
+    max_completion_tokens: isGpt5 ? 1500 : 300,
     response_format: { type: "json_object" },
-    ...(modelUsed.includes("gpt-5") ? { reasoning_effort: "low" } : {}),
+    ...(isGpt5 ? { reasoning_effort: "minimal" } : {}),
   });
 
   try {
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 6000);
+    const to = setTimeout(() => ctrl.abort(), 8000);
     const resp = await fetch(aiEndpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${aiAuthKey}`, "Content-Type": "application/json" },
@@ -4179,21 +4220,33 @@ async function classifyPendingBookings(params: {
     clearTimeout(to);
     if (!resp.ok) {
       console.warn(`[MultiBookingGuard] classifier HTTP ${resp.status}`);
-      return fallback;
+      return fallback();
     }
     const j = await resp.json();
     const raw = j?.choices?.[0]?.message?.content;
-    if (typeof raw !== "string") return fallback;
+    if (typeof raw !== "string" || !raw.trim()) {
+      console.warn(`[MultiBookingGuard] classifier empty content (finish=${j?.choices?.[0]?.finish_reason})`);
+      return fallback();
+    }
     const parsed = JSON.parse(raw);
     const n = Number(parsed?.total_bookings_requested);
-    if (!Number.isFinite(n) || n < 1) return fallback;
+    if (!Number.isFinite(n) || n < 1) return fallback();
     const capped = Math.min(Math.floor(n), 10); // sanity cap
-    return { total: capped, source: "llm", reasoning: String(parsed?.reasoning || "").slice(0, 200) };
+    // Se o LLM disse 1 mas a heurística viu 2+ horários ofertados + resposta curta,
+    // acredita na heurística. Rede de segurança contra o mesmo bug que já mordeu.
+    const heuristic = heuristicPromisedFromWindow(messages, attempts);
+    const total = Math.max(capped, heuristic);
+    return {
+      total,
+      source: "llm",
+      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}`,
+    };
   } catch (e) {
     console.warn(`[MultiBookingGuard] classifier failed:`, (e as Error)?.message);
-    return fallback;
+    return fallback();
   }
 }
+
 
 /** Monta uma resposta determinística parcial: "Consegui X. Ainda faltam Y." */
 function buildPartialBookingFallback(
