@@ -8615,8 +8615,27 @@ async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<str
       out.push(a);
     }
   }
-  out.sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
-  return out;
+
+  // 🚨 FIX — o parâmetro `telefone` mandado direto pro /agendamentos da Trinks
+  // parece NÃO filtrar do lado da API (evidência real de produção: consulta sem
+  // nenhum clienteId resolvido ainda assim devolveu dezenas de agendamentos de
+  // clientes completamente diferentes). Sem esse filtro extra, isso vazava dados
+  // de outros clientes pra conversa errada, e causava rejeição de cancelamentos
+  // válidos (o mesmo agendamento "sumia" entre uma chamada e outra).
+  //
+  // Mantemos a busca por telefone (o comentário original documenta casos reais
+  // em que ela achava agendamento que a busca só por clienteId perdia), mas
+  // filtramos o resultado combinado: só aceita um agendamento se o `cliente.id`
+  // que a própria Trinks devolveu bater com um dos clienteIds que JÁ resolvemos
+  // com confiança (via /clientes?telefone=, que filtra corretamente). Se não
+  // resolvemos NENHUM clienteId, não há como validar com segurança — devolve
+  // vazio em vez de confiar cegamente na busca por telefone.
+  const knownIds = new Set(clienteIds.map((c) => Number(c)).filter((c) => Number.isFinite(c)));
+  if (knownIds.size === 0) return [];
+  const filtered = out.filter((a) => knownIds.has(Number(a?.cliente?.id)));
+
+  filtered.sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
+  return filtered;
 }
 
 
