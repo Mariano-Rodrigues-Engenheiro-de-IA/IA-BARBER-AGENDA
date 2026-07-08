@@ -4140,20 +4140,42 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     if (visible[i].role === "assistant") { lastAssistant = visible[i].content; break; }
   }
   if (!lastAssistant) return Math.max(1, attempts);
+
+  // Quebra em frases e SÓ conta horários em frases que soam como oferta de
+  // slot pra agendar. Frases sobre horário de funcionamento são explicitamente
+  // excluídas (senão "funcionamos das 9h às 19h30" viraria 2 promessas).
+  const OFFER_CTX_RE =
+    /\b(tenho|temos|consegui|consigo|dispon[ií]vel|dispon[ií]veis|livre|livres|vago|vagos|hor[aá]rio|hor[aá]rios|slot|slots|[aà]s?\s+\d|op[çc][aã]o|op[çc][oõ]es|posso\s+(?:agendar|marcar|encaixar)|ou\s+\d|entre\s+\d)\b/i;
+  const NON_BOOKING_CTX_RE =
+    /\b(funcionamos|funcionamento|abrimos|fechamos|abertos?|fechados?|atendemos|atendimento|expediente|hor[aá]rio\s+de\s+funcionamento|hor[aá]rio\s+comercial|de\s+segunda|seg\s+a\s+|dom(?:ingo)?|s[aá]bado|feriado)\b/i;
+
+  const sentences = lastAssistant
+    .split(/(?<=[.!?\n])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
   const set = new Set<string>();
-  let m: RegExpExecArray | null;
-  while ((m = timeRe.exec(lastAssistant)) !== null) {
-    const h = Number(m[1]);
-    if (h < 0 || h > 23) continue;
-    const mm = m[2] ? m[2].padStart(2, "0") : "00";
-    set.add(`${h.toString().padStart(2, "0")}:${mm}`);
+  for (const sent of sentences) {
+    if (NON_BOOKING_CTX_RE.test(sent)) continue;
+    if (!OFFER_CTX_RE.test(sent)) continue;
+    let m: RegExpExecArray | null;
+    timeRe.lastIndex = 0;
+    while ((m = timeRe.exec(sent)) !== null) {
+      const h = Number(m[1]);
+      if (h < 0 || h > 23) continue;
+      const mm = m[2] ? m[2].padStart(2, "0") : "00";
+      set.add(`${h.toString().padStart(2, "0")}:${mm}`);
+    }
   }
   const distinct = set.size;
-  // Se a IA ofertou 2+ horários e o cliente respondeu curto ("sim", "pode", "fechado"),
-  // assumimos aceite de TODOS. Nunca reduz abaixo das tentativas efetivas.
-  return Math.max(1, attempts, distinct);
+  // Só usamos a heurística quando ela viu 2+ horários OFERTADOS em contexto de
+  // agendamento. 1 horário isolado não sobe a promessa acima de attempts —
+  // evita falso positivo em "às 14h com o Luan, confirma?" quando é 1 booking só.
+  const heuristicPromised = distinct >= 2 ? distinct : 0;
+  return Math.max(1, attempts, heuristicPromised);
 }
+
 
 /**
  * Camada 1 lazy. Só é chamada quando gatilho estrutural disparou.
