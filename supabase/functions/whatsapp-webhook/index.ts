@@ -6167,11 +6167,11 @@ async function callAIAgent(
               {
                 tenant_id: tenant.id,
                 phone_number: phoneNumber,
-                reason: "multi_booking_overflow",
-                paused_by: "system",
+                paused: true,
               },
               { onConflict: "tenant_id,phone_number" },
             );
+          console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (multi_booking_overflow)`);
         } catch (e) {
           console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
         }
