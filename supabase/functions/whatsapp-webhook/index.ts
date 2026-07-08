@@ -1892,6 +1892,17 @@ Deno.serve(async (req) => {
           .eq("tenant_id", tenant.id)
           .eq("phone_number", phoneNumber);
 
+        // Também limpa o resumo de IA do CRM (crm_leads.ai_summary) — sem isso, o
+        // "reset de memória" era incompleto: o resumo sobrevivia ao ❌ e podia
+        // reaparecer numa conversa "nova" com informação de um agendamento antigo.
+        // Só zera o campo de resumo, preserva o resto do registro de CRM (etiqueta,
+        // funil, etc.) que não tem relação com a memória de conversa.
+        await supabase
+          .from("crm_leads")
+          .update({ ai_summary: null, ai_summary_updated_at: null })
+          .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber);
+
         const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
         const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
         await fetch(`${uazapiUrl}/send/text`, {
@@ -6902,6 +6913,32 @@ async function executeToolForProvider(
     let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
     const resumo = String(toolArgs?.resumo ?? "").trim().slice(0, 1200);
     if (!resumo) return { ok: false, error: "Resumo vazio." };
+
+    // 🚨 TRAVA ESTRUTURAL — o resumo é memória de PERFIL/PREFERÊNCIA (ex: "prefere
+    // corte com o Vinícius", "cliente do plano VIP"), NUNCA histórico de agendamento
+    // específico. Bug real: resumo guardou "corte com Vinícius às 15h confirmado", e
+    // numa conversa futura (inclusive após reset de memória via ❌, que não limpa
+    // esta tabela) a IA reafirmou esse fato antigo como se fosse confirmação de uma
+    // solicitação NOVA. Em vez de confiar só em instrução de prompt, bloqueia aqui
+    // qualquer resumo com data, horário ou linguagem de confirmação/ação concreta —
+    // não depende da IA obedecer, é impossível esse tipo de dado ser salvo.
+    const FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
+      { re: /\b\d{1,2}[:h]\d{2}\b/i, label: "horário específico (ex: 15:00, 15h30)" },
+      { re: /\b\d{4}-\d{2}-\d{2}\b/, label: "data no formato yyyy-MM-dd" },
+      { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
+      { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa])(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã)" },
+      { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?)\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
+      { re: /\b(confirmad[oa]|confirmei|agendad[oa]\s+para|marcad[oa]\s+para|reservad[oa]\s+para|agendamento\s+confirmado)\b/i, label: "linguagem de confirmação/ação concreta" },
+    ];
+    const violated = FORBIDDEN_PATTERNS.find((p) => p.re.test(resumo));
+    if (violated) {
+      console.warn(`[ResumoCliente] BLOQUEADO — resumo contém ${violated.label}: "${resumo.slice(0, 100)}"`);
+      return {
+        ok: false,
+        error: `Resumo rejeitado: contém ${violated.label}. O resumo do cliente é só para PREFERÊNCIAS DURÁVEIS (serviço favorito, plano, profissional preferido, frequência) — nunca datas, horários ou confirmações de agendamentos específicos, que ficam em outro lugar do sistema. Reescreva sem essa informação.`,
+      };
+    }
+
     if (simulator) {
       return { ok: true, simulated: true, message: "Resumo atualizado (simulado)." };
     }
