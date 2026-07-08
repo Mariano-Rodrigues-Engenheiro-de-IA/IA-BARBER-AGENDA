@@ -6236,6 +6236,7 @@ async function callAIAgent(
       console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
       logErrors.push(`Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`);
       finalResponse = MULTI_BOOKING_ESCALATION_MSG;
+      guardOverrideResponse = true;
       sessionBlocked = true;
       guardLog("human_escalation");
       if (!simulatorMode) {
