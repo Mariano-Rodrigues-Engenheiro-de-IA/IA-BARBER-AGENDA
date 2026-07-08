@@ -4170,6 +4170,12 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     const token = normalizeTimeToken(userMatch);
     if (token) explicitUserTimes.add(token);
   }
+  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b/gi;
+  let hourOnlyMatch: RegExpExecArray | null;
+  while ((hourOnlyMatch = hourOnlyContextRe.exec(lastUser)) !== null) {
+    const h = Number(hourOnlyMatch[1]);
+    if (h >= 0 && h <= 23) explicitUserTimes.add(`${h.toString().padStart(2, "0")}:00`);
+  }
   if (explicitUserTimes.size >= 2) {
     return Math.max(1, attempts, explicitUserTimes.size);
   }
