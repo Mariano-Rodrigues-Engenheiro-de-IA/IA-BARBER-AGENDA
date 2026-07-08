@@ -346,6 +346,7 @@ export type Database = {
         Row: {
           created_at: string
           id: string
+          pending_bookings: Json | null
           phone_number: string
           state: Json
           tenant_id: string
@@ -354,6 +355,7 @@ export type Database = {
         Insert: {
           created_at?: string
           id?: string
+          pending_bookings?: Json | null
           phone_number: string
           state?: Json
           tenant_id: string
@@ -362,6 +364,7 @@ export type Database = {
         Update: {
           created_at?: string
           id?: string
+          pending_bookings?: Json | null
           phone_number?: string
           state?: Json
           tenant_id?: string

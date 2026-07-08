@@ -1,0 +1,1 @@
+ALTER TABLE public.conversation_state ADD COLUMN IF NOT EXISTS pending_bookings jsonb;
