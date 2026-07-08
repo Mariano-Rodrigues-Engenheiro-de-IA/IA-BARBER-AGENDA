@@ -780,6 +780,29 @@ const NON_NAME_STOPWORDS = new Set([
 
 const NAME_CONNECTORS = new Set(["de","da","do","das","dos","e","del","della","di"]);
 
+// Trava estrutural para o resumo/CRM do cliente (crm_leads.ai_summary). O resumo é
+// memória de PERFIL/PREFERÊNCIA (ex: "prefere corte com o Vinícius", "cliente do
+// plano VIP") — NUNCA histórico de agendamento específico (data, horário,
+// confirmação de uma ação concreta). Bug real: o resumo guardou "corte com
+// Vinícius às 15h confirmado", e numa conversa futura a IA reafirmou esse fato
+// antigo como se fosse confirmação de uma solicitação NOVA, sem chamar nenhuma
+// ferramenta. Usada nos DOIS caminhos que escrevem em crm_leads.ai_summary — a
+// tool explícita atualizar_resumo_cliente E o extrator automático
+// (persistClientSummary, chamado por maybeAutoPersistClientSummary a cada turno).
+const SUMMARY_FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: /\b\d{1,2}[:h]\d{2}\b/i, label: "horário específico (ex: 15:00, 15h30)" },
+  { re: /\b\d{4}-\d{2}-\d{2}\b/, label: "data no formato yyyy-MM-dd" },
+  { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
+  { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa])(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã)" },
+  { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?)\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
+  { re: /\b(confirmad[oa]|confirmei|agendad[oa]\s+para|marcad[oa]\s+para|reservad[oa]\s+para|agendamento\s+confirmado)\b/i, label: "linguagem de confirmação/ação concreta" },
+];
+
+function findForbiddenSummaryContent(resumo: string): { re: RegExp; label: string } | null {
+  return SUMMARY_FORBIDDEN_PATTERNS.find((p) => p.re.test(resumo)) || null;
+}
+
+
 // Heurística forte: o texto realmente parece um nome próprio.
 // - 2 a 4 palavras
 // - cada palavra com 2+ letras
@@ -4498,6 +4521,17 @@ async function callAIAgent(
     const cleaned = String(resumo || "").trim().slice(0, 1200);
     if (!cleaned || !phoneNumber) return false;
 
+    // 🚨 Mesma trava estrutural aplicada aqui — este é o segundo caminho (o
+    // extrator automático via maybeAutoPersistClientSummary) que escreve na
+    // mesma coluna que a tool atualizar_resumo_cliente. O prompt do extrator
+    // abaixo chega a SUGERIR guardar "agendou corte com X em DATA" — por isso
+    // não dá pra confiar só na tool explícita, precisa bloquear aqui também.
+    const violated = findForbiddenSummaryContent(cleaned);
+    if (violated) {
+      console.warn(`[SummaryAuto] BLOQUEADO (persistClientSummary) — contém ${violated.label}: "${cleaned.slice(0, 100)}"`);
+      return false;
+    }
+
     const { data: existing } = await supabase
       .from("crm_leads")
       .select("id")
@@ -4552,14 +4586,16 @@ async function callAIAgent(
               "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
               "Responda APENAS JSON válido (sem markdown) no formato " +
               "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
-              "REGRA PRINCIPAL: seja GENEROSO ao atualizar. should_update=true sempre que houver QUALQUER fato útil sobre o cliente, mesmo que pequeno:\n" +
+              "REGRA PRINCIPAL: seja GENEROSO ao atualizar. should_update=true sempre que houver QUALQUER fato útil e DURÁVEL sobre o cliente, mesmo que pequeno:\n" +
               "- Nome do cliente (quando descoberto)\n" +
-              "- Serviço(s) que mencionou, perguntou ou agendou (mesmo uma vez)\n" +
+              "- Tipo de serviço que costuma pedir/perguntar (ex: 'costuma fazer corte e barba') — SEM data nem horário\n" +
               "- Profissional citado/preferido\n" +
-              "- Janela de horário típica (manhã/tarde/sábado/etc.)\n" +
+              "- Janela de horário típica (ex: 'prefere manhãs', 'costuma vir aos sábados') — período GENÉRICO, nunca dia/hora específicos\n" +
               "- Plano, clube, assinatura, pacote\n" +
-              "- Restrição, alergia, observação útil\n" +
-              "- Status da última interação (ex: 'agendou corte com X em DATA', 'pediu preço de barba', 'primeiro contato — interesse em sobrancelha', 'desmarcou e quer remarcar')\n\n" +
+              "- Restrição, alergia, observação útil\n\n" +
+              "🚫 NUNCA inclua no summary: datas específicas (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'sexta que vem'), horários específicos (15h, 15:00), ou linguagem de confirmação de uma ação concreta ('confirmado', 'agendado para', 'marcado para'). " +
+              "Esse tipo de dado muda a cada atendimento e pertence ao sistema de agendamento, não ao perfil do cliente — incluí-lo aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo). " +
+              "Se a única coisa relevante da interação for algo com data/hora (ex: 'agendou corte pra amanhã às 15h'), extraia só a parte durável (ex: 'gosta de corte') e ignore a parte temporal — ou responda should_update=false se não sobrar nada durável.\n\n" +
               "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
               "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.",
           },
@@ -6914,23 +6950,10 @@ async function executeToolForProvider(
     const resumo = String(toolArgs?.resumo ?? "").trim().slice(0, 1200);
     if (!resumo) return { ok: false, error: "Resumo vazio." };
 
-    // 🚨 TRAVA ESTRUTURAL — o resumo é memória de PERFIL/PREFERÊNCIA (ex: "prefere
-    // corte com o Vinícius", "cliente do plano VIP"), NUNCA histórico de agendamento
-    // específico. Bug real: resumo guardou "corte com Vinícius às 15h confirmado", e
-    // numa conversa futura (inclusive após reset de memória via ❌, que não limpa
-    // esta tabela) a IA reafirmou esse fato antigo como se fosse confirmação de uma
-    // solicitação NOVA. Em vez de confiar só em instrução de prompt, bloqueia aqui
-    // qualquer resumo com data, horário ou linguagem de confirmação/ação concreta —
-    // não depende da IA obedecer, é impossível esse tipo de dado ser salvo.
-    const FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
-      { re: /\b\d{1,2}[:h]\d{2}\b/i, label: "horário específico (ex: 15:00, 15h30)" },
-      { re: /\b\d{4}-\d{2}-\d{2}\b/, label: "data no formato yyyy-MM-dd" },
-      { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
-      { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa])(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã)" },
-      { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?)\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
-      { re: /\b(confirmad[oa]|confirmei|agendad[oa]\s+para|marcad[oa]\s+para|reservad[oa]\s+para|agendamento\s+confirmado)\b/i, label: "linguagem de confirmação/ação concreta" },
-    ];
-    const violated = FORBIDDEN_PATTERNS.find((p) => p.re.test(resumo));
+    // Trava estrutural compartilhada — ver findForbiddenSummaryContent() (top-level).
+    // Também aplicada dentro de persistClientSummary(), que é o segundo caminho
+    // (automático) que escreve na mesma coluna — ambos precisam da mesma validação.
+    const violated = findForbiddenSummaryContent(resumo);
     if (violated) {
       console.warn(`[ResumoCliente] BLOQUEADO — resumo contém ${violated.label}: "${resumo.slice(0, 100)}"`);
       return {
