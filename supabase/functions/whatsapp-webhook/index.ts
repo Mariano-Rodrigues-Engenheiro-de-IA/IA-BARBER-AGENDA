@@ -6334,12 +6334,14 @@ async function callAIAgent(
               finalResponse = allSummaries.length > 0
                 ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
                 : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
+              guardOverrideResponse = true;
               guardLog("reinject_completed");
             } else {
               // Ainda faltou — agora sim vai pro fallback que pede ajuda ao cliente.
               console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — fallback determinístico.`);
               logErrors.push(`Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`);
               finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
+              guardOverrideResponse = true;
               guardLog("reinject_then_partial_fallback");
             }
           } else {
@@ -6347,18 +6349,21 @@ async function callAIAgent(
             console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — fallback determinístico.`);
             logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`);
             finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+            guardOverrideResponse = true;
             guardLog("reinject_no_tools_then_partial_fallback");
           }
         } else {
           console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
           logErrors.push(`Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`);
           finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+          guardOverrideResponse = true;
           guardLog("reinject_http_error_then_partial_fallback");
         }
       } catch (e) {
         console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
         logErrors.push(`Multi-booking retry exception: ${(e as Error)?.message || "erro"}`);
         finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+        guardOverrideResponse = true;
         guardLog("reinject_exception_then_partial_fallback");
       }
     } else {
