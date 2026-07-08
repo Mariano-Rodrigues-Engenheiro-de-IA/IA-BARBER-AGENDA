@@ -6322,11 +6322,96 @@ async function callAIAgent(
   }
 
   // ============================================================================
+  // 🛡️ PHANTOM CONFIRMATION GUARD
+  // Cobre o caso em que a IA afirma "confirmado"/"agendei" SEM NUNCA TER CHAMADO
+  // agendar/criar_agendamento nesta rodada (0 tentativas) — bug real observado em
+  // produção, ex: cliente manda "marca outro horário / pode confirmar" numa
+  // mensagem só, a IA confunde e alucina a confirmação do agendamento anterior
+  // sem rodar a ferramenta. O MultiBookingGuard abaixo só roda quando há pelo
+  // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
+  // ============================================================================
+  const _bookingAttempts = countBookingCallAttempts(logToolCalls);
+  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && provider !== "none") {
+    const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
+    const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
+    const sentences = finalResponse.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+    const claimsNewBookingConfirmed = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+
+    if (claimsNewBookingConfirmed) {
+      // Só é alucinação de verdade se NÃO houver nenhum agendamento real e recente
+      // já registrado nesta sessão (senão pode ser reconfirmação legítima de algo
+      // que já foi criado num turno anterior — não bloquear esse caso).
+      const recentBookingSuccess = pruneRecentActions(sessionState).some(
+        (a) => a.category === "booking" && a.status === "success",
+      );
+
+      if (!recentBookingSuccess) {
+        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, e nenhum sucesso recente na sessão. Tentando reinjeção.`);
+        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
+
+        let recovered = false;
+        try {
+          const nudge = {
+            role: "system",
+            content:
+              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você afirmou que um agendamento foi confirmado, mas NÃO chamou a ferramenta agendar/criar_agendamento nesta execução. " +
+              "Use os dados já confirmados na conversa (serviço, profissional, data, hora) e chame a ferramenta de agendar AGORA, imediatamente. " +
+              "Depois de ver o resultado, responda ao cliente de forma natural confirmando (se deu certo) ou explicando o que faltou (se não deu).",
+          };
+          messages.push(nudge);
+          const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
+          const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "phantom-confirmation-reinject");
+          if (retryResp.ok) {
+            const retryJson = await retryResp.json();
+            const retryMsg = retryJson?.choices?.[0]?.message;
+            const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+            if (retryToolCalls.length > 0) {
+              messages.push(retryMsg);
+              let anySucceeded = false;
+              for (const tc of retryToolCalls) {
+                let tResult: any;
+                try {
+                  tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+                } catch (e) {
+                  tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+                }
+                messages.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+                });
+                if (BOOKING_TOOL_NAMES.has(tc?.function?.name) && tResult && !tResult.error && !tResult.blocked) {
+                  anySucceeded = true;
+                  logToolCalls.push({ name: tc.function.name, args: parseToolArguments(tc.function?.arguments), result: tResult });
+                }
+              }
+              if (anySucceeded) {
+                const det = buildDeterministicBookingConfirmation(logToolCalls);
+                if (det) {
+                  finalResponse = det;
+                  guardOverrideResponse = true;
+                  recovered = true;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`[PhantomConfirmationGuard] reinject exception: ${(e as Error)?.message}`);
+        }
+
+        if (!recovered) {
+          finalResponse = "Antes de eu confirmar, preciso checar esse agendamento direitinho de novo — pode me confirmar mais uma vez o serviço, dia e horário que você quer?";
+          guardOverrideResponse = true;
+        }
+      }
+    }
+  }
+
+  // ============================================================================
   // 🛡️ MULTI-BOOKING GUARD (Camadas 1+2+3)
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
   // ============================================================================
-  const _bookingAttempts = countBookingCallAttempts(logToolCalls);
   if (_bookingAttempts > 0 && provider !== "none") {
     const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
