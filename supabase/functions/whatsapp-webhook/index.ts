@@ -6537,6 +6537,32 @@ async function callAIAgent(
   // FIM MULTI-BOOKING GUARD
   // ============================================================================
 
+  // ============================================================================
+  // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando cancelar_agendamento
+  // falhou nesta rodada. Mesmo princípio do BookingGuard/MultiBookingGuard, só que
+  // pro lado do cancelamento (nunca existia proteção equivalente aqui).
+  // ============================================================================
+  if (finalResponse && !guardOverrideResponse) {
+    const cancelAttempted = (logToolCalls || []).some((tc) => tc?.name === "cancelar_agendamento");
+    if (cancelAttempted) {
+      const cancelSucceeded = (logToolCalls || []).some((tc) => {
+        if (tc?.name !== "cancelar_agendamento") return false;
+        const r: any = tc.result || {};
+        return !r.error && r.blocked !== true;
+      });
+      const claimsCancelled = /cancel(ei|ado|ada|amos)|desmarqu(ei|ei|amos)|j[aá]\s+(cancel|desmarqu)/i.test(finalResponse);
+      if (!cancelSucceeded && claimsCancelled) {
+        console.warn(`[CancelGuard] cancelar_agendamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
+        logErrors.push({ message: `Cancelamento não confirmado pela ferramenta, mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
+        finalResponse = "Tive uma instabilidade aqui pra confirmar seu cancelamento. Já acionei o responsável pra garantir isso pra você — só um momento 🙏";
+        guardOverrideResponse = true;
+      }
+    }
+  }
+  // ============================================================================
+  // FIM CANCEL GUARD
+  // ============================================================================
+
 
 
   // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
