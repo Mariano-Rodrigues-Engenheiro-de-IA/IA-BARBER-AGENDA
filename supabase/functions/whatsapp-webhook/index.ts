@@ -8530,7 +8530,7 @@ async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<str
 }
 
 
-async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -8835,7 +8835,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
         // Aqui bloqueamos qualquer código que não tenha vindo de um listar_servicos
         // desta mesma conversa.
         {
-          const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+          const catalog = (((sessionState as any)?.trinksServiceCatalog) || []) as Array<{ id: number; nome: string; duracao: number }>;
           if (Array.isArray(catalog) && catalog.length > 0) {
             const reqSid = Number(args.servicoId);
             if (!Number.isFinite(reqSid) || !catalog.some((s) => s.id === reqSid)) {
