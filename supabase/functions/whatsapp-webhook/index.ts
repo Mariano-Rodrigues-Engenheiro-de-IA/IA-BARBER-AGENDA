@@ -4289,10 +4289,19 @@ async function classifyPendingBookings(params: {
     const parsed = JSON.parse(raw);
     const n = Number(parsed?.total_bookings_requested);
     if (!Number.isFinite(n) || n < 1) return fallback();
-    const capped = Math.min(Math.floor(n), 10); // sanity cap
+    let capped = Math.min(Math.floor(n), 10); // sanity cap
     // Se o LLM disse 1 mas a heurística viu 2+ horários ofertados + resposta curta,
     // acredita na heurística. Rede de segurança contra o mesmo bug que já mordeu.
     const heuristic = heuristicPromisedFromWindow(messages, attempts);
+    const lastUserText = [...window].reverse().find((m: any) => m.role === "user")?.content || "";
+    // Proteção anti-falso-positivo: com uma única chamada de agendamento no turno,
+    // se a mensagem do cliente NÃO é confirmação curta e a heurística não viu
+    // multi-horários explícitos, não deixa o classificador inflar para 4, 7 etc.
+    // Caso real: cliente disse "Hoje, 15:20" e o LLM contou 7 horários da lista anterior.
+    if (attempts === 1 && heuristic <= 1 && !isAffirmativeReply(lastUserText) && capped > 1) {
+      console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
+      capped = 1;
+    }
     const total = Math.max(capped, heuristic);
     return {
       total,
