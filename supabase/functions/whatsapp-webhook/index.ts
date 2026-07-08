@@ -8723,7 +8723,27 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
 
         return { data: allActive, totalRecords: allActive.length, clienteIdsConsultados: clienteIds };
-      }
+        }
+
+        // 🚨 TRAVA 0.5 — servicoId alucinado (não veio de listar_servicos desta conversa).
+        // Evita o caso real onde a IA passou servicoId=2461 ("Unha de Fibra de Vidro")
+        // no lugar de um serviço de corte válido — a API aceita porque o serviço existe,
+        // mas o cliente recebe algo completamente diferente do que pediu.
+        {
+          const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+          if (Array.isArray(catalog) && catalog.length > 0) {
+            const reqSid = Number(args.servicoId);
+            if (!Number.isFinite(reqSid) || !catalog.some((s) => s.id === reqSid)) {
+              console.warn(`[Trinks] BLOQUEIO servicoId fora do catálogo listado: ${args.servicoId} (válidos: ${catalog.map((s) => `${s.id}=${s.nome}`).slice(0, 20).join(", ")})`);
+              return {
+                error: `servicoId ${args.servicoId} não corresponde a nenhum serviço retornado por listar_servicos nesta conversa. Use APENAS um id do catálogo abaixo. Se o cliente pediu corte, escolha o serviço de corte correto pelo NOME, nunca chute o código.`,
+                servicoIdRecebido: args.servicoId,
+                servicosValidos: catalog.map((s) => ({ id: s.id, nome: s.nome })).slice(0, 30),
+                blocked: true,
+              };
+            }
+          }
+        }
 
 
       case "criar_agendamento": {
