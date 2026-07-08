@@ -6147,6 +6147,10 @@ async function callAIAgent(
   if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
 
   let finalResponse = typeof assistantMessage?.content === "string" ? assistantMessage.content.trim() : "";
+  // Flag: quando o MultiBookingGuard sobrescreve finalResponse, essa resposta é
+  // intencional/correta e NÃO deve ser passada pelo ReplyDedup (que poderia
+  // regenerá-la sem contexto do guard e voltar a mentir "tá tudo confirmado").
+  let guardOverrideResponse = false;
 
   // Strip leaked internal prefixes (NEVER expose to client)
   finalResponse = stripInternalPrefixes(finalResponse);
@@ -6232,6 +6236,7 @@ async function callAIAgent(
       console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
       logErrors.push(`Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`);
       finalResponse = MULTI_BOOKING_ESCALATION_MSG;
+      guardOverrideResponse = true;
       sessionBlocked = true;
       guardLog("human_escalation");
       if (!simulatorMode) {
@@ -6329,12 +6334,14 @@ async function callAIAgent(
               finalResponse = allSummaries.length > 0
                 ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
                 : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
+              guardOverrideResponse = true;
               guardLog("reinject_completed");
             } else {
               // Ainda faltou — agora sim vai pro fallback que pede ajuda ao cliente.
               console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — fallback determinístico.`);
               logErrors.push(`Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`);
               finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
+              guardOverrideResponse = true;
               guardLog("reinject_then_partial_fallback");
             }
           } else {
@@ -6342,18 +6349,21 @@ async function callAIAgent(
             console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — fallback determinístico.`);
             logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`);
             finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+            guardOverrideResponse = true;
             guardLog("reinject_no_tools_then_partial_fallback");
           }
         } else {
           console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
           logErrors.push(`Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`);
           finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+          guardOverrideResponse = true;
           guardLog("reinject_http_error_then_partial_fallback");
         }
       } catch (e) {
         console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
         logErrors.push(`Multi-booking retry exception: ${(e as Error)?.message || "erro"}`);
         finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+        guardOverrideResponse = true;
         guardLog("reinject_exception_then_partial_fallback");
       }
     } else {
@@ -6374,6 +6384,7 @@ async function callAIAgent(
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
       logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
       finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
+      guardOverrideResponse = true;
     }
   }
   // ============================================================================
@@ -6414,7 +6425,7 @@ async function callAIAgent(
   // uma vez forçando "diga algo novo ou fique em silêncio". Se ainda assim vier
   // duplicada, fica em silêncio (string vazia) — preferimos não enviar nada do
   // que mandar a mesma coisa de novo.
-  if (finalResponse) {
+  if (finalResponse && !guardOverrideResponse) {
     const dupHit = findSimilarRecentReply(sessionState, finalResponse);
     if (dupHit) {
       console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
@@ -8715,6 +8726,8 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
       }
 
 
+
+
       case "criar_agendamento": {
         // 🚨 TRAVA 0 — campos obrigatórios vazios. Evita 400/500 silencioso na Trinks
         // e impede a IA de chutar agendamento sem ter coletado os dados.
@@ -8732,6 +8745,29 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             blocked: true,
           };
         }
+
+        // 🚨 TRAVA 0.5 — servicoId alucinado (não veio de listar_servicos desta conversa).
+        // Caso real: IA passou servicoId=2461 ("Unha de Fibra de Vidro — Manutenção") no
+        // lugar do serviço de corte que o cliente pediu. A API aceita porque o serviço
+        // existe no estabelecimento, mas o cliente recebe algo completamente diferente.
+        // Aqui bloqueamos qualquer código que não tenha vindo de um listar_servicos
+        // desta mesma conversa.
+        {
+          const catalog = ((sessionState as any).trinksServiceCatalog || []) as Array<{ id: number; nome: string; duracao: number }>;
+          if (Array.isArray(catalog) && catalog.length > 0) {
+            const reqSid = Number(args.servicoId);
+            if (!Number.isFinite(reqSid) || !catalog.some((s) => s.id === reqSid)) {
+              console.warn(`[Trinks] BLOQUEIO servicoId fora do catálogo listado: ${args.servicoId} (válidos: ${catalog.map((s) => `${s.id}=${s.nome}`).slice(0, 20).join(", ")})`);
+              return {
+                error: `servicoId ${args.servicoId} não corresponde a nenhum serviço retornado por listar_servicos nesta conversa. Escolha um dos ids abaixo pelo NOME do serviço que o cliente pediu (nunca chute o código).`,
+                servicoIdRecebido: args.servicoId,
+                servicosValidos: catalog.map((s) => ({ id: s.id, nome: s.nome })).slice(0, 30),
+                blocked: true,
+              };
+            }
+          }
+        }
+
 
         let resolvedClienteId = args.clienteId;
 
