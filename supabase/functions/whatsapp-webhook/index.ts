@@ -4111,7 +4111,20 @@ function countSuccessfulBookingsInTurn(
       }
       case "bemp": {
         succeeded = r.ok === true;
-        summary = `${args.start || "horário"} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
+        // Usa o retorno real da API (r.data já vem com service_name/professional_name
+        // prontos) em vez de reimprimir os args crus (ISO completo + ID numérico).
+        const bempData = (r.data || {}) as Record<string, any>;
+        const startIso = bempData.start || args.start;
+        let formattedWhen = "horário";
+        if (typeof startIso === "string") {
+          const m = startIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+          formattedWhen = m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : startIso;
+        }
+        const serviceName = bempData.service_name;
+        const professionalName = bempData.professional_name;
+        summary = serviceName
+          ? `${serviceName} às ${formattedWhen}${professionalName ? ` com ${professionalName}` : ""}`
+          : `${formattedWhen} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
         break;
       }
       case "appbarber": {
