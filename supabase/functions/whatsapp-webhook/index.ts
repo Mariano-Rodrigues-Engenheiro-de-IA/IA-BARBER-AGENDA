@@ -6425,7 +6425,7 @@ async function callAIAgent(
   // uma vez forçando "diga algo novo ou fique em silêncio". Se ainda assim vier
   // duplicada, fica em silêncio (string vazia) — preferimos não enviar nada do
   // que mandar a mesma coisa de novo.
-  if (finalResponse) {
+  if (finalResponse && !guardOverrideResponse) {
     const dupHit = findSimilarRecentReply(sessionState, finalResponse);
     if (dupHit) {
       console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
