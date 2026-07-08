@@ -4026,6 +4026,193 @@ async function hydrateOneBelezaSessionStateFromProvider(
   }
 }
 
+// ============================================================================
+// MULTI-BOOKING GUARD (Camadas 1+2+3)
+// Impede que a IA responda "tá tudo certo" quando prometeu N agendamentos
+// (2 ou 3) e executou menos. Escala humano se N > 3.
+// Só é acionado quando a IA tentou criar pelo menos 1 agendamento no turno.
+// ============================================================================
+
+const MAX_AUTO_BOOKINGS = 3;
+const MULTI_BOOKING_ESCALATION_MSG =
+  "Pra 4 ou mais agendamentos na mesma conversa prefiro te passar pro atendimento humano pra não errar nenhum — só um momento 🙏";
+const BOOKING_TOOL_NAMES = new Set(["agendar", "criar_agendamento"]);
+// Regex Camada 3 — confirmação implícita de sucesso no texto da IA.
+// Não depende de palavra específica de "agendei" — cobre também "te espero", "show", etc.
+const IMPLICIT_CONFIRMATION_RE =
+  /\b(confirm|agendei|marquei|marcado|pronto|feito|t[aá]\s+marcado|t[aá]\s+combinado|show|beleza|te\s+espero|te\s+aguard|at[eé]\s+l[aá]|nos\s+vemos)\b/i;
+
+/** Conta quantas vezes o modelo TENTOU chamar agendar/criar_agendamento no turno (sucesso ou não). */
+function countBookingCallAttempts(logToolCalls: any[]): number {
+  return (logToolCalls || []).filter((tc) => tc && BOOKING_TOOL_NAMES.has(tc.name)).length;
+}
+
+/**
+ * Conta agendamentos EFETIVAMENTE criados no turno, com regras específicas por provider.
+ * Validado contra o código real de cada execute<Provider>Tool.
+ * Retorna { count, breakdown } onde breakdown lista cada booking pra montar mensagem.
+ */
+function countSuccessfulBookingsInTurn(
+  logToolCalls: any[],
+  provider: string,
+): { count: number; breakdown: Array<{ tool: string; summary: string }> } {
+  const breakdown: Array<{ tool: string; summary: string }> = [];
+  let count = 0;
+
+  for (const tc of logToolCalls || []) {
+    if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) continue;
+    const r = tc.result;
+    if (!r || typeof r !== "object") continue;
+    // Regra transversal: bloqueado ou com erro NUNCA conta.
+    if (r.blocked === true) continue;
+    if (r.error) continue;
+    if (Array.isArray(r.Errors) && r.Errors.length > 0) continue;
+    if (typeof r.status === "number" && r.status >= 400) continue;
+
+    let succeeded = false;
+    let bookedCount = 1;
+    let summary = "";
+    const args = tc.args || {};
+
+    switch (provider) {
+      case "trinks": {
+        // Sucesso: resposta crua da API, sem `error`/`blocked`/`code` de erro.
+        // Falha detectável no código: { id: "duplicate", blocked: true } → já filtrado acima.
+        // Sucesso típico da Trinks devolve o objeto do agendamento.
+        succeeded = !r.code && (typeof r.id !== "undefined" || typeof r.data !== "undefined" || r.success === true);
+        summary = `${args.dataHoraInicio || "horário"} (serviço ${args.servicoId ?? "?"})`;
+        break;
+      }
+      case "onebeleza": {
+        // Sucesso confiável: success: true (sempre presente). NÃO usar `id` (vira boolean true às vezes).
+        succeeded = r.success === true;
+        summary = `${args.horarioinicio || args.horarioInicio || "horário"} em ${args.datanumero || args.dataAg || args.data || "data"}`;
+        break;
+      }
+      case "frizzar": {
+        // Sucesso: ok:true + agendamentoId. Conta agendamentos.length (1 por serviço).
+        succeeded = r.ok === true && (r.agendamentoId != null || Array.isArray(r.agendamentos));
+        if (succeeded && Array.isArray(r.agendamentos) && r.agendamentos.length > 0) {
+          bookedCount = r.agendamentos.length;
+        }
+        summary = `${args.hora || "?"} em ${args.dia || "?"}${bookedCount > 1 ? ` (${bookedCount} serviços)` : ""}`;
+        break;
+      }
+      case "bemp": {
+        succeeded = r.ok === true;
+        summary = `${args.start || "horário"} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
+        break;
+      }
+      case "appbarber": {
+        succeeded = r.ok === true && !!r.appointment_id;
+        summary = `${args.start_date || "?"} ${args.start_time || ""} (serviço ${args.service_code ?? "?"})`.trim();
+        break;
+      }
+      default:
+        succeeded = false;
+    }
+
+    if (succeeded) {
+      count += bookedCount;
+      for (let i = 0; i < bookedCount; i++) breakdown.push({ tool: tc.name, summary });
+    }
+  }
+
+  return { count, breakdown };
+}
+
+/**
+ * Camada 1 lazy. Só é chamada quando gatilho estrutural disparou.
+ * Retorna quantos agendamentos DISTINTOS o cliente confirmou/pediu na janela.
+ * Fallback: max(1, attempts) se o LLM falhar/timeout.
+ */
+async function classifyPendingBookings(params: {
+  messages: any[];
+  aiEndpoint: string;
+  aiAuthKey: string;
+  modelUsed: string;
+  attempts: number;
+}): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts } = params;
+  const fallback = { total: Math.max(1, attempts), source: "fallback" as const };
+
+  // Janela: últimas ~6 mensagens do histórico visível (só role/content, sem tool_calls).
+  const window = messages
+    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim())
+    .slice(-6)
+    .map((m: any) => ({ role: m.role, content: m.content.slice(0, 800) }));
+
+  if (window.length === 0) return fallback;
+
+  const sys = [
+    "Você é um classificador de intenção.",
+    "Dada a janela de conversa a seguir entre CLIENTE e ATENDENTE, conte quantos AGENDAMENTOS DISTINTOS o cliente pediu/confirmou nesta rodada.",
+    "Regras:",
+    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3).",
+    "- Cada pessoa distinta = +1 (ex: '2 cortes pra amanhã' = 2).",
+    "- Se o atendente ofereceu opções e o cliente respondeu apenas 'sim'/'pode'/'beleza'/'fechado', considere que ele aceitou TODAS as opções ofertadas na última fala do atendente.",
+    "- Se não há intenção clara de agendar, retorne 1.",
+    "- Nunca retorne 0.",
+    "Responda APENAS em JSON: {\"total_bookings_requested\": <numero>, \"reasoning\": \"<curto>\"}",
+  ].join("\n");
+
+  const body = JSON.stringify({
+    model: modelUsed,
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: JSON.stringify(window) },
+    ],
+    max_completion_tokens: 200,
+    response_format: { type: "json_object" },
+    ...(modelUsed.includes("gpt-5") ? { reasoning_effort: "low" } : {}),
+  });
+
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 6000);
+    const resp = await fetch(aiEndpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${aiAuthKey}`, "Content-Type": "application/json" },
+      body,
+      signal: ctrl.signal,
+    });
+    clearTimeout(to);
+    if (!resp.ok) {
+      console.warn(`[MultiBookingGuard] classifier HTTP ${resp.status}`);
+      return fallback;
+    }
+    const j = await resp.json();
+    const raw = j?.choices?.[0]?.message?.content;
+    if (typeof raw !== "string") return fallback;
+    const parsed = JSON.parse(raw);
+    const n = Number(parsed?.total_bookings_requested);
+    if (!Number.isFinite(n) || n < 1) return fallback;
+    const capped = Math.min(Math.floor(n), 10); // sanity cap
+    return { total: capped, source: "llm", reasoning: String(parsed?.reasoning || "").slice(0, 200) };
+  } catch (e) {
+    console.warn(`[MultiBookingGuard] classifier failed:`, (e as Error)?.message);
+    return fallback;
+  }
+}
+
+/** Monta uma resposta determinística parcial: "Consegui X. Ainda faltam Y." */
+function buildPartialBookingFallback(
+  criados: number,
+  prometidos: number,
+  breakdown: Array<{ tool: string; summary: string }>,
+): string {
+  const feitos = breakdown.length > 0
+    ? breakdown.map((b) => b.summary).filter((s) => !!s).join("; ")
+    : `${criados} agendamento(s)`;
+  const faltam = prometidos - criados;
+  return [
+    `Consegui confirmar: ${feitos}.`,
+    `Ainda preciso confirmar mais ${faltam} agendamento(s) que você pediu — pode me ajudar com os detalhes que faltam?`,
+  ].join(" ");
+}
+
+
+
 async function callAIAgent(
   supabase: any,
   tenant: any,
