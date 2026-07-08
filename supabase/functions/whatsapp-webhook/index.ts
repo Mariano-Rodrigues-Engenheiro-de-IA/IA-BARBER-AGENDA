@@ -2120,7 +2120,7 @@ Deno.serve(async (req) => {
               result: { released_for_retry: true },
               blocked: true,
             }],
-            errors: [`Pipeline error: ${errMsg}`],
+            errors: [{ message: `Pipeline error: ${errMsg}`, level: "error" }],
             model_used: "error",
             duration_ms: Date.now() - tDebounceEnd,
             session_blocked: false,
@@ -2433,8 +2433,8 @@ Deno.serve(async (req) => {
         ? tFirstSend - newestQueuedAtMsForTotal
         : (debounceWaitMs + aiDurationMs + (uazapiSendMs || 0));
 
-      const logErrors = [...(agentResult?.errors || [])];
-      if (firstSendError) logErrors.push(firstSendError);
+      const logErrors: LogEntry[] = [...(agentResult?.errors || [])];
+      if (firstSendError) logErrors.push({ message: firstSendError, level: "error" });
 
       await supabase.from("agent_logs").insert({
         tenant_id: tenant.id,
@@ -2618,10 +2618,15 @@ async function autoRegisterClient(_tenant: any, phoneNumber: string, provider: s
 
 // ===================== AI AGENT =====================
 
+// Nível de severidade dos logs de erro/aviso do agente. "warning" = sistema
+// funcionando como projetado (trava intencional, recuperação de conflito,
+// dedupe, etc.). "error" = falha de verdade que merece atenção humana.
+type LogEntry = { message: string; level: "error" | "warning" };
+
 interface AgentResult {
   response: string;
   toolCalls: { name: string; args: any; result: any; blocked?: boolean; deduplicated?: boolean; originalArgs?: any; resolvedArgs?: any; correctionReason?: string }[];
-  errors: string[];
+  errors: LogEntry[];
   model: string;
   durationMs: number;
   sessionBlocked: boolean;
@@ -4308,7 +4313,7 @@ async function callAIAgent(
 ): Promise<AgentResult> {
   const startTime = Date.now();
   const logToolCalls: AgentResult["toolCalls"] = [];
-  const logErrors: string[] = [];
+  const logErrors: LogEntry[] = [];
   let sessionBlocked = false;
   // Tracks if a cancel/edit (reschedule flow) succeeded earlier in THIS invocation.
   // When true, slot-based duplicate protection can be reset so the customer can be
@@ -4510,7 +4515,7 @@ async function callAIAgent(
     if (!finalResponse.ok) {
       const errText = await finalResponse.text();
       console.error("AI gateway error (final text fallback):", finalResponse.status, errText);
-      logErrors.push(`AI gateway error (final fallback): ${finalResponse.status} ${errText.slice(0, 200)}`);
+      logErrors.push({ message: `AI gateway error (final fallback): ${finalResponse.status} ${errText.slice(0, 200)}`, level: "error" });
       return null;
     }
 
@@ -4834,10 +4839,10 @@ async function callAIAgent(
   if (!response.ok) {
     const errText = await response.text();
     console.error("AI gateway error (initial):", response.status, errText);
-    logErrors.push(`AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`);
+    logErrors.push({ message: `AI gateway error (initial): ${response.status} ${errText.slice(0, 200)}`, level: "error" });
     // 🚨 Política global: NUNCA expor erro técnico ao cliente. Escala humano de imediato.
     console.warn(`[AIGatewayFallback] Falha no gateway para ${phoneNumber}, escalando humano sem expor erro.`);
-    logErrors.push(`AI gateway: falha → escalar humano (sem expor erro ao cliente)`);
+    logErrors.push({ message: `AI gateway: falha → escalar humano (sem expor erro ao cliente)`, level: "error" });
     const fallbackMsg = "Só um instante, vou avisar o responsável pra te atender por aqui 🙏";
     sessionBlocked = true;
     (sessionState as any).aiFailureCount = 0;
@@ -6054,7 +6059,11 @@ async function callAIAgent(
       logToolCalls.push(logEntry);
 
       if (toolResult?.error) {
-        logErrors.push(`Tool ${toolCall.function.name}: ${JSON.stringify(toolResult.error).slice(0, 200)}`);
+        const isIntentionalBlock = toolResult?.blocked === true;
+        logErrors.push({
+          message: `Tool ${toolCall.function.name}: ${JSON.stringify(toolResult.error).slice(0, 200)}`,
+          level: isIntentionalBlock ? "warning" : "error",
+        });
       }
 
       console.log(`Tool result (${toolCall.function.name}):`, JSON.stringify(toolResult).slice(0, 500));
@@ -6090,7 +6099,7 @@ async function callAIAgent(
             // produção). A instrução de recuperação vira o próprio conteúdo da resposta da tool.
             const recoveryInstruction = buildFrizzarScheduleRecoveryInstruction(r, parsedArgs);
             messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryInstruction }) });
-            logErrors.push(`[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`);
+            logErrors.push({ message: `[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`, level: "warning" });
             continue;
           }
           // Conflitos recuperáveis (ex.: AppBarber 422 — choque de horário). NÃO escalar.
@@ -6105,7 +6114,7 @@ async function callAIAgent(
             // 🚨 FIX: idem acima — fecha o tool_call_id com role:"tool" antes de qualquer coisa,
             // senão a próxima chamada à API quebra com 400 (bug real visto em produção).
             messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryMsg }) });
-            logErrors.push(`[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`);
+            logErrors.push({ message: `[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`, level: "warning" });
             continue;
           }
           const escalateTool = (getEnabledCustomTools(tenant) || []).find(
@@ -6121,7 +6130,7 @@ async function callAIAgent(
               : "OBRIGATÓRIO: responda ao cliente que não foi possível concluir o agendamento agora e que um atendente humano vai assumir em instantes. NÃO confirme o agendamento.",
           ].join(" ");
           messages.push({ role: "system", content: guardMsg });
-          logErrors.push(`[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`);
+          logErrors.push({ message: `[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`, level: "error" });
         } else {
           // ✅ SUCESSO: força a IA a PARAR de chamar ferramentas e responder agora.
           // Sem isso, em alguns casos a IA chama listar_horarios/listar_agendamentos
@@ -6156,7 +6165,7 @@ async function callAIAgent(
     if (!response.ok) {
       const errText = await response.text();
       console.error("AI gateway error (tool round):", response.status, errText);
-      logErrors.push(`AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`);
+      logErrors.push({ message: `AI gateway error (round ${rounds}): ${response.status} ${errText.slice(0, 200)}`, level: "error" });
       // Save state even on error
       if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
       sessionBlocked = true;
@@ -6183,7 +6192,7 @@ async function callAIAgent(
   // Detect leaked reasoning/scratchpad (e.g., "Vou proceed. Need next user input.") and regenerate
   if (finalResponse && isLeakedReasoningResponse(finalResponse)) {
     console.warn(`[LeakDetected] Discarding leaked reasoning response: "${finalResponse.slice(0, 120)}"`);
-    logErrors.push(`Leaked reasoning detected and discarded: "${finalResponse.slice(0, 120)}"`);
+    logErrors.push({ message: `Leaked reasoning detected and discarded: "${finalResponse.slice(0, 120)}"`, level: "warning" });
     finalResponse = "";
   }
 
@@ -6194,7 +6203,7 @@ async function callAIAgent(
       finalResponse = recoveredResponse;
     } else if (recoveredResponse) {
       console.warn(`[LeakDetected] Recovery also leaked, discarding: "${recoveredResponse.slice(0, 120)}"`);
-      logErrors.push(`Recovery response also leaked: "${recoveredResponse.slice(0, 120)}"`);
+      logErrors.push({ message: `Recovery response also leaked: "${recoveredResponse.slice(0, 120)}"`, level: "error" });
     }
   }
 
@@ -6207,7 +6216,7 @@ async function callAIAgent(
     const bookingFallback = buildDeterministicBookingConfirmation(logToolCalls);
     if (bookingFallback) {
       console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
-      logErrors.push(`Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`);
+      logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
     } else {
       // Last-resort fallback: stay completely silent rather than send a generic line that
@@ -6259,7 +6268,7 @@ async function callAIAgent(
     if (prometidos > MAX_AUTO_BOOKINGS) {
       // Escalada humana — mais de 3 agendamentos na mesma conversa.
       console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
-      logErrors.push(`Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`);
+      logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`, level: "warning" });
       finalResponse = MULTI_BOOKING_ESCALATION_MSG;
       guardOverrideResponse = true;
       sessionBlocked = true;
@@ -6353,7 +6362,7 @@ async function callAIAgent(
                 executed++;
               } catch (e) {
                 console.error(`[MultiBookingGuard] retry tool ${tname} failed:`, (e as Error)?.message);
-                logErrors.push(`Guard retry ${tname}: ${(e as Error)?.message || "erro"}`);
+                logErrors.push({ message: `Guard retry ${tname}: ${(e as Error)?.message || "erro"}`, level: "error" });
                 messages.push({
                   role: "tool",
                   tool_call_id: tc.id,
@@ -6378,7 +6387,7 @@ async function callAIAgent(
             } else {
               // Ainda faltou — agora sim vai pro fallback que pede ajuda ao cliente.
               console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — fallback determinístico.`);
-              logErrors.push(`Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`);
+              logErrors.push({ message: `Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`, level: "warning" });
               finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
               guardOverrideResponse = true;
               guardLog("reinject_then_partial_fallback");
@@ -6386,21 +6395,21 @@ async function callAIAgent(
           } else {
             // Retry não gerou tool_calls → cai no fallback direto.
             console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — fallback determinístico.`);
-            logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`);
+            logErrors.push({ message: `Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`, level: "warning" });
             finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
             guardOverrideResponse = true;
             guardLog("reinject_no_tools_then_partial_fallback");
           }
         } else {
           console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
-          logErrors.push(`Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`);
+          logErrors.push({ message: `Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`, level: "error" });
           finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
           guardOverrideResponse = true;
           guardLog("reinject_http_error_then_partial_fallback");
         }
       } catch (e) {
         console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
-        logErrors.push(`Multi-booking retry exception: ${(e as Error)?.message || "erro"}`);
+        logErrors.push({ message: `Multi-booking retry exception: ${(e as Error)?.message || "erro"}`, level: "error" });
         finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
         guardOverrideResponse = true;
         guardLog("reinject_exception_then_partial_fallback");
@@ -6421,7 +6430,7 @@ async function callAIAgent(
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
-      logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
+      logErrors.push({ message: `Mismatch texto↔execução detectado — forçado fallback parcial.`, level: "warning" });
       finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
       guardOverrideResponse = true;
     }
@@ -6447,7 +6456,7 @@ async function callAIAgent(
       (sessionState as any).lastTimeListings = history;
       if (history.length === 3 && history[0] === history[1] && history[1] === history[2]) {
         console.warn(`[LoopDetector] 3x mesma lista de horários para ${phoneNumber}: ${signature}. Substituindo resposta e zerando histórico.`);
-        logErrors.push(`Loop de listagem de horários detectado (sig=${signature})`);
+        logErrors.push({ message: `Loop de listagem de horários detectado (sig=${signature})`, level: "warning" });
         finalResponse = "Vou pedir pra um atendente humano te ajudar a finalizar isso, um momento por favor 🙏";
         sessionBlocked = true;
         (sessionState as any).lastTimeListings = [];
@@ -6468,7 +6477,7 @@ async function callAIAgent(
     const dupHit = findSimilarRecentReply(sessionState, finalResponse);
     if (dupHit) {
       console.warn(`[ReplyDedup] Resposta similar à enviada há ${Math.round((Date.now() - Date.parse(dupHit.entry.at)) / 60000)}min (sim=${dupHit.sim.toFixed(2)}) para ${phoneNumber}. Tentando regenerar.`);
-      logErrors.push(`Reply repetida detectada (sim=${dupHit.sim.toFixed(2)}); regenerando.`);
+      logErrors.push({ message: `Reply repetida detectada (sim=${dupHit.sim.toFixed(2)}); regenerando.`, level: "warning" });
       // Detecta se a última mensagem do cliente é um acknowledgement puro
       // (ok/valeu/emoji) — só nesse caso o silêncio é aceitável. Se o cliente
       // trouxe qualquer conteúdo substantivo (nome de serviço, horário, nome
@@ -6492,12 +6501,12 @@ async function callAIAgent(
           if (stillDup) {
             if (isPureAck) {
               console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack. Silenciando.`);
-              logErrors.push(`Regeneração ainda duplicada — mensagem suprimida (ack).`);
+              logErrors.push({ message: `Regeneração ainda duplicada — mensagem suprimida (ack).`, level: "warning" });
               finalResponse = "";
             } else {
               // Cliente trouxe contexto novo — melhor mandar duplicado do que ficar mudo.
               console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) mas cliente trouxe contexto novo. Enviando mesmo assim.`);
-              logErrors.push(`Regeneração ainda duplicada, mas cliente trouxe contexto novo — enviado assim mesmo.`);
+              logErrors.push({ message: `Regeneração ainda duplicada, mas cliente trouxe contexto novo — enviado assim mesmo.`, level: "warning" });
               finalResponse = regen;
             }
           } else {
@@ -6511,7 +6520,7 @@ async function callAIAgent(
             // Cliente trouxe contexto novo e regeneração falhou — mantém a resposta original
             // para não deixar o cliente sem retorno.
             console.warn(`[ReplyDedup] Regeneração vazia mas cliente trouxe contexto novo — mantendo resposta original.`);
-            logErrors.push(`Regeneração vazia com contexto novo do cliente — mantida resposta original.`);
+            logErrors.push({ message: `Regeneração vazia com contexto novo do cliente — mantida resposta original.`, level: "warning" });
             // finalResponse já contém a resposta original
           }
         }

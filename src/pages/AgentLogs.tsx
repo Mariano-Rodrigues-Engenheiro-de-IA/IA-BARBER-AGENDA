@@ -158,7 +158,16 @@ export default function AgentLogsPage() {
       ) : (
         <div className="space-y-3">
           {logs.map((log) => {
-            const hasErrors = Array.isArray(log.errors) && log.errors.length > 0;
+            // Normaliza cada entrada de erro pro formato {message, level}. Logs antigos
+            // (antes da classificação por severidade) só têm string solta — tratamos
+            // como "error" por segurança, pra nunca esconder algo que já existia.
+            const normalizedErrors = (Array.isArray(log.errors) ? log.errors : []).map((e: any) =>
+              typeof e === "string" ? { message: e, level: "error" as const } : { message: e?.message ?? JSON.stringify(e), level: (e?.level === "warning" ? "warning" : "error") as "error" | "warning" }
+            );
+            const realErrors = normalizedErrors.filter((e) => e.level === "error");
+            const warnings = normalizedErrors.filter((e) => e.level === "warning");
+            const hasErrors = realErrors.length > 0;
+            const hasWarnings = warnings.length > 0;
             const toolCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
             const { debounceBatch, hasExactTiming, totalMs, debounceMs, aiMs, uazapiMs } = getTimingMetrics(log);
             const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
@@ -167,7 +176,7 @@ export default function AgentLogsPage() {
             const isExpanded = expandedId === log.id;
 
             return (
-              <Card key={log.id} className={hasErrors ? "border-destructive/50" : ""}>
+              <Card key={log.id} className={hasErrors ? "border-destructive/50" : hasWarnings ? "border-warning/50" : ""}>
                 <CardHeader
                   className="cursor-pointer pb-3"
                   onClick={() => toggleExpand(log.id)}
@@ -176,6 +185,8 @@ export default function AgentLogsPage() {
                     <div className="flex items-center gap-3 min-w-0">
                       {hasErrors ? (
                         <AlertTriangle className="w-5 h-5 text-destructive shrink-0" />
+                      ) : hasWarnings ? (
+                        <AlertTriangle className="w-5 h-5 text-warning shrink-0" />
                       ) : (
                         <CheckCircle className="w-5 h-5 text-accent shrink-0" />
                       )}
@@ -204,7 +215,12 @@ export default function AgentLogsPage() {
                           )}
                           {hasErrors && (
                             <Badge variant="destructive" className="text-xs">
-                              {log.errors.length} erro{log.errors.length > 1 ? "s" : ""}
+                              {realErrors.length} erro{realErrors.length > 1 ? "s" : ""}
+                            </Badge>
+                          )}
+                          {hasWarnings && (
+                            <Badge variant="outline" className="text-xs bg-warning/10 text-warning border-warning/50">
+                              {warnings.length} aviso{warnings.length > 1 ? "s" : ""}
                             </Badge>
                           )}
                         </div>
@@ -259,11 +275,11 @@ export default function AgentLogsPage() {
                         </h4>
                         <div className="space-y-2">
                           {visibleToolCalls.map((tc, i) => (
-                            <div key={i} className={`rounded-lg border p-3 text-sm ${tc.blocked ? "border-destructive/50 bg-destructive/5" : "border-border"}`}>
+                            <div key={i} className={`rounded-lg border p-3 text-sm ${tc.blocked ? "border-warning/50 bg-warning/5" : "border-border"}`}>
                               <div className="flex items-center gap-2 mb-2">
                                 <Wrench className="w-4 h-4 text-primary" />
                                 <span className="font-mono font-medium">{tc.name}</span>
-                                {tc.blocked && <Badge variant="destructive" className="text-xs">BLOQUEADA</Badge>}
+                                {tc.blocked && <Badge variant="outline" className="text-xs bg-warning/10 text-warning border-warning/50">BLOQUEADA</Badge>}
                               </div>
                               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                                 <div>
@@ -304,9 +320,23 @@ export default function AgentLogsPage() {
                       <div>
                         <h4 className="text-xs font-semibold text-destructive uppercase mb-2">Erros</h4>
                         <div className="space-y-1">
-                          {(log.errors as string[]).map((err, i) => (
+                          {realErrors.map((err, i) => (
                             <div key={i} className="bg-destructive/10 text-destructive text-sm p-2 rounded">
-                              {typeof err === "string" ? err : JSON.stringify(err)}
+                              {err.message}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Warnings — sistema funcionando como projetado (trava, recuperação, dedupe) */}
+                    {hasWarnings && (
+                      <div>
+                        <h4 className="text-xs font-semibold text-warning uppercase mb-2">Avisos (sem ação necessária)</h4>
+                        <div className="space-y-1">
+                          {warnings.map((err, i) => (
+                            <div key={i} className="bg-warning/10 text-warning text-sm p-2 rounded">
+                              {err.message}
                             </div>
                           ))}
                         </div>
