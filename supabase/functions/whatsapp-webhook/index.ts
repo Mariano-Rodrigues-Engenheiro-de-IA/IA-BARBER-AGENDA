@@ -4352,8 +4352,28 @@ async function classifyPendingBookings(params: {
       return fallback();
     }
     const parsed = JSON.parse(raw);
-    const n = Number(parsed?.total_bookings_requested);
+    let n = Number(parsed?.total_bookings_requested);
     if (!Number.isFinite(n) || n < 1) return fallback();
+
+    // 🚨 FIX — o classificador às vezes erra a própria conta: o texto de
+    // `reasoning` soma corretamente (ex: "corte (1) + avô (1) = total 2
+    // agendamentos"), mas o campo `total_bookings_requested` sai divergente
+    // (ex: 1). Caso real: reasoning dizia "total 2 agendamentos" mas o campo
+    // veio 1 — o guard liberou achando 1/1 completo, e o segundo pedido
+    // (avô) nunca foi processado. Reconcilia: se o texto do reasoning
+    // menciona um número maior, usa o maior dos dois (nunca o menor —
+    // mesma lógica defensiva já usada no resto do guard).
+    const reasoningText = String(parsed?.reasoning || "");
+    const reasoningTotalMatch = reasoningText.match(/total\s*(?:de\s*)?(\d{1,2})\s*agendamentos?/i)
+      || reasoningText.match(/=\s*(\d{1,2})\s*agendamentos?/i);
+    if (reasoningTotalMatch) {
+      const reasoningN = Number(reasoningTotalMatch[1]);
+      if (Number.isFinite(reasoningN) && reasoningN > n) {
+        console.warn(`[MultiBookingGuard] classifier inconsistente: total_bookings_requested=${n} mas reasoning menciona ${reasoningN}. Usando o maior.`);
+        n = reasoningN;
+      }
+    }
+
     let capped = Math.min(Math.floor(n), 10); // sanity cap
     // Se o LLM disse 1 mas a heurística viu 2+ horários ofertados + resposta curta,
     // acredita na heurística. Rede de segurança contra o mesmo bug que já mordeu.
