@@ -6112,6 +6112,104 @@ async function callAIAgent(
     }
   }
 
+  // ============================================================================
+  // 🛡️ MULTI-BOOKING GUARD (Camadas 1+2+3)
+  // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
+  // no turno (agendar/criar_agendamento). Independente do texto de saída.
+  // ============================================================================
+  const _bookingAttempts = countBookingCallAttempts(logToolCalls);
+  if (_bookingAttempts > 0 && provider !== "none") {
+    const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider);
+    const cls = await classifyPendingBookings({
+      messages,
+      aiEndpoint,
+      aiAuthKey,
+      modelUsed,
+      attempts: _bookingAttempts,
+    });
+    const prometidos = cls.total;
+
+    console.log(
+      `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
+    );
+
+    // Log estruturado no rastro de tool_calls pra auditoria.
+    const guardLog = (acao: string) => {
+      logToolCalls.push({
+        name: "__multi_booking_guard__",
+        args: { phase: "response_guard" },
+        result: {
+          layer: "multi_booking_guard",
+          provider,
+          attempts: _bookingAttempts,
+          prometidos,
+          criados,
+          criados_por_tool: breakdown,
+          acao,
+          classifier_source: cls.source,
+          classifier_reasoning: cls.reasoning,
+        },
+      });
+    };
+
+    if (prometidos > MAX_AUTO_BOOKINGS) {
+      // Escalada humana — mais de 3 agendamentos na mesma conversa.
+      console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
+      logErrors.push(`Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`);
+      finalResponse = MULTI_BOOKING_ESCALATION_MSG;
+      sessionBlocked = true;
+      guardLog("human_escalation");
+      if (!simulatorMode) {
+        try {
+          await supabase
+            .from("conversation_pauses")
+            .upsert(
+              {
+                tenant_id: tenant.id,
+                phone_number: phoneNumber,
+                reason: "multi_booking_overflow",
+                paused_by: "system",
+              },
+              { onConflict: "tenant_id,phone_number" },
+            );
+        } catch (e) {
+          console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
+        }
+      }
+    } else if (criados < prometidos) {
+      // Faltou completar algum agendamento (2 ou 3 casos).
+      // Camada 2: substitui a resposta por uma parcial determinística.
+      // (Sem re-injetar turno automático — decisão consciente pra manter previsibilidade;
+      //  a IA já teve `maxRounds` chances de completar e não completou.)
+      console.warn(`[MultiBookingGuard] parcial: criados=${criados}<prometidos=${prometidos} — usando fallback determinístico.`);
+      logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — fallback determinístico.`);
+      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+      guardLog("partial_fallback");
+    } else {
+      // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
+      guardLog("released");
+    }
+
+    // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
+    // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
+    // força a resposta determinística parcial. Rede de segurança se Camada 1 subestimar.
+    if (
+      prometidos <= MAX_AUTO_BOOKINGS &&
+      criados < prometidos &&
+      finalResponse &&
+      IMPLICIT_CONFIRMATION_RE.test(finalResponse)
+    ) {
+      console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
+      logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
+      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+    }
+  }
+  // ============================================================================
+  // FIM MULTI-BOOKING GUARD
+  // ============================================================================
+
+
+
   // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
   // sem o cliente confirmar, troca a resposta por um pedido de paciência + flag interna
   // para o operador humano assumir. Evita irritar o cliente em loop.
