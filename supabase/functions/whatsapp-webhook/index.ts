@@ -6364,15 +6364,16 @@ async function callAIAgent(
     // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
     // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
     // força a resposta determinística parcial. Rede de segurança se Camada 1 subestimar.
+    const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider);
     if (
       prometidos <= MAX_AUTO_BOOKINGS &&
-      criados < prometidos &&
+      postGuardCount.count < prometidos &&
       finalResponse &&
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
       logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
-      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+      finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
     }
   }
   // ============================================================================
