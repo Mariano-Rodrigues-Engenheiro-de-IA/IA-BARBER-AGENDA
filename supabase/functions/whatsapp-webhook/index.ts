@@ -6759,7 +6759,7 @@ async function executeToolForProvider(
     case "onebeleza":
       return executeOneBelezaTool(tenant, toolCall, phoneNumber);
     case "frizzar":
-      return executeFrizzarTool(tenant, toolCall, phoneNumber);
+      return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
       return executeBempTool(tenant, toolCall, phoneNumber);
     case "appbarber":
@@ -9762,7 +9762,7 @@ function buildFrizzarTools(tenant: any) {
 // Usada por `agendar` para travar tentativa de agendar em data diferente da consultada.
 const frizzarLastListed = new Map<string, { dia: string; listedAt: number }>();
 
-async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string): Promise<any> {
+async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -10042,7 +10042,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         // existe no estabelecimento, mas o cliente recebe algo completamente diferente.
         // Bloqueia qualquer código que não tenha vindo de um listar_servicos desta conversa.
         {
-          const catalog = ((sessionState as any).frizzarServiceCatalog || []) as Array<{ codigo: number; nome: string }>;
+          const catalog = (((sessionState as any)?.frizzarServiceCatalog) || []) as Array<{ codigo: number; nome: string }>;
           if (Array.isArray(catalog) && catalog.length > 0) {
             const invalidCodes = body
               .map((s: any) => toPositiveInteger(s?.codigo))
