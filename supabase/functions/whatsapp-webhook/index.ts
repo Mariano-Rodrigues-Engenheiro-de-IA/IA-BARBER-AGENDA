@@ -6084,7 +6084,12 @@ async function callAIAgent(
           && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
         if (!succeeded) {
           if (provider === "frizzar" && toolCall.function.name === "agendar" && isRecoverableFrizzarScheduleResult(r)) {
-            messages.push({ role: "system", content: buildFrizzarScheduleRecoveryInstruction(r, parsedArgs) });
+            // 🚨 FIX: precisa SEMPRE fechar este tool_call_id com uma mensagem "tool" antes
+            // de qualquer outra coisa — senão a próxima chamada à API da OpenAI é recusada
+            // com 400 "tool_call_ids did not have response messages" (bug real visto em
+            // produção). A instrução de recuperação vira o próprio conteúdo da resposta da tool.
+            const recoveryInstruction = buildFrizzarScheduleRecoveryInstruction(r, parsedArgs);
+            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryInstruction }) });
             logErrors.push(`[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`);
             continue;
           }
@@ -6097,7 +6102,9 @@ async function callAIAgent(
               "NÃO escale humano. NÃO diga que houve erro/problema. NÃO confirme o agendamento.",
               "Fale de forma natural: o horário escolhido acabou de ficar indisponível e ofereça as alternativas que vierem da próxima consulta.",
             ].join(" ");
-            messages.push({ role: "system", content: recoveryMsg });
+            // 🚨 FIX: idem acima — fecha o tool_call_id com role:"tool" antes de qualquer coisa,
+            // senão a próxima chamada à API quebra com 400 (bug real visto em produção).
+            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryMsg }) });
             logErrors.push(`[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`);
             continue;
           }
@@ -6310,12 +6317,21 @@ async function callAIAgent(
           if (retryToolCalls.length > 0) {
             messages.push(retryMsg);
             // Executa no máximo `faltam` tools de booking nesta rodada de retry.
+            // 🚨 IMPORTANTE: TODO tool_call de retryMsg precisa de uma resposta "tool"
+            // (executado ou não) — senão o `messages` fica com tool_call_id sem resposta,
+            // o mesmo bug que já vimos quebrar a API da OpenAI em produção.
             const bookingToolNames = new Set(["agendar", "criar_agendamento"]);
             let executed = 0;
             for (const tc of retryToolCalls) {
-              if (executed >= faltam) break;
               const tname = tc?.function?.name;
-              if (!bookingToolNames.has(tname)) continue;
+              if (executed >= faltam || !bookingToolNames.has(tname)) {
+                messages.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: JSON.stringify({ skipped: true, reason: "Limite de agendamentos pendentes já atingido ou tool não relacionada a agendamento nesta rodada de recuperação." }),
+                });
+                continue;
+              }
               try {
                 const tResult = await executeToolForProvider(
                   provider,
@@ -6338,6 +6354,11 @@ async function callAIAgent(
               } catch (e) {
                 console.error(`[MultiBookingGuard] retry tool ${tname} failed:`, (e as Error)?.message);
                 logErrors.push(`Guard retry ${tname}: ${(e as Error)?.message || "erro"}`);
+                messages.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: JSON.stringify({ error: `Erro ao executar ${tname}: ${(e as Error)?.message || "erro desconhecido"}` }),
+                });
               }
             }
             // Recontagem após a rodada extra.
