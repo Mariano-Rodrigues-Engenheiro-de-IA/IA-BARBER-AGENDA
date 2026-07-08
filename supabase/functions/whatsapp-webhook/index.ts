@@ -6253,13 +6253,109 @@ async function callAIAgent(
       }
     } else if (criados < prometidos) {
       // Faltou completar algum agendamento (2 ou 3 casos).
-      // Camada 2: substitui a resposta por uma parcial determinística.
-      // (Sem re-injetar turno automático — decisão consciente pra manter previsibilidade;
-      //  a IA já teve `maxRounds` chances de completar e não completou.)
-      console.warn(`[MultiBookingGuard] parcial: criados=${criados}<prometidos=${prometidos} — usando fallback determinístico.`);
-      logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — fallback determinístico.`);
-      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
-      guardLog("partial_fallback");
+      // ANTES de cair no fallback que pede ajuda ao cliente, damos UMA tentativa
+      // automática de completar — só quando o classificador já enxergou dados
+      // completos na conversa. Se essa tentativa falhar, aí sim vai pro fallback.
+      const faltam = prometidos - criados;
+      const feitosSummary = breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum ainda";
+      const nudge = [
+        `[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO]`,
+        `Você prometeu ${prometidos} agendamento(s) ao cliente nesta conversa e só criou ${criados}.`,
+        `Já criados: ${feitosSummary}.`,
+        `Faltam ${faltam}. O cliente já forneceu os dados necessários no histórico acima (pessoas, horários, profissional). NÃO pergunte de novo.`,
+        `Ação obrigatória agora: chame a tool de agendar (${provider === "trinks" || provider === "appbarber" ? "criar_agendamento" : "agendar"}) ${faltam} vez(es), uma por agendamento faltante, reaproveitando exatamente o que o cliente confirmou. Não responda em texto neste turno — apenas execute as tools.`,
+      ].join(" ");
+
+      console.warn(`[MultiBookingGuard] tentando re-injeção automática (faltam=${faltam}).`);
+      messages.push({ role: "system", content: nudge });
+
+      let retrySucceededExtra = 0;
+      try {
+        const retryBody: any = {
+          model: modelUsed,
+          messages,
+          max_completion_tokens: 4096,
+          tools,
+          tool_choice: "auto",
+        };
+        if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
+        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "guard-reinject");
+        if (retryResp.ok) {
+          const retryJson: any = await retryResp.json();
+          const retryMsg: any = retryJson?.choices?.[0]?.message;
+          const retryToolCalls: any[] = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+          if (retryToolCalls.length > 0) {
+            messages.push(retryMsg);
+            // Executa no máximo `faltam` tools de booking nesta rodada de retry.
+            const bookingToolNames = new Set(["agendar", "criar_agendamento"]);
+            let executed = 0;
+            for (const tc of retryToolCalls) {
+              if (executed >= faltam) break;
+              const tname = tc?.function?.name;
+              if (!bookingToolNames.has(tname)) continue;
+              try {
+                const tResult = await executeToolForProvider(
+                  provider,
+                  tenant,
+                  tc,
+                  phoneNumber,
+                  { supabase, simulatorMode },
+                );
+                messages.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+                });
+                logToolCalls.push({
+                  name: tname,
+                  args: parseToolArguments(tc.function?.arguments),
+                  result: tResult,
+                });
+                executed++;
+              } catch (e) {
+                console.error(`[MultiBookingGuard] retry tool ${tname} failed:`, (e as Error)?.message);
+                logErrors.push(`Guard retry ${tname}: ${(e as Error)?.message || "erro"}`);
+              }
+            }
+            // Recontagem após a rodada extra.
+            const recount = countSuccessfulBookingsInTurn(logToolCalls, provider);
+            retrySucceededExtra = Math.max(0, recount.count - criados);
+            console.log(`[MultiBookingGuard] re-injeção executou=${executed} novos_ok=${retrySucceededExtra}`);
+
+            if (recount.count >= prometidos) {
+              // Completou tudo. Monta confirmação determinística com todos os slots.
+              const allSummaries = recount.breakdown.map((b) => b.summary).filter(Boolean);
+              const detConfirm = buildDeterministicBookingConfirmation(logToolCalls);
+              finalResponse = allSummaries.length > 0
+                ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
+                : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
+              guardLog("reinject_completed");
+            } else {
+              // Ainda faltou — agora sim vai pro fallback que pede ajuda ao cliente.
+              console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — fallback determinístico.`);
+              logErrors.push(`Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`);
+              finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
+              guardLog("reinject_then_partial_fallback");
+            }
+          } else {
+            // Retry não gerou tool_calls → cai no fallback direto.
+            console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — fallback determinístico.`);
+            logErrors.push(`Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`);
+            finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+            guardLog("reinject_no_tools_then_partial_fallback");
+          }
+        } else {
+          console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
+          logErrors.push(`Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`);
+          finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+          guardLog("reinject_http_error_then_partial_fallback");
+        }
+      } catch (e) {
+        console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
+        logErrors.push(`Multi-booking retry exception: ${(e as Error)?.message || "erro"}`);
+        finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+        guardLog("reinject_exception_then_partial_fallback");
+      }
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
@@ -6268,15 +6364,16 @@ async function callAIAgent(
     // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
     // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
     // força a resposta determinística parcial. Rede de segurança se Camada 1 subestimar.
+    const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider);
     if (
       prometidos <= MAX_AUTO_BOOKINGS &&
-      criados < prometidos &&
+      postGuardCount.count < prometidos &&
       finalResponse &&
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
       logErrors.push(`Mismatch texto↔execução detectado — forçado fallback parcial.`);
-      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+      finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
     }
   }
   // ============================================================================
