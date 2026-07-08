@@ -4152,6 +4152,34 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
   }
   if (!lastAssistant) return Math.max(1, attempts);
 
+  const lastUser = [...visible].reverse().find((m: any) => m.role === "user")?.content || "";
+  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
+  const normalizeTimeToken = (m: RegExpExecArray): string | null => {
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) return null;
+    const mm = m[2] ? m[2].padStart(2, "0") : "00";
+    return `${h.toString().padStart(2, "0")}:${mm}`;
+  };
+
+  // Se o CLIENTE explicitamente escolheu 2+ horários na própria mensagem
+  // (ex.: "pode ser 14 e 15"), isso é promessa multi-booking mesmo sem "sim" seco.
+  const explicitUserTimes = new Set<string>();
+  let userMatch: RegExpExecArray | null;
+  timeRe.lastIndex = 0;
+  while ((userMatch = timeRe.exec(lastUser)) !== null) {
+    const token = normalizeTimeToken(userMatch);
+    if (token) explicitUserTimes.add(token);
+  }
+  if (explicitUserTimes.size >= 2) {
+    return Math.max(1, attempts, explicitUserTimes.size);
+  }
+
+  // Só interpreta múltiplos horários da ÚLTIMA fala da IA como múltiplos
+  // agendamentos quando a última fala do cliente é uma confirmação curta.
+  // Caso real: cliente respondeu "Hoje, 15:20" depois de uma lista de 7 horários;
+  // a heurística contava os 7 horários ofertados e escalava humano indevidamente.
+  if (!isAffirmativeReply(lastUser)) return Math.max(1, attempts);
+
   // Quebra em frases e SÓ conta horários em frases que soam como oferta de
   // slot pra agendar. Frases sobre horário de funcionamento são explicitamente
   // excluídas (senão "funcionamos das 9h às 19h30" viraria 2 promessas).
@@ -4165,7 +4193,6 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
   const set = new Set<string>();
   for (const sent of sentences) {
     if (NON_BOOKING_CTX_RE.test(sent)) continue;
@@ -4173,10 +4200,8 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     let m: RegExpExecArray | null;
     timeRe.lastIndex = 0;
     while ((m = timeRe.exec(sent)) !== null) {
-      const h = Number(m[1]);
-      if (h < 0 || h > 23) continue;
-      const mm = m[2] ? m[2].padStart(2, "0") : "00";
-      set.add(`${h.toString().padStart(2, "0")}:${mm}`);
+      const token = normalizeTimeToken(m);
+      if (token) set.add(token);
     }
   }
   const distinct = set.size;
