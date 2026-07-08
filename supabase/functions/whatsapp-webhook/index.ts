@@ -8939,7 +8939,19 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
             for (const cid of extra) if (!dedupIds.includes(cid)) dedupIds.push(cid);
           }
           const activeAg = await trinksListActiveByClienteIds(baseUrl, headers, dedupIds, phoneNumber);
-          const isDuplicate = activeAg.some((a: any) => a.dataHoraInicio === dataHoraInicio);
+          // Duplicata de verdade = mesmo cliente + mesma data/hora + MESMO profissional.
+          // Duas pessoas diferentes (mesmo clienteId na Trinks, já que não há campo "de quem")
+          // podem legitimamente ter agendamentos no mesmo horário com profissionais diferentes —
+          // isso não é duplicidade, é o cenário normal de "corte pra mim e corte+barba pro meu pai".
+          // Se não conseguirmos identificar o profissional do agendamento já existente, mantemos
+          // o comportamento conservador de ANTES (bloqueia) — só liberamos quando temos certeza
+          // de que é um profissional diferente.
+          const isDuplicate = activeAg.some((a: any) => {
+            if (a.dataHoraInicio !== dataHoraInicio) return false;
+            const existingProfId = a.profissionalId ?? a.profissional?.id ?? a.funcionarioId ?? a.funcionario?.id;
+            if (existingProfId === undefined || existingProfId === null) return true;
+            return Number(existingProfId) === profId;
+          });
           if (isDuplicate) {
             console.log(`criar_agendamento: DUPLICATE detected for ${dataHoraInicio}`);
             return {
