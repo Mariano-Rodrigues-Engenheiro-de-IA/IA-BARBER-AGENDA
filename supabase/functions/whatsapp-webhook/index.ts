@@ -4220,7 +4220,10 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
     const token = normalizeTimeToken(userMatch);
     if (token) explicitUserTimes.add(token);
   }
-  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b/gi;
+  // Hora solta ("14 e 15") só conta quando NÃO é parte de HH:MM/HHhMM.
+  // Caso real: "As 10:30" virava dois horários (10:30 + 10:00) porque
+  // o trecho "As 10" batia aqui. Isso inflava agendamento único para 2.
+  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b(?!\s*[:h]\d{2})/gi;
   let hourOnlyMatch: RegExpExecArray | null;
   while ((hourOnlyMatch = hourOnlyContextRe.exec(lastUser)) !== null) {
     const h = Number(hourOnlyMatch[1]);
