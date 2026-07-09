@@ -1968,47 +1968,12 @@ Deno.serve(async (req) => {
         }
       }
 
-      // ❌ = reset memory for this user
-      if (messageContent.trim() === "❌") {
-        const { error: delError } = await supabase
-          .from("chat_messages")
-          .delete()
-          .eq("tenant_id", tenant.id)
-          .eq("phone_number", phoneNumber);
-        console.log(`Memory reset for ${phoneNumber}:`, delError ? delError.message : "OK");
+      // Nota: o handler antigo de ❌ vivia aqui e só rodava depois do skip de
+      // fromMe + resolução de tenant + debounce. Ele foi movido pra bem antes
+      // (logo após o parse do phoneNumber) pra funcionar também quando o dono do
+      // salão manda ❌ do próprio WhatsApp e pra normalizar variantes com
+      // variation selector. Ver bloco "MemoryReset EARLY" acima.
 
-        // Also clear conversation state
-        await supabase
-          .from("conversation_state")
-          .delete()
-          .eq("tenant_id", tenant.id)
-          .eq("phone_number", phoneNumber);
-
-        // Também limpa o resumo de IA do CRM (crm_leads.ai_summary) — sem isso, o
-        // "reset de memória" era incompleto: o resumo sobrevivia ao ❌ e podia
-        // reaparecer numa conversa "nova" com informação de um agendamento antigo.
-        // Só zera o campo de resumo, preserva o resto do registro de CRM (etiqueta,
-        // funil, etc.) que não tem relação com a memória de conversa.
-        const { data: crmResetData, error: crmResetError } = await supabase
-          .from("crm_leads")
-          .update({ ai_summary: null, ai_summary_updated_at: null })
-          .eq("tenant_id", tenant.id)
-          .eq("phone_number", phoneNumber)
-          .select("id");
-        console.log(`[MemoryReset] crm_leads.ai_summary cleared for ${phoneNumber} (tenant ${tenant.id}): rows_affected=${crmResetData?.length ?? 0} error=${crmResetError?.message || "none"}`);
-
-        const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
-        const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-        await fetch(`${uazapiUrl}/send/text`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa.", delay: 1000 }),
-        });
-
-        return new Response(JSON.stringify({ status: "memory_reset" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
 
       // Save message as unprocessed for debounce queue
       await supabase.from("chat_messages").insert({
