@@ -6453,15 +6453,25 @@ async function callAIAgent(
     const claimsNewBookingConfirmed = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
 
     if (claimsNewBookingConfirmed) {
-      // Só é alucinação de verdade se NÃO houver nenhum agendamento real e recente
-      // já registrado nesta sessão (senão pode ser reconfirmação legítima de algo
-      // que já foi criado num turno anterior — não bloquear esse caso).
-      const recentBookingSuccess = pruneRecentActions(sessionState).some(
+      // Só é alucinação de verdade se NÃO houver nenhum agendamento real JÁ EXISTENTE
+      // registrado nesta sessão (senão pode ser reconfirmação legítima — ex: cliente
+      // responde "positivo"/"sim" a um lembrete de agendamento feito dias atrás).
+      //
+      // 🚨 IMPORTANTE: usa a lista CRUA (sessionState.recentCompletedActions), NÃO
+      // pruneRecentActions() — essa função aplica ACTION_LEDGER_TTL_MS (30 min),
+      // que é curto demais pra esta checagem específica (um agendamento real segue
+      // válido por dias, não só nos primeiros 30 min). Os outros 3 usos de
+      // pruneRecentActions() (anti-loop, limpeza do ledger, texto injetado no
+      // prompt) continuam com os 30 min originais — não tocados, é checagem
+      // separada e isolada só pra este guard. O tamanho da lista já é limitado
+      // por ACTION_LEDGER_MAX (12) em recordCompletedAction, então não cresce
+      // sem limite mesmo sem o filtro de tempo aqui.
+      const recentBookingSuccess = (sessionState.recentCompletedActions || []).some(
         (a) => a.category === "booking" && a.status === "success",
       );
 
       if (!recentBookingSuccess) {
-        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, e nenhum sucesso recente na sessão. Tentando reinjeção.`);
+        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, e nenhum sucesso na sessão (sem limite de tempo). Tentando reinjeção.`);
         logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
