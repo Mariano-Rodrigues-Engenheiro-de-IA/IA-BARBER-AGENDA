@@ -1445,6 +1445,72 @@ Deno.serve(async (req) => {
         });
       }
 
+      // ❌ = reset universal da memória deste cliente.
+      // Roda ANTES do skip de fromMe e do debounce por três motivos:
+      //   1. O dono do salão pode mandar ❌ do próprio WhatsApp (fromMe=true) pra
+      //      resetar a memória de um cliente específico — antes esse caminho caía no
+      //      "skipped_fromMe_stored" e nunca limpava nada, o que gerou o bug real
+      //      relatado (resumo do CRM continuava intacto depois do ❌).
+      //   2. WhatsApp/teclado emoji às vezes anexa variation selector (U+FE0F) ou
+      //      zero-width chars — a checagem antiga `=== "❌"` falhava silenciosamente
+      //      nessas variantes. Aqui normalizamos antes de comparar.
+      //   3. Se o ❌ estiver junto num batch, ainda queremos apagar tudo — a
+      //      intenção do reset é destruir o contexto acumulado, não preservá-lo.
+      const normalizedForReset = String(messageContent || "")
+        .replace(/[\uFE0E\uFE0F\u200D\u200B]/g, "")
+        .trim();
+      if (normalizedForReset === "❌") {
+        const ownerDigitsReset = digitsOnly(payload.chat?.owner || payload.owner || payload.to || "");
+        const { data: activeTenantsReset } = await supabase
+          .from("tenants")
+          .select("id, name, whatsapp_number, uazapi_url, uazapi_token")
+          .eq("status", "active");
+        const tenantForReset = (activeTenantsReset || []).find((t: any) => {
+          if (!t.whatsapp_number) return false;
+          return ownerDigitsReset ? exactDigitsMatch(ownerDigitsReset, t.whatsapp_number) : false;
+        }) || (activeTenantsReset || [])[0];
+
+        if (tenantForReset) {
+          await supabase
+            .from("chat_messages")
+            .delete()
+            .eq("tenant_id", tenantForReset.id)
+            .eq("phone_number", phoneNumber);
+          await supabase
+            .from("conversation_state")
+            .delete()
+            .eq("tenant_id", tenantForReset.id)
+            .eq("phone_number", phoneNumber);
+          const { data: crmResetRows, error: crmResetErr } = await supabase
+            .from("crm_leads")
+            .update({ ai_summary: null, ai_summary_updated_at: null })
+            .eq("tenant_id", tenantForReset.id)
+            .eq("phone_number", phoneNumber)
+            .select("id");
+          console.log(`[MemoryReset EARLY] phone=${phoneNumber} tenant=${tenantForReset.id} fromMe=${fromMe} summary_cleared_rows=${crmResetRows?.length ?? 0} err=${crmResetErr?.message || "none"}`);
+
+          const uazapiUrl = tenantForReset.uazapi_url || Deno.env.get("UAZAPI_URL");
+          const uazapiToken = tenantForReset.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+          if (uazapiUrl && uazapiToken) {
+            try {
+              await fetch(`${uazapiUrl}/send/text`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+                body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa.", delay: 1000 }),
+              });
+            } catch (e: any) {
+              console.warn(`[MemoryReset EARLY] send confirmation failed: ${e?.message || e}`);
+            }
+          }
+        } else {
+          console.warn(`[MemoryReset EARLY] no tenant resolved for phone=${phoneNumber} ownerDigits=${ownerDigitsReset}`);
+        }
+        return new Response(JSON.stringify({ status: "memory_reset" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+
       if (isReactionMessage) {
         console.log(`Skipping reaction message from ${phoneNumber}`);
         return new Response(JSON.stringify({ status: "reaction_ignored" }), {
