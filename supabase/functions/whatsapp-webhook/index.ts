@@ -1920,11 +1920,13 @@ Deno.serve(async (req) => {
         // reaparecer numa conversa "nova" com informação de um agendamento antigo.
         // Só zera o campo de resumo, preserva o resto do registro de CRM (etiqueta,
         // funil, etc.) que não tem relação com a memória de conversa.
-        await supabase
+        const { data: crmResetData, error: crmResetError } = await supabase
           .from("crm_leads")
           .update({ ai_summary: null, ai_summary_updated_at: null })
           .eq("tenant_id", tenant.id)
-          .eq("phone_number", phoneNumber);
+          .eq("phone_number", phoneNumber)
+          .select("id");
+        console.log(`[MemoryReset] crm_leads.ai_summary cleared for ${phoneNumber} (tenant ${tenant.id}): rows_affected=${crmResetData?.length ?? 0} error=${crmResetError?.message || "none"}`);
 
         const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
         const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
