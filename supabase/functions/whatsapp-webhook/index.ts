@@ -1483,7 +1483,10 @@ Deno.serve(async (req) => {
             .eq("phone_number", phoneNumber);
           const { data: crmResetRows, error: crmResetErr } = await supabase
             .from("crm_leads")
-            .update({ ai_summary: null, ai_summary_updated_at: null })
+            // ai_summary é NOT NULL no banco; apagar = string vazia.
+            // O bug real acontecia porque tentar gravar NULL falhava e o resumo antigo
+            // continuava disponível para a IA no próximo turno.
+            .update({ ai_summary: "", ai_summary_updated_at: null })
             .eq("tenant_id", tenantForReset.id)
             .eq("phone_number", phoneNumber)
             .select("id");
