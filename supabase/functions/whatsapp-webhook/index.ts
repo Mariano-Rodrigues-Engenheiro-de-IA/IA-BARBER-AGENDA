@@ -791,11 +791,14 @@ const NAME_CONNECTORS = new Set(["de","da","do","das","dos","e","del","della","d
 // (persistClientSummary, chamado por maybeAutoPersistClientSummary a cada turno).
 const SUMMARY_FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{1,2}[:h]\d{2}\b/i, label: "horário específico (ex: 15:00, 15h30)" },
+  { re: /\b\d{1,2}\s*h(?:s|oras?)?\b/i, label: "horário específico (ex: 15h, 15 horas)" },
   { re: /\b\d{4}-\d{2}-\d{2}\b/, label: "data no formato yyyy-MM-dd" },
   { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
-  { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa])(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã)" },
-  { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?)\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
-  { re: /\b(confirmad[oa]|confirmei|agendad[oa]\s+para|marcad[oa]\s+para|reservad[oa]\s+para|agendamento\s+confirmado)\b/i, label: "linguagem de confirmação/ação concreta" },
+  { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|ontem)(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã/ontem)" },
+  { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?|passad[ao])\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
+  { re: /\b(confirmad[oa]|confirmei|confirmou|agendad[oa]|agendei|agendou|marcad[oa]|marquei|marcou|reservad[oa]|reservei|reservou|desmarc\w+|cancel\w+|remarc\w+)\b/i, label: "linguagem de confirmação/agendamento (agendou/marcou/confirmou/cancelou)" },
+  { re: /\bagendamento(s)?\b/i, label: "menção a agendamento específico" },
+  { re: /\b(hor[áa]rio\s+(marcado|reservado|confirmado|agendado))\b/i, label: "horário marcado/reservado" },
 ];
 
 function findForbiddenSummaryContent(resumo: string): { re: RegExp; label: string } | null {
