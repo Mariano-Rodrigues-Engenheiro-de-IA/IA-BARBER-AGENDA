@@ -791,11 +791,14 @@ const NAME_CONNECTORS = new Set(["de","da","do","das","dos","e","del","della","d
 // (persistClientSummary, chamado por maybeAutoPersistClientSummary a cada turno).
 const SUMMARY_FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{1,2}[:h]\d{2}\b/i, label: "horário específico (ex: 15:00, 15h30)" },
+  { re: /\b\d{1,2}\s*h(?:s|oras?)?\b/i, label: "horário específico (ex: 15h, 15 horas)" },
   { re: /\b\d{4}-\d{2}-\d{2}\b/, label: "data no formato yyyy-MM-dd" },
   { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
-  { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa])(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã)" },
-  { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?)\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
-  { re: /\b(confirmad[oa]|confirmei|agendad[oa]\s+para|marcad[oa]\s+para|reservad[oa]\s+para|agendamento\s+confirmado)\b/i, label: "linguagem de confirmação/ação concreta" },
+  { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|ontem)(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã/ontem)" },
+  { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?|passad[ao])\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
+  { re: /\b(confirmad[oa]|confirmei|confirmou|agendad[oa]|agendei|agendou|marcad[oa]|marquei|marcou|reservad[oa]|reservei|reservou|desmarc\w+|cancel\w+|remarc\w+)\b/i, label: "linguagem de confirmação/agendamento (agendou/marcou/confirmou/cancelou)" },
+  { re: /\bagendamento(s)?\b/i, label: "menção a agendamento específico" },
+  { re: /\b(hor[áa]rio\s+(marcado|reservado|confirmado|agendado))\b/i, label: "horário marcado/reservado" },
 ];
 
 function findForbiddenSummaryContent(resumo: string): { re: RegExp; label: string } | null {
@@ -4588,18 +4591,24 @@ async function callAIAgent(
               "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
               "Responda APENAS JSON válido (sem markdown) no formato " +
               "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
-              "REGRA PRINCIPAL: seja GENEROSO ao atualizar. should_update=true sempre que houver QUALQUER fato útil e DURÁVEL sobre o cliente, mesmo que pequeno:\n" +
-              "- Nome do cliente (quando descoberto)\n" +
-              "- Tipo de serviço que costuma pedir/perguntar (ex: 'costuma fazer corte e barba') — SEM data nem horário\n" +
-              "- Profissional citado/preferido\n" +
-              "- Janela de horário típica (ex: 'prefere manhãs', 'costuma vir aos sábados') — período GENÉRICO, nunca dia/hora específicos\n" +
+              "REGRA PRINCIPAL: o resumo é ESTRITAMENTE um PERFIL DURÁVEL do cliente. Contém APENAS:\n" +
+              "- Nome do cliente\n" +
+              "- Serviço(s) que costuma pedir (ex: 'costuma fazer corte e barba') — nunca associado a data/hora\n" +
+              "- Profissional preferido (só o nome, sem dia/hora)\n" +
+              "- Janela de horário TÍPICA e GENÉRICA (ex: 'prefere manhãs', 'costuma vir aos sábados') — nunca dia/hora específicos\n" +
               "- Plano, clube, assinatura, pacote\n" +
-              "- Restrição, alergia, observação útil\n\n" +
-              "🚫 NUNCA inclua no summary: datas específicas (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'sexta que vem'), horários específicos (15h, 15:00), ou linguagem de confirmação de uma ação concreta ('confirmado', 'agendado para', 'marcado para'). " +
-              "Esse tipo de dado muda a cada atendimento e pertence ao sistema de agendamento, não ao perfil do cliente — incluí-lo aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo). " +
-              "Se a única coisa relevante da interação for algo com data/hora (ex: 'agendou corte pra amanhã às 15h'), extraia só a parte durável (ex: 'gosta de corte') e ignore a parte temporal — ou responda should_update=false se não sobrar nada durável.\n\n" +
+              "- Restrição, alergia, observação útil (ex: 'alérgico a X', 'cabelo cacheado')\n\n" +
+              "🚫 PROIBIDO no summary (nunca inclua, mesmo que apareça no histórico):\n" +
+              "- Agendamentos específicos (passados, presentes ou futuros)\n" +
+              "- Datas de qualquer formato (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'ontem', 'sexta que vem')\n" +
+              "- Horários específicos (15h, 15:00, 15h30, 'às 10')\n" +
+              "- Qualquer verbo de ação de agendamento: agendou, marcou, confirmou, reservou, cancelou, desmarcou, remarcou\n" +
+              "- A palavra 'agendamento' em si\n" +
+              "- Status de confirmação de qualquer atendimento concreto\n\n" +
+              "Motivo: esses dados mudam a cada atendimento e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA.\n\n" +
+              "Se a única coisa relevante da interação for algo com data/hora ou agendamento (ex: 'agendou corte pra amanhã às 15h com Vinícius'), extraia SÓ a parte durável (ex: 'gosta de corte, prefere o Vinícius') e descarte a parte temporal/transacional. Se não sobrar nada durável, responda should_update=false.\n\n" +
               "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
-              "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.",
+              "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil. Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.",
           },
           {
             role: "user",
