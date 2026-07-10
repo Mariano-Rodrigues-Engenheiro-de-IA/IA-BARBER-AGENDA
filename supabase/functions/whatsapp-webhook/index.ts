@@ -2970,6 +2970,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       frizzarListedByProfessional: Array.isArray((state as any).frizzarListedByProfessional)
         ? (state as any).frizzarListedByProfessional.slice(-30)
         : [],
+      recentActiveBookingsLookup: (state as any).recentActiveBookingsLookup ?? null,
     };
 
     await supabase
