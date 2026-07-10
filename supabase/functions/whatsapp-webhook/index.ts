@@ -10713,7 +10713,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             // NÃO assuma parsed[0] (geralmente é o próximo dia disponível) — devolva vazio.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato && args.profissionalId) {
-              frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: args.data, listedAt: Date.now() });
+              frizzarSetLastListed(sessionState, args.profissionalId, args.data);
             }
             return {
               data: args.data,
