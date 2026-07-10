@@ -73,7 +73,38 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { tenant_id, limit = 200, force = false, dry_run = false } = await req.json().catch(() => ({}));
+    // ===== Auth guard: CRON_SECRET header, service-role bearer, or admin JWT =====
+    const cronSecret = Deno.env.get("CRON_SECRET");
+    const providedSecret = req.headers.get("x-cron-secret") || req.headers.get("x-webhook-secret");
+    const authHeader = req.headers.get("Authorization") || "";
+    const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    const secretOk = !!(cronSecret && providedSecret && providedSecret === cronSecret);
+    const serviceOk = !!(bearer && bearer === SERVICE_ROLE);
+    let adminOk = false;
+    if (!secretOk && !serviceOk && bearer) {
+      const anonClient = createClient(
+        SUPABASE_URL,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      const { data: { user } } = await anonClient.auth.getUser();
+      if (user) {
+        const { data: isAdmin } = await supabase.rpc("has_role", { _user_id: user.id, _role: "admin" });
+        adminOk = !!isAdmin;
+      }
+    }
+    if (!secretOk && !serviceOk && !adminOk) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const raw = await req.json().catch(() => ({}));
+    const { tenant_id, force = false, dry_run = false } = raw;
+    // Clamp limit to prevent runaway OpenAI spend per call
+    const rawLimit = Number(raw.limit ?? 200);
+    const limit = Math.max(1, Math.min(500, Number.isFinite(rawLimit) ? rawLimit : 200));
+
 
     // Pick candidate phone+tenant pairs from chat_messages (recent activity first)
     let q = supabase
