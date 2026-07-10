@@ -2863,6 +2863,9 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
       // Frizzar service-catalog (mesma ideia da Trinks — bloqueia servicoId alucinado)
       ...(Array.isArray(s.frizzarServiceCatalog) ? { frizzarServiceCatalog: s.frizzarServiceCatalog } : { frizzarServiceCatalog: [] }),
+      // Bemp / AppBarber service catalogs (bloqueio de service_code alucinado)
+      ...(Array.isArray(s.bempServiceCatalog) ? { bempServiceCatalog: s.bempServiceCatalog } : { bempServiceCatalog: [] }),
+      ...(Array.isArray(s.appbarberServiceCatalog) ? { appbarberServiceCatalog: s.appbarberServiceCatalog } : { appbarberServiceCatalog: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
