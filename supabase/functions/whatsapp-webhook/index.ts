@@ -11931,6 +11931,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
+        // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
+        {
+          const abCat = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string }>;
+          const sc = Number(args.service_code);
+          if (abCat.length > 0 && sc > 0 && !abCat.some((s) => s.service_code === sc)) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_code=${sc} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
+            return {
+              error: `service_code ${sc} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
+              blocked: true,
+              validServiceCodes: abCat.map((s) => s.service_code),
+            };
+          }
+        }
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
         const startDateTime = normalizeAppBarberStartDateTime(args.start_date, args.start_time);
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
