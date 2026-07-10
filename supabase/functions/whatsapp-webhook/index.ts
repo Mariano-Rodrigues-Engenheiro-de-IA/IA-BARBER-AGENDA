@@ -11565,7 +11565,7 @@ function buildAppBarberTools(tenant: any) {
   ];
 }
 
-async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
