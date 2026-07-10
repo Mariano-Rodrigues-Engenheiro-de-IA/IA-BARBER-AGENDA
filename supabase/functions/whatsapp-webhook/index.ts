@@ -10814,6 +10814,15 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
     return tel;
   };
 
+  // Mensagem padrão de instabilidade transitória (mesmo tom do buscar_cliente).
+  // Aplicada em cadastrar_cliente / buscar_agendamentos / listar_horarios_geral
+  // para não vazar "instabilidade" pro cliente e não deixar a IA improvisar.
+  const transientErrorPayload = (context: string, status: number) => ({
+    error: `Falha transitória ao ${context}. NÃO mencione erro, sistema, instabilidade ou tente de novo ao cliente. Chame a ferramenta de escalar humano se existir; caso contrário responda APENAS: 'Só um instante, vou avisar o responsável pra te atender por aqui 🙏' e não prossiga com o fluxo.`,
+    upstreamStatus: status,
+    retryable: true,
+  });
+
   try {
     switch (funcName) {
       case "buscar_cliente": {
@@ -10827,13 +10836,18 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           return { notFound: true, message: "Cliente não encontrado. Use cadastrar_cliente." };
         }
         if (transientStatuses.has(res.status)) {
-          return {
-            error: "Falha transitória ao consultar o cliente. NÃO mencione erro, sistema, instabilidade ou tente de novo ao cliente. Chame a ferramenta de escalar humano se existir; caso contrário responda APENAS: 'Só um instante, vou avisar o responsável pra te atender por aqui 🙏' e não prossiga com o fluxo.",
-            upstreamStatus: res.status,
-            retryable: true,
-          };
+          return transientErrorPayload("consultar o cliente", res.status);
         }
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        try {
+          const parsed = JSON.parse(text);
+          // Ownership: memoriza o clienteId real do telefone da conversa.
+          const cid = toPositiveInteger(parsed?.codigo);
+          if (cid && sessionState) {
+            (sessionState as any).frizzarClienteId = cid;
+            console.log(`[Frizzar] frizzarClienteId tracked (buscar_cliente)=${cid}`);
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
 
@@ -10852,13 +10866,44 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         });
         const text = await res.text();
         console.log(`[Frizzar] cadastrar_cliente response (${res.status}):`, text.slice(0, 400));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        if (transientStatuses.has(res.status)) {
+          return transientErrorPayload("cadastrar o cliente", res.status);
+        }
+        try {
+          const parsed = JSON.parse(text);
+          const cid = toPositiveInteger(parsed?.codigo);
+          if (cid && sessionState) {
+            (sessionState as any).frizzarClienteId = cid;
+            console.log(`[Frizzar] frizzarClienteId tracked (cadastrar_cliente)=${cid}`);
+          }
+          return parsed;
+        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
       case "buscar_agendamentos": {
+        // 🛡️ Ownership: se já conhecemos o clienteId real desta conversa (via
+        // buscar_cliente/cadastrar_cliente), não deixa a IA consultar agendamentos
+        // de outro clienteId. Mesmo risco de vazamento cruzado que já corrigimos
+        // no buscar_agendamento da Trinks.
+        {
+          const ownerCid = toPositiveInteger((sessionState as any)?.frizzarClienteId);
+          const reqCid = toPositiveInteger(args.clienteId);
+          if (ownerCid && reqCid && ownerCid !== reqCid) {
+            console.warn(`[Frizzar] buscar_agendamentos BLOCKED: clienteId=${reqCid} não pertence a esta conversa (real=${ownerCid})`);
+            return {
+              error: `clienteId ${reqCid} não pertence ao cliente desta conversa. Use clienteId=${ownerCid} (o retornado por buscar_cliente/cadastrar_cliente neste atendimento).`,
+              blocked: true,
+              ownership_mismatch: true,
+              clienteIdEsperado: ownerCid,
+            };
+          }
+        }
         const res = await frizzarFetch(`/buscar/agendamentos/${args.clienteId}`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] buscar_agendamentos response (${res.status}):`, text.slice(0, 400));
+        if (transientStatuses.has(res.status)) {
+          return transientErrorPayload("consultar seus agendamentos", res.status);
+        }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
@@ -10884,6 +10929,16 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         console.log(`[Frizzar] listar_profissionais response (${res.status}):`, text.slice(0, 600));
         let parsed: any;
         try { parsed = JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        // Rastreia profissionais válidos (bloqueia profissionalId alucinado em agendar).
+        if (Array.isArray(parsed) && sessionState) {
+          const ids = parsed
+            .map((p: any) => toPositiveInteger(p?.codigo))
+            .filter((n: any): n is number => typeof n === "number");
+          const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
+          for (const id of ids) existing.add(id);
+          (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+          console.log(`[Frizzar] frizzarValidProfessionalIds += [${ids.join(",")}] (total=${(sessionState as any).frizzarValidProfessionalIds.length})`);
+        }
         // A API filtra por disponibilidade nas próximas horas — fora do expediente retorna [].
         // Quando vazio, oriente a IA a perguntar uma data específica e seguir para listar_horarios.
         if (Array.isArray(parsed) && parsed.length === 0) {
