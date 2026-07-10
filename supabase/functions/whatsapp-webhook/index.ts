@@ -7375,9 +7375,9 @@ async function executeToolForProvider(
     case "frizzar":
       return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
-      return executeBempTool(tenant, toolCall, phoneNumber);
+      return executeBempTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "appbarber":
-      return executeAppBarberTool(tenant, toolCall, phoneNumber);
+      return executeAppBarberTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
