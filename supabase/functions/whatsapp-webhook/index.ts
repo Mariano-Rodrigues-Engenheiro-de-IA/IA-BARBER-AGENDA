@@ -9732,7 +9732,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
 // ===================== ONE BELEZA TOOL EXECUTION =====================
 
-async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
