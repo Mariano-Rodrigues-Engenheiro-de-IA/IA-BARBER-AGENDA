@@ -11892,9 +11892,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
-        const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[AppBarber] criar_agendamento (${res.status}):`, text.slice(0, 600));
+        // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
+        let res: Response;
+        let text = "";
+        {
+          let attempt = 0;
+          const maxAttempts = 3;
+          while (true) {
+            attempt++;
+            res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+            text = await res.text();
+            console.log(`[AppBarber] criar_agendamento (${res.status}, attempt ${attempt}):`, text.slice(0, 600));
+            if (res.status !== 429 || attempt >= maxAttempts) break;
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+          }
+        }
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
           const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
