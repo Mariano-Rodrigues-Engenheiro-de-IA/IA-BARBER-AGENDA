@@ -6601,12 +6601,13 @@ async function callAIAgent(
   // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  // ⚠️ ESCOPO: apenas Trinks e AppBarber — únicos providers onde já vimos
-  // alucinação real de "agendei" sem tool_call (Trinks: cliente pediu 2º
-  // horário; AppBarber: pediu nome já cadastrado). Nos outros (OneBeleza,
-  // Frizzar, Bemp) esse guard estava só adicionando risco de falso positivo
-  // sem cobrir bug observado. Ampliar só com bug reproduzido em log.
-  const _phantomGuardProviders = new Set(["trinks", "appbarber"]);
+  // ⚠️ ESCOPO: Trinks, AppBarber e Bemp. Bemp foi devolvida ao guard porque
+  // historicamente foi ONDE este guard surgiu (casos Leonardo/avô e Vinícius 15h)
+  // — a exclusão anterior foi efeito colateral de um refino de escopo do
+  // MultiBookingGuard, não decisão fundamentada. OneBeleza e Frizzar seguem
+  // fora porque nunca reproduziram alucinação de "agendei" sem tool_call.
+  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp"]);
+
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
     const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
     const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
@@ -6698,16 +6699,18 @@ async function callAIAgent(
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
   //
-  // ⚠️ ESCOPO: APENAS FRIZZAR.
-  // Motivo real: o bug de "prometeu N, criou <N e disse tá tudo certo" só se
-  // manifesta no Frizzar, porque lá cada `agendar` aceita um combo (array de
-  // serviços) e é fácil a IA dividir errado. Nos outros 4 providers (Trinks,
-  // OneBeleza, Bemp, AppBarber) cada agendamento é 1 chamada 1 pessoa 1 horário
-  // — o classificador acabava inflando "prometidos" e disparando recuperação
-  // desnecessária (caso Bemp/Dom Castro 10/07). Não recriar pros outros sem
-  // confirmação explícita do dono do projeto.
-  // ============================================================================
-  if (_bookingAttempts > 0 && provider === "frizzar") {
+  // ⚠️ ESCOPO: Frizzar e Bemp.
+  // Frizzar: cada `agendar` aceita combo (array de serviços) — fácil a IA
+  // dividir errado; guard já provado necessário.
+  // Bemp: retorno da API traz `service_name`/`agendamentos` variável — mesma
+  // classe de bug de contagem, e foi ONDE apareceram vários bugs reais hoje
+  // (Cabelo+Barba contando 2, Vinícius 15h). O clamp de bookedServiceNames vs
+  // agendamentos.length já protege contra o falso positivo do caso Dom Castro
+  // (10/07) que motivou a restrição anterior. Trinks/OneBeleza/AppBarber
+  // seguem fora porque lá 1 chamada = 1 pessoa/1 horário estritamente.
+  const _multiBookingGuardProviders = new Set(["frizzar", "bemp"]);
+  if (_bookingAttempts > 0 && _multiBookingGuardProviders.has(provider)) {
+
     const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
@@ -6919,30 +6922,128 @@ async function callAIAgent(
   // ============================================================================
 
   // ============================================================================
-  // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando cancelar_agendamento
-  // falhou nesta rodada. Mesmo princípio do BookingGuard/MultiBookingGuard, só que
-  // pro lado do cancelamento (nunca existia proteção equivalente aqui).
+  // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando a ferramenta de
+  // cancelamento falhou nesta rodada. Cobre `cancelar_agendamento` (Trinks,
+  // Frizzar, Bemp, AppBarber) E `desmarcar_agendamento` (OneBeleza) — sem o
+  // segundo nome, cancelamento da OneBeleza ficava sem guard e a IA podia
+  // afirmar cancelamento falso.
   // ============================================================================
+  const CANCEL_TOOL_NAMES = new Set(["cancelar_agendamento", "desmarcar_agendamento"]);
   if (finalResponse && !guardOverrideResponse) {
-    const cancelAttempted = (logToolCalls || []).some((tc) => tc?.name === "cancelar_agendamento");
+    const cancelAttempted = (logToolCalls || []).some((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
     if (cancelAttempted) {
       const cancelSucceeded = (logToolCalls || []).some((tc) => {
-        if (tc?.name !== "cancelar_agendamento") return false;
+        if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
         const r: any = tc.result || {};
         return !r.error && r.blocked !== true;
       });
       const claimsCancelled = /cancel(ei|ado|ada|amos)|desmarqu(ei|ei|amos)|j[aá]\s+(cancel|desmarqu)/i.test(finalResponse);
       if (!cancelSucceeded && claimsCancelled) {
-        console.warn(`[CancelGuard] cancelar_agendamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
+        console.warn(`[CancelGuard] tool de cancelamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
         logErrors.push({ message: `Cancelamento não confirmado pela ferramenta, mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
         finalResponse = "Tive uma instabilidade aqui pra confirmar seu cancelamento. Já acionei o responsável pra garantir isso pra você — só um momento 🙏";
         guardOverrideResponse = true;
       }
     }
   }
+
   // ============================================================================
   // FIM CANCEL GUARD
   // ============================================================================
+
+  // ============================================================================
+  // 🛡️ RESCHEDULE GUARD — cenário "cancelou o antigo, novo falhou"
+  // Se no mesmo turno a IA CANCELOU com sucesso E tentou criar/agendar mas
+  // FALHOU, o cliente fica sem agendamento. Aqui a gente injeta 1 rodada extra
+  // forçando a IA a recriar usando os dados que já estão no contexto
+  // (chat_messages + sessionState). Sem escalar humano, sem pedir dado ao
+  // cliente. Se ainda assim falhar, envia mensagem determinística avisando
+  // que vai continuar tentando por aqui (o item de rollback via `editar_agendamento`
+  // atômico só existe hoje na Trinks — cobrir os outros 4 fica pra P2).
+  // ============================================================================
+  if (finalResponse && !guardOverrideResponse) {
+    const cancelOk = (logToolCalls || []).some((tc) => {
+      if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !r.error && r.blocked !== true;
+    });
+    const bookingFailed = (logToolCalls || []).some((tc) => {
+      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !!r.error || r.blocked === true || r.success === false;
+    });
+    const bookingOk = (logToolCalls || []).some((tc) => {
+      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      if (r.error || r.blocked === true) return false;
+      if (r.success === false) return false;
+      return true;
+    });
+    if (cancelOk && bookingFailed && !bookingOk) {
+      console.warn(`[RescheduleGuard] cancel OK + criar FAIL no mesmo turno para ${phoneNumber}. Tentando recuperação.`);
+      logErrors.push({ message: `Remarcação incompleta detectada (cancelou o antigo, novo falhou) — tentando reinjeção sem pedir dados ao cliente.`, level: "warning" });
+      let recovered = false;
+      try {
+        const nudge = {
+          role: "system",
+          content:
+            "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você cancelou o agendamento antigo com sucesso, mas a criação do novo falhou. O cliente NÃO PODE ficar sem agendamento. " +
+            "Use os dados que já estão no histórico (serviço, profissional, data, hora — tanto do antigo quanto do que o cliente pediu agora) e chame a ferramenta de agendar/criar_agendamento AGORA. " +
+            "Se o erro anterior foi de horário indisponível, tente o horário original do agendamento cancelado como fallback. " +
+            "PROIBIDO: pedir dados ao cliente, escalar pra humano, ou dizer que vai chamar alguém. Você resolve aqui.",
+        };
+        messages.push(nudge);
+        const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
+        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "reschedule-guard-reinject");
+        if (retryResp.ok) {
+          const retryJson = await retryResp.json();
+          const retryMsg = retryJson?.choices?.[0]?.message;
+          const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+          if (retryToolCalls.length > 0) {
+            messages.push(retryMsg);
+            let anyBookingSucceeded = false;
+            for (const tc of retryToolCalls) {
+              let tResult: any;
+              try {
+                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+              } catch (e) {
+                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+              }
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              const toolName = tc?.function?.name;
+              logToolCalls.push({ name: toolName, args: parseToolArguments(tc.function?.arguments), result: tResult });
+              if (BOOKING_TOOL_NAMES.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
+                anyBookingSucceeded = true;
+              }
+            }
+            if (anyBookingSucceeded) {
+              const det = buildDeterministicBookingConfirmation(logToolCalls);
+              if (det) {
+                finalResponse = det;
+                guardOverrideResponse = true;
+                recovered = true;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[RescheduleGuard] reinject exception: ${(e as Error)?.message}`);
+      }
+      if (!recovered) {
+        finalResponse = "Peraí, tive um problema técnico ao remarcar seu horário agora. Vou refazer aqui e já te confirmo em instantes 🙏";
+        guardOverrideResponse = true;
+      }
+    }
+  }
+  // ============================================================================
+  // FIM RESCHEDULE GUARD
+  // ============================================================================
+
+
 
 
 
@@ -7235,7 +7336,7 @@ async function executeToolForProvider(
     case "trinks":
       return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "onebeleza":
-      return executeOneBelezaTool(tenant, toolCall, phoneNumber);
+      return executeOneBelezaTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "frizzar":
       return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
@@ -9631,7 +9732,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
 
 // ===================== ONE BELEZA TOOL EXECUTION =====================
 
-async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -10044,6 +10145,22 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "desmarcar_agendamento": {
+        // 🛡️ Ownership check — bloqueia desmarcar de ID que não está na lista
+        // filtrada por telefone (validAgendasIds populada por buscar_agendamentos_dia,
+        // linha ~6112). Evita cancelar agendamento de outro cliente por ID alucinado.
+        const validIds: number[] = Array.isArray((sessionState as any)?.validAgendasIds)
+          ? (sessionState as any).validAgendasIds
+          : [];
+        const requestedId = Number(args.agendasId);
+        if (validIds.length > 0 && !validIds.includes(requestedId)) {
+          console.warn(`[OneBeleza] desmarcar_agendamento ownership_mismatch: id=${requestedId} não está em validAgendasIds=[${validIds.join(",")}]`);
+          return {
+            blocked: true,
+            reason: "ownership_mismatch",
+            message: `Esse agendamento não pertence a este cliente. Chame buscar_agendamentos_dia primeiro para pegar o ID correto.`,
+            validIds,
+          };
+        }
         const url = `${baseUrl}/api/Agendamento/DesmarcarAgendamento?celular=${celular}&agendasId=${args.agendasId}`;
         console.log(`[OneBeleza] desmarcar_agendamento URL: ${url}`);
         const res = await fetchOneBelezaWithRetry(url, {
@@ -10057,6 +10174,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
+
 
       default:
         return { error: `Unknown OneBeleza tool: ${funcName}` };
