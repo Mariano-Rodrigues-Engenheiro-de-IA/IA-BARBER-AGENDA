@@ -6684,12 +6684,13 @@ async function callAIAgent(
   // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  // ⚠️ ESCOPO: Trinks, AppBarber e Bemp. Bemp foi devolvida ao guard porque
-  // historicamente foi ONDE este guard surgiu (casos Leonardo/avô e Vinícius 15h)
-  // — a exclusão anterior foi efeito colateral de um refino de escopo do
-  // MultiBookingGuard, não decisão fundamentada. OneBeleza e Frizzar seguem
-  // fora porque nunca reproduziram alucinação de "agendei" sem tool_call.
-  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp"]);
+  // ⚠️ ESCOPO: os 5 providers (trinks, appbarber, bemp, onebeleza, frizzar).
+  // A restrição anterior a 3 providers era só reflexo de onde bugs foram
+  // observados; não há particularidade que justifique deixar OneBeleza/Frizzar
+  // fora — o guard só dispara quando NÃO houve tool_call de agendar/criar_agendamento
+  // no turno E não há sucesso recente no ledger da sessão, então não gera
+  // falso positivo em fluxos legítimos desses providers.
+  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
 
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
     const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
@@ -6782,16 +6783,15 @@ async function callAIAgent(
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
   //
-  // ⚠️ ESCOPO: Frizzar e Bemp.
-  // Frizzar: cada `agendar` aceita combo (array de serviços) — fácil a IA
-  // dividir errado; guard já provado necessário.
-  // Bemp: retorno da API traz `service_name`/`agendamentos` variável — mesma
-  // classe de bug de contagem, e foi ONDE apareceram vários bugs reais hoje
-  // (Cabelo+Barba contando 2, Vinícius 15h). O clamp de bookedServiceNames vs
-  // agendamentos.length já protege contra o falso positivo do caso Dom Castro
-  // (10/07) que motivou a restrição anterior. Trinks/OneBeleza/AppBarber
-  // seguem fora porque lá 1 chamada = 1 pessoa/1 horário estritamente.
-  const _multiBookingGuardProviders = new Set(["frizzar", "bemp"]);
+  // ⚠️ ESCOPO: os 5 providers (frizzar, bemp, trinks, onebeleza, appbarber).
+  // countSuccessfulBookingsInTurn já conta corretamente 1 por chamada nos
+  // providers "1 chamada = 1 pessoa" (Trinks/OneBeleza/AppBarber), e o clamp
+  // de bookedServiceNames vs agendamentos.length + o classifier clamp já
+  // previnem o falso positivo do caso Dom Castro que motivou a restrição
+  // anterior. Sem particularidade que justifique deixar qualquer provider
+  // fora — o cenário "cliente pediu N, IA criou <N mas confirma tudo" é
+  // exatamente o risco cotidiano que este guard existe pra cobrir.
+  const _multiBookingGuardProviders = new Set(["frizzar", "bemp", "trinks", "onebeleza", "appbarber"]);
   if (_bookingAttempts > 0 && _multiBookingGuardProviders.has(provider)) {
 
     const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
