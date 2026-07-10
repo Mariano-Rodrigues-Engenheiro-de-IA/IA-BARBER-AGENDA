@@ -1075,7 +1075,8 @@ async function fetchOneBelezaWithRetry(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const res = await fetch(url, options);
-      if (res.status >= 500 && res.status < 600) {
+      // 429 (rate-limit) e 5xx são transitórios — mesmo backoff que já existia para 5xx.
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
         console.log(`[OneBeleza] HTTP ${res.status} on ${url}, retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
         if (attempt < maxRetries - 1) {
           await new Promise((r) => setTimeout(r, retryDelayMs));
