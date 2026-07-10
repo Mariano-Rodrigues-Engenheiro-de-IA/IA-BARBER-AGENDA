@@ -4347,6 +4347,9 @@ function parseSmallPtNumber(value: string): number | null {
   return map[v] ?? null;
 }
 
+// ⚠️ FRIZZAR-ONLY: chamada só via classifyPendingBookings / heuristicPromisedFromWindow,
+// que hoje só rodam dentro do MultiBookingGuard (gated em provider === "frizzar").
+// Se um dia religar o guard noutro provider, revisar as regras abaixo antes.
 function countExplicitProfessionalSelections(text: string): number {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
   if (!normalized) return 0;
