@@ -3192,13 +3192,13 @@ function buildDedupeKey(toolName: string, args: any): string {
 function buildActionSummary(toolName: string, args: any, result: any): string {
   try {
     if (toolName === "agendar" || toolName === "criar_agendamento") {
-      const date = args?.dia || args?.data || args?.date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "");
-      const time = args?.hora || args?.horario || args?.time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "");
-      const prof = args?.profissionalId || args?.professionalId || args?.barberId || "";
-      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || "?"}`;
+      const date = args?.dia || args?.data || args?.date || args?.dataNumero || args?.start_date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "") || (typeof args?.start === "string" ? args.start.slice(0, 10) : "");
+      const time = args?.hora || args?.horario || args?.time || args?.horarioInicio || args?.start_time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "") || (typeof args?.start === "string" && args.start.length >= 16 ? args.start.slice(11, 16) : "");
+      const prof = args?.profissionalId || args?.professionalId || args?.barberId || args?.professional_code || args?.employee_code || "";
+      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || result?.invoice_code || "?"}`;
     }
     if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento") {
-      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || "?"}`;
+      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || args?.invoice_code || "?"}`;
     }
     if (toolName === "confirmar_agendamento") {
       return `confirmação concluída id=${args?.agendamentoId || args?.id || "?"}`;
