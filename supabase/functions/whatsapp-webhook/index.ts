@@ -12075,9 +12075,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           const url = buildUrl(`/v1/invoice/item/${encodeURIComponent(String(args.invoice_item_code))}`, {});
           const body = { establishment_code: estCode, reason };
           console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
-          const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
-          const text = await res.text();
-          console.log(`[AppBarber] remover_item_comanda (${res.status}):`, text.slice(0, 600));
+          // Retry 429 (2 tentativas extras, backoff 800/1600ms).
+          let res: Response; let text = "";
+          {
+            let attempt = 0; const maxAttempts = 3;
+            while (true) {
+              attempt++;
+              res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+              text = await res.text();
+              console.log(`[AppBarber] remover_item_comanda (${res.status}, attempt ${attempt}):`, text.slice(0, 600));
+              if (res.status !== 429 || attempt >= maxAttempts) break;
+              await new Promise((r) => setTimeout(r, 800 * attempt));
+            }
+          }
           let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
           if (res.ok) {
             return {
