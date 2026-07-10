@@ -7336,7 +7336,7 @@ async function executeToolForProvider(
     case "trinks":
       return executeTrinksTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "onebeleza":
-      return executeOneBelezaTool(tenant, toolCall, phoneNumber);
+      return executeOneBelezaTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "frizzar":
       return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
