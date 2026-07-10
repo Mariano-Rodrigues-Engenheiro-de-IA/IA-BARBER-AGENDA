@@ -3145,28 +3145,30 @@ function buildDedupeKey(toolName: string, args: any): string {
 
   if (toolName === "agendar" || toolName === "criar_agendamento") {
     const serviceIds: string[] = [];
-    const candidates = [args.serviceId, args.servicoId, args.servicosId, args.servicoid];
+    // Cobre todas as variantes por provider: trinks (servicoId), onebeleza
+    // (servicoid), frizzar (serviceId), appbarber (service_code), bemp (servicos[])
+    const candidates = [args.serviceId, args.servicoId, args.servicosId, args.servicoid, args.service_code, args.serviceCode];
     for (const c of candidates) if (c) serviceIds.push(String(c));
     if (Array.isArray(args.servicos)) {
       for (const s of args.servicos) {
-        const sid = s?.codigo ?? s?.servicoId ?? s?.servicosId ?? s?.id;
+        const sid = s?.codigo ?? s?.servicoId ?? s?.servicosId ?? s?.id ?? s?.service_code;
         if (sid) serviceIds.push(String(sid));
       }
     }
     const dt = pick("dataHoraInicio", "start");
-    const date = pick("dia", "data", "date") || (dt ? dt.slice(0, 10) : "");
-    const time = pick("hora", "horario", "time") || (dt.length >= 16 ? dt.slice(11, 16) : "");
-    const prof = pick("profissionalId", "professionalId", "barberId");
-    const clientHint = pick("clienteId", "clientId", "nome", "name");
+    const date = pick("dia", "data", "date", "dataNumero", "start_date") || (dt ? dt.slice(0, 10) : "");
+    const time = pick("hora", "horario", "time", "horarioInicio", "start_time") || (dt.length >= 16 ? dt.slice(11, 16) : "");
+    const prof = pick("profissionalId", "professionalId", "barberId", "professional_code", "employee_code");
+    const clientHint = pick("clienteId", "clientId", "nome", "name", "customer_name", "customer_phone");
     return `${toolName}|${serviceIds.sort().join(",")}|${date}|${time}|${prof}|${clientHint}`;
   }
 
   if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento" || toolName === "confirmar_agendamento") {
-    return `${toolName}|${pick("agendamentoId", "appointmentId", "id", "agendasId")}`;
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id", "agendasId", "invoice_code", "invoice_item_code")}`;
   }
 
   if (toolName === "editar_agendamento") {
-    return `${toolName}|${pick("agendamentoId", "appointmentId", "id")}|${pick("dataHoraInicio", "start", "data")}|${pick("hora", "time")}`;
+    return `${toolName}|${pick("agendamentoId", "appointmentId", "id", "invoice_code")}|${pick("dataHoraInicio", "start", "data", "start_date")}|${pick("hora", "time", "start_time")}`;
   }
 
   if (toolName === "cadastrar_cliente") {
@@ -3190,13 +3192,13 @@ function buildDedupeKey(toolName: string, args: any): string {
 function buildActionSummary(toolName: string, args: any, result: any): string {
   try {
     if (toolName === "agendar" || toolName === "criar_agendamento") {
-      const date = args?.dia || args?.data || args?.date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "");
-      const time = args?.hora || args?.horario || args?.time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "");
-      const prof = args?.profissionalId || args?.professionalId || args?.barberId || "";
-      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || "?"}`;
+      const date = args?.dia || args?.data || args?.date || args?.dataNumero || args?.start_date || (typeof args?.dataHoraInicio === "string" ? args.dataHoraInicio.slice(0, 10) : "") || (typeof args?.start === "string" ? args.start.slice(0, 10) : "");
+      const time = args?.hora || args?.horario || args?.time || args?.horarioInicio || args?.start_time || (typeof args?.dataHoraInicio === "string" && args.dataHoraInicio.length >= 16 ? args.dataHoraInicio.slice(11, 16) : "") || (typeof args?.start === "string" && args.start.length >= 16 ? args.start.slice(11, 16) : "");
+      const prof = args?.profissionalId || args?.professionalId || args?.barberId || args?.professional_code || args?.employee_code || "";
+      return `agendamento concluído (data=${date || "?"} hora=${time || "?"} prof=${prof || "?"}) id=${result?.id || result?.agendamentoId || result?.invoice_code || "?"}`;
     }
     if (toolName === "cancelar_agendamento" || toolName === "desmarcar_agendamento") {
-      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || "?"}`;
+      return `cancelamento concluído id=${args?.agendamentoId || args?.id || args?.agendasId || args?.invoice_code || "?"}`;
     }
     if (toolName === "confirmar_agendamento") {
       return `confirmação concluída id=${args?.agendamentoId || args?.id || "?"}`;
