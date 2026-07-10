@@ -11013,9 +11013,19 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
   };
   const phone = splitPhone(phoneNumber || "");
 
+  // Retry em 429 e 5xx transitórios (mesma abordagem de Frizzar/OneBeleza).
+  const bempTransientStatuses = new Set([429, 502, 503, 504]);
   const bempFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    console.log(`[Bemp] -> ${init?.method || "GET"} ${url}`);
-    return await fetch(url, init);
+    let lastRes: Response | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      console.log(`[Bemp] -> ${init?.method || "GET"} ${url} (tentativa ${attempt}/3)`);
+      const res = await fetch(url, init);
+      if (!bempTransientStatuses.has(res.status)) return res;
+      console.warn(`[Bemp] status transitório ${res.status} em ${url} — backoff`);
+      lastRes = res;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+    return lastRes!;
   };
 
   let cachedSalons: any[] | null = null;
