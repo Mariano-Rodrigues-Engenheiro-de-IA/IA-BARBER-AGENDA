@@ -11023,7 +11023,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
 
         // Helper: busca horários livres do profissional naquele dia (valida/devolve opções).
-        const fetchHorariosLivres = async (): Promise<{ checked: boolean; horariosLivres: string[]; outrosDias: Array<{ dia: string; horariosLivres: string[] }> }> => {
+        const fetchHorariosLivres = async (): Promise<{ checked: boolean; horariosLivres: string[]; outrosDias: Array<{ dia: string; horariosLivres: string[] }>; reason?: "technical_failure" }> => {
           try {
             const hRes = await frizzarFetch(`/listar/horarios/${args.profissionalId}/${args.dia}`, {
               method: "POST",
@@ -11046,13 +11046,30 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
                   })),
               };
             }
-          } catch { /* ignore */ }
-          return { checked: false, horariosLivres: [], outrosDias: [] };
+            // Formato inesperado: trata como falha técnica (fail-closed), não como "sem grade".
+            console.warn(`[Frizzar] pré-validação recebeu formato inesperado (não-array); bloqueando por precaução.`);
+            return { checked: false, horariosLivres: [], outrosDias: [], reason: "technical_failure" };
+          } catch (err) {
+            // Cobre tanto instabilidade persistente (frizzarFetch já retentou 3x/backoff/domínio de fallback)
+            // quanto bug de parsing (.map/.filter/JSON estourando por schema diferente). Nos dois casos,
+            // fail-closed com motivo explícito pra IA não seguir cega.
+            console.error(`[Frizzar] pré-validação falhou tecnicamente, bloqueando por precaução:`, err);
+            return { checked: false, horariosLivres: [], outrosDias: [], reason: "technical_failure" };
+          }
         };
 
         // Pré-validação: evita 500 quando o horário não está na grade livre.
         const disponibilidadePre = await fetchHorariosLivres();
         const horariosLivresPre = disponibilidadePre.horariosLivres;
+        if (!disponibilidadePre.checked && disponibilidadePre.reason === "technical_failure") {
+          // Fail-closed: não seguimos pra API de criação sem confirmar a grade,
+          // pra evitar agendar horário inválido (bug real de produção que motivou essa trava).
+          return {
+            error: `Não consegui confirmar a grade de horários livres da Frizzar agora (instabilidade ou resposta inesperada). NÃO agende sem revalidar. Chame listar_horarios do profissional ${args.profissionalId} no dia ${args.dia} de novo antes de tentar; se o horário ${args.hora} ainda aparecer livre, tente agendar mais uma vez.`,
+            dia: args.dia,
+            profissionalId: args.profissionalId,
+          };
+        }
         if (disponibilidadePre.checked && horariosLivresPre.length === 0) {
           return {
             error: `Sem vagas disponíveis em ${args.dia} para este profissional. NÃO peça confirmação e NÃO tente agendar nessa data. Ofereça outro dia ou opções de outrosDias.`,
@@ -11071,6 +11088,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             profissionalId: args.profissionalId,
           };
         }
+
 
         const path = `/agendar/cliente/${args.clienteId}/dia/${args.dia}/hora/${args.hora}/profissional/${args.profissionalId}`;
         console.log(`[Frizzar] agendar body:`, JSON.stringify(body));
