@@ -1,73 +1,88 @@
-## Objetivo
-Impedir que a IA responda "tá tudo certo" quando prometeu N agendamentos (2–3) e executou menos. Escalar humano quando N>3. Constante: `MAX_AUTO_BOOKINGS = 3`.
+# Plano de Correção — Auditoria Cruzada (Claude + Lovable)
 
-## Onde vive tudo
-Dentro de `supabase/functions/whatsapp-webhook/index.ts`, na seção depois do loop de tool-calling e antes do envio via UAZAPI. Reaproveita `BookingGuard`, `recordCompletedAction` e `conversation_state` existentes.
+## 0. Resposta ao ponto que você pediu pra olhar primeiro (Bemp fora dos dois guards)
 
-## Gatilho
-Após o loop de tool-calls do turno, verificar se **houve pelo menos 1 chamada da tool `agendar` OU `criar_agendamento`** nesse turno (independente de sucesso, independente do texto de saída).
-- Se **não** → libera resposta normal, não roda nenhuma das camadas novas.
-- Se **sim** → roda Camada 1 (lazy) + Camada 2 (guard) + Camada 3 (mismatch).
+**Foi efeito colateral, não decisão bem fundamentada.** Confirmo pela leitura do código atual:
 
-## Camada 1 — Classificador de intenção (lazy)
-Nova função `classifyPendingBookings(historyWindow)` inline no arquivo.
-- Input: janela das últimas 6 mensagens (client + assistant, sem tool_calls).
-- LLM: mesmo modelo do agente (`openai/gpt-5-mini`), `temperature: 0`, `response_format: json_object`.
-- Prompt curto em PT-BR: "Quantos agendamentos distintos (por pessoa, serviço ou horário) o cliente confirmou nesta janela? Considere 'sim'/'pode'/'beleza' como aceite da oferta imediatamente anterior da IA. Retorne JSON: `{ total_bookings_requested: number, reasoning: string }`."
-- Persiste `pending_bookings` em `conversation_state` pra não reclassificar no mesmo turno.
-- Timeout curto (5s); se falhar, cai pra fallback determinístico = `max(1, chamadas_de_agendar_no_turno)`.
+- `MultiBookingGuard` (`index.ts:6710`): gated em `provider === "frizzar"`. O comentário no código justifica que "1 chamada = 1 pessoa/horário" nos outros providers, o que é **verdade só pra Camada 2 (contagem prometido vs. criado)** — a Camada 3 (mismatch texto↔execução) e o classificador de intenção (`classifyPendingBookings`) fariam sentido nos outros. Ao restringir o guard inteiro ao Frizzar, perdi as três camadas de uma vez.
+- `PhantomConfirmationGuard` (`index.ts:6609`): gated em `["trinks","appbarber"]`. O comentário diz "sem bug observado nos outros" — mas seu histórico mostra que a Bemp foi **exatamente** onde o Phantom foi criado (caso Leonardo/avô, caso Vinícius 15h). A restrição feita hoje ignorou essa origem.
 
-## Camada 2 — Guard de completude (contagem CORRIGIDA por provider)
+**Resultado real:** Bemp saiu dos dois guards ao mesmo tempo, e é o provider com mais bugs de alucinação confirmados hoje. Isso vira o item #1 do plano.
 
-Função `countSuccessfulBookingsInTurn(toolCalls, provider)` inline, com regras específicas por provider (validadas contra o código real):
+---
 
-| Provider | Tool name | Critério de sucesso | Critério de bloqueio (NÃO contar) |
-|---|---|---|---|
-| **Trinks** | `criar_agendamento` | resposta crua da API (`JSON.parse` do body); assumir sucesso se **não** tem `error`, **não** tem `blocked`, **não** tem `code` de erro | `blocked: true` (inclui caso `id: "duplicate"`), `error` presente, `status >= 400` |
-| **OneBeleza** | `agendar` | `success: true` (SEMPRE presente no sucesso, único critério confiável) | `blocked: true`, `error` presente, `conflict: true`. **NÃO usar `id`** (vem como boolean `true` às vezes) |
-| **Frizzar** | `agendar` | `ok: true` + `agendamentoId` presente. **Contar `agendamentos.length`** (array de bookings criados, 1 por serviço), não 1 por chamada | `error` presente, `ok` ausente |
-| **Bemp** | `agendar` (não `criar_agendamento`) | `ok: true` (do wrap `{ ok: true, ...parsed }`) | `blocked: true`, `error` presente, `subscription_overdue` |
-| **AppBarber** | `criar_agendamento` | `ok: true` + `appointment_id` truthy | `error` presente, `status >= 400`, `recoverable: true` |
+## 1. Achados novos que a Claude não pegou (independentes)
 
-**Regra transversal em todos os providers:** `tc.result.blocked === true` OU `tc.result.error` presente → nunca conta como sucesso.
+- **CancelGuard cego a `desmarcar_agendamento`** (`index.ts:6927`): o guard filtra só `tc.name === "cancelar_agendamento"`. OneBeleza usa `desmarcar_agendamento` como nome canônico da tool (`index.ts:8810`). Se a IA chama e falha, o Cancel**Guard não detecta** — IA pode afirmar cancelamento falso na OneBeleza sem trava alguma. **Crítico**, provider-específico.
+- **`frizzarLastListed` é `Map` module-level** (`index.ts:10272`) — em multi-instância Deno o Map pode estar vazio na instância errada, gerando falso "não listou antes" e bloqueando agendamento legítimo. Alto, específico Frizzar.
+- **`editar_agendamento` só existe em Trinks** — os outros 4 providers fazem cancel+create manualmente, sem trava para o cenário "cancelou o antigo, criar falhou". Crítico compartilhado (bate com o item 2 da sua lista, mas confirma o escopo real).
+- **Retry de 429 só no `cancelar_agendamento` da Trinks** (`index.ts:9527`). `criar_agendamento` da Trinks e todos os outros providers não têm — a IA recebe erro cru e pode tentar de novo (duplicata). Confirma seu item 4.
 
-Comparação:
+Concordo com o resto do seu documento — não achei divergência estrutural.
 
-| Caso | Ação |
-|---|---|
-| `criados >= prometidos` | Libera resposta normal |
-| `criados < prometidos` **e** `prometidos ≤ 3` | Bloqueia resposta, re-injeta 1 turno forçado ("Faltam X agendamentos dos Y prometidos ao cliente. Execute as chamadas restantes agora. NÃO responda ao cliente até completar.") — máximo 1 re-injeção |
-| Re-injeção falhou (ainda faltam) | Envia resposta determinística parcial: "Consegui confirmar [lista dos criados]. Ainda preciso confirmar [lista dos que faltam] — pode me ajudar aí?" |
-| `prometidos > 3` | Bloqueia loop imediatamente (antes até de tentar), envia msg fixa de escalada humana, marca `conversation_pauses` com motivo `multi_booking_overflow` |
+---
 
-Msg fixa de escalada: *"Pra 4 ou mais agendamentos na mesma conversa prefiro te passar pro atendimento humano pra não errar nenhum — só um momento."*
+## 2. Plano priorizado por risco real
 
-## Camada 3 — Mismatch resposta ↔ execução
-Se após Camada 2 ainda tem `criados < prometidos` **e** o texto final da IA contém regex de confirmação total (`/confirm|agendei|marquei|pronto|t[aá]\s+marcado|feito|show|te\s+espero/i`), força o mesmo caminho de bloqueio (resposta determinística parcial). Rede de segurança pro caso de a Camada 1 subestimar.
+### P0 — Correções mínimas de segurança (fazer agora)
 
-## Migration
-Adicionar coluna `pending_bookings jsonb` em `conversation_state` (opcional, default null) — apenas cache pra evitar reclassificar.
+1. **Devolver Bemp aos dois guards** (`index.ts:6609`, `6710`):
+   - Adicionar `"bemp"` a `_phantomGuardProviders`.
+   - Ampliar `MultiBookingGuard` para `["frizzar","bemp"]`, mantendo o clamp do classificador que já protege contra falso positivo de "prometidos" (o clamp de `bookedServiceNames` vs `agendamentos.length` já foi implementado hoje).
+2. **CancelGuard reconhecer `desmarcar_agendamento`** (`index.ts:6927`, `6930`) — mudar o filtro para `["cancelar_agendamento","desmarcar_agendamento"]`. Fecha alucinação de cancelamento na OneBeleza (e cobre o alias da Bemp qualquer que seja a ordem).
+3. **Trava de remarcação sem rollback** — introduzir função `guardReschedule` que, quando detecta no mesmo turno `cancelar_agendamento` OK + `criar_agendamento` (ou `agendar`) FALHA, força re-injeção pedindo à IA recriar o antigo com os dados originais (que estão no `sessionState`/`chat_messages`), sem escalar humano nem pedir dado ao cliente. Roda pros 5 providers. Não é `editar_agendamento` atômico — é rollback conversacional.
 
-## Logs
-Cada acionamento vira uma entrada em `tool_calls` do `agent_logs`:
-```
-{ layer: "multi_booking_guard", provider, prometidos, criados, criados_por_tool: [...], acao: "released"|"reinject"|"partial_fallback"|"human_escalation", classifier_source: "llm"|"fallback" }
-```
+### P1 — Ownership e validação de ID (fazer em seguida)
 
-## Fora de escopo
-- Refactor de providers pra interface comum
-- Extração de helpers pra `_shared/`
-- Camada 1 always-on
-- Mudar modelo de IA
-- Tocar em `src/lib/booking.ts` (frontend, sem relação com o guard)
+4. **Ownership check no cancelamento** para Frizzar, AppBarber e OneBeleza (`index.ts:10679`, `11885`, `10046`): antes de executar, validar que o `agendamentoId` pertence ao telefone ativo (buscar lista do cliente e comparar). Trinks já faz via `trinksListActiveByClienteIds`. Padrão único, isolado por provider.
+5. **Validação de servicoId/profissionalId contra catálogo** — Trinks e Frizzar já persistem catálogo em `sessionState`; falta adicionar guard de pré-execução em `criar_agendamento`/`agendar` bloqueando IDs fora do catálogo com mensagem devolvida à IA ("servicoId X não está no catálogo, use um destes: [...]"). Estender persistência do catálogo para OneBeleza, Bemp e AppBarber.
 
-## Ordem de implementação
-1. Migration `pending_bookings` em `conversation_state`
-2. `countSuccessfulBookingsInTurn` com a tabela por provider acima
-3. `classifyPendingBookings` (lazy, gatilho = houve chamada de agendar/criar_agendamento no turno)
-4. Guard + re-injeção + fallback determinístico + escalada humana
-5. Camada 3 (regex mismatch)
-6. Teste no simulador com casos: 1 booking simples, "sim" seco pra 2 horários, 3 serviços diferentes (corte+barba+sobrancelha), 4+ (escalada). Rodar em pelo menos 2 providers diferentes (Frizzar por causa do array + um sem-array, ex Bemp ou Trinks).
+### P2 — Retry e idempotência em escrita
 
-## Critério de aceite
-Não é "compilou". É: no simulador, cenário "IA oferece 14h e 15h, cliente responde só 'sim'" produz **2 agendamentos** ou **resposta determinística explícita de que faltou 1** — nunca "tá tudo certo" silencioso.
+6. **Retry de 429 em `criar_agendamento`/`agendar`** pros 5 providers, reaproveitando o padrão já existente no `cancelar_agendamento` Trinks (`index.ts:9527`). Backoff exponencial curto (2 tentativas, 500ms/1500ms). Combinado com o dedupe de `agent_logs` que já existe (`index.ts:5545`), evita duplicata.
+7. **`frizzarLastListed` migrar de Map módulo-level para `sessionState`** — chave `frizzarListedProfissionais` já usada em outros lugares. Fecha a janela de multi-instância.
+
+### P3 — Consistência de contagem e casos raros
+
+8. **Cancelamento multi-serviço com `.every()`** em vez de `.some()` (`index.ts:6930`) — se o cliente pediu cancelar 2 e só 1 caiu, IA precisa saber que faltou 1 e tentar de novo, mesma lógica do MultiBookingGuard mas do lado do cancel.
+9. **`trinksResolveClienteIds` consolidar todos os IDs no `editar_agendamento`** (`index.ts:9555`) em vez de usar só `[0]`.
+10. **Seção de remarcação no prompt Frizzar** — hoje nem existe. Após P0#3 (trava em código) faz sentido documentar o fluxo esperado no prompt também.
+
+### Fora deste plano (fica pra depois)
+- Refactor pra extrair providers em módulos separados (`_shared/providers/`) — mudança estrutural, requer sua aprovação explícita conforme regra do projeto.
+- Testes automatizados — o projeto não tem suíte hoje; criar isso é escopo próprio.
+
+---
+
+## 3. Ordem de implementação nesta rodada
+
+Vou fazer P0 (itens 1-3) e P1 (itens 4-5) agora, num commit por item, todos dentro de `supabase/functions/whatsapp-webhook/index.ts` (sem refactor estrutural, sem novos módulos). P2 e P3 num turno seguinte pra você conseguir isolar regressão se aparecer.
+
+Ao final de cada item vou anotar aqui:
+- o que mudou (linhas)
+- por que
+- qual teste manual/log confirmaria a correção
+
+Depois você roda a nova varredura com a Claude em cima desse resultado.
+
+---
+
+## 4. Detalhes técnicos por item P0
+
+### Item 1 — Devolver Bemp aos guards
+- `index.ts:6609` — trocar `new Set(["trinks","appbarber"])` por `new Set(["trinks","appbarber","bemp"])`.
+- `index.ts:6710` — trocar `provider === "frizzar"` por `["frizzar","bemp"].includes(provider)`.
+- Deixar comentário explicando o histórico (por que não OneBeleza/AppBarber/Trinks no Multi).
+
+### Item 2 — CancelGuard reconhecer desmarcar
+- `index.ts:6926-6943` — introduzir `const CANCEL_TOOL_NAMES = new Set(["cancelar_agendamento","desmarcar_agendamento"])` e trocar as duas ocorrências de `tc?.name === "cancelar_agendamento"`.
+
+### Item 3 — guardReschedule (rollback conversacional)
+- Nova função pós-loop, antes do envio: detecta no turno atual pares (cancel OK, create FAIL) para o mesmo telefone; injeta system nudge forçando 1 rodada extra reusando dados do `chat_messages` e do `sessionState` (`trinksSelectedServiceId`, `frizzarLastListed`, etc.) pra recriar o antigo. Se falhar novamente, envia mensagem determinística: "Peraí, tive um problema técnico ao remarcar — vou refazer aqui e já te confirmo" (não escala humano, não pede dado).
+- Fica gated pros 5 providers, mas só ativa se houver a combinação exata no mesmo turno.
+
+### Item 4 — Ownership check no cancel (3 providers)
+- Nas funções de execução de cancel/desmarcar de Frizzar/AppBarber/OneBeleza, adicionar chamada prévia à respectiva `listar_agendamentos_do_dia`/equivalente filtrando pelo telefone ativo, e comparar `agendamentoId`. Se não bater, devolver erro estruturado à IA: `{blocked: true, reason: "ownership_mismatch", validIds: [...]}`.
+
+### Item 5 — Validação de servicoId/profissionalId
+- Trinks/Frizzar: guard de pré-execução consultando `sessionState.*ServiceCatalog` já existente. Bemp/AppBarber/OneBeleza: adicionar persistência do catálogo após `listar_servicos`/`buscar_servicos` no `sessionState`, mesmo padrão dos outros.
