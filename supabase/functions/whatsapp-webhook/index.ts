@@ -5624,7 +5624,7 @@ async function callAIAgent(
           alreadyBooked: true,
         };
         wasBlocked = true;
-        sessionBlocked = true;
+        // Duplicidade exata não é falha nem motivo de pausa: a ação já foi concluída.
         // garante persistência da assinatura no state para próximas mensagens
         if (attemptedSlotSignature && !sessionState.scheduledSlotSignatures.includes(attemptedSlotSignature)) {
           sessionState.scheduledSlotSignatures.push(attemptedSlotSignature);
@@ -6442,9 +6442,10 @@ async function callAIAgent(
       ]);
       if (bookingToolNames.has(toolCall.function.name)) {
         const r: any = toolResult || {};
-        const succeeded = !r.error && !r.blocked && r.success !== false
+        const alreadyBooked = r.alreadyBooked === true || r.status === "SUCESSO_ANTERIOR_JA_REGISTRADO";
+        const succeeded = alreadyBooked || (!r.error && !r.blocked && r.success !== false
           && !(Array.isArray(r.Errors) && r.Errors.length > 0)
-          && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data);
+          && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data));
         if (!succeeded) {
           if (provider === "frizzar" && toolCall.function.name === "agendar" && isRecoverableFrizzarScheduleResult(r)) {
             // 🚨 FIX: precisa SEMPRE fechar este tool_call_id com uma mensagem "tool" antes
@@ -6490,13 +6491,20 @@ async function callAIAgent(
           // Sem isso, em alguns casos a IA chama listar_horarios/listar_agendamentos
           // depois do agendar bem-sucedido, estoura o limite de rounds e acaba
           // entregando uma resposta vazia ao cliente — mesmo com a reserva criada.
-          const successMsg = [
-            "✅ AGENDAMENTO CRIADO COM SUCESSO.",
-            "PARE imediatamente de chamar ferramentas — NÃO chame listar_horarios, listar_agendamentos, buscar_agendamento, agendar de novo, nem qualquer outra. NADA.",
-            "Sua PRÓXIMA ação OBRIGATÓRIA é responder ao cliente em PORTUGUÊS, em UMA mensagem curta de WhatsApp, confirmando:",
-            "(1) que o agendamento foi feito; (2) data e horário; (3) serviço; (4) profissional. Use os dados do último resultado da ferramenta.",
-            "Não invente preço nem nada que não esteja no resultado. Termine com uma despedida curta (ex: 'até lá!' ou um emoji).",
-          ].join(" ");
+          const successMsg = alreadyBooked
+            ? [
+              "✅ AGENDAMENTO JÁ ESTAVA REGISTRADO.",
+              "PARE imediatamente de chamar ferramentas — NÃO chame escalar_humano, agendar de novo, listar_horarios nem qualquer outra. NADA.",
+              "Sua PRÓXIMA ação OBRIGATÓRIA é responder ao cliente em PORTUGUÊS, em UMA mensagem curta de WhatsApp, confirmando naturalmente que esse agendamento já ficou registrado.",
+              "NÃO diga que houve erro, conflito, bloqueio ou falha. NÃO fale em atendimento humano.",
+            ].join(" ")
+            : [
+              "✅ AGENDAMENTO CRIADO COM SUCESSO.",
+              "PARE imediatamente de chamar ferramentas — NÃO chame listar_horarios, listar_agendamentos, buscar_agendamento, agendar de novo, nem qualquer outra. NADA.",
+              "Sua PRÓXIMA ação OBRIGATÓRIA é responder ao cliente em PORTUGUÊS, em UMA mensagem curta de WhatsApp, confirmando:",
+              "(1) que o agendamento foi feito; (2) data e horário; (3) serviço; (4) profissional. Use os dados do último resultado da ferramenta.",
+              "Não invente preço nem nada que não esteja no resultado. Termine com uma despedida curta (ex: 'até lá!' ou um emoji).",
+            ].join(" ");
           messages.push({ role: "system", content: successMsg });
         }
       }
