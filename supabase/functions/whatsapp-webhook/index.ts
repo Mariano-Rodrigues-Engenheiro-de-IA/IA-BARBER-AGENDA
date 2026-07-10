@@ -12410,6 +12410,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
             };
           }
         }
+        // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
+        // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
+        // a IA pode oferecer horário de um professional_code que nem existe e só descobrir no 422 do POST.
+        {
+          const validProfs = (((sessionState as any)?.appbarberValidProfessionalCodes) || []) as number[];
+          const pc = Number(args.professional_code);
+          if (validProfs.length > 0 && pc > 0 && !validProfs.includes(pc)) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: professional_code=${pc} não pertence ao catálogo (${validProfs.join(",")})`);
+            return {
+              error: `professional_code ${pc} não está entre os profissionais listados nesta conversa. Chame listar_profissionais e use um dos codes retornados.`,
+              blocked: true,
+              validProfessionalCodes: validProfs,
+            };
+          }
+        }
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
         const startDateTime = normalizeAppBarberStartDateTime(args.start_date, args.start_time);
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
