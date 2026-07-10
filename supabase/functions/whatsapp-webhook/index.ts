@@ -4113,7 +4113,7 @@ async function hydrateOneBelezaSessionStateFromProvider(
 // ============================================================================
 // MULTI-BOOKING GUARD (Camadas 1+2+3)
 // Impede que a IA responda "tá tudo certo" quando prometeu N agendamentos
-// (2 ou 3) e executou menos. A correção é a IA continuar chamando a tool de
+// (dentro do limite automático) e executou menos. A correção é a IA continuar chamando a tool de
 // agendamento com os dados já presentes — sem pedir dados de novo e sem humano.
 // Só é acionado quando a IA tentou criar pelo menos 1 agendamento no turno.
 // ============================================================================
@@ -6681,7 +6681,6 @@ async function callAIAgent(
       logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — acima do limite automático.`, level: "warning" });
       finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
       guardOverrideResponse = true;
-      guardLog("human_escalation");
       guardLog("over_limit_no_human");
     } else if (criados < prometidos) {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
