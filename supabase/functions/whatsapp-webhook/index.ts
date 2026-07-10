@@ -10052,6 +10052,21 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           return { error: "profissionalId inválido. Execute buscar_barbeiros_por_servico novamente e use o profissionalId retornado (número grande, ex: 40658).", blocked: true };
         }
 
+        // 🛡️ Catálogo: se buscar_servicos já rodou nesta conversa, o servicoId
+        // precisa estar em allowedServiceIds. Evita alucinação de IDs plausíveis
+        // (números grandes que passam pelo filtro de "número pequeno" acima).
+        const allowedServiceIds: number[] = Array.isArray(sessionState?.allowedServiceIds)
+          ? sessionState!.allowedServiceIds
+          : [];
+        if (aServicoId && sIdNum > 0 && allowedServiceIds.length > 0 && !allowedServiceIds.includes(sIdNum)) {
+          console.warn(`[OneBeleza] agendar BLOCKED: servicoId=${sIdNum} não está no catálogo desta conversa (${allowedServiceIds.join(",")})`);
+          return {
+            error: `servicoId ${sIdNum} não corresponde a nenhum serviço listado nesta conversa. Chame buscar_servicos novamente e use um dos IDs retornados.`,
+            blocked: true,
+            allowedServiceIds,
+          };
+        }
+
         // ⚠️ CRITICAL: the `celular` query param identifies the BOOKING CLIENT in the One Beleza API.
         // Using the tenant owner's phone (tenant.onebeleza_celular) makes the appointment fall under the owner.
         // We MUST use the conversation client's phone (the one writing on WhatsApp).
