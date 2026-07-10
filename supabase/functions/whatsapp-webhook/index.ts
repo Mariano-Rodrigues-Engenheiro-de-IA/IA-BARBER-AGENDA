@@ -5537,7 +5537,7 @@ async function callAIAgent(
           sessionBlocked = true;
         }
 
-          const lastFrizzarListedForProfessional = frizzarLastListed.get(`${tenant.id}:${phoneNumber || ""}:${parsedArgs?.profissionalId}`);
+          const lastFrizzarListedForProfessional = frizzarGetLastListed(sessionState, parsedArgs?.profissionalId);
           const hasRecentFrizzarList = !!lastFrizzarListedForProfessional && Date.now() - lastFrizzarListedForProfessional.listedAt < 30 * 60 * 1000;
           if (
             !toolResult &&
