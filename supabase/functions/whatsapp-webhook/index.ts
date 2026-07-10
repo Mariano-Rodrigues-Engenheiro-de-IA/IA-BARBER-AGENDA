@@ -6797,33 +6797,37 @@ async function callAIAgent(
               guardOverrideResponse = true;
               guardLog("reinject_completed");
             } else {
-              // Ainda faltou — agora sim vai pro fallback que pede ajuda ao cliente.
-              console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — fallback determinístico.`);
-              logErrors.push({ message: `Multi-booking re-injeção parcial: ${recount.count}/${prometidos}.`, level: "warning" });
+              // Ainda faltou — não pergunta ao cliente, escala pro humano com o que já foi feito.
+              console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — escalando humano.`);
+              logErrors.push({ message: `Multi-booking re-injeção parcial: ${recount.count}/${prometidos} — escalado.`, level: "warning" });
               finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
               guardOverrideResponse = true;
+              sessionBlocked = true;
               guardLog("reinject_then_partial_fallback");
             }
           } else {
-            // Retry não gerou tool_calls → cai no fallback direto.
-            console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — fallback determinístico.`);
-            logErrors.push({ message: `Multi-booking parcial: ${criados}/${prometidos} — retry sem tools.`, level: "warning" });
+            // Retry não gerou tool_calls → escala.
+            console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — escalando humano.`);
+            logErrors.push({ message: `Multi-booking parcial: ${criados}/${prometidos} — retry sem tools, escalado.`, level: "warning" });
             finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
             guardOverrideResponse = true;
+            sessionBlocked = true;
             guardLog("reinject_no_tools_then_partial_fallback");
           }
         } else {
           console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
-          logErrors.push({ message: `Multi-booking retry HTTP ${retryResp.status} — fallback determinístico.`, level: "error" });
+          logErrors.push({ message: `Multi-booking retry HTTP ${retryResp.status} — escalado.`, level: "error" });
           finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
           guardOverrideResponse = true;
+          sessionBlocked = true;
           guardLog("reinject_http_error_then_partial_fallback");
         }
       } catch (e) {
         console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
-        logErrors.push({ message: `Multi-booking retry exception: ${(e as Error)?.message || "erro"}`, level: "error" });
+        logErrors.push({ message: `Multi-booking retry exception: ${(e as Error)?.message || "erro"} — escalado.`, level: "error" });
         finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
         guardOverrideResponse = true;
+        sessionBlocked = true;
         guardLog("reinject_exception_then_partial_fallback");
       }
     } else {
@@ -6833,7 +6837,7 @@ async function callAIAgent(
 
     // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
     // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
-    // força a resposta determinística parcial. Rede de segurança se Camada 1 subestimar.
+    // força a resposta determinística parcial + escala humana. Sem perguntar ao cliente.
     const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     if (
       prometidos <= MAX_AUTO_BOOKINGS &&
@@ -6841,10 +6845,26 @@ async function callAIAgent(
       finalResponse &&
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
-      console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Forçando parcial.`);
-      logErrors.push({ message: `Mismatch texto↔execução detectado — forçado fallback parcial.`, level: "warning" });
+      console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Escalando humano.`);
+      logErrors.push({ message: `Mismatch texto↔execução detectado — escalado pro humano.`, level: "warning" });
       finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
       guardOverrideResponse = true;
+      sessionBlocked = true;
+    }
+
+    // Pausa a conversa em qualquer cenário de escalada acima (sessionBlocked ligado pelo guard).
+    if (sessionBlocked && !simulatorMode) {
+      try {
+        await supabase
+          .from("conversation_pauses")
+          .upsert(
+            { tenant_id: tenant.id, phone_number: phoneNumber, paused: true },
+            { onConflict: "tenant_id,phone_number" },
+          );
+        console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (partial_fallback escalation)`);
+      } catch (e) {
+        console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
+      }
     }
   }
   // ============================================================================
