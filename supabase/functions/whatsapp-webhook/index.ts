@@ -6687,8 +6687,17 @@ async function callAIAgent(
   // 🛡️ MULTI-BOOKING GUARD (Camadas 1+2+3)
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
+  //
+  // ⚠️ ESCOPO: APENAS FRIZZAR.
+  // Motivo real: o bug de "prometeu N, criou <N e disse tá tudo certo" só se
+  // manifesta no Frizzar, porque lá cada `agendar` aceita um combo (array de
+  // serviços) e é fácil a IA dividir errado. Nos outros 4 providers (Trinks,
+  // OneBeleza, Bemp, AppBarber) cada agendamento é 1 chamada 1 pessoa 1 horário
+  // — o classificador acabava inflando "prometidos" e disparando recuperação
+  // desnecessária (caso Bemp/Dom Castro 10/07). Não recriar pros outros sem
+  // confirmação explícita do dono do projeto.
   // ============================================================================
-  if (_bookingAttempts > 0 && provider !== "none") {
+  if (_bookingAttempts > 0 && provider === "frizzar") {
     const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
