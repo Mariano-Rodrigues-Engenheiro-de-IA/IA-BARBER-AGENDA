@@ -2911,6 +2911,9 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.frizzarValidProfessionalIds)
         ? { frizzarValidProfessionalIds: s.frizzarValidProfessionalIds.filter((n: any) => typeof n === "number").slice(0, 100) }
         : { frizzarValidProfessionalIds: [] }),
+      ...(Array.isArray(s.appbarberValidProfessionalCodes)
+        ? { appbarberValidProfessionalCodes: s.appbarberValidProfessionalCodes.filter((n: any) => typeof n === "number").slice(0, 100) }
+        : { appbarberValidProfessionalCodes: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
