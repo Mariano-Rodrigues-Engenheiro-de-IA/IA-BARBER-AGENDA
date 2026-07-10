@@ -4118,10 +4118,8 @@ async function hydrateOneBelezaSessionStateFromProvider(
 // Só é acionado quando a IA tentou criar pelo menos 1 agendamento no turno.
 // ============================================================================
 
-const MAX_AUTO_BOOKINGS = 3;
+const MAX_AUTO_BOOKINGS = 6;
 const MAX_GUARD_RECOVERY_ROUNDS = 3;
-const MULTI_BOOKING_ESCALATION_MSG =
-  "Pra 4 ou mais agendamentos na mesma conversa prefiro te passar pro atendimento humano pra não errar nenhum — só um momento 🙏";
 const BOOKING_TOOL_NAMES = new Set(["agendar", "criar_agendamento"]);
 // Regex Camada 3 — confirmação implícita de sucesso no texto da IA.
 // Não depende de palavra específica de "agendei" — cobre também "te espero", "show", etc.
@@ -6679,29 +6677,12 @@ async function callAIAgent(
 
     if (prometidos > MAX_AUTO_BOOKINGS) {
       // Escalada humana — mais de 3 agendamentos na mesma conversa.
-      console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
-      logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`, level: "warning" });
-      finalResponse = MULTI_BOOKING_ESCALATION_MSG;
+      console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → acima do limite automático desta rodada, sem escalar humano.`);
+      logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — acima do limite automático.`, level: "warning" });
+      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
       guardOverrideResponse = true;
-      sessionBlocked = true;
       guardLog("human_escalation");
-      if (!simulatorMode) {
-        try {
-          await supabase
-            .from("conversation_pauses")
-            .upsert(
-              {
-                tenant_id: tenant.id,
-                phone_number: phoneNumber,
-                paused: true,
-              },
-              { onConflict: "tenant_id,phone_number" },
-            );
-          console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (multi_booking_overflow)`);
-        } catch (e) {
-          console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
-        }
-      }
+      guardLog("over_limit_no_human");
     } else if (criados < prometidos) {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
@@ -6860,7 +6841,7 @@ async function callAIAgent(
             { tenant_id: tenant.id, phone_number: phoneNumber, paused: true },
             { onConflict: "tenant_id,phone_number" },
           );
-        console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (partial_fallback escalation)`);
+        console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (blocking condition)`);
       } catch (e) {
         console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
       }
