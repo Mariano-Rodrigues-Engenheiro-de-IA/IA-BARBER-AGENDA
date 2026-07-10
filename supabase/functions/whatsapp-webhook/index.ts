@@ -4113,13 +4113,13 @@ async function hydrateOneBelezaSessionStateFromProvider(
 // ============================================================================
 // MULTI-BOOKING GUARD (Camadas 1+2+3)
 // Impede que a IA responda "tá tudo certo" quando prometeu N agendamentos
-// (2 ou 3) e executou menos. Escala humano se N > 3.
+// (dentro do limite automático) e executou menos. A correção é a IA continuar chamando a tool de
+// agendamento com os dados já presentes — sem pedir dados de novo e sem humano.
 // Só é acionado quando a IA tentou criar pelo menos 1 agendamento no turno.
 // ============================================================================
 
-const MAX_AUTO_BOOKINGS = 3;
-const MULTI_BOOKING_ESCALATION_MSG =
-  "Pra 4 ou mais agendamentos na mesma conversa prefiro te passar pro atendimento humano pra não errar nenhum — só um momento 🙏";
+const MAX_AUTO_BOOKINGS = 6;
+const MAX_GUARD_RECOVERY_ROUNDS = 3;
 const BOOKING_TOOL_NAMES = new Set(["agendar", "criar_agendamento"]);
 // Regex Camada 3 — confirmação implícita de sucesso no texto da IA.
 // Não depende de palavra específica de "agendei" — cobre também "te espero", "show", etc.
@@ -4574,8 +4574,8 @@ async function classifyPendingBookings(params: {
 }
 
 
-/** Monta uma resposta determinística parcial: confirma o que foi feito e escala pro humano
- * finalizar o restante — NUNCA pede dado ao cliente (ele já forneceu tudo). */
+/** Mensagem determinística quando a recuperação automática esgotou as tentativas.
+ * NUNCA pede dado ao cliente e NUNCA escala humano: mantém a conversa com a IA. */
 function buildPartialBookingFallback(
   criados: number,
   prometidos: number,
@@ -4586,10 +4586,8 @@ function buildPartialBookingFallback(
     : (criados > 0 ? `${criados} agendamento(s)` : "");
   const faltam = Math.max(0, prometidos - criados);
   const partes: string[] = [];
-  if (feitos) partes.push(`Já deixei confirmado: ${feitos}.`);
-  partes.push(
-    `Vou passar aqui pro atendimento humano finalizar ${faltam > 0 ? `o${faltam > 1 ? "s" : ""} outro${faltam > 1 ? "s" : ""} ${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"} pra você — só um instante.`,
-  );
+  if (feitos) partes.push(`Já consegui registrar: ${feitos}.`);
+  partes.push(`Ainda falta concluir ${faltam > 0 ? `${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"}; vou continuar tentando por aqui com os dados que você já enviou.`);
   return partes.join(" ");
 }
 
@@ -6679,165 +6677,147 @@ async function callAIAgent(
 
     if (prometidos > MAX_AUTO_BOOKINGS) {
       // Escalada humana — mais de 3 agendamentos na mesma conversa.
-      console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → escalando humano.`);
-      logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — escalando humano.`, level: "warning" });
-      finalResponse = MULTI_BOOKING_ESCALATION_MSG;
+      console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → acima do limite automático desta rodada, sem escalar humano.`);
+      logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — acima do limite automático.`, level: "warning" });
+      finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
       guardOverrideResponse = true;
-      sessionBlocked = true;
-      guardLog("human_escalation");
-      if (!simulatorMode) {
-        try {
-          await supabase
-            .from("conversation_pauses")
-            .upsert(
-              {
-                tenant_id: tenant.id,
-                phone_number: phoneNumber,
-                paused: true,
-              },
-              { onConflict: "tenant_id,phone_number" },
-            );
-          console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (multi_booking_overflow)`);
-        } catch (e) {
-          console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
-        }
-      }
+      guardLog("over_limit_no_human");
     } else if (criados < prometidos) {
-      // Faltou completar algum agendamento (2 ou 3 casos).
-      // ANTES de cair no fallback que pede ajuda ao cliente, damos UMA tentativa
-      // automática de completar — só quando o classificador já enxergou dados
-      // completos na conversa. Se essa tentativa falhar, aí sim vai pro fallback.
-      const faltam = prometidos - criados;
-      const feitosSummary = breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum ainda";
-      const nudge = [
-        `[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO]`,
-        `Você prometeu ${prometidos} agendamento(s) ao cliente nesta conversa e só criou ${criados}.`,
-        `Já criados: ${feitosSummary}.`,
-        `Faltam ${faltam}. O cliente já forneceu os dados necessários no histórico acima (pessoas, horários, profissional). NÃO pergunte de novo.`,
-        `Ação obrigatória agora: chame a tool de agendar (${provider === "trinks" || provider === "appbarber" ? "criar_agendamento" : "agendar"}) ${faltam} vez(es), uma por agendamento faltante, reaproveitando exatamente o que o cliente confirmou. Não responda em texto neste turno — apenas execute as tools.`,
-      ].join(" ");
+      // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
+      // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
+      // tool-calling para a IA resolver usando o histórico já disponível.
+      const bookingToolName = provider === "trinks" || provider === "appbarber" ? "criar_agendamento" : "agendar";
+      let current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+      let recoveryError: string | null = null;
 
-      console.warn(`[MultiBookingGuard] tentando re-injeção automática (faltam=${faltam}).`);
-      messages.push({ role: "system", content: nudge });
+      for (let recoveryRound = 1; recoveryRound <= MAX_GUARD_RECOVERY_ROUNDS && current.count < prometidos; recoveryRound++) {
+        const faltam = prometidos - current.count;
+        const feitosSummary = current.breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum ainda";
+        const nudge = [
+          `[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO]`,
+          `CORREÇÃO OBRIGATÓRIA DO MULTI-BOOKING GUARD. Ignore qualquer instrução anterior de parar após um agendamento: a rodada ainda está incompleta.`,
+          `O cliente pediu/confirmou ${prometidos} agendamento(s), mas só existem ${current.count} criado(s).`,
+          `Já criados: ${feitosSummary}. Faltam ${faltam}.`,
+          `O cliente já forneceu no histórico os dados necessários (serviço, profissional, horário e pessoa quando aplicável). NÃO pergunte nada ao cliente e NÃO escale humano.`,
+          `Resolva agora: se precisar consultar alguma ferramenta de leitura para recuperar ID/horário, consulte; em seguida chame "${bookingToolName}" para cada agendamento faltante.`,
+          `É proibido responder em texto enquanto ainda faltar agendamento. A próxima saída deve conter tool_calls.`,
+        ].join(" ");
 
-      let retrySucceededExtra = 0;
-      try {
-        const retryBody: any = {
-          model: modelUsed,
-          messages,
-          max_completion_tokens: 4096,
-          tools,
-          tool_choice: "auto",
-        };
-        if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
-        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "guard-reinject");
-        if (retryResp.ok) {
+        console.warn(`[MultiBookingGuard] recuperação automática rodada=${recoveryRound}/${MAX_GUARD_RECOVERY_ROUNDS} faltam=${faltam}.`);
+        messages.push({ role: "system", content: nudge });
+
+        try {
+          const retryBody: any = {
+            model: modelUsed,
+            messages,
+            max_completion_tokens: 4096,
+            tools,
+            tool_choice: "auto",
+          };
+          if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
+          const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `guard-reinject-${recoveryRound}`);
+          if (!retryResp.ok) {
+            recoveryError = `HTTP ${retryResp.status}`;
+            console.error(`[MultiBookingGuard] recovery AI call failed: ${retryResp.status}`);
+            logErrors.push({ message: `Multi-booking recovery HTTP ${retryResp.status}`, level: "error" });
+            continue;
+          }
+
           const retryJson: any = await retryResp.json();
           const retryMsg: any = retryJson?.choices?.[0]?.message;
           const retryToolCalls: any[] = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
-          if (retryToolCalls.length > 0) {
-            messages.push(retryMsg);
-            // Executa no máximo `faltam` tools de booking nesta rodada de retry.
-            // 🚨 IMPORTANTE: TODO tool_call de retryMsg precisa de uma resposta "tool"
-            // (executado ou não) — senão o `messages` fica com tool_call_id sem resposta,
-            // o mesmo bug que já vimos quebrar a API da OpenAI em produção.
-            const bookingToolNames = new Set(["agendar", "criar_agendamento"]);
-            let executed = 0;
-            for (const tc of retryToolCalls) {
-              const tname = tc?.function?.name;
-              if (executed >= faltam || !bookingToolNames.has(tname)) {
-                messages.push({
-                  role: "tool",
-                  tool_call_id: tc.id,
-                  content: JSON.stringify({ skipped: true, reason: "Limite de agendamentos pendentes já atingido ou tool não relacionada a agendamento nesta rodada de recuperação." }),
-                });
-                continue;
-              }
-              try {
-                const tResult = await executeToolForProvider(
-                  provider,
-                  tenant,
-                  tc,
-                  phoneNumber,
-                  { supabase, simulatorMode, sessionState },
-                );
-                messages.push({
-                  role: "tool",
-                  tool_call_id: tc.id,
-                  content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
-                });
-                logToolCalls.push({
-                  name: tname,
-                  args: parseToolArguments(tc.function?.arguments),
-                  result: tResult,
-                });
-                executed++;
-              } catch (e) {
-                console.error(`[MultiBookingGuard] retry tool ${tname} failed:`, (e as Error)?.message);
-                logErrors.push({ message: `Guard retry ${tname}: ${(e as Error)?.message || "erro"}`, level: "error" });
-                messages.push({
-                  role: "tool",
-                  tool_call_id: tc.id,
-                  content: JSON.stringify({ error: `Erro ao executar ${tname}: ${(e as Error)?.message || "erro desconhecido"}` }),
-                });
-              }
-            }
-            // Recontagem após a rodada extra.
-            const recount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
-            retrySucceededExtra = Math.max(0, recount.count - criados);
-            console.log(`[MultiBookingGuard] re-injeção executou=${executed} novos_ok=${retrySucceededExtra}`);
-
-            if (recount.count >= prometidos) {
-              // Completou tudo. Monta confirmação determinística com todos os slots.
-              const allSummaries = recount.breakdown.map((b) => b.summary).filter(Boolean);
-              const detConfirm = buildDeterministicBookingConfirmation(logToolCalls);
-              finalResponse = allSummaries.length > 0
-                ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
-                : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
-              guardOverrideResponse = true;
-              guardLog("reinject_completed");
-            } else {
-              // Ainda faltou — não pergunta ao cliente, escala pro humano com o que já foi feito.
-              console.warn(`[MultiBookingGuard] re-injeção parcial: ${recount.count}/${prometidos} — escalando humano.`);
-              logErrors.push({ message: `Multi-booking re-injeção parcial: ${recount.count}/${prometidos} — escalado.`, level: "warning" });
-              finalResponse = buildPartialBookingFallback(recount.count, prometidos, recount.breakdown);
-              guardOverrideResponse = true;
-              sessionBlocked = true;
-              guardLog("reinject_then_partial_fallback");
-            }
-          } else {
-            // Retry não gerou tool_calls → escala.
-            console.warn(`[MultiBookingGuard] re-injeção não gerou tool_calls — escalando humano.`);
-            logErrors.push({ message: `Multi-booking parcial: ${criados}/${prometidos} — retry sem tools, escalado.`, level: "warning" });
-            finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
-            guardOverrideResponse = true;
-            sessionBlocked = true;
-            guardLog("reinject_no_tools_then_partial_fallback");
+          if (retryToolCalls.length === 0) {
+            recoveryError = "retry sem tool_calls";
+            console.warn(`[MultiBookingGuard] recuperação rodada=${recoveryRound} veio sem tool_calls; reforçando.`);
+            logErrors.push({ message: `Multi-booking recovery sem tool_calls na rodada ${recoveryRound}`, level: "warning" });
+            continue;
           }
-        } else {
-          console.error(`[MultiBookingGuard] retry AI call failed: ${retryResp.status}`);
-          logErrors.push({ message: `Multi-booking retry HTTP ${retryResp.status} — escalado.`, level: "error" });
-          finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
-          guardOverrideResponse = true;
-          sessionBlocked = true;
-          guardLog("reinject_http_error_then_partial_fallback");
+
+          messages.push(retryMsg);
+          let executed = 0;
+          for (const tc of retryToolCalls) {
+            const tname = tc?.function?.name;
+            const isBookingTool = BOOKING_TOOL_NAMES.has(tname);
+            if (!isBookingTool && (typeof tname !== "string" || isWriteToolName(tname))) {
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({ skipped: true, reason: "MultiBookingGuard: nesta recuperação só são permitidas consultas auxiliares e tools de agendamento." }),
+              });
+              continue;
+            }
+            current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+            if (isBookingTool && current.count >= prometidos) {
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({ skipped: true, reason: "MultiBookingGuard: quantidade prometida já foi concluída; chamada extra bloqueada para evitar duplicidade." }),
+              });
+              continue;
+            }
+
+            try {
+              const tResult = await executeToolForProvider(
+                provider,
+                tenant,
+                tc,
+                phoneNumber,
+                { supabase, simulatorMode, sessionState },
+              );
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              logToolCalls.push({
+                name: tname,
+                args: parseToolArguments(tc.function?.arguments),
+                result: tResult,
+              });
+              executed++;
+            } catch (e) {
+              recoveryError = (e as Error)?.message || "erro";
+              console.error(`[MultiBookingGuard] recovery tool ${tname} failed:`, recoveryError);
+              logErrors.push({ message: `Guard recovery ${tname}: ${recoveryError}`, level: "error" });
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: `Erro ao executar ${tname}: ${recoveryError}` }),
+              });
+            }
+          }
+
+          current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+          console.log(`[MultiBookingGuard] recuperação rodada=${recoveryRound} tools_executadas=${executed} total_ok=${current.count}/${prometidos}`);
+        } catch (e) {
+          recoveryError = (e as Error)?.message || "erro";
+          console.error(`[MultiBookingGuard] recovery exception:`, recoveryError);
+          logErrors.push({ message: `Multi-booking recovery exception: ${recoveryError}`, level: "error" });
         }
-      } catch (e) {
-        console.error(`[MultiBookingGuard] retry exception:`, (e as Error)?.message);
-        logErrors.push({ message: `Multi-booking retry exception: ${(e as Error)?.message || "erro"} — escalado.`, level: "error" });
-        finalResponse = buildPartialBookingFallback(criados, prometidos, breakdown);
+      }
+
+      if (current.count >= prometidos) {
+        const allSummaries = current.breakdown.map((b) => b.summary).filter(Boolean);
+        const detConfirm = buildDeterministicBookingConfirmation(logToolCalls);
+        finalResponse = allSummaries.length > 0
+          ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
+          : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
         guardOverrideResponse = true;
-        sessionBlocked = true;
-        guardLog("reinject_exception_then_partial_fallback");
+        guardLog("recovery_completed");
+      } else {
+        console.warn(`[MultiBookingGuard] recuperação esgotada sem completar: ${current.count}/${prometidos}. Não escalando humano.`);
+        logErrors.push({ message: `Multi-booking recovery esgotada: ${current.count}/${prometidos}${recoveryError ? ` (${recoveryError})` : ""}`, level: "error" });
+        finalResponse = buildPartialBookingFallback(current.count, prometidos, current.breakdown);
+        guardOverrideResponse = true;
+        guardLog("recovery_exhausted_no_human");
       }
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
     }
 
-    // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
-    // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
-    // força a resposta determinística parcial + escala humana. Sem perguntar ao cliente.
+    // Camada 3 — mismatch texto↔execução. Se ainda restar incompleto, bloqueia
+    // qualquer texto de confirmação total. Não escala humano e não pede dados.
     const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     if (
       prometidos <= MAX_AUTO_BOOKINGS &&
@@ -6845,14 +6825,13 @@ async function callAIAgent(
       finalResponse &&
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
-      console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Escalando humano.`);
-      logErrors.push({ message: `Mismatch texto↔execução detectado — escalado pro humano.`, level: "warning" });
+      console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Bloqueando confirmação falsa.`);
+      logErrors.push({ message: `Mismatch texto↔execução detectado — confirmação falsa bloqueada.`, level: "warning" });
       finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
       guardOverrideResponse = true;
-      sessionBlocked = true;
     }
 
-    // Pausa a conversa em qualquer cenário de escalada acima (sessionBlocked ligado pelo guard).
+    // Pausa a conversa apenas em cenários realmente bloqueantes (ex.: overflow > limite automático).
     if (sessionBlocked && !simulatorMode) {
       try {
         await supabase
@@ -6861,7 +6840,7 @@ async function callAIAgent(
             { tenant_id: tenant.id, phone_number: phoneNumber, paused: true },
             { onConflict: "tenant_id,phone_number" },
           );
-        console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (partial_fallback escalation)`);
+        console.log(`[MultiBookingGuard] conversation_pauses set for ${phoneNumber} (blocking condition)`);
       } catch (e) {
         console.error("[MultiBookingGuard] failed to record pause:", (e as Error)?.message);
       }
