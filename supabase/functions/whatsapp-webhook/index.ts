@@ -10754,7 +10754,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             // e sem expor outros dias ao modelo.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato) {
-              frizzarLastListed.set(lastListedKey(profissionalId), { dia: args.data, listedAt: Date.now() });
+              frizzarSetLastListed(sessionState, profissionalId, args.data);
             }
             return {
               profissionalId,
