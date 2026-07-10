@@ -4307,6 +4307,51 @@ function countSuccessfulBookingsInTurn(
   return { count, breakdown };
 }
 
+function parseSmallPtNumber(value: string): number | null {
+  const v = String(value || "").toLowerCase();
+  const map: Record<string, number> = {
+    "1": 1,
+    um: 1,
+    uma: 1,
+    "2": 2,
+    dois: 2,
+    duas: 2,
+    "3": 3,
+    tres: 3,
+    três: 3,
+    "4": 4,
+    quatro: 4,
+    "5": 5,
+    cinco: 5,
+  };
+  return map[v] ?? null;
+}
+
+function countExplicitProfessionalSelections(text: string): number {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return 0;
+
+  // Caso real Frizzar: "corte com Gabriel / corte e barba com Luan" = 2 reservas.
+  // Uma combinação de serviços com UM profissional ("corte e barba com Gabriel")
+  // continua sendo 1 reserva; só sobe quando há 2+ seleções "com Nome".
+  const professionalMentions = normalized.match(/\bcom\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'-]*/g) || [];
+  return professionalMentions.length;
+}
+
+function extractBookingCountFromReasoning(reasoning: string): number | null {
+  const text = String(reasoning || "");
+  const direct = text.match(/total\s*(?:de\s*)?(\d{1,2})\s*agendamentos?/i)
+    || text.match(/=\s*(\d{1,2})\s*agendamentos?/i);
+  if (direct) return Number(direct[1]);
+
+  const bookingWords = "agendamentos?|reservas?|marcações?|marcacoes?|horários?|horarios?|pessoas?|clientes?|profissionais?";
+  const before = new RegExp(`\\b(\\d{1,2}|um|uma|dois|duas|tr[eê]s|quatro|cinco)\\b[^.]{0,80}\\b(${bookingWords})\\b`, "i").exec(text);
+  const after = new RegExp(`\\b(${bookingWords})\\b[^.]{0,80}\\b(\\d{1,2}|um|uma|dois|duas|tr[eê]s|quatro|cinco)\\b`, "i").exec(text);
+  if (before) return parseSmallPtNumber(before[1]);
+  if (after) return parseSmallPtNumber(after[2]);
+  return null;
+}
+
 /**
  * Fallback heurístico determinístico: se o LLM falhar, olha a ÚLTIMA fala do
  * atendente antes da última mensagem do cliente e conta horários distintos
@@ -4328,6 +4373,11 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
   if (!lastAssistant) return Math.max(1, attempts);
 
   const lastUser = [...visible].reverse().find((m: any) => m.role === "user")?.content || "";
+  const professionalSelections = countExplicitProfessionalSelections(lastUser);
+  if (professionalSelections >= 2) {
+    return Math.max(1, attempts, professionalSelections);
+  }
+
   const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
   const normalizeTimeToken = (m: RegExpExecArray): string | null => {
     const h = Number(m[1]);
@@ -4489,10 +4539,8 @@ async function classifyPendingBookings(params: {
     // menciona um número maior, usa o maior dos dois (nunca o menor —
     // mesma lógica defensiva já usada no resto do guard).
     const reasoningText = String(parsed?.reasoning || "");
-    const reasoningTotalMatch = reasoningText.match(/total\s*(?:de\s*)?(\d{1,2})\s*agendamentos?/i)
-      || reasoningText.match(/=\s*(\d{1,2})\s*agendamentos?/i);
-    if (reasoningTotalMatch) {
-      const reasoningN = Number(reasoningTotalMatch[1]);
+    const reasoningN = extractBookingCountFromReasoning(reasoningText);
+    if (reasoningN != null) {
       if (Number.isFinite(reasoningN) && reasoningN > n) {
         console.warn(`[MultiBookingGuard] classifier inconsistente: total_bookings_requested=${n} mas reasoning menciona ${reasoningN}. Usando o maior.`);
         n = reasoningN;
@@ -4506,7 +4554,8 @@ async function classifyPendingBookings(params: {
     const lastUserText = [...window].reverse().find((m: any) => m.role === "user")?.content || "";
     // Proteção anti-falso-positivo: com uma única chamada de agendamento no turno,
     // se a mensagem do cliente NÃO é confirmação curta e a heurística não viu
-    // multi-horários explícitos, não deixa o classificador inflar para 4, 7 etc.
+    // nenhuma evidência determinística de múltiplas reservas (horários explícitos
+    // ou múltiplos "com Profissional"), não deixa o classificador inflar para 4, 7 etc.
     // Caso real: cliente disse "Hoje, 15:20" e o LLM contou 7 horários da lista anterior.
     if (attempts === 1 && heuristic <= 1 && !isAffirmativeReply(lastUserText) && capped > 1) {
       console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
