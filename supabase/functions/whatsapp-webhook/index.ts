@@ -5132,7 +5132,15 @@ async function callAIAgent(
       /\(\s*j[aá]\s+enviad[ao]/i,
       /\(\s*nenhuma?\s+(altera|mudan|novidad|resposta)/i,
       /\bmensagem\s+duplicada\s+acima\b/i,
+      // Auto-diretivas do modelo em PT que escaparam do scratchpad (ex: "Não enviar nada.",
+      // "Não responder", "Sem resposta", "Não é necessário responder"). O modelo escreve
+      // isso pra si mesmo quando decide ficar em silêncio (ex: após tool escalate_human
+      // já ter enviado a mensagem ao cliente). NUNCA pode virar mensagem pro cliente.
+      /^\s*n[aã]o\s+(enviar|enviar\s+nada|responder|responda|mandar|mandar\s+nada|escrever|escrever\s+nada)\b[\s.!]*$/i,
+      /^\s*(sem\s+resposta|sem\s+mensagem|nenhuma\s+resposta|nada\s+a\s+(enviar|responder|dizer))\s*[.!]*$/i,
+      /^\s*n[aã]o\s+[eé]\s+necess[aá]rio\s+(responder|enviar|mandar)/i,
     ];
+
     if (leakPatterns.some((re) => re.test(t))) return true;
     // Whole response is just a parenthetical meta-note (e.g., "(Mensagem duplicada acima)")
     if (/^\s*\([^)]{3,80}\)\s*$/.test(t)) {
