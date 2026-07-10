@@ -4173,9 +4173,42 @@ function extractBookedServiceNames(
   return names;
 }
 
+// Formata data/hora de agendamento de forma humanizada: "hoje às HH:MM" se for
+// hoje (fuso America/Sao_Paulo), ou "DD/MM às HH:MM" caso contrário. Aceita
+// ISO completo (yyyy-MM-ddTHH:mm ou yyyy-MM-dd HH:MM) ou data+hora separadas.
+function formatBookingWhen(dateStr: string, timeStr?: string): string {
+  const cleaned = String(dateStr || "").trim();
+  const m = cleaned.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/);
+  if (!m) return timeStr ? `${cleaned} às ${timeStr}` : cleaned || "horário";
+
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  let hour = m[4];
+  let minute = m[5];
+
+  if (timeStr) {
+    const tm = String(timeStr).trim().match(/^(\d{1,2})[:h](\d{2})/);
+    if (tm) {
+      hour = tm[1].padStart(2, "0");
+      minute = tm[2];
+    }
+  }
+
+  const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date());
+  const [ty, tmo, td] = todayStr.split("-").map(Number);
+  const isToday = year === ty && month === tmo && day === td;
+
+  const timePart = hour && minute ? `${hour}:${minute}` : null;
+  if (isToday) return timePart ? `hoje às ${timePart}` : "hoje";
+  const dateFormatted = `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
+  return timePart ? `${dateFormatted} às ${timePart}` : dateFormatted;
+}
+
 function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
+  sessionState?: any,
 ): { count: number; breakdown: Array<{ tool: string; summary: string }> } {
   const breakdown: Array<{ tool: string; summary: string }> = [];
   let count = 0;
@@ -4199,24 +4232,40 @@ function countSuccessfulBookingsInTurn(
       case "trinks": {
         // Sucesso: resposta crua da API, sem `error`/`blocked`/`code` de erro.
         // Falha detectável no código: { id: "duplicate", blocked: true } → já filtrado acima.
-        // Sucesso típico da Trinks devolve o objeto do agendamento.
+        // Sucesso típico da Trinks devolve o objeto do agendamento (só o id, sem
+        // nome de serviço) — usa o catálogo salvo em sessionState pra traduzir.
         succeeded = !r.code && (typeof r.id !== "undefined" || typeof r.data !== "undefined" || r.success === true);
-        summary = `${args.dataHoraInicio || "horário"} (serviço ${args.servicoId ?? "?"})`;
+        const trinksCatalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
+        const trinksServiceName = trinksCatalog.find((s) => Number(s.id) === Number(args.servicoId))?.nome;
+        const trinksWhen = formatBookingWhen(args.dataHoraInicio || "");
+        summary = trinksServiceName
+          ? `${trinksServiceName} ${trinksWhen}`
+          : `${trinksWhen} (serviço ${args.servicoId ?? "?"})`;
         break;
       }
       case "onebeleza": {
         // Sucesso confiável: success: true (sempre presente). NÃO usar `id` (vira boolean true às vezes).
         succeeded = r.success === true;
-        summary = `${args.horarioinicio || args.horarioInicio || "horário"} em ${args.datanumero || args.dataAg || args.data || "data"}`;
+        // A API pode devolver nome do serviço espalhado no resultado (...parsed) —
+        // tenta os campos mais prováveis; se não vier, fica só com data/hora.
+        const obServiceName = r.servicoNome || r.nomeServico || r.ServicoNome || r.NomeServico;
+        const obDate = args.datanumero || args.dataAg || args.data || "";
+        const obTime = args.horarioinicio || args.horarioInicio || "";
+        const obWhen = formatBookingWhen(String(obDate), String(obTime));
+        summary = obServiceName ? `${obServiceName} ${obWhen}` : obWhen;
         break;
       }
       case "frizzar": {
         // Sucesso: ok:true + agendamentoId. Conta agendamentos.length (1 por serviço).
+        // O nome do serviço já vem pronto em r.agendamentos[].servicoNome.
         succeeded = r.ok === true && (r.agendamentoId != null || Array.isArray(r.agendamentos));
+        let frizzarServiceName: string | undefined;
         if (succeeded && Array.isArray(r.agendamentos) && r.agendamentos.length > 0) {
           bookedCount = r.agendamentos.length;
+          frizzarServiceName = r.agendamentos[0]?.servicoNome;
         }
-        summary = `${args.hora || "?"} em ${args.dia || "?"}${bookedCount > 1 ? ` (${bookedCount} serviços)` : ""}`;
+        const frizzarWhen = formatBookingWhen(String(args.dia || ""), String(args.hora || ""));
+        summary = `${frizzarServiceName ? `${frizzarServiceName} ` : ""}${frizzarWhen}${bookedCount > 1 ? ` (${bookedCount} serviços)` : ""}`;
         break;
       }
       case "bemp": {
@@ -4225,21 +4274,19 @@ function countSuccessfulBookingsInTurn(
         // prontos) em vez de reimprimir os args crus (ISO completo + ID numérico).
         const bempData = (r.data || {}) as Record<string, any>;
         const startIso = bempData.start || args.start;
-        let formattedWhen = "horário";
-        if (typeof startIso === "string") {
-          const m = startIso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-          formattedWhen = m ? `${m[3]}/${m[2]} ${m[4]}:${m[5]}` : startIso;
-        }
+        const bempWhen = formatBookingWhen(typeof startIso === "string" ? startIso : "");
         const serviceName = bempData.service_name;
         const professionalName = bempData.professional_name;
         summary = serviceName
-          ? `${serviceName} às ${formattedWhen}${professionalName ? ` com ${professionalName}` : ""}`
-          : `${formattedWhen} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
+          ? `${serviceName} ${bempWhen}${professionalName ? ` com ${professionalName}` : ""}`
+          : `${bempWhen} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
         break;
       }
       case "appbarber": {
+        // AppBarber não devolve nome de serviço no sucesso do agendamento (só
+        // service_code numérico) — fica sem nome, só data/hora humanizada.
         succeeded = r.ok === true && !!r.appointment_id;
-        summary = `${args.start_date || "?"} ${args.start_time || ""} (serviço ${args.service_code ?? "?"})`.trim();
+        summary = formatBookingWhen(String(args.start_date || ""), String(args.start_time || ""));
         break;
       }
       default:
@@ -6538,7 +6585,7 @@ async function callAIAgent(
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
   // ============================================================================
   if (_bookingAttempts > 0 && provider !== "none") {
-    const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider);
+    const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
       messages,
@@ -6679,7 +6726,7 @@ async function callAIAgent(
               }
             }
             // Recontagem após a rodada extra.
-            const recount = countSuccessfulBookingsInTurn(logToolCalls, provider);
+            const recount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
             retrySucceededExtra = Math.max(0, recount.count - criados);
             console.log(`[MultiBookingGuard] re-injeção executou=${executed} novos_ok=${retrySucceededExtra}`);
 
@@ -6730,7 +6777,7 @@ async function callAIAgent(
     // Camada 3 — mismatch texto↔execução. Se a IA disse "confirmei/agendei/te espero"
     // MAS o número de bookings criados é MENOR que o prometido (mesmo após guard),
     // força a resposta determinística parcial. Rede de segurança se Camada 1 subestimar.
-    const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider);
+    const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     if (
       prometidos <= MAX_AUTO_BOOKINGS &&
       postGuardCount.count < prometidos &&
