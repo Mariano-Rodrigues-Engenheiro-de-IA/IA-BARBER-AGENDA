@@ -6862,9 +6862,22 @@ async function callAIAgent(
         (a) => a.category === "booking" && a.status === "success",
       );
 
-      if (!recentBookingSuccess) {
-        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, e nenhum sucesso na sessão (sem limite de tempo). Tentando reinjeção.`);
-        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
+      // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
+      // ativo do cliente (buscar_agendamento[s|_dia] / listar_agendamentos)
+      // cujo horário/data aparece no texto da resposta. Cobre o caso do
+      // agendamento criado FORA da IA (ex: cliente marcou no app do provider
+      // e depois mandou "vou atrasar"), que nunca entra em recentCompletedActions.
+      // TTL curto (10 min) e invalidada por cancel posterior — ver
+      // isActiveBookingLookupStillValid.
+      const lookupLegit = isActiveBookingLookupStillValid(sessionState)
+        && responseCitesLookupBooking(finalResponse, sessionState);
+      if (lookupLegit) {
+        console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
+      }
+
+      if (!recentBookingSuccess && !lookupLegit) {
+        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, nenhum sucesso na sessão, e nenhuma busca ativa recente bate. Tentando reinjeção.`);
+        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar e sem busca ativa que confirme — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
         try {
