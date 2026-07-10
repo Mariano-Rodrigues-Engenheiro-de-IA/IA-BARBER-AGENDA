@@ -4113,7 +4113,8 @@ async function hydrateOneBelezaSessionStateFromProvider(
 // ============================================================================
 // MULTI-BOOKING GUARD (Camadas 1+2+3)
 // Impede que a IA responda "tá tudo certo" quando prometeu N agendamentos
-// (2 ou 3) e executou menos. Escala humano se N > 3.
+// (2 ou 3) e executou menos. A correção é a IA continuar chamando a tool de
+// agendamento com os dados já presentes — sem pedir dados de novo e sem humano.
 // Só é acionado quando a IA tentou criar pelo menos 1 agendamento no turno.
 // ============================================================================
 
@@ -4574,8 +4575,8 @@ async function classifyPendingBookings(params: {
 }
 
 
-/** Monta uma resposta determinística parcial: confirma o que foi feito e escala pro humano
- * finalizar o restante — NUNCA pede dado ao cliente (ele já forneceu tudo). */
+/** Mensagem determinística quando a recuperação automática esgotou as tentativas.
+ * NUNCA pede dado ao cliente e NUNCA escala humano: mantém a conversa com a IA. */
 function buildPartialBookingFallback(
   criados: number,
   prometidos: number,
@@ -4586,10 +4587,8 @@ function buildPartialBookingFallback(
     : (criados > 0 ? `${criados} agendamento(s)` : "");
   const faltam = Math.max(0, prometidos - criados);
   const partes: string[] = [];
-  if (feitos) partes.push(`Já deixei confirmado: ${feitos}.`);
-  partes.push(
-    `Vou passar aqui pro atendimento humano finalizar ${faltam > 0 ? `o${faltam > 1 ? "s" : ""} outro${faltam > 1 ? "s" : ""} ${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"} pra você — só um instante.`,
-  );
+  if (feitos) partes.push(`Já consegui registrar: ${feitos}.`);
+  partes.push(`Ainda falta concluir ${faltam > 0 ? `${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"}; vou continuar tentando por aqui com os dados que você já enviou.`);
   return partes.join(" ");
 }
 
