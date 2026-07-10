@@ -11030,6 +11030,23 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
         };
 
         const resultados = await Promise.all(profs.map(consultaUm));
+        // Rastreia profissionais válidos (mesma proteção do listar_profissionais).
+        if (sessionState) {
+          const ids = resultados
+            .map((r: any) => toPositiveInteger(r?.profissionalId))
+            .filter((n: any): n is number => typeof n === "number");
+          const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
+          for (const id of ids) existing.add(id);
+          (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+        }
+        // Se TODAS as consultas falharam com erro transitório de rede, devolve mensagem
+        // padrão de instabilidade (não deixa a IA improvisar "sem horários").
+        if (resultados.length > 0 && resultados.every((r: any) => r?.erro && r.horariosLivres?.length === 0)) {
+          const anyTransient = resultados.some((r: any) => typeof r?.erro === "string" && /status (5\d\d|429)/i.test(r.erro));
+          if (anyTransient) {
+            return transientErrorPayload("consultar a grade de horários", 503);
+          }
+        }
         const comHorario = resultados.filter((r: any) => Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0);
         // Horários únicos consolidados (qualquer profissional) para a IA reconhecer o pool total.
         const horariosConsolidados = Array.from(new Set(
