@@ -3016,7 +3016,23 @@ function _extractTimesAndDatesFromPayload(payload: unknown): { times: string[]; 
   }
   let json = "";
   try { json = typeof payload === "string" ? payload : JSON.stringify(payload ?? {}); } catch { json = ""; }
-  const times = Array.from(new Set((json.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [])));
+  // Extração ancorada: pega HH:MM que vem logo depois de uma data ISO (yyyy-MM-dd
+  // com "T" ou espaço como separador — Trinks/Bemp/AppBarber usam esse formato),
+  // ou em campos de horário nomeados (hora/horario/time/hour/inicio), ou em
+  // strings JSON que contenham exatamente HH:MM(:SS). Evita capturar segundos
+  // (":00" final de ISO) e offsets de timezone (-03:00). Ver bug documentado
+  // na conversa: \b não ativa entre "T" e dígito, o que fazia o regex antigo
+  // capturar "00:00" (segundos) em "2026-07-09T09:00:00".
+  const timeSet = new Set<string>();
+  const pushTime = (h: string, m: string) => {
+    const hh = h.padStart(2, "0");
+    const hn = Number(hh);
+    if (hn >= 0 && hn <= 23) timeSet.add(`${hh}:${m}`);
+  };
+  for (const m of json.matchAll(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/g)) pushTime(m[1], m[2]);
+  for (const m of json.matchAll(/"(?:hora|horario|hora_?inicio|hora_?fim|inicio|fim|time|hour|start|end)"\s*:\s*"(\d{1,2}):(\d{2})(?::\d{2})?"/gi)) pushTime(m[1], m[2]);
+  for (const m of json.matchAll(/"(\d{1,2}):(\d{2})(?::\d{2})?"/g)) pushTime(m[1], m[2]);
+  const times = Array.from(timeSet);
   const dates = Array.from(new Set([
     ...(json.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []),
     ...(json.match(/\b\d{2}\/\d{2}(?:\/\d{4})?\b/g) || []),
