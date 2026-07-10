@@ -10428,7 +10428,8 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
   // wrapper que tenta a URL primária, faz retry com backoff em 5xx transientes (502/503/504)
   // e, em caso de erro de rede/DNS ou 5xx persistente, repete na URL de fallback.
-  const transientStatuses = new Set([502, 503, 504]);
+  // 429 (rate-limit) tratado como transitório junto com 5xx: mesmo backoff.
+  const transientStatuses = new Set([429, 502, 503, 504]);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const frizzarFetch = async (path: string, init?: RequestInit): Promise<Response> => {
     const tryFetch = async (base: string) => {
