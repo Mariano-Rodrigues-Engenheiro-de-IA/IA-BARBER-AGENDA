@@ -255,11 +255,24 @@ Deno.serve(async (req) => {
     let tenants: any[] = [];
 
     if (isCronCall) {
+      // ===== Auth guard: CRON_SECRET header OR service-role bearer =====
+      const cronSecret = Deno.env.get("CRON_SECRET");
+      const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const providedSecret = req.headers.get("x-cron-secret") || req.headers.get("x-webhook-secret");
+      const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+      const secretOk = !!(cronSecret && providedSecret && providedSecret === cronSecret);
+      const serviceOk = !!(bearer && bearer === serviceRoleKey);
+      if (!secretOk && !serviceOk) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       const { data } = await supabase
         .from("tenants")
         .select("id, name, celcash_galax_id, celcash_galax_hash, celcash_env, celcash_enabled")
         .eq("celcash_enabled", true);
       tenants = data || [];
+
     } else {
       // Admin-only path
       if (!authHeader.startsWith("Bearer ")) {
