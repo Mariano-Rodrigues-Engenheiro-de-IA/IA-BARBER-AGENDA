@@ -6384,7 +6384,7 @@ async function callAIAgent(
           const profId = toPositiveInteger(parsedArgs?.profissionalId);
           const data = typeof parsedArgs?.data === "string" ? parsedArgs.data.slice(0, 10) : null;
           if (profId && data) {
-            frizzarLastListed.set(`${tenant.id}:${phoneNumber || ""}:${profId}`, { dia: data, listedAt: Date.now() });
+            frizzarSetLastListed(sessionState, profId, data);
             sessionState.selectedProfessionalId = profId;
             sessionState.selectedDate = data;
             console.log(`[FrizzarGuard] tracked listar_horarios prof=${profId} data=${data}`);
