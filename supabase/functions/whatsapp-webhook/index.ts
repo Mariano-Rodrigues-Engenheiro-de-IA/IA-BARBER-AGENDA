@@ -6684,12 +6684,13 @@ async function callAIAgent(
   // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  // ⚠️ ESCOPO: Trinks, AppBarber e Bemp. Bemp foi devolvida ao guard porque
-  // historicamente foi ONDE este guard surgiu (casos Leonardo/avô e Vinícius 15h)
-  // — a exclusão anterior foi efeito colateral de um refino de escopo do
-  // MultiBookingGuard, não decisão fundamentada. OneBeleza e Frizzar seguem
-  // fora porque nunca reproduziram alucinação de "agendei" sem tool_call.
-  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp"]);
+  // ⚠️ ESCOPO: os 5 providers (trinks, appbarber, bemp, onebeleza, frizzar).
+  // A restrição anterior a 3 providers era só reflexo de onde bugs foram
+  // observados; não há particularidade que justifique deixar OneBeleza/Frizzar
+  // fora — o guard só dispara quando NÃO houve tool_call de agendar/criar_agendamento
+  // no turno E não há sucesso recente no ledger da sessão, então não gera
+  // falso positivo em fluxos legítimos desses providers.
+  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
 
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
     const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
