@@ -2905,6 +2905,13 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       frizzarServiceCatalog: Array.isArray((state as any).frizzarServiceCatalog)
         ? (state as any).frizzarServiceCatalog.slice(0, 200)
         : [],
+      // Bemp / AppBarber service catalogs
+      bempServiceCatalog: Array.isArray((state as any).bempServiceCatalog)
+        ? (state as any).bempServiceCatalog.slice(0, 200)
+        : [],
+      appbarberServiceCatalog: Array.isArray((state as any).appbarberServiceCatalog)
+        ? (state as any).appbarberServiceCatalog.slice(0, 200)
+        : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
