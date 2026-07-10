@@ -2985,6 +2985,101 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
   }
 }
 
+// ===================== ACTIVE BOOKINGS LOOKUP TRACKING =====================
+// Segunda fonte de legitimidade do PhantomConfirmationGuard: quando o cliente
+// tem agendamento criado FORA da IA (ex: pelo app do provider), o ledger de
+// ações criadas nesta sessão fica vazio. Se a IA acabou de rodar uma tool de
+// leitura (buscar_agendamento[s|_dia] / listar_agendamentos) e recebeu ao
+// menos 1 agendamento ativo, isso conta como prova válida de que o agendamento
+// existe de verdade. Guard fica frouxo por 10 min e é invalidado por qualquer
+// cancel bem-sucedido posterior.
+
+const ACTIVE_BOOKING_LOOKUP_TOOLS = new Set([
+  "buscar_agendamento",       // Trinks
+  "buscar_agendamentos",      // Frizzar (retorno array)
+  "buscar_agendamentos_dia",  // OneBeleza
+  "listar_agendamentos",      // Bemp + AppBarber
+]);
+const ACTIVE_BOOKING_LOOKUP_TTL_MS = 10 * 60 * 1000;
+
+function _extractTimesAndDatesFromPayload(payload: unknown): { times: string[]; dates: string[]; count: number } {
+  let count = 0;
+  if (Array.isArray(payload)) {
+    count = payload.length;
+  } else if (payload && typeof payload === "object") {
+    const anyP = payload as any;
+    if (Array.isArray(anyP.appointments)) count = anyP.appointments.length;
+    else if (Array.isArray(anyP.data)) count = anyP.data.length;
+    else if (Array.isArray(anyP.agendamentos)) count = anyP.agendamentos.length;
+    else if (Array.isArray(anyP.items)) count = anyP.items.length;
+    else if (anyP.id || anyP.agendamentoId || anyP.invoice_code) count = 1;
+  }
+  let json = "";
+  try { json = typeof payload === "string" ? payload : JSON.stringify(payload ?? {}); } catch { json = ""; }
+  const times = Array.from(new Set((json.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [])));
+  const dates = Array.from(new Set([
+    ...(json.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []),
+    ...(json.match(/\b\d{2}\/\d{2}(?:\/\d{4})?\b/g) || []),
+  ]));
+  return { times, dates, count };
+}
+
+function recordActiveBookingsLookup(state: AgentSessionState, toolName: string, toolResult: unknown): void {
+  const { times, dates, count } = _extractTimesAndDatesFromPayload(toolResult);
+  if (count <= 0) return; // busca vazia não conta como prova
+  state.recentActiveBookingsLookup = {
+    at: Date.now(),
+    toolName,
+    count,
+    times,
+    dates,
+  };
+  console.log(`[ActiveBookingsLookup] ${toolName}: count=${count} times=${times.join(",")} dates=${dates.slice(0, 5).join(",")}`);
+}
+
+function isActiveBookingLookupStillValid(state: AgentSessionState): boolean {
+  const lu = state.recentActiveBookingsLookup;
+  if (!lu || lu.count <= 0) return false;
+  if (Date.now() - lu.at > ACTIVE_BOOKING_LOOKUP_TTL_MS) return false;
+  // Invalidação por cancel bem-sucedido depois da busca
+  const cancelAfter = (state.recentCompletedActions || []).some((a) => {
+    if (a.category !== "booking_cancel" || a.status !== "success") return false;
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && t > lu.at;
+  });
+  return !cancelAfter;
+}
+
+function responseCitesLookupBooking(text: string, state: AgentSessionState): boolean {
+  const lu = state.recentActiveBookingsLookup;
+  if (!lu) return false;
+  const responseTimes = new Set<string>((text.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || []));
+  const responseHourOnly = new Set<string>(
+    (text.match(/\b(\d{1,2})\s*h(?![a-z0-9])/gi) || []).map((s) => (s.match(/\d+/) || [""])[0].replace(/^0+/, "") || "0"),
+  );
+  const lookupTimes = new Set<string>(lu.times);
+  const lookupHourOnly = new Set<string>(lu.times.map((t) => (t.split(":")[0] || "").replace(/^0+/, "") || "0"));
+  for (const rt of responseTimes) {
+    if (lookupTimes.has(rt)) return true;
+    const h = (rt.split(":")[0] || "").replace(/^0+/, "") || "0";
+    if (lookupHourOnly.has(h)) return true;
+  }
+  for (const h of responseHourOnly) {
+    if (lookupHourOnly.has(h)) return true;
+  }
+  // Fallback: se cita uma data que aparece na busca
+  const responseDates = new Set<string>([
+    ...((text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])),
+    ...((text.match(/\b\d{2}\/\d{2}(?:\/\d{4})?\b/g) || [])),
+  ]);
+  for (const d of responseDates) {
+    if (lu.dates.includes(d)) return true;
+  }
+  return false;
+}
+
+
+
 // ===================== GLOBAL ACTION LEDGER =====================
 // Prevents the AI from repeating the SAME mutating action across consecutive
 // user messages in the same conversation. Cross-provider, cross-tool.
