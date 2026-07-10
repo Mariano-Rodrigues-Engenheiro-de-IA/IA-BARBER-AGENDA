@@ -11027,7 +11027,7 @@ function buildBempTools(tenant: any) {
 
 // ===================== BEMP TOOL EXECUTION =====================
 
-async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const rawFuncName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
