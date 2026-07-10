@@ -12169,6 +12169,22 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const reason = String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp");
         let removingItem = cancelScope === "item" && args.invoice_item_code;
 
+        // 🛡️ Ownership: se listar_agendamentos já rodou nesta conversa, invoice_code precisa pertencer ao cliente.
+        {
+          const validCodes = (((sessionState as any)?.appbarberValidInvoiceCodes) || []) as number[];
+          const reqCode = toPositiveInteger(args.invoice_code);
+          if (validCodes.length > 0 && reqCode && !validCodes.includes(reqCode)) {
+            console.warn(`[AppBarber] cancelar_agendamento BLOCKED: invoice_code=${reqCode} não pertence ao cliente (válidos: ${validCodes.join(",")})`);
+            return {
+              error: `invoice_code ${reqCode} não pertence ao cliente desta conversa. Rode listar_agendamentos novamente e use um dos codes retornados.`,
+              blocked: true,
+              ownership_mismatch: true,
+              validInvoiceCodes: validCodes,
+            };
+          }
+        }
+
+
         // Guard-rail: se for cancelar ITEM mas a comanda só tem 1 serviço, força cancelar comanda inteira.
         // Isso evita o fluxo "tenta item → falha → tenta comanda" observado em produção.
         if (removingItem && args.invoice_code && phoneDigits) {
