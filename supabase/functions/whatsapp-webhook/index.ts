@@ -2784,6 +2784,14 @@ interface AgentSessionState {
     norm: string;
     at: string; // ISO
   }>;
+  // FRIZZAR — memória persistida da última `listar_horarios` por profissional.
+  // Migrado do Map in-process (que sumia entre cold starts de instâncias diferentes
+  // do Deno, causando falso "não listou antes" e bloqueando agendamento legítimo).
+  frizzarListedByProfessional?: Array<{
+    profissionalId: number;
+    dia: string;
+    listedAt: number; // epoch ms
+  }>;
 }
 
 
@@ -2810,6 +2818,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     awaitingNameForRegistration: false,
     recentCompletedActions: [],
     recentAssistantReplies: [],
+    frizzarListedByProfessional: [],
   };
 
   try {
@@ -2873,6 +2882,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
       trinksLockUpdatedAt: typeof s.trinksLockUpdatedAt === "number" ? s.trinksLockUpdatedAt : 0,
+      frizzarListedByProfessional: Array.isArray(s.frizzarListedByProfessional)
+        ? s.frizzarListedByProfessional
+            .filter((r: any) => r && typeof r.profissionalId === "number" && typeof r.dia === "string" && typeof r.listedAt === "number")
+            .slice(-30)
+        : [],
     } as AgentSessionState;
   } catch {
     return defaultState;
@@ -2926,6 +2940,10 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
       trinksLockUpdatedAt: (state as any).trinksLockUpdatedAt ?? 0,
+      // Frizzar: última grade listada por profissional (persistida cross-instância)
+      frizzarListedByProfessional: Array.isArray((state as any).frizzarListedByProfessional)
+        ? (state as any).frizzarListedByProfessional.slice(-30)
+        : [],
     };
 
     await supabase
@@ -5519,7 +5537,7 @@ async function callAIAgent(
           sessionBlocked = true;
         }
 
-          const lastFrizzarListedForProfessional = frizzarLastListed.get(`${tenant.id}:${phoneNumber || ""}:${parsedArgs?.profissionalId}`);
+          const lastFrizzarListedForProfessional = frizzarGetLastListed(sessionState, parsedArgs?.profissionalId);
           const hasRecentFrizzarList = !!lastFrizzarListedForProfessional && Date.now() - lastFrizzarListedForProfessional.listedAt < 30 * 60 * 1000;
           if (
             !toolResult &&
@@ -6366,7 +6384,7 @@ async function callAIAgent(
           const profId = toPositiveInteger(parsedArgs?.profissionalId);
           const data = typeof parsedArgs?.data === "string" ? parsedArgs.data.slice(0, 10) : null;
           if (profId && data) {
-            frizzarLastListed.set(`${tenant.id}:${phoneNumber || ""}:${profId}`, { dia: data, listedAt: Date.now() });
+            frizzarSetLastListed(sessionState, profId, data);
             sessionState.selectedProfessionalId = profId;
             sessionState.selectedDate = data;
             console.log(`[FrizzarGuard] tracked listar_horarios prof=${profId} data=${data}`);
@@ -6997,15 +7015,22 @@ async function callAIAgent(
   if (finalResponse && !guardOverrideResponse) {
     const cancelAttempted = (logToolCalls || []).some((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
     if (cancelAttempted) {
-      const cancelSucceeded = (logToolCalls || []).some((tc) => {
-        if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
+      // Todas as chamadas de cancelamento do turno precisam ter dado certo.
+      // Antes usávamos `.some()` — se o cliente pedia cancelar 2 e só 1 caía,
+      // a resposta afirmando "cancelei os dois" passava sem correção.
+      const cancelCalls = (logToolCalls || []).filter((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
+      const cancelAllSucceeded = cancelCalls.length > 0 && cancelCalls.every((tc) => {
         const r: any = tc.result || {};
         return !r.error && r.blocked !== true;
       });
       const claimsCancelled = /cancel(ei|ado|ada|amos)|desmarqu(ei|ei|amos)|j[aá]\s+(cancel|desmarqu)/i.test(finalResponse);
-      if (!cancelSucceeded && claimsCancelled) {
-        console.warn(`[CancelGuard] tool de cancelamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
-        logErrors.push({ message: `Cancelamento não confirmado pela ferramenta, mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
+      if (!cancelAllSucceeded && claimsCancelled) {
+        const failedCount = cancelCalls.filter((tc) => {
+          const r: any = tc.result || {};
+          return !!r.error || r.blocked === true;
+        }).length;
+        console.warn(`[CancelGuard] cancelamento incompleto (${failedCount}/${cancelCalls.length} falharam) mas a resposta afirmava sucesso. Corrigindo.`);
+        logErrors.push({ message: `Cancelamento parcial/falhou (${failedCount}/${cancelCalls.length}) mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
         finalResponse = "Tive uma instabilidade aqui pra confirmar seu cancelamento. Já acionei o responsável pra garantir isso pra você — só um momento 🙏";
         guardOverrideResponse = true;
       }
@@ -10483,16 +10508,35 @@ function buildFrizzarTools(tenant: any) {
 
 // ===================== FRIZZAR TOOL EXECUTION =====================
 
-// Memória in-process da última `listar_horarios` por conversa/profissional.
-// Chave: `${tenantId}:${phoneNumber}:${profissionalId}` → { dia, listedAt }.
-// Usada por `agendar` para travar tentativa de agendar em data diferente da consultada.
-const frizzarLastListed = new Map<string, { dia: string; listedAt: number }>();
+// Memória persistida da última `listar_horarios` por profissional (por conversa).
+// Antes era um Map module-level, que sumia entre cold starts de instâncias
+// diferentes do Deno — gerando falso "não listou antes" e bloqueando agendamento
+// legítimo. Agora vive dentro de `sessionState.frizzarListedByProfessional` e
+// atravessa reinício de instância normalmente.
+function frizzarGetLastListed(state: AgentSessionState | undefined, profissionalId: any): { dia: string; listedAt: number } | null {
+  const pid = toPositiveInteger(profissionalId);
+  if (!pid || !state?.frizzarListedByProfessional) return null;
+  const entry = state.frizzarListedByProfessional.find((e) => e.profissionalId === pid);
+  return entry ? { dia: entry.dia, listedAt: entry.listedAt } : null;
+}
+function frizzarSetLastListed(state: AgentSessionState | undefined, profissionalId: any, dia: string): void {
+  const pid = toPositiveInteger(profissionalId);
+  if (!pid || !state || !dia) return;
+  if (!Array.isArray(state.frizzarListedByProfessional)) state.frizzarListedByProfessional = [];
+  const list = state.frizzarListedByProfessional;
+  const idx = list.findIndex((e) => e.profissionalId === pid);
+  const record = { profissionalId: pid, dia, listedAt: Date.now() };
+  if (idx >= 0) list[idx] = record;
+  else list.push(record);
+  // cap
+  if (list.length > 30) state.frizzarListedByProfessional = list.slice(-30);
+}
 
 async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
-  const lastListedKey = (profId: any) => `${tenant.id}:${_phoneNumber || ""}:${profId}`;
+
 
 
   // Resolução da URL base da Frizzar:
@@ -10676,7 +10720,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             // NÃO assuma parsed[0] (geralmente é o próximo dia disponível) — devolva vazio.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato && args.profissionalId) {
-              frizzarLastListed.set(lastListedKey(args.profissionalId), { dia: args.data, listedAt: Date.now() });
+              frizzarSetLastListed(sessionState, args.profissionalId, args.data);
             }
             return {
               data: args.data,
@@ -10717,7 +10761,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
             // e sem expor outros dias ao modelo.
             const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
             if (exato) {
-              frizzarLastListed.set(lastListedKey(profissionalId), { dia: args.data, listedAt: Date.now() });
+              frizzarSetLastListed(sessionState, profissionalId, args.data);
             }
             return {
               profissionalId,
@@ -10788,7 +10832,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
         // 🚨 TRAVA DE DATA: valida que `dia` bate com a última `listar_horarios` para este profissional.
         // Evita o bug em que a IA lista para 27 e tenta agendar 28 (ou vice-versa).
-        const lastListed = frizzarLastListed.get(lastListedKey(args.profissionalId));
+        const lastListed = frizzarGetLastListed(sessionState, args.profissionalId);
         if (lastListed && Date.now() - lastListed.listedAt < 30 * 60 * 1000 && lastListed.dia !== args.dia) {
           console.warn(`[Frizzar] BLOQUEIO data divergente: listada=${lastListed.dia} vs agendar=${args.dia} (prof=${args.profissionalId}, phone=${_phoneNumber})`);
           return {
