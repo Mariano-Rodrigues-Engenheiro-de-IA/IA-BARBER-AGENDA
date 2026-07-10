@@ -2940,6 +2940,10 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
       trinksLockUpdatedAt: (state as any).trinksLockUpdatedAt ?? 0,
+      // Frizzar: última grade listada por profissional (persistida cross-instância)
+      frizzarListedByProfessional: Array.isArray((state as any).frizzarListedByProfessional)
+        ? (state as any).frizzarListedByProfessional.slice(-30)
+        : [],
     };
 
     await supabase
