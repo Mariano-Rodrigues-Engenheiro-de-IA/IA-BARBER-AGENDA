@@ -6507,6 +6507,40 @@ async function callAIAgent(
           console.log(`[Frizzar] validAgendasIds tracked: [${ids.join(",")}]`);
         }
 
+        // ===== APPBARBER: catálogo de profissionais válidos (bloqueia professional_code alucinado em criar_agendamento).
+        // Alimentado por listar_profissionais, listar_horarios e listar_horarios_geral.
+        // Grave porque /v1/availability tem bug conhecido: ignora filtro por profissional
+        // e devolve grade de todos, então sem trava a IA pode oferecer horário do barbeiro errado.
+        if (provider === "appbarber" && toolResult && !(toolResult as any)?.error) {
+          const collectCodes = (): number[] => {
+            const out: number[] = [];
+            if (toolCall.function.name === "listar_profissionais" && Array.isArray((toolResult as any)?.professionals)) {
+              for (const p of (toolResult as any).professionals) {
+                const code = toPositiveInteger(p?.professional_code) ?? toPositiveInteger(p?.employee_code);
+                if (typeof code === "number") out.push(code);
+              }
+            }
+            if (toolCall.function.name === "listar_horarios_geral" && Array.isArray((toolResult as any)?.profissionais)) {
+              for (const p of (toolResult as any).profissionais) {
+                const code = toPositiveInteger(p?.professional_code);
+                if (typeof code === "number") out.push(code);
+              }
+            }
+            if (toolCall.function.name === "listar_horarios") {
+              const code = toPositiveInteger((toolResult as any)?.professional_code);
+              if (typeof code === "number") out.push(code);
+            }
+            return out;
+          };
+          const newCodes = collectCodes();
+          if (newCodes.length > 0) {
+            const existing = new Set(((sessionState as any).appbarberValidProfessionalCodes || []) as number[]);
+            for (const c of newCodes) existing.add(c);
+            (sessionState as any).appbarberValidProfessionalCodes = Array.from(existing).slice(0, 100);
+            console.log(`[AppBarber] validProfessionalCodes += [${newCodes.join(",")}] (total=${(sessionState as any).appbarberValidProfessionalCodes.length})`);
+          }
+        }
+
         // ===== APPBARBER: rastreia invoice_codes do cliente após listar_agendamentos (checagem de propriedade em cancelar_agendamento).
         if (provider === "appbarber" && toolCall.function.name === "listar_agendamentos" && toolResult && Array.isArray((toolResult as any)?.appointments)) {
           const codes = (toolResult as any).appointments
