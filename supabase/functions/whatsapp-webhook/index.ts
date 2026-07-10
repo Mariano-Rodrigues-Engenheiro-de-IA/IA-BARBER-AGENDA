@@ -11346,6 +11346,20 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
 
+        // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, serviceId precisa estar no catálogo.
+        {
+          const bempCat = (((sessionState as any)?.bempServiceCatalog) || []) as Array<{ id: number; name: string }>;
+          const sid = Number(args.serviceId);
+          if (bempCat.length > 0 && sid > 0 && !bempCat.some((s) => s.id === sid)) {
+            console.warn(`[Bemp] agendar BLOCKED: serviceId=${sid} fora do catálogo (${bempCat.map((s) => s.id).join(",")})`);
+            return {
+              error: `serviceId ${sid} não está no catálogo listado nesta conversa. Chame listar_servicos novamente e use um dos IDs retornados.`,
+              blocked: true,
+              validServiceIds: bempCat.map((s) => s.id),
+            };
+          }
+        }
+
         // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta usar a seleção persistida;
         // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
         let professionalId = args.professionalId;
