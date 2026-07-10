@@ -6758,6 +6758,14 @@ async function callAIAgent(
           for (const tc of retryToolCalls) {
             const tname = tc?.function?.name;
             const isBookingTool = BOOKING_TOOL_NAMES.has(tname);
+            if (!isBookingTool && (typeof tname !== "string" || isWriteToolName(tname))) {
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: JSON.stringify({ skipped: true, reason: "MultiBookingGuard: nesta recuperação só são permitidas consultas auxiliares e tools de agendamento." }),
+              });
+              continue;
+            }
             current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
             if (isBookingTool && current.count >= prometidos) {
               messages.push({
@@ -6843,7 +6851,7 @@ async function callAIAgent(
       guardOverrideResponse = true;
     }
 
-    // Pausa a conversa em qualquer cenário de escalada acima (sessionBlocked ligado pelo guard).
+    // Pausa a conversa apenas em cenários realmente bloqueantes (ex.: overflow > limite automático).
     if (sessionBlocked && !simulatorMode) {
       try {
         await supabase
