@@ -10145,6 +10145,22 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "desmarcar_agendamento": {
+        // 🛡️ Ownership check — bloqueia desmarcar de ID que não está na lista
+        // filtrada por telefone (validAgendasIds populada por buscar_agendamentos_dia,
+        // linha ~6112). Evita cancelar agendamento de outro cliente por ID alucinado.
+        const validIds: number[] = Array.isArray((sessionState as any)?.validAgendasIds)
+          ? (sessionState as any).validAgendasIds
+          : [];
+        const requestedId = Number(args.agendasId);
+        if (validIds.length > 0 && !validIds.includes(requestedId)) {
+          console.warn(`[OneBeleza] desmarcar_agendamento ownership_mismatch: id=${requestedId} não está em validAgendasIds=[${validIds.join(",")}]`);
+          return {
+            blocked: true,
+            reason: "ownership_mismatch",
+            message: `Esse agendamento não pertence a este cliente. Chame buscar_agendamentos_dia primeiro para pegar o ID correto.`,
+            validIds,
+          };
+        }
         const url = `${baseUrl}/api/Agendamento/DesmarcarAgendamento?celular=${celular}&agendasId=${args.agendasId}`;
         console.log(`[OneBeleza] desmarcar_agendamento URL: ${url}`);
         const res = await fetchOneBelezaWithRetry(url, {
@@ -10158,6 +10174,7 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
+
 
       default:
         return { error: `Unknown OneBeleza tool: ${funcName}` };
