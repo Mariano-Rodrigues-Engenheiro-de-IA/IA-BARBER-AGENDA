@@ -2818,6 +2818,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     awaitingNameForRegistration: false,
     recentCompletedActions: [],
     recentAssistantReplies: [],
+    frizzarListedByProfessional: [],
   };
 
   try {
