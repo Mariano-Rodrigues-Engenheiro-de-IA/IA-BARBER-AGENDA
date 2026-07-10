@@ -4256,16 +4256,21 @@ function countSuccessfulBookingsInTurn(
         break;
       }
       case "frizzar": {
-        // Sucesso: ok:true + agendamentoId. Conta agendamentos.length (1 por serviço).
-        // O nome do serviço já vem pronto em r.agendamentos[].servicoNome.
+        // Sucesso: ok:true + agendamentoId. Uma chamada `agendar` = 1 reserva (1 pessoa),
+        // independente de quantos serviços vieram no combo (agendamentos[] pode ter N
+        // linhas por serviço, mas é a mesma pessoa/horário). Se o cliente quiser marcar
+        // pra outra pessoa, a IA precisa fazer outra chamada — e é isso que o Guard
+        // vai cobrar via reinjeção/fallback parcial.
         succeeded = r.ok === true && (r.agendamentoId != null || Array.isArray(r.agendamentos));
         let frizzarServiceName: string | undefined;
+        let frizzarServiceCount = 0;
         if (succeeded && Array.isArray(r.agendamentos) && r.agendamentos.length > 0) {
-          bookedCount = r.agendamentos.length;
           frizzarServiceName = r.agendamentos[0]?.servicoNome;
+          frizzarServiceCount = r.agendamentos.length;
         }
+        if (succeeded) bookedCount = 1;
         const frizzarWhen = formatBookingWhen(String(args.dia || ""), String(args.hora || ""));
-        summary = `${frizzarServiceName ? `${frizzarServiceName} ` : ""}${frizzarWhen}${bookedCount > 1 ? ` (${bookedCount} serviços)` : ""}`;
+        summary = `${frizzarServiceName ? `${frizzarServiceName} ` : ""}${frizzarWhen}${frizzarServiceCount > 1 ? ` (${frizzarServiceCount} serviços)` : ""}`;
         break;
       }
       case "bemp": {
