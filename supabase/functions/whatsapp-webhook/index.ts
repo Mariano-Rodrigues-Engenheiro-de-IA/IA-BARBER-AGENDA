@@ -10825,7 +10825,7 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
         // 🚨 TRAVA DE DATA: valida que `dia` bate com a última `listar_horarios` para este profissional.
         // Evita o bug em que a IA lista para 27 e tenta agendar 28 (ou vice-versa).
-        const lastListed = frizzarLastListed.get(lastListedKey(args.profissionalId));
+        const lastListed = frizzarGetLastListed(sessionState, args.profissionalId);
         if (lastListed && Date.now() - lastListed.listedAt < 30 * 60 * 1000 && lastListed.dia !== args.dia) {
           console.warn(`[Frizzar] BLOQUEIO data divergente: listada=${lastListed.dia} vs agendar=${args.dia} (prof=${args.profissionalId}, phone=${_phoneNumber})`);
           return {
