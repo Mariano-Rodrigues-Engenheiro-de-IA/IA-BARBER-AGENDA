@@ -6951,6 +6951,100 @@ async function callAIAgent(
   // FIM CANCEL GUARD
   // ============================================================================
 
+  // ============================================================================
+  // 🛡️ RESCHEDULE GUARD — cenário "cancelou o antigo, novo falhou"
+  // Se no mesmo turno a IA CANCELOU com sucesso E tentou criar/agendar mas
+  // FALHOU, o cliente fica sem agendamento. Aqui a gente injeta 1 rodada extra
+  // forçando a IA a recriar usando os dados que já estão no contexto
+  // (chat_messages + sessionState). Sem escalar humano, sem pedir dado ao
+  // cliente. Se ainda assim falhar, envia mensagem determinística avisando
+  // que vai continuar tentando por aqui (o item de rollback via `editar_agendamento`
+  // atômico só existe hoje na Trinks — cobrir os outros 4 fica pra P2).
+  // ============================================================================
+  if (finalResponse && !guardOverrideResponse) {
+    const cancelOk = (logToolCalls || []).some((tc) => {
+      if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !r.error && r.blocked !== true;
+    });
+    const bookingFailed = (logToolCalls || []).some((tc) => {
+      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !!r.error || r.blocked === true || r.success === false;
+    });
+    const bookingOk = (logToolCalls || []).some((tc) => {
+      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      if (r.error || r.blocked === true) return false;
+      if (r.success === false) return false;
+      return true;
+    });
+    if (cancelOk && bookingFailed && !bookingOk) {
+      console.warn(`[RescheduleGuard] cancel OK + criar FAIL no mesmo turno para ${phoneNumber}. Tentando recuperação.`);
+      logErrors.push({ message: `Remarcação incompleta detectada (cancelou o antigo, novo falhou) — tentando reinjeção sem pedir dados ao cliente.`, level: "warning" });
+      let recovered = false;
+      try {
+        const nudge = {
+          role: "system",
+          content:
+            "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você cancelou o agendamento antigo com sucesso, mas a criação do novo falhou. O cliente NÃO PODE ficar sem agendamento. " +
+            "Use os dados que já estão no histórico (serviço, profissional, data, hora — tanto do antigo quanto do que o cliente pediu agora) e chame a ferramenta de agendar/criar_agendamento AGORA. " +
+            "Se o erro anterior foi de horário indisponível, tente o horário original do agendamento cancelado como fallback. " +
+            "PROIBIDO: pedir dados ao cliente, escalar pra humano, ou dizer que vai chamar alguém. Você resolve aqui.",
+        };
+        messages.push(nudge);
+        const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
+        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "reschedule-guard-reinject");
+        if (retryResp.ok) {
+          const retryJson = await retryResp.json();
+          const retryMsg = retryJson?.choices?.[0]?.message;
+          const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+          if (retryToolCalls.length > 0) {
+            messages.push(retryMsg);
+            let anyBookingSucceeded = false;
+            for (const tc of retryToolCalls) {
+              let tResult: any;
+              try {
+                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+              } catch (e) {
+                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+              }
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              const toolName = tc?.function?.name;
+              logToolCalls.push({ name: toolName, args: parseToolArguments(tc.function?.arguments), result: tResult });
+              if (BOOKING_TOOL_NAMES.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
+                anyBookingSucceeded = true;
+              }
+            }
+            if (anyBookingSucceeded) {
+              const det = buildDeterministicBookingConfirmation(logToolCalls);
+              if (det) {
+                finalResponse = det;
+                guardOverrideResponse = true;
+                recovered = true;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[RescheduleGuard] reinject exception: ${(e as Error)?.message}`);
+      }
+      if (!recovered) {
+        finalResponse = "Peraí, tive um problema técnico ao remarcar seu horário agora. Vou refazer aqui e já te confirmo em instantes 🙏";
+        guardOverrideResponse = true;
+      }
+    }
+  }
+  // ============================================================================
+  // FIM RESCHEDULE GUARD
+  // ============================================================================
+
+
+
 
 
   // 🚨 LOOP DETECTOR (FIX #3): se a IA repetiu o MESMO conjunto de horários 3x seguidas
