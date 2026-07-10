@@ -6483,10 +6483,13 @@ async function callAIAgent(
         }
 
         // ===== FRIZZAR: rastreia agendasIds do cliente após buscar_agendamentos (para checagem de propriedade em cancelar_agendamento).
+        // A Frizzar retorna cada agendamento com o campo `codigo` (é o próprio agendamentoId
+        // usado depois em cancelar_agendamento). Os aliases agendamentoId/agendaId/id existem
+        // como salvaguarda caso a API mude a nomenclatura no futuro.
         if (provider === "frizzar" && toolCall.function.name === "buscar_agendamentos" && Array.isArray(toolResult)) {
           const ids = toolResult
-            .map((a: any) => toPositiveInteger(a?.agendamentoId) ?? toPositiveInteger(a?.agendaId) ?? toPositiveInteger(a?.id))
-            .filter((n: any) => typeof n === "number");
+            .map((a: any) => toPositiveInteger(a?.codigo) ?? toPositiveInteger(a?.agendamentoId) ?? toPositiveInteger(a?.agendaId) ?? toPositiveInteger(a?.id))
+            .filter((n: any): n is number => typeof n === "number");
           (sessionState as any).frizzarValidAgendasIds = ids;
           console.log(`[Frizzar] validAgendasIds tracked: [${ids.join(",")}]`);
         }
