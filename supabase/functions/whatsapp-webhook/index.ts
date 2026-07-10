@@ -6263,6 +6263,30 @@ async function callAIAgent(
           console.log(`[FrizzarLock] catalog tracked: ${catalog.length} serviços`);
         }
 
+        // ===== BEMP: catálogo de serviços (bloqueia serviceId alucinado em agendar) =====
+        if (provider === "bemp" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
+          const catalog = toolResult
+            .map((s: any) => ({ id: toPositiveInteger(s?.id) ?? null, name: typeof s?.name === "string" ? s.name : "" }))
+            .filter((s: any) => s.id);
+          (sessionState as any).bempServiceCatalog = catalog;
+          console.log(`[BempLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        // ===== APPBARBER: catálogo de serviços (bloqueia service_code alucinado em criar_agendamento) =====
+        if (provider === "appbarber" && toolCall.function.name === "listar_servicos" && toolResult && Array.isArray((toolResult as any)?.services)) {
+          const catalog = (toolResult as any).services
+            .map((s: any) => ({
+              service_code: toPositiveInteger(s?.service_code) ?? null,
+              name: typeof s?.name === "string" ? s.name : "",
+              duration_minutes: toPositiveInteger(s?.duration_minutes) ?? null,
+            }))
+            .filter((s: any) => s.service_code);
+          (sessionState as any).appbarberServiceCatalog = catalog;
+          console.log(`[AppBarberLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+
+
         if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
           const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
           if (reqDur) {
