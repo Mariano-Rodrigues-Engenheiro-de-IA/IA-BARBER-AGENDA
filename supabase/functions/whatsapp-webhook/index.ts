@@ -6295,6 +6295,26 @@ async function callAIAgent(
           console.log(`[AppBarberLock] catalog tracked: ${catalog.length} serviços`);
         }
 
+        // ===== FRIZZAR: rastreia agendasIds do cliente após buscar_agendamentos (para checagem de propriedade em cancelar_agendamento).
+        if (provider === "frizzar" && toolCall.function.name === "buscar_agendamentos" && Array.isArray(toolResult)) {
+          const ids = toolResult
+            .map((a: any) => toPositiveInteger(a?.agendamentoId) ?? toPositiveInteger(a?.agendaId) ?? toPositiveInteger(a?.id))
+            .filter((n: any) => typeof n === "number");
+          (sessionState as any).frizzarValidAgendasIds = ids;
+          console.log(`[Frizzar] validAgendasIds tracked: [${ids.join(",")}]`);
+        }
+
+        // ===== APPBARBER: rastreia invoice_codes do cliente após listar_agendamentos (checagem de propriedade em cancelar_agendamento).
+        if (provider === "appbarber" && toolCall.function.name === "listar_agendamentos" && toolResult && Array.isArray((toolResult as any)?.appointments)) {
+          const codes = (toolResult as any).appointments
+            .map((a: any) => toPositiveInteger(a?.invoice_code))
+            .filter((n: any) => typeof n === "number");
+          (sessionState as any).appbarberValidInvoiceCodes = codes;
+          console.log(`[AppBarber] validInvoiceCodes tracked: [${codes.join(",")}]`);
+        }
+
+
+
 
 
         if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
