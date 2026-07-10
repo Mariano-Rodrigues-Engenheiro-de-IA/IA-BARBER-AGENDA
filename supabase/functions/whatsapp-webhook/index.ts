@@ -2792,6 +2792,13 @@ interface AgentSessionState {
     dia: string;
     listedAt: number; // epoch ms
   }>;
+  // FRIZZAR — ownership do clienteId desta conversa (evita vazamento cruzado
+  // do tipo do bug antigo da Trinks: IA passa clienteId de outra pessoa em
+  // buscar_agendamentos e recebe agendamentos alheios).
+  frizzarClienteId?: number | null;
+  // FRIZZAR — profissionais válidos vindos de listar_profissionais /
+  // listar_horarios_geral. Bloqueia profissionalId alucinado em `agendar`.
+  frizzarValidProfessionalIds?: number[];
   // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
   // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
   // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
