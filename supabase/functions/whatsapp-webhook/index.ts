@@ -2784,6 +2784,14 @@ interface AgentSessionState {
     norm: string;
     at: string; // ISO
   }>;
+  // FRIZZAR — memória persistida da última `listar_horarios` por profissional.
+  // Migrado do Map in-process (que sumia entre cold starts de instâncias diferentes
+  // do Deno, causando falso "não listou antes" e bloqueando agendamento legítimo).
+  frizzarListedByProfessional?: Array<{
+    profissionalId: number;
+    dia: string;
+    listedAt: number; // epoch ms
+  }>;
 }
 
 
