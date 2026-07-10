@@ -12212,7 +12212,14 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "criar_agendamento": {
-        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // 🛡️ Anti-alucinação: mesma proteção do listar_agendamentos — força usar
+        // o telefone da conversa e loga quando a IA tenta um número diferente.
+        const _convDigits = normalizePhoneDigits(phoneNumber || "");
+        const _argDigits = normalizePhoneDigits(args.customer_phone || "");
+        if (_argDigits && _convDigits && _argDigits !== _convDigits) {
+          console.warn(`[AppBarber] criar_agendamento: IA passou telefone (${_argDigits}) diferente do da conversa (${_convDigits}) — usando o da conversa.`);
+        }
+        const phoneDigits = normalizePhoneDigits(phoneNumber || args.customer_phone || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
