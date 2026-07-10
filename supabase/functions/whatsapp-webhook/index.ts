@@ -2799,6 +2799,11 @@ interface AgentSessionState {
   // FRIZZAR — profissionais válidos vindos de listar_profissionais /
   // listar_horarios_geral. Bloqueia profissionalId alucinado em `agendar`.
   frizzarValidProfessionalIds?: number[];
+  // APPBARBER — profissionais válidos vindos de listar_profissionais /
+  // listar_horarios / listar_horarios_geral. Bloqueia professional_code
+  // alucinado em `criar_agendamento` (grave: /v1/availability tem bug que
+  // ignora filtro por profissional e devolve grade de todos).
+  appbarberValidProfessionalCodes?: number[];
   // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
   // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
   // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
@@ -2840,6 +2845,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     frizzarListedByProfessional: [],
     frizzarClienteId: null,
     frizzarValidProfessionalIds: [],
+    appbarberValidProfessionalCodes: [],
     recentActiveBookingsLookup: null,
   };
 
@@ -2905,6 +2911,9 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.frizzarValidProfessionalIds)
         ? { frizzarValidProfessionalIds: s.frizzarValidProfessionalIds.filter((n: any) => typeof n === "number").slice(0, 100) }
         : { frizzarValidProfessionalIds: [] }),
+      ...(Array.isArray(s.appbarberValidProfessionalCodes)
+        ? { appbarberValidProfessionalCodes: s.appbarberValidProfessionalCodes.filter((n: any) => typeof n === "number").slice(0, 100) }
+        : { appbarberValidProfessionalCodes: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
@@ -2980,6 +2989,10 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       frizzarClienteId: (state as any).frizzarClienteId ?? null,
       frizzarValidProfessionalIds: Array.isArray((state as any).frizzarValidProfessionalIds)
         ? (state as any).frizzarValidProfessionalIds.slice(0, 100)
+        : [],
+      // APPBARBER — profissionais válidos (bloqueia professional_code alucinado)
+      appbarberValidProfessionalCodes: Array.isArray((state as any).appbarberValidProfessionalCodes)
+        ? (state as any).appbarberValidProfessionalCodes.slice(0, 100)
         : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
@@ -6492,6 +6505,40 @@ async function callAIAgent(
             .filter((n: any): n is number => typeof n === "number");
           (sessionState as any).frizzarValidAgendasIds = ids;
           console.log(`[Frizzar] validAgendasIds tracked: [${ids.join(",")}]`);
+        }
+
+        // ===== APPBARBER: catálogo de profissionais válidos (bloqueia professional_code alucinado em criar_agendamento).
+        // Alimentado por listar_profissionais, listar_horarios e listar_horarios_geral.
+        // Grave porque /v1/availability tem bug conhecido: ignora filtro por profissional
+        // e devolve grade de todos, então sem trava a IA pode oferecer horário do barbeiro errado.
+        if (provider === "appbarber" && toolResult && !(toolResult as any)?.error) {
+          const collectCodes = (): number[] => {
+            const out: number[] = [];
+            if (toolCall.function.name === "listar_profissionais" && Array.isArray((toolResult as any)?.professionals)) {
+              for (const p of (toolResult as any).professionals) {
+                const code = toPositiveInteger(p?.professional_code) ?? toPositiveInteger(p?.employee_code);
+                if (typeof code === "number") out.push(code);
+              }
+            }
+            if (toolCall.function.name === "listar_horarios_geral" && Array.isArray((toolResult as any)?.profissionais)) {
+              for (const p of (toolResult as any).profissionais) {
+                const code = toPositiveInteger(p?.professional_code);
+                if (typeof code === "number") out.push(code);
+              }
+            }
+            if (toolCall.function.name === "listar_horarios") {
+              const code = toPositiveInteger((toolResult as any)?.professional_code);
+              if (typeof code === "number") out.push(code);
+            }
+            return out;
+          };
+          const newCodes = collectCodes();
+          if (newCodes.length > 0) {
+            const existing = new Set(((sessionState as any).appbarberValidProfessionalCodes || []) as number[]);
+            for (const c of newCodes) existing.add(c);
+            (sessionState as any).appbarberValidProfessionalCodes = Array.from(existing).slice(0, 100);
+            console.log(`[AppBarber] validProfessionalCodes += [${newCodes.join(",")}] (total=${(sessionState as any).appbarberValidProfessionalCodes.length})`);
+          }
         }
 
         // ===== APPBARBER: rastreia invoice_codes do cliente após listar_agendamentos (checagem de propriedade em cancelar_agendamento).
@@ -12360,6 +12407,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
               error: `service_code ${sc} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
               blocked: true,
               validServiceCodes: abCat.map((s) => s.service_code),
+            };
+          }
+        }
+        // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
+        // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
+        // a IA pode oferecer horário de um professional_code que nem existe e só descobrir no 422 do POST.
+        {
+          const validProfs = (((sessionState as any)?.appbarberValidProfessionalCodes) || []) as number[];
+          const pc = Number(args.professional_code);
+          if (validProfs.length > 0 && pc > 0 && !validProfs.includes(pc)) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: professional_code=${pc} não pertence ao catálogo (${validProfs.join(",")})`);
+            return {
+              error: `professional_code ${pc} não está entre os profissionais listados nesta conversa. Chame listar_profissionais e use um dos codes retornados.`,
+              blocked: true,
+              validProfessionalCodes: validProfs,
             };
           }
         }
