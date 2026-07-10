@@ -2990,6 +2990,10 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       frizzarValidProfessionalIds: Array.isArray((state as any).frizzarValidProfessionalIds)
         ? (state as any).frizzarValidProfessionalIds.slice(0, 100)
         : [],
+      // APPBARBER — profissionais válidos (bloqueia professional_code alucinado)
+      appbarberValidProfessionalCodes: Array.isArray((state as any).appbarberValidProfessionalCodes)
+        ? (state as any).appbarberValidProfessionalCodes.slice(0, 100)
+        : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
