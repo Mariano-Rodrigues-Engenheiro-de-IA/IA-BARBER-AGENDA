@@ -4377,6 +4377,7 @@ function countExplicitProfessionalSelections(text: string): number {
   return professionalMentions.length;
 }
 
+// ⚠️ FRIZZAR-ONLY: só usado por classifyPendingBookings (ver aviso acima).
 function extractBookingCountFromReasoning(reasoning: string): number | null {
   const text = String(reasoning || "");
   const direct = text.match(/total\s*(?:de\s*)?(\d{1,2})\s*agendamentos?/i)
