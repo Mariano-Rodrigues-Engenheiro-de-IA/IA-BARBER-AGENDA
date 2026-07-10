@@ -4574,7 +4574,8 @@ async function classifyPendingBookings(params: {
 }
 
 
-/** Monta uma resposta determinística parcial: "Consegui X. Ainda faltam Y." */
+/** Monta uma resposta determinística parcial: confirma o que foi feito e escala pro humano
+ * finalizar o restante — NUNCA pede dado ao cliente (ele já forneceu tudo). */
 function buildPartialBookingFallback(
   criados: number,
   prometidos: number,
@@ -4582,12 +4583,14 @@ function buildPartialBookingFallback(
 ): string {
   const feitos = breakdown.length > 0
     ? breakdown.map((b) => b.summary).filter((s) => !!s).join("; ")
-    : `${criados} agendamento(s)`;
-  const faltam = prometidos - criados;
-  return [
-    `Consegui confirmar: ${feitos}.`,
-    `Ainda preciso confirmar mais ${faltam} agendamento(s) que você pediu — pode me ajudar com os detalhes que faltam?`,
-  ].join(" ");
+    : (criados > 0 ? `${criados} agendamento(s)` : "");
+  const faltam = Math.max(0, prometidos - criados);
+  const partes: string[] = [];
+  if (feitos) partes.push(`Já deixei confirmado: ${feitos}.`);
+  partes.push(
+    `Vou passar aqui pro atendimento humano finalizar ${faltam > 0 ? `o${faltam > 1 ? "s" : ""} outro${faltam > 1 ? "s" : ""} ${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"} pra você — só um instante.`,
+  );
+  return partes.join(" ");
 }
 
 
