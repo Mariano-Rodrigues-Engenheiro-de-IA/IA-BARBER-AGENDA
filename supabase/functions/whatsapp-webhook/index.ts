@@ -8736,6 +8736,7 @@ ${recentActionsBlock}
 ${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
+${existingBookingLookupBlock}
 ${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : buildGlobalPromptSection(tenant)}
 ------------------------------------------
 
