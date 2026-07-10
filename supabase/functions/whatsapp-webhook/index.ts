@@ -4217,7 +4217,23 @@ function countSuccessfulBookingsInTurn(
     if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) continue;
     const r = tc.result;
     if (!r || typeof r !== "object") continue;
-    // Regra transversal: bloqueado ou com erro NUNCA conta.
+    const args = tc.args || {};
+    const isAlreadyBooked = r.alreadyBooked === true || r.status === "SUCESSO_ANTERIOR_JA_REGISTRADO";
+
+    // Bloqueio de duplicidade significa que a reserva exata já existe: para o
+    // MultiBookingGuard isso conta como concluído, senão ele tenta repetir a
+    // mesma reserva, zera `criados` e pode cair em rota indevida.
+    if (isAlreadyBooked) {
+      const when = formatBookingWhen(
+        String(args.dia || args.data || args.date || args.dataHoraInicio || args.start || args.start_date || ""),
+        String(args.hora || args.horario || args.time || args.start_time || ""),
+      );
+      breakdown.push({ tool: tc.name, summary: `${when} (já registrado)` });
+      count += 1;
+      continue;
+    }
+
+    // Regra transversal: bloqueado ou com erro NUNCA conta, exceto duplicidade já registrada acima.
     if (r.blocked === true) continue;
     if (r.error) continue;
     if (Array.isArray(r.Errors) && r.Errors.length > 0) continue;
@@ -4226,7 +4242,6 @@ function countSuccessfulBookingsInTurn(
     let succeeded = false;
     let bookedCount = 1;
     let summary = "";
-    const args = tc.args || {};
 
     switch (provider) {
       case "trinks": {
@@ -4323,6 +4338,11 @@ function parseSmallPtNumber(value: string): number | null {
     quatro: 4,
     "5": 5,
     cinco: 5,
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
   };
   return map[v] ?? null;
 }
@@ -4335,6 +4355,22 @@ function countExplicitProfessionalSelections(text: string): number {
   // Uma combinação de serviços com UM profissional ("corte e barba com Gabriel")
   // continua sendo 1 reserva; só sobe quando há 2+ seleções "com Nome".
   const professionalMentions = normalized.match(/\bcom\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'-]*/g) || [];
+  if (professionalMentions.length >= 2) return professionalMentions.length;
+
+  // Caso real: cliente responde só "Pode ser Luan e Gabriel" depois da IA
+  // listar profissionais. Não há "com Nome", mas há 2 nomes próprios unidos.
+  // Exclui termos comuns de serviço para não transformar "Corte e Barba" em 2 pessoas.
+  const properNameMatches = normalized.match(/\b[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'-]{2,}\b/g) || [];
+  const ignored = new Set([
+    "Pode", "Hoje", "Amanhã", "Amanha", "Corte", "Barba", "Sobrancelha", "Acabamento",
+    "Combo", "Masculino", "Feminino", "Infantil", "Idoso", "Express", "Limpeza",
+    "Hidratação", "Hidratacao", "Depilação", "Depilacao", "Nariz", "Orelha",
+  ]);
+  const names = [...new Set(properNameMatches.filter((name) => !ignored.has(name)))];
+  const hasSelectionConnector = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|fechado|beleza|sim)\b/i.test(normalized)
+    || /\b[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'-]{2,}\b\s*(?:,|\/|\be\b|\bou\b)\s*\b[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][A-Za-zÀ-ÿ'-]{2,}\b/.test(normalized);
+  if (hasSelectionConnector && names.length >= 2) return names.length;
+
   return professionalMentions.length;
 }
 
@@ -4344,11 +4380,16 @@ function extractBookingCountFromReasoning(reasoning: string): number | null {
     || text.match(/=\s*(\d{1,2})\s*agendamentos?/i);
   if (direct) return Number(direct[1]);
 
-  const bookingWords = "agendamentos?|reservas?|marcações?|marcacoes?|horários?|horarios?|pessoas?|clientes?|profissionais?";
+  const bookingWords = "agendamentos?|appointments?|bookings?|reservas?|marcações?|marcacoes?|horários?|horarios?|slots?|pessoas?|people|clientes?|clients?|profissionais?|professionals?";
   const before = new RegExp(`\\b(\\d{1,2}|um|uma|dois|duas|tr[eê]s|quatro|cinco)\\b[^.]{0,80}\\b(${bookingWords})\\b`, "i").exec(text);
   const after = new RegExp(`\\b(${bookingWords})\\b[^.]{0,80}\\b(\\d{1,2}|um|uma|dois|duas|tr[eê]s|quatro|cinco)\\b`, "i").exec(text);
   if (before) return parseSmallPtNumber(before[1]);
   if (after) return parseSmallPtNumber(after[2]);
+
+  const beforeEn = new RegExp(`\\b(one|two|three|four|five)\\b[^.]{0,80}\\b(${bookingWords})\\b`, "i").exec(text);
+  const afterEn = new RegExp(`\\b(${bookingWords})\\b[^.]{0,80}\\b(one|two|three|four|five)\\b`, "i").exec(text);
+  if (beforeEn) return parseSmallPtNumber(beforeEn[1]);
+  if (afterEn) return parseSmallPtNumber(afterEn[2]);
   return null;
 }
 
