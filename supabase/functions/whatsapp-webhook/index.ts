@@ -9559,13 +9559,32 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           valor: args.valor,
         };
         console.log("criar_agendamento body:", JSON.stringify(body));
-        const res = await fetch(`${baseUrl}/agendamentos`, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`criar_agendamento response (${res.status}):`, text.slice(0, 500));
+        // Retry loop 429 (Trinks às vezes rate-limita 2 criações consecutivas).
+        // Mesmo padrão do cancelar_agendamento (linha ~9618). Backoff 800ms/1600ms.
+        let res: Response;
+        let text = "";
+        let attempt = 0;
+        const maxAttempts = 3;
+        while (true) {
+          attempt++;
+          res = await fetch(`${baseUrl}/agendamentos`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          text = await res.text();
+          console.log(`criar_agendamento response (${res.status}, attempt ${attempt}):`, text.slice(0, 500));
+          if (res.status !== 429 || attempt >= maxAttempts) break;
+          await new Promise((r) => setTimeout(r, 800 * attempt));
+        }
+        if (res.status === 429) {
+          return {
+            error: "RATE_LIMIT_TRINKS",
+            status: 429,
+            recoverable: true,
+            message: "Trinks limitou as requisições (429). Aguarde alguns segundos e tente criar o agendamento novamente — a ação NÃO foi concluída.",
+          };
+        }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
