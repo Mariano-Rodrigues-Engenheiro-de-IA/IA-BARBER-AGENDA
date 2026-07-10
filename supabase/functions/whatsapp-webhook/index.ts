@@ -2838,6 +2838,8 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     recentCompletedActions: [],
     recentAssistantReplies: [],
     frizzarListedByProfessional: [],
+    frizzarClienteId: null,
+    frizzarValidProfessionalIds: [],
     recentActiveBookingsLookup: null,
   };
 
