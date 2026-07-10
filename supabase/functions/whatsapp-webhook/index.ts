@@ -2882,6 +2882,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
       trinksLockUpdatedAt: typeof s.trinksLockUpdatedAt === "number" ? s.trinksLockUpdatedAt : 0,
+      frizzarListedByProfessional: Array.isArray(s.frizzarListedByProfessional)
+        ? s.frizzarListedByProfessional
+            .filter((r: any) => r && typeof r.profissionalId === "number" && typeof r.dia === "string" && typeof r.listedAt === "number")
+            .slice(-30)
+        : [],
     } as AgentSessionState;
   } catch {
     return defaultState;
