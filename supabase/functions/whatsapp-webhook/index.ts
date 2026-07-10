@@ -6597,7 +6597,13 @@ async function callAIAgent(
   // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && provider !== "none") {
+  // ⚠️ ESCOPO: apenas Trinks e AppBarber — únicos providers onde já vimos
+  // alucinação real de "agendei" sem tool_call (Trinks: cliente pediu 2º
+  // horário; AppBarber: pediu nome já cadastrado). Nos outros (OneBeleza,
+  // Frizzar, Bemp) esse guard estava só adicionando risco de falso positivo
+  // sem cobrir bug observado. Ampliar só com bug reproduzido em log.
+  const _phantomGuardProviders = new Set(["trinks", "appbarber"]);
+  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
     const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
     const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
     const sentences = finalResponse.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
