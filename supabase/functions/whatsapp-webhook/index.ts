@@ -11061,6 +11061,38 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
           return { error: "Faltam parâmetros: clienteId, dia, hora, profissionalId, servicos." };
         }
 
+        // 🛡️ Ownership: bloqueia agendar em nome de OUTRO clienteId que não seja
+        // o desta conversa (mesmo tipo do vazamento cruzado da Trinks).
+        {
+          const ownerCid = toPositiveInteger((sessionState as any)?.frizzarClienteId);
+          const reqCid = toPositiveInteger(args.clienteId);
+          if (ownerCid && reqCid && ownerCid !== reqCid) {
+            console.warn(`[Frizzar] agendar BLOCKED: clienteId=${reqCid} não pertence a esta conversa (real=${ownerCid})`);
+            return {
+              error: `clienteId ${reqCid} não pertence ao cliente desta conversa. Use clienteId=${ownerCid} (o retornado por buscar_cliente/cadastrar_cliente neste atendimento) antes de agendar.`,
+              blocked: true,
+              ownership_mismatch: true,
+              clienteIdEsperado: ownerCid,
+            };
+          }
+        }
+
+        // 🚨 TRAVA — profissionalId fora do que foi listado nesta conversa.
+        // Espelha a proteção que a Trinks já tem: se a IA inventar um profissionalId
+        // que nunca veio de listar_profissionais/listar_horarios_geral, bloqueia.
+        {
+          const validProfs = ((sessionState as any)?.frizzarValidProfessionalIds || []) as number[];
+          const reqPid = toPositiveInteger(args.profissionalId);
+          if (Array.isArray(validProfs) && validProfs.length > 0 && reqPid && !validProfs.includes(reqPid)) {
+            console.warn(`[Frizzar] agendar BLOCKED: profissionalId=${reqPid} fora dos válidos (${validProfs.join(",")})`);
+            return {
+              error: `profissionalId ${reqPid} não corresponde a nenhum profissional retornado por listar_profissionais/listar_horarios_geral nesta conversa. Escolha um dos códigos abaixo pelo NOME.`,
+              blocked: true,
+              profissionaisValidos: validProfs,
+            };
+          }
+        }
+
         // 🚨 TRAVA — servicoId fora do catálogo listado nesta conversa.
         // Caso real: IA passou codigo=2461 ("Unha de Fibra de Vidro — Manutenção") no
         // lugar do serviço de corte que o cliente pediu. A API aceita porque o serviço
