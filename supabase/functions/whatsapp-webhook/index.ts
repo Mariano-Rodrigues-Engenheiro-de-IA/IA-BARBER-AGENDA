@@ -6922,27 +6922,31 @@ async function callAIAgent(
   // ============================================================================
 
   // ============================================================================
-  // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando cancelar_agendamento
-  // falhou nesta rodada. Mesmo princípio do BookingGuard/MultiBookingGuard, só que
-  // pro lado do cancelamento (nunca existia proteção equivalente aqui).
+  // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando a ferramenta de
+  // cancelamento falhou nesta rodada. Cobre `cancelar_agendamento` (Trinks,
+  // Frizzar, Bemp, AppBarber) E `desmarcar_agendamento` (OneBeleza) — sem o
+  // segundo nome, cancelamento da OneBeleza ficava sem guard e a IA podia
+  // afirmar cancelamento falso.
   // ============================================================================
+  const CANCEL_TOOL_NAMES = new Set(["cancelar_agendamento", "desmarcar_agendamento"]);
   if (finalResponse && !guardOverrideResponse) {
-    const cancelAttempted = (logToolCalls || []).some((tc) => tc?.name === "cancelar_agendamento");
+    const cancelAttempted = (logToolCalls || []).some((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
     if (cancelAttempted) {
       const cancelSucceeded = (logToolCalls || []).some((tc) => {
-        if (tc?.name !== "cancelar_agendamento") return false;
+        if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
         const r: any = tc.result || {};
         return !r.error && r.blocked !== true;
       });
       const claimsCancelled = /cancel(ei|ado|ada|amos)|desmarqu(ei|ei|amos)|j[aá]\s+(cancel|desmarqu)/i.test(finalResponse);
       if (!cancelSucceeded && claimsCancelled) {
-        console.warn(`[CancelGuard] cancelar_agendamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
+        console.warn(`[CancelGuard] tool de cancelamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
         logErrors.push({ message: `Cancelamento não confirmado pela ferramenta, mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
         finalResponse = "Tive uma instabilidade aqui pra confirmar seu cancelamento. Já acionei o responsável pra garantir isso pra você — só um momento 🙏";
         guardOverrideResponse = true;
       }
     }
   }
+
   // ============================================================================
   // FIM CANCEL GUARD
   // ============================================================================
