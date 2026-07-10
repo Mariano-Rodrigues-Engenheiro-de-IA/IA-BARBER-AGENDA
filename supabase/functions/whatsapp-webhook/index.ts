@@ -2792,6 +2792,18 @@ interface AgentSessionState {
     dia: string;
     listedAt: number; // epoch ms
   }>;
+  // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
+  // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
+  // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
+  // criado FORA da IA (ex: cliente marcou no app e depois mandou "vou atrasar").
+  // TTL curto (10 min) e invalidada por qualquer cancel posterior.
+  recentActiveBookingsLookup?: {
+    at: number; // epoch ms
+    toolName: string;
+    count: number;
+    times: string[]; // HH:MM extraídos do payload
+    dates: string[]; // YYYY-MM-DD ou DD/MM[/YYYY]
+  } | null;
 }
 
 
