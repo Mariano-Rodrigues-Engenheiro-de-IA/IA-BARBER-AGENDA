@@ -2974,6 +2974,11 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       appbarberValidInvoiceCodes: Array.isArray((state as any).appbarberValidInvoiceCodes)
         ? (state as any).appbarberValidInvoiceCodes.slice(0, 50)
         : [],
+      // FRIZZAR — ownership do cliente + profissionais válidos
+      frizzarClienteId: (state as any).frizzarClienteId ?? null,
+      frizzarValidProfessionalIds: Array.isArray((state as any).frizzarValidProfessionalIds)
+        ? (state as any).frizzarValidProfessionalIds.slice(0, 100)
+        : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
       trinksSelectedServiceName: (state as any).trinksSelectedServiceName ?? null,
