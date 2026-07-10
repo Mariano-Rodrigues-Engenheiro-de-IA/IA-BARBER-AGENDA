@@ -2799,6 +2799,11 @@ interface AgentSessionState {
   // FRIZZAR — profissionais válidos vindos de listar_profissionais /
   // listar_horarios_geral. Bloqueia profissionalId alucinado em `agendar`.
   frizzarValidProfessionalIds?: number[];
+  // APPBARBER — profissionais válidos vindos de listar_profissionais /
+  // listar_horarios / listar_horarios_geral. Bloqueia professional_code
+  // alucinado em `criar_agendamento` (grave: /v1/availability tem bug que
+  // ignora filtro por profissional e devolve grade de todos).
+  appbarberValidProfessionalCodes?: number[];
   // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
   // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
   // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
