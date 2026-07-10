@@ -1075,7 +1075,8 @@ async function fetchOneBelezaWithRetry(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       const res = await fetch(url, options);
-      if (res.status >= 500 && res.status < 600) {
+      // 429 (rate-limit) e 5xx são transitórios — mesmo backoff que já existia para 5xx.
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
         console.log(`[OneBeleza] HTTP ${res.status} on ${url}, retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
         if (attempt < maxRetries - 1) {
           await new Promise((r) => setTimeout(r, retryDelayMs));
@@ -2862,6 +2863,12 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.trinksServiceCatalog) ? { trinksServiceCatalog: s.trinksServiceCatalog } : { trinksServiceCatalog: [] }),
       // Frizzar service-catalog (mesma ideia da Trinks — bloqueia servicoId alucinado)
       ...(Array.isArray(s.frizzarServiceCatalog) ? { frizzarServiceCatalog: s.frizzarServiceCatalog } : { frizzarServiceCatalog: [] }),
+      // Bemp / AppBarber service catalogs (bloqueio de service_code alucinado)
+      ...(Array.isArray(s.bempServiceCatalog) ? { bempServiceCatalog: s.bempServiceCatalog } : { bempServiceCatalog: [] }),
+      ...(Array.isArray(s.appbarberServiceCatalog) ? { appbarberServiceCatalog: s.appbarberServiceCatalog } : { appbarberServiceCatalog: [] }),
+      // Ownership tracking (Frizzar/AppBarber) — impede cancelamento de agendamento de terceiro
+      ...(Array.isArray(s.frizzarValidAgendasIds) ? { frizzarValidAgendasIds: s.frizzarValidAgendasIds } : { frizzarValidAgendasIds: [] }),
+      ...(Array.isArray(s.appbarberValidInvoiceCodes) ? { appbarberValidInvoiceCodes: s.appbarberValidInvoiceCodes } : { appbarberValidInvoiceCodes: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
@@ -2900,6 +2907,20 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       // Frizzar service-catalog (bloqueia servicoId fora do que foi listado nesta conversa)
       frizzarServiceCatalog: Array.isArray((state as any).frizzarServiceCatalog)
         ? (state as any).frizzarServiceCatalog.slice(0, 200)
+        : [],
+      // Bemp / AppBarber service catalogs
+      bempServiceCatalog: Array.isArray((state as any).bempServiceCatalog)
+        ? (state as any).bempServiceCatalog.slice(0, 200)
+        : [],
+      appbarberServiceCatalog: Array.isArray((state as any).appbarberServiceCatalog)
+        ? (state as any).appbarberServiceCatalog.slice(0, 200)
+        : [],
+      // Ownership caches
+      frizzarValidAgendasIds: Array.isArray((state as any).frizzarValidAgendasIds)
+        ? (state as any).frizzarValidAgendasIds.slice(0, 50)
+        : [],
+      appbarberValidInvoiceCodes: Array.isArray((state as any).appbarberValidInvoiceCodes)
+        ? (state as any).appbarberValidInvoiceCodes.slice(0, 50)
         : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
@@ -6262,6 +6283,50 @@ async function callAIAgent(
           console.log(`[FrizzarLock] catalog tracked: ${catalog.length} serviços`);
         }
 
+        // ===== BEMP: catálogo de serviços (bloqueia serviceId alucinado em agendar) =====
+        if (provider === "bemp" && toolCall.function.name === "listar_servicos" && Array.isArray(toolResult)) {
+          const catalog = toolResult
+            .map((s: any) => ({ id: toPositiveInteger(s?.id) ?? null, name: typeof s?.name === "string" ? s.name : "" }))
+            .filter((s: any) => s.id);
+          (sessionState as any).bempServiceCatalog = catalog;
+          console.log(`[BempLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        // ===== APPBARBER: catálogo de serviços (bloqueia service_code alucinado em criar_agendamento) =====
+        if (provider === "appbarber" && toolCall.function.name === "listar_servicos" && toolResult && Array.isArray((toolResult as any)?.services)) {
+          const catalog = (toolResult as any).services
+            .map((s: any) => ({
+              service_code: toPositiveInteger(s?.service_code) ?? null,
+              name: typeof s?.name === "string" ? s.name : "",
+              duration_minutes: toPositiveInteger(s?.duration_minutes) ?? null,
+            }))
+            .filter((s: any) => s.service_code);
+          (sessionState as any).appbarberServiceCatalog = catalog;
+          console.log(`[AppBarberLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        // ===== FRIZZAR: rastreia agendasIds do cliente após buscar_agendamentos (para checagem de propriedade em cancelar_agendamento).
+        if (provider === "frizzar" && toolCall.function.name === "buscar_agendamentos" && Array.isArray(toolResult)) {
+          const ids = toolResult
+            .map((a: any) => toPositiveInteger(a?.agendamentoId) ?? toPositiveInteger(a?.agendaId) ?? toPositiveInteger(a?.id))
+            .filter((n: any) => typeof n === "number");
+          (sessionState as any).frizzarValidAgendasIds = ids;
+          console.log(`[Frizzar] validAgendasIds tracked: [${ids.join(",")}]`);
+        }
+
+        // ===== APPBARBER: rastreia invoice_codes do cliente após listar_agendamentos (checagem de propriedade em cancelar_agendamento).
+        if (provider === "appbarber" && toolCall.function.name === "listar_agendamentos" && toolResult && Array.isArray((toolResult as any)?.appointments)) {
+          const codes = (toolResult as any).appointments
+            .map((a: any) => toPositiveInteger(a?.invoice_code))
+            .filter((n: any) => typeof n === "number");
+          (sessionState as any).appbarberValidInvoiceCodes = codes;
+          console.log(`[AppBarber] validInvoiceCodes tracked: [${codes.join(",")}]`);
+        }
+
+
+
+
+
         if (provider === "trinks" && toolCall.function.name === "listar_horarios" && !wasBlocked && toolResult && !(toolResult as any)?.error) {
           const reqDur = toPositiveInteger(parsedArgs?.servicoDuracao);
           if (reqDur) {
@@ -7340,9 +7405,9 @@ async function executeToolForProvider(
     case "frizzar":
       return executeFrizzarTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "bemp":
-      return executeBempTool(tenant, toolCall, phoneNumber);
+      return executeBempTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "appbarber":
-      return executeAppBarberTool(tenant, toolCall, phoneNumber);
+      return executeAppBarberTool(tenant, toolCall, phoneNumber, opts?.sessionState);
     case "none":
       return executeNoneTool(tenant, toolCall);
     default:
@@ -9558,13 +9623,32 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           valor: args.valor,
         };
         console.log("criar_agendamento body:", JSON.stringify(body));
-        const res = await fetch(`${baseUrl}/agendamentos`, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`criar_agendamento response (${res.status}):`, text.slice(0, 500));
+        // Retry loop 429 (Trinks às vezes rate-limita 2 criações consecutivas).
+        // Mesmo padrão do cancelar_agendamento (linha ~9618). Backoff 800ms/1600ms.
+        let res: Response;
+        let text = "";
+        let attempt = 0;
+        const maxAttempts = 3;
+        while (true) {
+          attempt++;
+          res = await fetch(`${baseUrl}/agendamentos`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          text = await res.text();
+          console.log(`criar_agendamento response (${res.status}, attempt ${attempt}):`, text.slice(0, 500));
+          if (res.status !== 429 || attempt >= maxAttempts) break;
+          await new Promise((r) => setTimeout(r, 800 * attempt));
+        }
+        if (res.status === 429) {
+          return {
+            error: "RATE_LIMIT_TRINKS",
+            status: 429,
+            recoverable: true,
+            message: "Trinks limitou as requisições (429). Aguarde alguns segundos e tente criar o agendamento novamente — a ação NÃO foi concluída.",
+          };
+        }
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
@@ -10032,6 +10116,21 @@ async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumber?: st
           return { error: "profissionalId inválido. Execute buscar_barbeiros_por_servico novamente e use o profissionalId retornado (número grande, ex: 40658).", blocked: true };
         }
 
+        // 🛡️ Catálogo: se buscar_servicos já rodou nesta conversa, o servicoId
+        // precisa estar em allowedServiceIds. Evita alucinação de IDs plausíveis
+        // (números grandes que passam pelo filtro de "número pequeno" acima).
+        const allowedServiceIds: number[] = Array.isArray(sessionState?.allowedServiceIds)
+          ? sessionState!.allowedServiceIds
+          : [];
+        if (aServicoId && sIdNum > 0 && allowedServiceIds.length > 0 && !allowedServiceIds.includes(sIdNum)) {
+          console.warn(`[OneBeleza] agendar BLOCKED: servicoId=${sIdNum} não está no catálogo desta conversa (${allowedServiceIds.join(",")})`);
+          return {
+            error: `servicoId ${sIdNum} não corresponde a nenhum serviço listado nesta conversa. Chame buscar_servicos novamente e use um dos IDs retornados.`,
+            blocked: true,
+            allowedServiceIds,
+          };
+        }
+
         // ⚠️ CRITICAL: the `celular` query param identifies the BOOKING CLIENT in the One Beleza API.
         // Using the tenant owner's phone (tenant.onebeleza_celular) makes the appointment fall under the owner.
         // We MUST use the conversation client's phone (the one writing on WhatsApp).
@@ -10427,7 +10526,8 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
 
   // wrapper que tenta a URL primária, faz retry com backoff em 5xx transientes (502/503/504)
   // e, em caso de erro de rede/DNS ou 5xx persistente, repete na URL de fallback.
-  const transientStatuses = new Set([502, 503, 504]);
+  // 429 (rate-limit) tratado como transitório junto com 5xx: mesmo backoff.
+  const transientStatuses = new Set([429, 502, 503, 504]);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const frizzarFetch = async (path: string, init?: RequestInit): Promise<Response> => {
     const tryFetch = async (base: string) => {
@@ -10795,6 +10895,20 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       }
 
       case "cancelar_agendamento": {
+        // 🛡️ Ownership: se buscar_agendamentos rodou nesta conversa, agendamentoId precisa pertencer ao cliente.
+        {
+          const validIds = (((sessionState as any)?.frizzarValidAgendasIds) || []) as number[];
+          const reqId = toPositiveInteger(args.agendamentoId);
+          if (validIds.length > 0 && reqId && !validIds.includes(reqId)) {
+            console.warn(`[Frizzar] cancelar_agendamento BLOCKED: agendamentoId=${reqId} não pertence ao cliente (válidos: ${validIds.join(",")})`);
+            return {
+              error: `agendamentoId ${reqId} não pertence ao cliente desta conversa. Rode buscar_agendamentos novamente e use um dos IDs retornados.`,
+              blocked: true,
+              ownership_mismatch: true,
+              validAgendamentoIds: validIds,
+            };
+          }
+        }
         const res = await frizzarFetch(`/cancelaragendamento/${args.agendamentoId}`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] cancelar_agendamento response (${res.status}):`, text.slice(0, 400));
@@ -10957,7 +11071,7 @@ function buildBempTools(tenant: any) {
 
 // ===================== BEMP TOOL EXECUTION =====================
 
-async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const rawFuncName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -11011,9 +11125,19 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
   };
   const phone = splitPhone(phoneNumber || "");
 
+  // Retry em 429 e 5xx transitórios (mesma abordagem de Frizzar/OneBeleza).
+  const bempTransientStatuses = new Set([429, 502, 503, 504]);
   const bempFetch = async (url: string, init?: RequestInit): Promise<Response> => {
-    console.log(`[Bemp] -> ${init?.method || "GET"} ${url}`);
-    return await fetch(url, init);
+    let lastRes: Response | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      console.log(`[Bemp] -> ${init?.method || "GET"} ${url} (tentativa ${attempt}/3)`);
+      const res = await fetch(url, init);
+      if (!bempTransientStatuses.has(res.status)) return res;
+      console.warn(`[Bemp] status transitório ${res.status} em ${url} — backoff`);
+      lastRes = res;
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+    return lastRes!;
   };
 
   let cachedSalons: any[] | null = null;
@@ -11266,6 +11390,20 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string)
         }
         if (!phone.number) return { error: "Telefone do cliente atual indisponível para agendar." };
 
+        // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, serviceId precisa estar no catálogo.
+        {
+          const bempCat = (((sessionState as any)?.bempServiceCatalog) || []) as Array<{ id: number; name: string }>;
+          const sid = Number(args.serviceId);
+          if (bempCat.length > 0 && sid > 0 && !bempCat.some((s) => s.id === sid)) {
+            console.warn(`[Bemp] agendar BLOCKED: serviceId=${sid} fora do catálogo (${bempCat.map((s) => s.id).join(",")})`);
+            return {
+              error: `serviceId ${sid} não está no catálogo listado nesta conversa. Chame listar_servicos novamente e use um dos IDs retornados.`,
+              blocked: true,
+              validServiceIds: bempCat.map((s) => s.id),
+            };
+          }
+        }
+
         // professional_id é OBRIGATÓRIO na Bemp. Se não veio, tenta usar a seleção persistida;
         // se ainda não houver, tenta auto-resolver apenas quando existir UM único profissional real.
         let professionalId = args.professionalId;
@@ -11485,7 +11623,7 @@ function buildAppBarberTools(tenant: any) {
   ];
 }
 
-async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string): Promise<any> {
+async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
@@ -11837,6 +11975,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
+        // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
+        {
+          const abCat = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string }>;
+          const sc = Number(args.service_code);
+          if (abCat.length > 0 && sc > 0 && !abCat.some((s) => s.service_code === sc)) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_code=${sc} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
+            return {
+              error: `service_code ${sc} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
+              blocked: true,
+              validServiceCodes: abCat.map((s) => s.service_code),
+            };
+          }
+        }
         if (!args.start_date || !args.start_time) return { error: "start_date e start_time são obrigatórios." };
         const startDateTime = normalizeAppBarberStartDateTime(args.start_date, args.start_time);
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
@@ -11861,9 +12012,21 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
-        const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[AppBarber] criar_agendamento (${res.status}):`, text.slice(0, 600));
+        // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
+        let res: Response;
+        let text = "";
+        {
+          let attempt = 0;
+          const maxAttempts = 3;
+          while (true) {
+            attempt++;
+            res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+            text = await res.text();
+            console.log(`[AppBarber] criar_agendamento (${res.status}, attempt ${attempt}):`, text.slice(0, 600));
+            if (res.status !== 429 || attempt >= maxAttempts) break;
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+          }
+        }
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
           const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
@@ -12006,6 +12169,22 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const reason = String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp");
         let removingItem = cancelScope === "item" && args.invoice_item_code;
 
+        // 🛡️ Ownership: se listar_agendamentos já rodou nesta conversa, invoice_code precisa pertencer ao cliente.
+        {
+          const validCodes = (((sessionState as any)?.appbarberValidInvoiceCodes) || []) as number[];
+          const reqCode = toPositiveInteger(args.invoice_code);
+          if (validCodes.length > 0 && reqCode && !validCodes.includes(reqCode)) {
+            console.warn(`[AppBarber] cancelar_agendamento BLOCKED: invoice_code=${reqCode} não pertence ao cliente (válidos: ${validCodes.join(",")})`);
+            return {
+              error: `invoice_code ${reqCode} não pertence ao cliente desta conversa. Rode listar_agendamentos novamente e use um dos codes retornados.`,
+              blocked: true,
+              ownership_mismatch: true,
+              validInvoiceCodes: validCodes,
+            };
+          }
+        }
+
+
         // Guard-rail: se for cancelar ITEM mas a comanda só tem 1 serviço, força cancelar comanda inteira.
         // Isso evita o fluxo "tenta item → falha → tenta comanda" observado em produção.
         if (removingItem && args.invoice_code && phoneDigits) {
@@ -12032,9 +12211,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           const url = buildUrl(`/v1/invoice/item/${encodeURIComponent(String(args.invoice_item_code))}`, {});
           const body = { establishment_code: estCode, reason };
           console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
-          const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
-          const text = await res.text();
-          console.log(`[AppBarber] remover_item_comanda (${res.status}):`, text.slice(0, 600));
+          // Retry 429 (2 tentativas extras, backoff 800/1600ms).
+          let res: Response; let text = "";
+          {
+            let attempt = 0; const maxAttempts = 3;
+            while (true) {
+              attempt++;
+              res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+              text = await res.text();
+              console.log(`[AppBarber] remover_item_comanda (${res.status}, attempt ${attempt}):`, text.slice(0, 600));
+              if (res.status !== 429 || attempt >= maxAttempts) break;
+              await new Promise((r) => setTimeout(r, 800 * attempt));
+            }
+          }
           let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
           if (res.ok) {
             return {
@@ -12062,9 +12251,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           reason,
         };
         console.log(`[AppBarber] DELETE ${url} body=${JSON.stringify(body)}`);
-        const res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
-        const text = await res.text();
-        console.log(`[AppBarber] cancelar_agendamento (${res.status}):`, text.slice(0, 600));
+        // Retry 429 (2 tentativas extras, backoff 800/1600ms).
+        let res: Response; let text = "";
+        {
+          let attempt = 0; const maxAttempts = 3;
+          while (true) {
+            attempt++;
+            res = await fetch(url, { method: "DELETE", headers, body: JSON.stringify(body) });
+            text = await res.text();
+            console.log(`[AppBarber] cancelar_agendamento (${res.status}, attempt ${attempt}):`, text.slice(0, 600));
+            if (res.status !== 429 || attempt >= maxAttempts) break;
+            await new Promise((r) => setTimeout(r, 800 * attempt));
+          }
+        }
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
           const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
