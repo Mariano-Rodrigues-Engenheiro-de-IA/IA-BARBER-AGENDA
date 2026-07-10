@@ -2792,6 +2792,18 @@ interface AgentSessionState {
     dia: string;
     listedAt: number; // epoch ms
   }>;
+  // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
+  // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
+  // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
+  // criado FORA da IA (ex: cliente marcou no app e depois mandou "vou atrasar").
+  // TTL curto (10 min) e invalidada por qualquer cancel posterior.
+  recentActiveBookingsLookup?: {
+    at: number; // epoch ms
+    toolName: string;
+    count: number;
+    times: string[]; // HH:MM extraídos do payload
+    dates: string[]; // YYYY-MM-DD ou DD/MM[/YYYY]
+  } | null;
 }
 
 
@@ -2819,6 +2831,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     recentCompletedActions: [],
     recentAssistantReplies: [],
     frizzarListedByProfessional: [],
+    recentActiveBookingsLookup: null,
   };
 
   try {
@@ -2887,6 +2900,19 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((r: any) => r && typeof r.profissionalId === "number" && typeof r.dia === "string" && typeof r.listedAt === "number")
             .slice(-30)
         : [],
+      recentActiveBookingsLookup: (s.recentActiveBookingsLookup && typeof s.recentActiveBookingsLookup === "object"
+        && typeof s.recentActiveBookingsLookup.at === "number"
+        && typeof s.recentActiveBookingsLookup.count === "number"
+        && Array.isArray(s.recentActiveBookingsLookup.times)
+        && Array.isArray(s.recentActiveBookingsLookup.dates))
+        ? {
+            at: s.recentActiveBookingsLookup.at,
+            toolName: String(s.recentActiveBookingsLookup.toolName || ""),
+            count: s.recentActiveBookingsLookup.count,
+            times: s.recentActiveBookingsLookup.times.filter((t: any) => typeof t === "string").slice(0, 30),
+            dates: s.recentActiveBookingsLookup.dates.filter((d: any) => typeof d === "string").slice(0, 30),
+          }
+        : null,
     } as AgentSessionState;
   } catch {
     return defaultState;
@@ -2944,6 +2970,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       frizzarListedByProfessional: Array.isArray((state as any).frizzarListedByProfessional)
         ? (state as any).frizzarListedByProfessional.slice(-30)
         : [],
+      recentActiveBookingsLookup: (state as any).recentActiveBookingsLookup ?? null,
     };
 
     await supabase
@@ -2957,6 +2984,101 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
     console.error("[State] Save failed:", err);
   }
 }
+
+// ===================== ACTIVE BOOKINGS LOOKUP TRACKING =====================
+// Segunda fonte de legitimidade do PhantomConfirmationGuard: quando o cliente
+// tem agendamento criado FORA da IA (ex: pelo app do provider), o ledger de
+// ações criadas nesta sessão fica vazio. Se a IA acabou de rodar uma tool de
+// leitura (buscar_agendamento[s|_dia] / listar_agendamentos) e recebeu ao
+// menos 1 agendamento ativo, isso conta como prova válida de que o agendamento
+// existe de verdade. Guard fica frouxo por 10 min e é invalidado por qualquer
+// cancel bem-sucedido posterior.
+
+const ACTIVE_BOOKING_LOOKUP_TOOLS = new Set([
+  "buscar_agendamento",       // Trinks
+  "buscar_agendamentos",      // Frizzar (retorno array)
+  "buscar_agendamentos_dia",  // OneBeleza
+  "listar_agendamentos",      // Bemp + AppBarber
+]);
+const ACTIVE_BOOKING_LOOKUP_TTL_MS = 10 * 60 * 1000;
+
+function _extractTimesAndDatesFromPayload(payload: unknown): { times: string[]; dates: string[]; count: number } {
+  let count = 0;
+  if (Array.isArray(payload)) {
+    count = payload.length;
+  } else if (payload && typeof payload === "object") {
+    const anyP = payload as any;
+    if (Array.isArray(anyP.appointments)) count = anyP.appointments.length;
+    else if (Array.isArray(anyP.data)) count = anyP.data.length;
+    else if (Array.isArray(anyP.agendamentos)) count = anyP.agendamentos.length;
+    else if (Array.isArray(anyP.items)) count = anyP.items.length;
+    else if (anyP.id || anyP.agendamentoId || anyP.invoice_code) count = 1;
+  }
+  let json = "";
+  try { json = typeof payload === "string" ? payload : JSON.stringify(payload ?? {}); } catch { json = ""; }
+  const times = Array.from(new Set((json.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || [])));
+  const dates = Array.from(new Set([
+    ...(json.match(/\b\d{4}-\d{2}-\d{2}\b/g) || []),
+    ...(json.match(/\b\d{2}\/\d{2}(?:\/\d{4})?\b/g) || []),
+  ]));
+  return { times, dates, count };
+}
+
+function recordActiveBookingsLookup(state: AgentSessionState, toolName: string, toolResult: unknown): void {
+  const { times, dates, count } = _extractTimesAndDatesFromPayload(toolResult);
+  if (count <= 0) return; // busca vazia não conta como prova
+  state.recentActiveBookingsLookup = {
+    at: Date.now(),
+    toolName,
+    count,
+    times,
+    dates,
+  };
+  console.log(`[ActiveBookingsLookup] ${toolName}: count=${count} times=${times.join(",")} dates=${dates.slice(0, 5).join(",")}`);
+}
+
+function isActiveBookingLookupStillValid(state: AgentSessionState): boolean {
+  const lu = state.recentActiveBookingsLookup;
+  if (!lu || lu.count <= 0) return false;
+  if (Date.now() - lu.at > ACTIVE_BOOKING_LOOKUP_TTL_MS) return false;
+  // Invalidação por cancel bem-sucedido depois da busca
+  const cancelAfter = (state.recentCompletedActions || []).some((a) => {
+    if (a.category !== "booking_cancel" || a.status !== "success") return false;
+    const t = Date.parse(a.completedAt);
+    return Number.isFinite(t) && t > lu.at;
+  });
+  return !cancelAfter;
+}
+
+function responseCitesLookupBooking(text: string, state: AgentSessionState): boolean {
+  const lu = state.recentActiveBookingsLookup;
+  if (!lu) return false;
+  const responseTimes = new Set<string>((text.match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || []));
+  const responseHourOnly = new Set<string>(
+    (text.match(/\b(\d{1,2})\s*h(?![a-z0-9])/gi) || []).map((s) => (s.match(/\d+/) || [""])[0].replace(/^0+/, "") || "0"),
+  );
+  const lookupTimes = new Set<string>(lu.times);
+  const lookupHourOnly = new Set<string>(lu.times.map((t) => (t.split(":")[0] || "").replace(/^0+/, "") || "0"));
+  for (const rt of responseTimes) {
+    if (lookupTimes.has(rt)) return true;
+    const h = (rt.split(":")[0] || "").replace(/^0+/, "") || "0";
+    if (lookupHourOnly.has(h)) return true;
+  }
+  for (const h of responseHourOnly) {
+    if (lookupHourOnly.has(h)) return true;
+  }
+  // Fallback: se cita uma data que aparece na busca
+  const responseDates = new Set<string>([
+    ...((text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [])),
+    ...((text.match(/\b\d{2}\/\d{2}(?:\/\d{4})?\b/g) || [])),
+  ]);
+  for (const d of responseDates) {
+    if (lu.dates.includes(d)) return true;
+  }
+  return false;
+}
+
+
 
 // ===================== GLOBAL ACTION LEDGER =====================
 // Prevents the AI from repeating the SAME mutating action across consecutive
@@ -6341,6 +6463,30 @@ async function callAIAgent(
           console.log(`[AppBarber] validInvoiceCodes tracked: [${codes.join(",")}]`);
         }
 
+        // ===== ACTIVE BOOKINGS LOOKUP TRACKING (5 providers) =====
+        // Registra qualquer busca bem-sucedida de agendamento ativo do cliente
+        // atual. Roda DEPOIS dos filtros de ownership acima, então o payload
+        // aqui já reflete só os agendamentos que pertencem a este telefone.
+        // Serve como 2ª fonte de legitimidade pro PhantomConfirmationGuard —
+        // permite reafirmar/orientar sobre agendamento criado fora da IA
+        // (ex: no app do provider) sem cair no bloqueio de alucinação.
+        try {
+          if (
+            ACTIVE_BOOKING_LOOKUP_TOOLS.has(toolCall.function.name) &&
+            !wasBlocked &&
+            toolResult &&
+            !(toolResult as any)?.error &&
+            !(toolResult as any)?.blocked &&
+            !(toolResult as any)?.empty
+          ) {
+            recordActiveBookingsLookup(sessionState, toolCall.function.name, toolResult);
+          }
+        } catch (e) {
+          console.warn(`[ActiveBookingsLookup] record failed: ${(e as any)?.message || e}`);
+        }
+
+
+
 
 
 
@@ -6716,9 +6862,22 @@ async function callAIAgent(
         (a) => a.category === "booking" && a.status === "success",
       );
 
-      if (!recentBookingSuccess) {
-        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, e nenhum sucesso na sessão (sem limite de tempo). Tentando reinjeção.`);
-        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
+      // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
+      // ativo do cliente (buscar_agendamento[s|_dia] / listar_agendamentos)
+      // cujo horário/data aparece no texto da resposta. Cobre o caso do
+      // agendamento criado FORA da IA (ex: cliente marcou no app do provider
+      // e depois mandou "vou atrasar"), que nunca entra em recentCompletedActions.
+      // TTL curto (10 min) e invalidada por cancel posterior — ver
+      // isActiveBookingLookupStillValid.
+      const lookupLegit = isActiveBookingLookupStillValid(sessionState)
+        && responseCitesLookupBooking(finalResponse, sessionState);
+      if (lookupLegit) {
+        console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
+      }
+
+      if (!recentBookingSuccess && !lookupLegit) {
+        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, nenhum sucesso na sessão, e nenhuma busca ativa recente bate. Tentando reinjeção.`);
+        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar e sem busca ativa que confirme — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
         try {
@@ -8435,6 +8594,8 @@ Regras de uso do nome:
 
   const humanAttendantBlock = `\n## 🧑‍💼 MENSAGENS DO ATENDENTE HUMANO\nNo histórico, mensagens com role "assistant" que começam com o prefixo \`[ATENDENTE HUMANO]:\` foram enviadas MANUALMENTE pelo dono/atendente da empresa (pelo app ou direto pelo WhatsApp), NÃO por você.\n\nRegras quando isso aparece:\n- Trate o conteúdo como contexto verdadeiro e já realizado pelo humano (ex: confirmações, avisos, combinados).\n- NÃO repita ações que o humano já fez. Ex: se o atendente humano enviou "Confirma seu agendamento de hoje 19h?" e o cliente respondeu "Sim", você NÃO deve criar um novo agendamento — apenas continue a conversa naturalmente (ex: "Perfeito, te esperamos!").\n- Antes de chamar qualquer ferramenta de criar/cancelar/editar agendamento, verifique se o atendente humano já tratou o assunto na conversa recente.\n- Mensagens "assistant" SEM esse prefixo foram enviadas por você (IA) — pode considerar como suas.\n\n🚨🚨 REGRA CRÍTICA — RESPOSTA CURTA DO CLIENTE A UMA PERGUNTA DO ATENDENTE HUMANO:\nSe a ÚLTIMA mensagem \`assistant\` no histórico é \`[ATENDENTE HUMANO]:\` E a mensagem atual do cliente é uma resposta curta ("sim", "ok", "confirmo", "pode ser", "isso", "👍", "não", "pode confirmar", "confirmado" etc.), você DEVE interpretá-la como resposta DIRETA àquela mensagem do atendente humano. NUNCA ignore o contexto tratando como início de conversa novo.\n\nEspecialmente para MENSAGENS DE CONFIRMAÇÃO DE AGENDAMENTO enviadas pelo atendente/sistema (ex: "Você tem agendado X no dia DD/MM HH:MM com Fulano. Posso confirmar seu horário?"):\n- Cliente respondeu SIM/OK/CONFIRMO/POSITIVO → agradeça e encerre naturalmente. Ex: "Perfeito, Kevin! Seu horário está confirmado para <dia> às <hora> com <profissional>. Te esperamos! 💈"\n- Cliente respondeu NÃO/NÃO POSSO/CANCELA → pergunte se quer remarcar ou cancelar, e siga o fluxo apropriado.\n- Cliente respondeu com nova data/hora → siga o fluxo de remarcação.\n- É PROIBIDO responder "Como posso te ajudar?", "Bom dia!", "Em que posso ajudar hoje?" ou qualquer abertura genérica ignorando a confirmação pendente. Isso é ERRO GRAVE.\n- É PROIBIDO chamar qualquer ferramenta de criar/editar agendamento nesse caso — o agendamento já existe, o cliente só está confirmando.\n\n🚨 PROIBIDO TERMINANTEMENTE: NUNCA, em hipótese alguma, inclua na sua resposta ao cliente os marcadores internos \`[ATENDENTE HUMANO]\`, \`[ATENDENTE HUMANO]:\`, \`[SISTEMA]\`, \`[SYSTEM]\`, \`[INTERNO]\`, \`[CONTEXTO]\` ou qualquer outro rótulo entre colchetes que apareça no histórico. Esses marcadores são APENAS para SEU uso interno de leitura — o cliente NUNCA deve vê-los. Sua resposta deve ser sempre uma mensagem natural, limpa, sem prefixos técnicos. Se precisar referenciar algo que o atendente humano disse, parafraseie em linguagem natural (ex: "como combinamos", "como te avisamos") — JAMAIS copie o texto com o prefixo.\n\n🚨🚨 PROIBIDO COPIAR/REPRODUZIR O CONTEÚDO DE MENSAGENS [ATENDENTE HUMANO]:\n- NUNCA copie, reescreva ou "imite" o TEXTO de uma mensagem \`[ATENDENTE HUMANO]:\` na sua resposta. Mesmo sem o prefixo, é PROIBIDO reenviar o conteúdo dele.\n- NUNCA envie LEMBRETES DE CONFIRMAÇÃO DE AGENDAMENTO (ex: "Olá Fulano, você possui um agendamento com X em DD/MM às HH:MM" + link). Lembretes/confirmações são responsabilidade do sistema externo do estabelecimento, NÃO sua. Você NUNCA gera esse tipo de mensagem por conta própria.\n- NUNCA reenvie URLs/links de confirmação (ex: cashbarber.com.br/.../confirmacao/...) que tenham aparecido no histórico. Esses links são únicos por agendamento e foram enviados pelo humano/sistema — repetir é ERRO GRAVE.\n- NUNCA reenvie nomes de profissionais, horários ou valores que você só conhece porque viu numa mensagem \`[ATENDENTE HUMANO]:\` anterior — esses dados podem estar desatualizados. EXCEÇÃO: quando o cliente está CONFIRMANDO um agendamento que o atendente acabou de enviar (regra acima), você PODE — e DEVE — mencionar os dados (data/hora/profissional) daquela mensagem específica para fechar a confirmação com clareza.\n- Você só envia UMA resposta por vez, focada na ÚLTIMA mensagem do cliente. NÃO concatene várias "mensagens fantasma" copiando frases curtas do histórico do atendente (ex: "👍🏻", "Eu que agradeço", "Boa tarde", "😉"). Se a resposta natural é curta, mande curta.\n- Se você não tem informação NOVA e legítima a enviar agora, responda apenas o necessário à última mensagem do cliente — NUNCA "complete" com trechos que pareçam plausíveis tirados do histórico.\n`;
 
+  const existingBookingLookupBlock = `\n## 🔍 REAFIRMAR AGENDAMENTO EXISTENTE (criado FORA da IA)\nQuando o cliente fala sobre um agendamento que você NÃO criou nesta conversa (ex: "vou atrasar", "posso chegar mais cedo?", "confirma meu horário de amanhã?"), ANTES de reafirmar ou orientar, chame a ferramenta de busca de agendamento apropriada do provider na MESMA rodada (buscar_agendamento / buscar_agendamentos / buscar_agendamentos_dia / listar_agendamentos, conforme o provider) e use SÓ os dados que voltarem.\n\n- Se a busca trouxer o agendamento → responda normalmente (ex: "tranquilo, te esperamos até HH:MM").\n- Se a busca vier vazia → diga isso com clareza ("não achei nenhum agendamento ativo em <data>, pode confirmar comigo?") — NUNCA invente confirmação de algo que não apareceu na busca.\n- NUNCA reafirme horário/data que você só viu em mensagem antiga do histórico sem confirmar na busca desta rodada.\n`;
+
   // ===== PERSISTENT CLIENT SUMMARY (cross-conversation memory) =====
   const summaryText = (aiSummary || "").trim();
   const summaryAgeStr = aiSummaryUpdatedAt ? formatGapMinutes(Math.round((Date.now() - new Date(aiSummaryUpdatedAt).getTime()) / 60000)) : null;
@@ -8575,6 +8736,7 @@ ${recentActionsBlock}
 ${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
+${existingBookingLookupBlock}
 ${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : buildGlobalPromptSection(tenant)}
 ------------------------------------------
 
