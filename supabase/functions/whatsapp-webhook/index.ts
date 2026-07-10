@@ -10501,16 +10501,35 @@ function buildFrizzarTools(tenant: any) {
 
 // ===================== FRIZZAR TOOL EXECUTION =====================
 
-// Memória in-process da última `listar_horarios` por conversa/profissional.
-// Chave: `${tenantId}:${phoneNumber}:${profissionalId}` → { dia, listedAt }.
-// Usada por `agendar` para travar tentativa de agendar em data diferente da consultada.
-const frizzarLastListed = new Map<string, { dia: string; listedAt: number }>();
+// Memória persistida da última `listar_horarios` por profissional (por conversa).
+// Antes era um Map module-level, que sumia entre cold starts de instâncias
+// diferentes do Deno — gerando falso "não listou antes" e bloqueando agendamento
+// legítimo. Agora vive dentro de `sessionState.frizzarListedByProfessional` e
+// atravessa reinício de instância normalmente.
+function frizzarGetLastListed(state: AgentSessionState | undefined, profissionalId: any): { dia: string; listedAt: number } | null {
+  const pid = toPositiveInteger(profissionalId);
+  if (!pid || !state?.frizzarListedByProfessional) return null;
+  const entry = state.frizzarListedByProfessional.find((e) => e.profissionalId === pid);
+  return entry ? { dia: entry.dia, listedAt: entry.listedAt } : null;
+}
+function frizzarSetLastListed(state: AgentSessionState | undefined, profissionalId: any, dia: string): void {
+  const pid = toPositiveInteger(profissionalId);
+  if (!pid || !state || !dia) return;
+  if (!Array.isArray(state.frizzarListedByProfessional)) state.frizzarListedByProfessional = [];
+  const list = state.frizzarListedByProfessional;
+  const idx = list.findIndex((e) => e.profissionalId === pid);
+  const record = { profissionalId: pid, dia, listedAt: Date.now() };
+  if (idx >= 0) list[idx] = record;
+  else list.push(record);
+  // cap
+  if (list.length > 30) state.frizzarListedByProfessional = list.slice(-30);
+}
 
 async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
-  const lastListedKey = (profId: any) => `${tenant.id}:${_phoneNumber || ""}:${profId}`;
+
 
 
   // Resolução da URL base da Frizzar:
