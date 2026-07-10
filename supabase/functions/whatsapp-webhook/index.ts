@@ -2900,6 +2900,19 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             .filter((r: any) => r && typeof r.profissionalId === "number" && typeof r.dia === "string" && typeof r.listedAt === "number")
             .slice(-30)
         : [],
+      recentActiveBookingsLookup: (s.recentActiveBookingsLookup && typeof s.recentActiveBookingsLookup === "object"
+        && typeof s.recentActiveBookingsLookup.at === "number"
+        && typeof s.recentActiveBookingsLookup.count === "number"
+        && Array.isArray(s.recentActiveBookingsLookup.times)
+        && Array.isArray(s.recentActiveBookingsLookup.dates))
+        ? {
+            at: s.recentActiveBookingsLookup.at,
+            toolName: String(s.recentActiveBookingsLookup.toolName || ""),
+            count: s.recentActiveBookingsLookup.count,
+            times: s.recentActiveBookingsLookup.times.filter((t: any) => typeof t === "string").slice(0, 30),
+            dates: s.recentActiveBookingsLookup.dates.filter((d: any) => typeof d === "string").slice(0, 30),
+          }
+        : null,
     } as AgentSessionState;
   } catch {
     return defaultState;
