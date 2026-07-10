@@ -2898,6 +2898,11 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       // Ownership tracking (Frizzar/AppBarber) — impede cancelamento de agendamento de terceiro
       ...(Array.isArray(s.frizzarValidAgendasIds) ? { frizzarValidAgendasIds: s.frizzarValidAgendasIds } : { frizzarValidAgendasIds: [] }),
       ...(Array.isArray(s.appbarberValidInvoiceCodes) ? { appbarberValidInvoiceCodes: s.appbarberValidInvoiceCodes } : { appbarberValidInvoiceCodes: [] }),
+      // FRIZZAR — ownership do clienteId + catálogo de profissionais válidos
+      frizzarClienteId: typeof s.frizzarClienteId === "number" ? s.frizzarClienteId : null,
+      ...(Array.isArray(s.frizzarValidProfessionalIds)
+        ? { frizzarValidProfessionalIds: s.frizzarValidProfessionalIds.filter((n: any) => typeof n === "number").slice(0, 100) }
+        : { frizzarValidProfessionalIds: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
