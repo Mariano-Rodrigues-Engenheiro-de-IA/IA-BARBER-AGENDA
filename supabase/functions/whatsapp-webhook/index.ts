@@ -7015,15 +7015,22 @@ async function callAIAgent(
   if (finalResponse && !guardOverrideResponse) {
     const cancelAttempted = (logToolCalls || []).some((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
     if (cancelAttempted) {
-      const cancelSucceeded = (logToolCalls || []).some((tc) => {
-        if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
+      // Todas as chamadas de cancelamento do turno precisam ter dado certo.
+      // Antes usávamos `.some()` — se o cliente pedia cancelar 2 e só 1 caía,
+      // a resposta afirmando "cancelei os dois" passava sem correção.
+      const cancelCalls = (logToolCalls || []).filter((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
+      const cancelAllSucceeded = cancelCalls.length > 0 && cancelCalls.every((tc) => {
         const r: any = tc.result || {};
         return !r.error && r.blocked !== true;
       });
       const claimsCancelled = /cancel(ei|ado|ada|amos)|desmarqu(ei|ei|amos)|j[aá]\s+(cancel|desmarqu)/i.test(finalResponse);
-      if (!cancelSucceeded && claimsCancelled) {
-        console.warn(`[CancelGuard] tool de cancelamento falhou nesta rodada mas a resposta afirmava cancelamento. Corrigindo.`);
-        logErrors.push({ message: `Cancelamento não confirmado pela ferramenta, mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
+      if (!cancelAllSucceeded && claimsCancelled) {
+        const failedCount = cancelCalls.filter((tc) => {
+          const r: any = tc.result || {};
+          return !!r.error || r.blocked === true;
+        }).length;
+        console.warn(`[CancelGuard] cancelamento incompleto (${failedCount}/${cancelCalls.length} falharam) mas a resposta afirmava sucesso. Corrigindo.`);
+        logErrors.push({ message: `Cancelamento parcial/falhou (${failedCount}/${cancelCalls.length}) mas resposta afirmava sucesso — corrigido pelo CancelGuard.`, level: "warning" });
         finalResponse = "Tive uma instabilidade aqui pra confirmar seu cancelamento. Já acionei o responsável pra garantir isso pra você — só um momento 🙏";
         guardOverrideResponse = true;
       }
