@@ -6463,6 +6463,30 @@ async function callAIAgent(
           console.log(`[AppBarber] validInvoiceCodes tracked: [${codes.join(",")}]`);
         }
 
+        // ===== ACTIVE BOOKINGS LOOKUP TRACKING (5 providers) =====
+        // Registra qualquer busca bem-sucedida de agendamento ativo do cliente
+        // atual. Roda DEPOIS dos filtros de ownership acima, então o payload
+        // aqui já reflete só os agendamentos que pertencem a este telefone.
+        // Serve como 2ª fonte de legitimidade pro PhantomConfirmationGuard —
+        // permite reafirmar/orientar sobre agendamento criado fora da IA
+        // (ex: no app do provider) sem cair no bloqueio de alucinação.
+        try {
+          if (
+            ACTIVE_BOOKING_LOOKUP_TOOLS.has(toolCall.function.name) &&
+            !wasBlocked &&
+            toolResult &&
+            !(toolResult as any)?.error &&
+            !(toolResult as any)?.blocked &&
+            !(toolResult as any)?.empty
+          ) {
+            recordActiveBookingsLookup(sessionState, toolCall.function.name, toolResult);
+          }
+        } catch (e) {
+          console.warn(`[ActiveBookingsLookup] record failed: ${(e as any)?.message || e}`);
+        }
+
+
+
 
 
 
