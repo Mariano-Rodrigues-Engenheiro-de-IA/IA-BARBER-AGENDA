@@ -10895,6 +10895,20 @@ async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumber?: str
       }
 
       case "cancelar_agendamento": {
+        // 🛡️ Ownership: se buscar_agendamentos rodou nesta conversa, agendamentoId precisa pertencer ao cliente.
+        {
+          const validIds = (((sessionState as any)?.frizzarValidAgendasIds) || []) as number[];
+          const reqId = toPositiveInteger(args.agendamentoId);
+          if (validIds.length > 0 && reqId && !validIds.includes(reqId)) {
+            console.warn(`[Frizzar] cancelar_agendamento BLOCKED: agendamentoId=${reqId} não pertence ao cliente (válidos: ${validIds.join(",")})`);
+            return {
+              error: `agendamentoId ${reqId} não pertence ao cliente desta conversa. Rode buscar_agendamentos novamente e use um dos IDs retornados.`,
+              blocked: true,
+              ownership_mismatch: true,
+              validAgendamentoIds: validIds,
+            };
+          }
+        }
         const res = await frizzarFetch(`/cancelaragendamento/${args.agendamentoId}`, { headers });
         const text = await res.text();
         console.log(`[Frizzar] cancelar_agendamento response (${res.status}):`, text.slice(0, 400));
