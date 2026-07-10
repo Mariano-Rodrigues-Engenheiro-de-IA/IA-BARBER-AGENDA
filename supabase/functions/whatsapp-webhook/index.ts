@@ -12212,7 +12212,14 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "criar_agendamento": {
-        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // 🛡️ Anti-alucinação: mesma proteção do listar_agendamentos — força usar
+        // o telefone da conversa e loga quando a IA tenta um número diferente.
+        const _convDigits = normalizePhoneDigits(phoneNumber || "");
+        const _argDigits = normalizePhoneDigits(args.customer_phone || "");
+        if (_argDigits && _convDigits && _argDigits !== _convDigits) {
+          console.warn(`[AppBarber] criar_agendamento: IA passou telefone (${_argDigits}) diferente do da conversa (${_convDigits}) — usando o da conversa.`);
+        }
+        const phoneDigits = normalizePhoneDigits(phoneNumber || args.customer_phone || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
         if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
@@ -12295,7 +12302,19 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
       }
 
       case "listar_agendamentos": {
-        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // 🛡️ Anti-alucinação: a IA às vezes inventa/troca o DDD do cliente
+        // (caso real: conversa vinda de 556183012868 e IA passou 558183012868,
+        // trocando DDD 61→81, resultando em busca vazia). O telefone verdadeiro
+        // do cliente é SEMPRE o da conversa (phoneNumber). Ignoramos args.customer_phone
+        // como fonte primária e só logamos quando a IA tenta um número diferente,
+        // pra ficar rastreável no monitor do agente.
+        const convDigits = normalizePhoneDigits(phoneNumber || "");
+        const argDigits = normalizePhoneDigits(args.customer_phone || "");
+        if (argDigits && convDigits && argDigits !== convDigits) {
+          console.warn(`[AppBarber] listar_agendamentos: IA passou telefone (${argDigits}) diferente do da conversa (${convDigits}) — usando o da conversa.`);
+        }
+        const effectivePhone = phoneNumber || args.customer_phone || "";
+        const phoneDigits = normalizePhoneDigits(effectivePhone);
         // Datas padrão: -7 até +24 dias em Brasília. Cobre agendamentos recém-criados/cancelados
         // e respeita o limite de 31 dias da API AppBarber.
         const nowBrt = new Date(Date.now() - 3 * 60 * 60 * 1000);
@@ -12307,7 +12326,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         const requestedEnd = args.end_date ? new Date(`${args.end_date}T00:00:00Z`) : new Date(nowBrt.getTime() + 24 * 24 * 60 * 60 * 1000);
         const endDate = fmt(requestedEnd.getTime() > maxEndFromStart.getTime() ? maxEndFromStart : requestedEnd);
         const statusType = args.status_type ?? 1;
-        const phoneVariants = appBarberPhoneVariants(args.customer_phone || phoneNumber || "");
+        const phoneVariants = appBarberPhoneVariants(effectivePhone);
         const searchVariants = phoneVariants;
         const invoiceItems: any[] = [];
         const triedInvoicePhones: string[] = [];
