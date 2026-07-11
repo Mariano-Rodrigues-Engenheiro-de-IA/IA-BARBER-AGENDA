@@ -9758,9 +9758,49 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           profissionalId: a.profissional?.id,
         }));
 
+        // Separa ativos (Agendado/Confirmado/qualquer status não-final) de inativos
+        // (Cancelado/Finalizado/Realizado/etc). A IA precisa dessa distinção pra
+        // não dizer "não achei agendamento" quando na verdade só existe Cancelado,
+        // e pra tratar Finalizado no FUTURO como confirmação (a barbearia costuma
+        // marcar agendamentos futuros como Finalizado por engano no sistema).
+        const ativos: any[] = [];
+        const inativos: any[] = [];
+        for (const a of allActive) {
+          const s = normalizeUserFacingText(a.status || "");
+          const isCancelado = /cancel|desmarc|faltou|ausente|no ?show|nao compareceu/.test(s);
+          const isFinalizado = /finaliz|conclu|realiz|atendid/.test(s);
+          if (isCancelado) {
+            inativos.push({ ...a, _categoria: "cancelado" });
+          } else if (isFinalizado) {
+            const dt = a.dataHoraInicio ? new Date(a.dataHoraInicio).getTime() : 0;
+            // Finalizado com data no futuro (ou hoje ainda por vir) provavelmente
+            // é agendamento confirmado marcado por engano — tratamos como ativo.
+            if (dt && dt > Date.now() - 6 * 60 * 60 * 1000) {
+              ativos.push({ ...a, _categoria: "confirmado_marcado_como_finalizado" });
+            } else {
+              inativos.push({ ...a, _categoria: "finalizado" });
+            }
+          } else {
+            ativos.push({ ...a, _categoria: "ativo" });
+          }
+        }
 
+        const resumo = ativos.length > 0
+          ? `Encontrei ${ativos.length} agendamento(s) ativo(s).${inativos.length > 0 ? ` (${inativos.length} inativo(s) foram ignorados — NÃO os mencione ao cliente a menos que ele pergunte especificamente.)` : ""}`
+          : (inativos.length > 0
+              ? `NÃO há agendamentos ATIVOS, mas EXISTE(M) ${inativos.length} agendamento(s) INATIVO(S): ${inativos.map(i => `${i._categoria} (${i.servico} em ${i.dataHoraInicio})`).join("; ")}. Informe ao cliente o status real (ex: "seu agendamento consta como Cancelado no sistema") — NUNCA diga "não achei nenhum agendamento".`
+              : "Nenhum agendamento encontrado para este cliente.");
 
-        return { data: allActive, totalRecords: allActive.length, clienteIdsConsultados: clienteIds };
+        return {
+          data: ativos,
+          agendamentosAtivos: ativos,
+          agendamentosInativos: inativos,
+          totalAtivos: ativos.length,
+          totalInativos: inativos.length,
+          totalRecords: allActive.length,
+          clienteIdsConsultados: clienteIds,
+          resumo,
+        };
       }
 
 
