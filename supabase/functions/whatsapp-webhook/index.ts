@@ -6979,9 +6979,11 @@ async function callAIAgent(
           const nudge = {
             role: "system",
             content:
-              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você afirmou que um agendamento foi confirmado, mas NÃO chamou a ferramenta agendar/criar_agendamento nesta execução. " +
-              "Use os dados já confirmados na conversa (serviço, profissional, data, hora) e chame a ferramenta de agendar AGORA, imediatamente. " +
-              "Depois de ver o resultado, responda ao cliente de forma natural confirmando (se deu certo) ou explicando o que faltou (se não deu).",
+              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você afirmou que um agendamento está confirmado, mas NÃO chamou nenhuma ferramenta de agendar nem de busca de agendamento nesta execução — não dá pra afirmar confirmação sem verificar. " +
+              "Faça AGORA uma das duas coisas, obrigatoriamente via ferramenta:\n" +
+              "1) Se o cliente está reafirmando/confirmando um agendamento que JÁ EXISTE (ex: respondeu 'sim' a uma pergunta de confirmação, ou o agendamento pode ter sido criado no app do estabelecimento), chame a ferramenta de BUSCA de agendamentos do cliente (buscar_agendamento / listar_agendamentos / buscar_agendamentos_dia — o nome varia por provedor). Se achar um ativo compatível, responda confirmando com os dados reais retornados.\n" +
+              "2) Se é um agendamento NOVO com todos os dados já coletados na conversa (serviço, profissional, data, hora), chame a ferramenta de agendar/criar_agendamento AGORA com esses dados.\n" +
+              "Depois de ver o resultado da ferramenta, responda ao cliente de forma natural — confirmando (se deu certo/achou) ou pedindo o dado que falta (se não).",
           };
           messages.push(nudge);
           const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
