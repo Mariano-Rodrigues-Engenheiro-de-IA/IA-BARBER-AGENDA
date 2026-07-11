@@ -6994,7 +6994,14 @@ async function callAIAgent(
             const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
             if (retryToolCalls.length > 0) {
               messages.push(retryMsg);
-              let anySucceeded = false;
+              let anyBookingSucceeded = false;
+              let anySearchExecuted = false;
+              const SEARCH_TOOL_NAMES = new Set([
+                "buscar_agendamento",
+                "buscar_agendamentos",
+                "buscar_agendamentos_dia",
+                "listar_agendamentos",
+              ]);
               for (const tc of retryToolCalls) {
                 let tResult: any;
                 try {
@@ -7007,17 +7014,42 @@ async function callAIAgent(
                   tool_call_id: tc.id,
                   content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
                 });
-                if (BOOKING_TOOL_NAMES.has(tc?.function?.name) && tResult && !tResult.error && !tResult.blocked) {
-                  anySucceeded = true;
-                  logToolCalls.push({ name: tc.function.name, args: parseToolArguments(tc.function?.arguments), result: tResult });
+                const tname = tc?.function?.name;
+                if (BOOKING_TOOL_NAMES.has(tname) && tResult && !tResult.error && !tResult.blocked) {
+                  anyBookingSucceeded = true;
+                  logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
+                }
+                if (SEARCH_TOOL_NAMES.has(tname) && tResult && !tResult.error) {
+                  anySearchExecuted = true;
+                  logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
                 }
               }
-              if (anySucceeded) {
+              if (anyBookingSucceeded) {
                 const det = buildDeterministicBookingConfirmation(logToolCalls);
                 if (det) {
                   finalResponse = det;
                   guardOverrideResponse = true;
                   recovered = true;
+                }
+              } else if (anySearchExecuted) {
+                // Se a IA fez busca (caso "cliente confirmando agendamento pré-existente"),
+                // roda mais uma volta pra ela produzir a resposta em linguagem natural
+                // com base no resultado da busca — não temos como montar isso
+                // deterministicamente sem duplicar lógica por provider.
+                try {
+                  const finalBody = { model: modelUsed, messages, max_completion_tokens: 500 };
+                  const finalResp = await fetchAIWithRetry(JSON.stringify(finalBody), "phantom-confirmation-search-answer");
+                  if (finalResp.ok) {
+                    const finalJson = await finalResp.json();
+                    const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
+                    if (finalMsgText) {
+                      finalResponse = finalMsgText;
+                      guardOverrideResponse = true;
+                      recovered = true;
+                    }
+                  }
+                } catch (e) {
+                  console.error(`[PhantomConfirmationGuard] search-answer exception: ${(e as Error)?.message}`);
                 }
               }
             }
@@ -7027,7 +7059,7 @@ async function callAIAgent(
         }
 
         if (!recovered) {
-          finalResponse = "Antes de eu confirmar, preciso checar esse agendamento direitinho de novo — pode me confirmar mais uma vez o serviço, dia e horário que você quer?";
+          finalResponse = "Deixa eu confirmar aqui rapidinho e já te retorno.";
           guardOverrideResponse = true;
         }
       }
