@@ -9744,7 +9744,7 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           return { data: [], message: "Cliente não encontrado" };
         }
 
-        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, resolvePhone);
+        const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, resolvePhone, { includeInactive: true });
         const allActive = activeRaw.map((a: any) => ({
           id: a.id,
           status: a.status?.nome,
