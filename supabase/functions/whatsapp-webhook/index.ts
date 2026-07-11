@@ -11846,7 +11846,58 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         const res = await bempFetch(url, { headers });
         const text = await res.text();
         console.log(`[Bemp] listar_agendamentos (${res.status}):`, text.slice(0, 600));
-        try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        let parsed: any;
+        try { parsed = JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+
+        // Bemp devolve { code, status, data: [...] } ou { data: [...] }. Extrai a lista.
+        const rawList: any[] = Array.isArray(parsed) ? parsed
+          : Array.isArray(parsed?.data) ? parsed.data
+          : Array.isArray(parsed?.appointments) ? parsed.appointments
+          : [];
+
+        // Categoriza por status + data — mesma abordagem do fix da Trinks:
+        // - Status inativos (closed/canceled/finished/no_show) no PASSADO = inativo.
+        // - Status inativos com data HOJE/FUTURO tratamos como potencialmente confirmado
+        //   marcado errado pelo salão (comum na Bemp — status "closed" antes do horário).
+        // - Qualquer outro status (open/confirmed/scheduled/…) = ativo.
+        const INACTIVE_STATUSES = new Set(["closed", "cancelled", "canceled", "finished", "no_show", "no-show", "noshow"]);
+        const nowMs = Date.now();
+        const startOfTodayMs = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00-03:00").getTime();
+
+        const ativos: any[] = [];
+        const inativos: any[] = [];
+        for (const ap of rawList) {
+          const status = String(ap?.status || "").toLowerCase().trim();
+          const startMs = ap?.start ? new Date(ap.start).getTime() : NaN;
+          const isPast = Number.isFinite(startMs) && startMs < startOfTodayMs;
+          const isInactiveStatus = INACTIVE_STATUSES.has(status);
+          if (isInactiveStatus && isPast) {
+            inativos.push(ap);
+          } else {
+            // ativo real OU status inativo mas data hoje/futuro (provável "confirmado marcado errado")
+            ativos.push(ap);
+          }
+        }
+
+        let resumo = "";
+        if (ativos.length === 0 && inativos.length === 0) {
+          resumo = "Nenhum agendamento encontrado para este cliente na Bemp.";
+        } else if (ativos.length === 0 && inativos.length > 0) {
+          resumo = `Nenhum agendamento ativo. Existem ${inativos.length} agendamento(s) inativo(s) (cancelado/finalizado no passado) — informe o cliente do status real em vez de dizer "não achei".`;
+        } else if (ativos.length > 0) {
+          const closedAtivos = ativos.filter((a) => INACTIVE_STATUSES.has(String(a?.status || "").toLowerCase().trim()));
+          if (closedAtivos.length > 0) {
+            resumo = `${ativos.length} agendamento(s) na janela ativa. ATENÇÃO: ${closedAtivos.length} está(ão) marcado(s) como "${closedAtivos[0]?.status}" mas com data hoje/futura — provavelmente o salão marcou como finalizado antes do horário; trate como CONFIRMADO ativo.`;
+          } else {
+            resumo = `${ativos.length} agendamento(s) ativo(s).`;
+          }
+        }
+
+        return {
+          agendamentosAtivos: ativos,
+          agendamentosInativos: inativos,
+          resumo,
+        };
       }
 
       case "agendar": {
