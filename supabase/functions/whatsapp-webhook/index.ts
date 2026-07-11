@@ -9436,7 +9436,7 @@ async function trinksFetchAgendamentos(baseUrl: string, headers: Record<string, 
 // Lista agendamentos acionáveis por clienteId e, como fallback obrigatório, por telefone direto.
 // Na Trinks existem casos em que /clientes?telefone retorna um cadastro, mas /agendamentos?clienteId
 // não traz o agendamento que /agendamentos?telefone encontra. Por isso usamos os dois caminhos.
-async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[], phone?: string): Promise<any[]> {
+async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<string, string>, clienteIds: number[], phone?: string, opts?: { includeInactive?: boolean }): Promise<any[]> {
   const queries: Record<string, string | number>[] = [];
   for (const cid of clienteIds) {
     if (Number.isFinite(Number(cid))) queries.push({ clienteId: Number(cid) });
@@ -9451,7 +9451,11 @@ async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<str
   const out: any[] = [];
   for (const list of results) {
     for (const a of list) {
-      if (!trinksIsActionableAppointment(a)) continue;
+      // Para LEITURA (buscar_agendamento), incluímos até finalizados/realizados —
+      // o cliente pode estar só perguntando "tá confirmado hoje?" sobre um
+      // agendamento que a barbearia já marcou como Finalizado no sistema.
+      // Para cancelar/remarcar o filtro estrito continua valendo (default).
+      if (!opts?.includeInactive && !trinksIsActionableAppointment(a)) continue;
       if (seen.has(a.id)) continue;
       seen.add(a.id);
       out.push(a);
@@ -9479,6 +9483,7 @@ async function trinksListActiveByClienteIds(baseUrl: string, headers: Record<str
   filtered.sort((a, b) => String(a.dataHoraInicio || "").localeCompare(String(b.dataHoraInicio || "")));
   return filtered;
 }
+
 
 
 async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: AgentSessionState): Promise<any> {
