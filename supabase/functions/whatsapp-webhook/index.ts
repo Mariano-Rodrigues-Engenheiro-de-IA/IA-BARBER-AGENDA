@@ -3155,13 +3155,6 @@ function buildDeterministicBookingConfirmation(
 // ===================== ID RESOLUTION LAYER =====================
 
 
-interface IdResolutionResult {
-  resolvedArgs: any;
-  corrected: boolean;
-  correctionReason: string | null;
-  blocked: boolean;
-  blockMessage: string | null;
-}
 
 
 
