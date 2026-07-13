@@ -2804,6 +2804,24 @@ interface AgentSessionState {
   // alucinado em `criar_agendamento` (grave: /v1/availability tem bug que
   // ignora filtro por profissional e devolve grade de todos).
   appbarberValidProfessionalCodes?: number[];
+  appbarberServiceCatalog?: Array<{
+    service_code: number;
+    name: string;
+    duration_minutes: number | null;
+  }>;
+  // APPBARBER — slots reais consultados por serviço/profissional/data.
+  // Usado para montar uma ÚNICA comanda com múltiplos serviços quando a IA
+  // consultou disponibilidade de corte + sobrancelha, mas tenta criar só o
+  // primeiro service_code. Evita depender do LLM/guard para completar depois.
+  appbarberSlotOptions?: Array<{
+    service_code: number;
+    service_name: string;
+    duration_minutes: number | null;
+    professional_code: number;
+    professional_name: string;
+    start_date: string;
+    start_time: string;
+  }>;
   // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
   // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
   // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
@@ -2846,6 +2864,8 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     frizzarClienteId: null,
     frizzarValidProfessionalIds: [],
     appbarberValidProfessionalCodes: [],
+    appbarberServiceCatalog: [],
+    appbarberSlotOptions: [],
     recentActiveBookingsLookup: null,
   };
 
@@ -2914,6 +2934,13 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.appbarberValidProfessionalCodes)
         ? { appbarberValidProfessionalCodes: s.appbarberValidProfessionalCodes.filter((n: any) => typeof n === "number").slice(0, 100) }
         : { appbarberValidProfessionalCodes: [] }),
+      ...(Array.isArray(s.appbarberSlotOptions)
+        ? {
+            appbarberSlotOptions: s.appbarberSlotOptions
+              .filter((slot: any) => slot && typeof slot.service_code === "number" && typeof slot.professional_code === "number" && typeof slot.start_date === "string" && typeof slot.start_time === "string")
+              .slice(-300),
+          }
+        : { appbarberSlotOptions: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
@@ -2993,6 +3020,9 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       // APPBARBER — profissionais válidos (bloqueia professional_code alucinado)
       appbarberValidProfessionalCodes: Array.isArray((state as any).appbarberValidProfessionalCodes)
         ? (state as any).appbarberValidProfessionalCodes.slice(0, 100)
+        : [],
+      appbarberSlotOptions: Array.isArray((state as any).appbarberSlotOptions)
+        ? (state as any).appbarberSlotOptions.slice(-300)
         : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
@@ -3801,6 +3831,92 @@ function normalizeSearchText(value: unknown): string {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+}
+
+function normalizeServiceText(value: unknown): string {
+  return normalizeSearchText(value)
+    .replace(/[^a-z0-9\s+]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitServiceNameTokens(value: unknown): string[] {
+  return normalizeServiceText(value)
+    .split(/\s*(?:\+|\be\b|,|\/|&|\bmais\b|\bjunto\b|\bcom\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3);
+}
+
+function serviceNameImpliesAnotherService(bookedServiceName: string, candidateServiceName: string): boolean {
+  const booked = normalizeServiceText(bookedServiceName);
+  const candidate = normalizeServiceText(candidateServiceName);
+  if (!booked || !candidate || booked === candidate) return false;
+
+  // Se o serviço reservado já é um combo explícito do catálogo (ex.: "Corte + sobrancelha"),
+  // não devemos criar outro item de "sobrancelha". Se o serviço reservado é só "Corte",
+  // ele NÃO cobre "sobrancelha" — aí a fusão determinística entra.
+  const bookedParts = splitServiceNameTokens(booked);
+  if (bookedParts.length >= 2 && bookedParts.some((part) => part === candidate || part.includes(candidate) || candidate.includes(part))) {
+    return true;
+  }
+
+  return booked.includes(candidate) || candidate.includes(booked);
+}
+
+function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSessionState, contextText = ""): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
+  const requestedServiceCode = toPositiveInteger(args?.service_code);
+  const requestedProfessionalCode = toPositiveInteger(args?.professional_code);
+  const requestedDate = typeof args?.start_date === "string" ? args.start_date.slice(0, 10) : "";
+  const requestedTime = String(args?.start_time || "").slice(0, 5);
+  if (!requestedServiceCode || !requestedProfessionalCode || !requestedDate || !/^\d{2}:\d{2}$/.test(requestedTime)) return [];
+
+  const catalog = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string; duration_minutes?: number | null }>;
+  const slots = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
+    service_code: number;
+    service_name: string;
+    duration_minutes: number | null;
+    professional_code: number;
+    professional_name: string;
+    start_date: string;
+    start_time: string;
+  }>;
+
+  if (catalog.length === 0 || slots.length === 0) return [];
+  const requestedCatalog = catalog.find((s) => Number(s.service_code) === requestedServiceCode);
+  if (!requestedCatalog) return [];
+
+  const servicesAtSameSlot = slots
+    .filter((slot) =>
+      slot.service_code > 0 &&
+      slot.professional_code === requestedProfessionalCode &&
+      slot.start_date === requestedDate &&
+      slot.start_time.slice(0, 5) === requestedTime,
+    )
+    .map((slot) => {
+      const catalogItem = catalog.find((s) => Number(s.service_code) === Number(slot.service_code));
+      return {
+        service_code: Number(slot.service_code),
+        name: catalogItem?.name || slot.service_name || `Serviço ${slot.service_code}`,
+        duration_minutes: toPositiveInteger(catalogItem?.duration_minutes ?? slot.duration_minutes),
+      };
+    });
+
+  const deduped = dedupeByKey(servicesAtSameSlot, (service) => String(service.service_code));
+  if (!deduped.some((service) => service.service_code === requestedServiceCode)) return [];
+
+  const requestedName = requestedCatalog.name || "";
+  const normalizedContext = normalizeServiceText(contextText);
+  return deduped.filter((service) => {
+    if (service.service_code === requestedServiceCode) return true;
+    const candidate = normalizeServiceText(service.name);
+    const candidateParts = splitServiceNameTokens(service.name);
+    const mentionedByClientOrAssistant = candidate.length >= 3 && (
+      normalizedContext.includes(candidate) ||
+      candidateParts.some((part) => part.length >= 3 && normalizedContext.includes(part))
+    );
+    if (!mentionedByClientOrAssistant) return false;
+    return !serviceNameImpliesAnotherService(requestedName, service.name);
+  });
 }
 
 function getOneBelezaUnitFilterList(tenant: any): string[] {
@@ -5717,10 +5833,17 @@ async function callAIAgent(
           parsedArgs?.servicoId,
           parsedArgs?.servicoid,
           parsedArgs?.servicosId,
+          parsedArgs?.service_code,
+          parsedArgs?.serviceCode,
         ];
         if (Array.isArray(parsedArgs?.servicos)) {
           for (const s of parsedArgs.servicos) {
             candidateIds.push(s?.codigo, s?.servicoId, s?.servicosId);
+          }
+        }
+        if (Array.isArray(parsedArgs?.services)) {
+          for (const s of parsedArgs.services) {
+            candidateIds.push(s?.service_code, s?.serviceCode, s?.code, s?.id);
           }
         }
         attemptedServiceIds = candidateIds
@@ -5741,10 +5864,12 @@ async function callAIAgent(
           (typeof parsedArgs?.hora === "string" && parsedArgs.hora) ||
           (typeof parsedArgs?.horario === "string" && parsedArgs.horario) ||
           (typeof parsedArgs?.time === "string" && parsedArgs.time) ||
+          (typeof parsedArgs?.start_time === "string" && parsedArgs.start_time) ||
           (dt && dt.length >= 16 ? dt.slice(11, 16) : "");
         const prof =
           toPositiveInteger(parsedArgs?.profissionalId) ??
           toPositiveInteger(parsedArgs?.professionalId) ??
+          toPositiveInteger(parsedArgs?.professional_code) ??
           "";
         const servicesKey = [...attemptedServiceIds].sort((a, b) => a - b).join(",");
         attemptedSlotSignature = `${servicesKey}|${date}|${time}|${prof}`;
@@ -6282,6 +6407,34 @@ async function callAIAgent(
           }
         }
 
+        if (!toolResult && provider === "appbarber" && toolCall.function.name === "criar_agendamento") {
+          const contextText = [
+            ...messages.slice(-12).map((m: any) => typeof m?.content === "string" ? m.content : ""),
+            JSON.stringify(parsedArgs || {}),
+          ].join("\n");
+          const inferredServices = inferAppBarberServicesForSameSlot(parsedArgs, sessionState, contextText);
+          const existingServiceCodes = new Set<number>();
+          if (Array.isArray(parsedArgs?.services)) {
+            for (const s of parsedArgs.services) {
+              const code = toPositiveInteger(s?.service_code ?? s?.serviceCode ?? s?.code ?? s?.id);
+              if (code) existingServiceCodes.add(code);
+            }
+          }
+          if (inferredServices.length > Math.max(1, existingServiceCodes.size)) {
+            parsedArgs.services = inferredServices.map((service) => ({
+              service_code: service.service_code,
+              duration: service.duration_minutes,
+            }));
+            toolCallToExecute = {
+              ...toolCall,
+              function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+            };
+            const autoMergeReason = `appbarber multi-service auto-merged: ${inferredServices.map((service) => `${service.service_code}:${service.name}`).join(", ")}`;
+            correctionReason = correctionReason ? `${correctionReason}; ${autoMergeReason}` : autoMergeReason;
+            console.log(`[AppBarber] criar_agendamento auto-merged services for same slot: ${JSON.stringify(parsedArgs.services)}`);
+          }
+        }
+
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode, sessionState });
@@ -6555,6 +6708,54 @@ async function callAIAgent(
             .filter((s: any) => s.service_code);
           (sessionState as any).appbarberServiceCatalog = catalog;
           console.log(`[AppBarberLock] catalog tracked: ${catalog.length} serviços`);
+        }
+
+        // ===== APPBARBER: slots consultados por serviço/profissional/data =====
+        // Caso real: cliente pediu 2 serviços, a IA consultou horários dos 2, mas
+        // chamou criar_agendamento só com o primeiro. O POST do AppBarber aceita
+        // `services[]`, então guardamos as consultas reais para fundir serviços do
+        // MESMO profissional/data/hora em uma única comanda quando o texto pedir.
+        if (provider === "appbarber" && toolResult && !(toolResult as any)?.error && ["listar_horarios", "listar_horarios_geral"].includes(toolCall.function.name)) {
+          const catalog = (((sessionState as any).appbarberServiceCatalog || []) as Array<{ service_code: number; name: string; duration_minutes: number | null }>);
+          const serviceCode = toPositiveInteger(parsedArgs?.service_code ?? (toolResult as any)?.service_code);
+          const service = catalog.find((s) => s.service_code === serviceCode);
+          const serviceName = service?.name || `Serviço ${serviceCode || ""}`.trim();
+          const duration = service?.duration_minutes ?? null;
+          const startDate = String(parsedArgs?.start_date || (toolResult as any)?.date || "").slice(0, 10);
+          const slotOptions: NonNullable<AgentSessionState["appbarberSlotOptions"]> = [];
+
+          if (serviceCode && startDate && toolCall.function.name === "listar_horarios" && Array.isArray((toolResult as any)?.available_times)) {
+            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code);
+            if (professionalCode) {
+              for (const time of (toolResult as any).available_times) {
+                const hhmm = String(time || "").slice(0, 5);
+                if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
+                }
+              }
+            }
+          }
+
+          if (serviceCode && startDate && toolCall.function.name === "listar_horarios_geral" && Array.isArray((toolResult as any)?.profissionais)) {
+            for (const prof of (toolResult as any).profissionais) {
+              const professionalCode = toPositiveInteger(prof?.professional_code);
+              if (!professionalCode || !Array.isArray(prof?.available_times)) continue;
+              for (const time of prof.available_times) {
+                const hhmm = String(time || "").slice(0, 5);
+                if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: String(prof?.name || ""), start_date: startDate, start_time: hhmm });
+                }
+              }
+            }
+          }
+
+          if (slotOptions.length > 0) {
+            (sessionState as any).appbarberSlotOptions = dedupeByKey(
+              [...(((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>), ...slotOptions].slice(-500),
+              (slot) => `${slot.service_code}:${slot.professional_code}:${slot.start_date}:${slot.start_time}`,
+            );
+            console.log(`[AppBarber] tracked slot options: +${slotOptions.length} total=${((sessionState as any).appbarberSlotOptions || []).length}`);
+          }
         }
 
         // ===== FRIZZAR: rastreia agendasIds do cliente após buscar_agendamentos (para checagem de propriedade em cancelar_agendamento).
@@ -12691,15 +12892,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         const phoneDigits = normalizePhoneDigits(phoneNumber || args.customer_phone || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
-        if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
+        const requestedServices = (Array.isArray(args.services) && args.services.length > 0
+          ? args.services
+          : [{ service_code: args.service_code, duration: args.service_duration_minutes }])
+          .map((service: any) => ({
+            service_code: toPositiveInteger(service?.service_code ?? service?.serviceCode ?? service?.code ?? service?.id),
+            duration: toPositiveInteger(service?.duration ?? service?.service_duration_minutes ?? service?.duration_minutes),
+          }))
+          .filter((service: any) => typeof service.service_code === "number");
+        const primaryServiceCode = requestedServices[0]?.service_code ?? toPositiveInteger(args.service_code);
+        if (!primaryServiceCode || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
         {
           const abCat = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string }>;
-          const sc = Number(args.service_code);
-          if (abCat.length > 0 && sc > 0 && !abCat.some((s) => s.service_code === sc)) {
-            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_code=${sc} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
+          const invalidServiceCodes = requestedServices
+            .map((service: any) => service.service_code)
+            .filter((code: number) => code > 0 && !abCat.some((s) => s.service_code === code));
+          if (abCat.length > 0 && invalidServiceCodes.length > 0) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_codes=${invalidServiceCodes.join(",")} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
             return {
-              error: `service_code ${sc} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
+              error: `service_code ${invalidServiceCodes.join(", ")} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
               blocked: true,
               validServiceCodes: abCat.map((s) => s.service_code),
             };
@@ -12725,9 +12937,13 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
           return { error: "start_date/start_time inválidos. Use start_date YYYY-MM-DD e start_time HH:MM.", recoverable: true };
         }
-        const serviceDuration = await resolveAppBarberServiceDuration(args.service_code, args.service_duration_minutes);
-        if (!serviceDuration) {
-          return { error: "Duração do serviço não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.", recoverable: true };
+        const serviceItems: Array<{ service_code: number; duration: number }> = [];
+        for (const service of requestedServices) {
+          const duration = await resolveAppBarberServiceDuration(service.service_code, service.duration);
+          if (!duration) {
+            return { error: `Duração do serviço ${service.service_code} não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.`, recoverable: true };
+          }
+          serviceItems.push({ service_code: service.service_code, duration });
         }
         const url = buildUrl("/v1/appointments", {});
         const customerName = String(args.customer_name || "Cliente").trim();
@@ -12740,7 +12956,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           customer_name: customerName,
           start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
-          services: [{ service_code: Number(args.service_code), duration: serviceDuration }],
+          services: serviceItems,
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
@@ -12780,7 +12996,9 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           ok: true,
           appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
           start_date: body.start_date,
-          service_code: Number(args.service_code),
+          service_code: primaryServiceCode,
+          service_codes: serviceItems.map((service) => service.service_code),
+          services: serviceItems,
           professional_code: Number(args.professional_code),
           raw: parsed?.data ?? parsed,
         };
