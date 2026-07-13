@@ -3827,6 +3827,84 @@ function normalizeSearchText(value: unknown): string {
     .trim();
 }
 
+function normalizeServiceText(value: unknown): string {
+  return normalizeSearchText(value)
+    .replace(/[^a-z0-9\s+]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitServiceNameTokens(value: unknown): string[] {
+  return normalizeServiceText(value)
+    .split(/\s*(?:\+|\be\b|,|\/|&|\bmais\b|\bjunto\b|\bcom\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3);
+}
+
+function serviceNameImpliesAnotherService(bookedServiceName: string, candidateServiceName: string): boolean {
+  const booked = normalizeServiceText(bookedServiceName);
+  const candidate = normalizeServiceText(candidateServiceName);
+  if (!booked || !candidate || booked === candidate) return false;
+
+  // Se o serviço reservado já é um combo explícito do catálogo (ex.: "Corte + sobrancelha"),
+  // não devemos criar outro item de "sobrancelha". Se o serviço reservado é só "Corte",
+  // ele NÃO cobre "sobrancelha" — aí a fusão determinística entra.
+  const bookedParts = splitServiceNameTokens(booked);
+  if (bookedParts.length >= 2 && bookedParts.some((part) => part === candidate || part.includes(candidate) || candidate.includes(part))) {
+    return true;
+  }
+
+  return booked.includes(candidate) || candidate.includes(booked);
+}
+
+function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSessionState): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
+  const requestedServiceCode = toPositiveInteger(args?.service_code);
+  const requestedProfessionalCode = toPositiveInteger(args?.professional_code);
+  const requestedDate = typeof args?.start_date === "string" ? args.start_date.slice(0, 10) : "";
+  const requestedTime = String(args?.start_time || "").slice(0, 5);
+  if (!requestedServiceCode || !requestedProfessionalCode || !requestedDate || !/^\d{2}:\d{2}$/.test(requestedTime)) return [];
+
+  const catalog = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string; duration_minutes?: number | null }>;
+  const slots = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
+    service_code: number;
+    service_name: string;
+    duration_minutes: number | null;
+    professional_code: number;
+    professional_name: string;
+    start_date: string;
+    start_time: string;
+  }>;
+
+  if (catalog.length === 0 || slots.length === 0) return [];
+  const requestedCatalog = catalog.find((s) => Number(s.service_code) === requestedServiceCode);
+  if (!requestedCatalog) return [];
+
+  const servicesAtSameSlot = slots
+    .filter((slot) =>
+      slot.service_code > 0 &&
+      slot.professional_code === requestedProfessionalCode &&
+      slot.start_date === requestedDate &&
+      slot.start_time.slice(0, 5) === requestedTime,
+    )
+    .map((slot) => {
+      const catalogItem = catalog.find((s) => Number(s.service_code) === Number(slot.service_code));
+      return {
+        service_code: Number(slot.service_code),
+        name: catalogItem?.name || slot.service_name || `Serviço ${slot.service_code}`,
+        duration_minutes: toPositiveInteger(catalogItem?.duration_minutes ?? slot.duration_minutes),
+      };
+    });
+
+  const deduped = dedupeByKey(servicesAtSameSlot, (service) => String(service.service_code));
+  if (!deduped.some((service) => service.service_code === requestedServiceCode)) return [];
+
+  const requestedName = requestedCatalog.name || "";
+  return deduped.filter((service) => {
+    if (service.service_code === requestedServiceCode) return true;
+    return !serviceNameImpliesAnotherService(requestedName, service.name);
+  });
+}
+
 function getOneBelezaUnitFilterList(tenant: any): string[] {
   const rawFilter = tenant?.agent_settings?.onebeleza_unit_filter;
   const list = Array.isArray(rawFilter)
