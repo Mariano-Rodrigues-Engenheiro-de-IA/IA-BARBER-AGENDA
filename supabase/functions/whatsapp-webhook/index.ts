@@ -2804,6 +2804,19 @@ interface AgentSessionState {
   // alucinado em `criar_agendamento` (grave: /v1/availability tem bug que
   // ignora filtro por profissional e devolve grade de todos).
   appbarberValidProfessionalCodes?: number[];
+  // APPBARBER — slots reais consultados por serviço/profissional/data.
+  // Usado para montar uma ÚNICA comanda com múltiplos serviços quando a IA
+  // consultou disponibilidade de corte + sobrancelha, mas tenta criar só o
+  // primeiro service_code. Evita depender do LLM/guard para completar depois.
+  appbarberSlotOptions?: Array<{
+    service_code: number;
+    service_name: string;
+    duration_minutes: number | null;
+    professional_code: number;
+    professional_name: string;
+    start_date: string;
+    start_time: string;
+  }>;
   // Segunda fonte de legitimidade do PhantomConfirmationGuard: registra a
   // última busca bem-sucedida de agendamento ativo (buscar_agendamento[s|_dia],
   // listar_agendamentos). Serve pra permitir reafirmar/orientar sobre agendamento
@@ -2846,6 +2859,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     frizzarClienteId: null,
     frizzarValidProfessionalIds: [],
     appbarberValidProfessionalCodes: [],
+    appbarberSlotOptions: [],
     recentActiveBookingsLookup: null,
   };
 
@@ -2914,6 +2928,13 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       ...(Array.isArray(s.appbarberValidProfessionalCodes)
         ? { appbarberValidProfessionalCodes: s.appbarberValidProfessionalCodes.filter((n: any) => typeof n === "number").slice(0, 100) }
         : { appbarberValidProfessionalCodes: [] }),
+      ...(Array.isArray(s.appbarberSlotOptions)
+        ? {
+            appbarberSlotOptions: s.appbarberSlotOptions
+              .filter((slot: any) => slot && typeof slot.service_code === "number" && typeof slot.professional_code === "number" && typeof slot.start_date === "string" && typeof slot.start_time === "string")
+              .slice(-300),
+          }
+        : { appbarberSlotOptions: [] }),
       trinksSelectedServiceId: typeof s.trinksSelectedServiceId === "number" ? s.trinksSelectedServiceId : null,
       trinksSelectedServiceDuration: typeof s.trinksSelectedServiceDuration === "number" ? s.trinksSelectedServiceDuration : null,
       trinksSelectedServiceName: typeof s.trinksSelectedServiceName === "string" ? s.trinksSelectedServiceName : null,
@@ -2993,6 +3014,9 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       // APPBARBER — profissionais válidos (bloqueia professional_code alucinado)
       appbarberValidProfessionalCodes: Array.isArray((state as any).appbarberValidProfessionalCodes)
         ? (state as any).appbarberValidProfessionalCodes.slice(0, 100)
+        : [],
+      appbarberSlotOptions: Array.isArray((state as any).appbarberSlotOptions)
+        ? (state as any).appbarberSlotOptions.slice(-300)
         : [],
       trinksSelectedServiceId: (state as any).trinksSelectedServiceId ?? null,
       trinksSelectedServiceDuration: (state as any).trinksSelectedServiceDuration ?? null,
