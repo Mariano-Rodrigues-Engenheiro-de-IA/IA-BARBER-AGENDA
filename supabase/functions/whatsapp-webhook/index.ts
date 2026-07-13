@@ -6195,9 +6195,17 @@ async function callAIAgent(
         const r: any = definitiveFailure.result;
         console.warn(`[MultiBookingGuard] falha definitiva detectada (reason=${r.failureReason || r.error}) — pulando recovery.`);
         logErrors.push({ message: `Multi-booking abortado por falha definitiva: ${r.failureReason || r.error}`, level: "warning" });
-        finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
-          ? r.clientMessage.trim()
-          : "Não consegui concluir esse agendamento agora. Vou verificar aqui e já te retorno.";
+        // Se já rolou pelo menos um agendamento com sucesso, usar o fallback
+        // transparente (o que criou + probleminha no restante + aciona equipe).
+        // Se nada foi criado, respeita o clientMessage do provider.
+        const partialCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+        if (partialCount.count > 0 && partialCount.count < prometidos) {
+          finalResponse = buildPartialBookingFallback(partialCount.count, prometidos, partialCount.breakdown);
+        } else {
+          finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
+            ? r.clientMessage.trim()
+            : "Não consegui concluir esse agendamento agora. Vou acionar a equipe aqui pra resolver e já te retorno.";
+        }
         guardOverrideResponse = true;
         guardLog("definitive_failure_no_recovery");
       } else {
