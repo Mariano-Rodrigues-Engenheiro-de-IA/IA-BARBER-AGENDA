@@ -5476,10 +5476,9 @@ async function callAIAgent(
         }
 
         // ===== APPBARBER: slots consultados por serviço/profissional/data =====
-        // Caso real: cliente pediu 2 serviços, a IA consultou horários dos 2, mas
-        // chamou criar_agendamento só com o primeiro. O POST do AppBarber aceita
-        // `services[]`, então guardamos as consultas reais para fundir serviços do
-        // MESMO profissional/data/hora em uma única comanda quando o texto pedir.
+        // Guardamos as consultas reais para validar que criar_agendamento use um
+        // horário/profissional efetivamente listado. Importante: AppBarber NÃO deve
+        // receber múltiplos `services[]` soltos; multi-serviço só via combo cadastrado.
         if (provider === "appbarber" && toolResult && !(toolResult as any)?.error && ["listar_horarios", "listar_horarios_geral"].includes(toolCall.function.name)) {
           const catalog = (((sessionState as any).appbarberServiceCatalog || []) as Array<{ service_code: number; name: string; duration_minutes: number | null }>);
           const serviceCode = toPositiveInteger(parsedArgs?.service_code ?? (toolResult as any)?.service_code);
