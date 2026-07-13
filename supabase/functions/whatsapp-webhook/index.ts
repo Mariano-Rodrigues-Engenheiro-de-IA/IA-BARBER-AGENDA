@@ -15,7 +15,6 @@ import {
 import {
   buildAppBarberTools,
   executeAppBarberTool,
-  inferAppBarberServicesForSameSlot,
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
 } from "./providers/appbarber/index.ts";
@@ -3772,7 +3771,7 @@ async function classifyPendingBookings(params: {
 
 
 /** Mensagem determinística quando a recuperação automática esgotou as tentativas.
- * NUNCA pede dado ao cliente e NUNCA escala humano: mantém a conversa com a IA. */
+ * NUNCA promete continuar tentando em background: deixa claro que a equipe será acionada. */
 function buildPartialBookingFallback(
   criados: number,
   prometidos: number,
@@ -5198,34 +5197,6 @@ async function callAIAgent(
             console.log(`[OneBeleza] agendar BLOCKED by session validation:`, JSON.stringify(toolResult).slice(0, 1000));
             wasBlocked = true;
             sessionBlocked = true;
-          }
-        }
-
-        if (!toolResult && provider === "appbarber" && toolCall.function.name === "criar_agendamento") {
-          const contextText = [
-            ...messages.slice(-12).map((m: any) => typeof m?.content === "string" ? m.content : ""),
-            JSON.stringify(parsedArgs || {}),
-          ].join("\n");
-          const inferredServices = inferAppBarberServicesForSameSlot(parsedArgs, sessionState, contextText);
-          const existingServiceCodes = new Set<number>();
-          if (Array.isArray(parsedArgs?.services)) {
-            for (const s of parsedArgs.services) {
-              const code = toPositiveInteger(s?.service_code ?? s?.serviceCode ?? s?.code ?? s?.id);
-              if (code) existingServiceCodes.add(code);
-            }
-          }
-          if (inferredServices.length > Math.max(1, existingServiceCodes.size)) {
-            parsedArgs.services = inferredServices.map((service) => ({
-              service_code: service.service_code,
-              duration: service.duration_minutes,
-            }));
-            toolCallToExecute = {
-              ...toolCall,
-              function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
-            };
-            const autoMergeReason = `appbarber multi-service auto-merged: ${inferredServices.map((service) => `${service.service_code}:${service.name}`).join(", ")}`;
-            correctionReason = correctionReason ? `${correctionReason}; ${autoMergeReason}` : autoMergeReason;
-            console.log(`[AppBarber] criar_agendamento auto-merged services for same slot: ${JSON.stringify(parsedArgs.services)}`);
           }
         }
 
