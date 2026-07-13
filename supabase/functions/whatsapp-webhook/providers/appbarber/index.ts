@@ -865,4 +865,111 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     const msg = error instanceof Error ? error.message : String(error);
     return { error: `Erro ao executar ${funcName}: ${msg}` };
   }
+}}
+
+// ===================== HELPERS DE NOME DE SERVIÇO (locais) =====================
+// Duplicados do index.ts pra manter o módulo independente. Só usados pelo
+// inferAppBarberServicesForSameSlot abaixo.
+
+function _abNormalizeServiceText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s+]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
+
+function _abSplitServiceNameTokens(value: unknown): string[] {
+  return _abNormalizeServiceText(value)
+    .split(/\s*(?:\+|\be\b|,|\/|&|\bmais\b|\bjunto\b|\bcom\b)\s*/i)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 3);
+}
+
+function _abServiceNameImpliesAnotherService(bookedServiceName: string, candidateServiceName: string): boolean {
+  const booked = _abNormalizeServiceText(bookedServiceName);
+  const candidate = _abNormalizeServiceText(candidateServiceName);
+  if (!booked || !candidate || booked === candidate) return false;
+  const bookedParts = _abSplitServiceNameTokens(booked);
+  if (bookedParts.length >= 2 && bookedParts.some((part) => part === candidate || part.includes(candidate) || candidate.includes(part))) {
+    return true;
+  }
+  return booked.includes(candidate) || candidate.includes(booked);
+}
+
+function _abDedupeByKey<T>(items: T[], getKey: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    const key = getKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+// AppBarber-only: dado um `criar_agendamento` com 1 service_code, tenta inferir
+// outros serviços do MESMO slot (mesma pessoa/data/hora) que o cliente mencionou
+// na conversa. Usado pelo dispatcher pra fundir múltiplos serviços numa única
+// chamada (a API AppBarber aceita `services[]` no mesmo agendamento).
+export function inferAppBarberServicesForSameSlot(
+  args: any,
+  sessionState: any,
+  contextText = "",
+): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
+  const requestedServiceCode = toPositiveInteger(args?.service_code);
+  const requestedProfessionalCode = toPositiveInteger(args?.professional_code);
+  const requestedDate = typeof args?.start_date === "string" ? args.start_date.slice(0, 10) : "";
+  const requestedTime = String(args?.start_time || "").slice(0, 5);
+  if (!requestedServiceCode || !requestedProfessionalCode || !requestedDate || !/^\d{2}:\d{2}$/.test(requestedTime)) return [];
+
+  const catalog = ((sessionState?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string; duration_minutes?: number | null }>;
+  const slots = ((sessionState?.appbarberSlotOptions) || []) as Array<{
+    service_code: number;
+    service_name: string;
+    duration_minutes: number | null;
+    professional_code: number;
+    professional_name: string;
+    start_date: string;
+    start_time: string;
+  }>;
+
+  if (catalog.length === 0 || slots.length === 0) return [];
+  const requestedCatalog = catalog.find((s) => Number(s.service_code) === requestedServiceCode);
+  if (!requestedCatalog) return [];
+
+  const servicesAtSameSlot = slots
+    .filter((slot) =>
+      slot.service_code > 0 &&
+      slot.professional_code === requestedProfessionalCode &&
+      slot.start_date === requestedDate &&
+      slot.start_time.slice(0, 5) === requestedTime,
+    )
+    .map((slot) => {
+      const catalogItem = catalog.find((s) => Number(s.service_code) === Number(slot.service_code));
+      return {
+        service_code: Number(slot.service_code),
+        name: catalogItem?.name || slot.service_name || `Serviço ${slot.service_code}`,
+        duration_minutes: toPositiveInteger(catalogItem?.duration_minutes ?? slot.duration_minutes),
+      };
+    });
+
+  const deduped = _abDedupeByKey(servicesAtSameSlot, (service) => String(service.service_code));
+  if (!deduped.some((service) => service.service_code === requestedServiceCode)) return [];
+
+  const requestedName = requestedCatalog.name || "";
+  const normalizedContext = _abNormalizeServiceText(contextText);
+  return deduped.filter((service) => {
+    if (service.service_code === requestedServiceCode) return true;
+    const candidate = _abNormalizeServiceText(service.name);
+    const candidateParts = _abSplitServiceNameTokens(service.name);
+    const mentionedByClientOrAssistant = candidate.length >= 3 && (
+      normalizedContext.includes(candidate) ||
+      candidateParts.some((part) => part.length >= 3 && normalizedContext.includes(part))
+    );
+    if (!mentionedByClientOrAssistant) return false;
+    return !_abServiceNameImpliesAnotherService(requestedName, service.name);
+  });
