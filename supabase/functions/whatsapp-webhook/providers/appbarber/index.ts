@@ -14,6 +14,60 @@ function toPositiveInteger(value: unknown): number | null {
   return i > 0 ? i : null;
 }
 
+// Classificação genérica de falha da AppBarber em 2 eixos: retryable + clientMessage.
+// Mesmo padrão já validado na Bemp (jul/2026, caso de pendência de pagamento):
+//   - retryable=false  → MultiBookingGuard NÃO roda recovery (definitivo).
+//     Se vier `clientMessage`, o guard usa essa mensagem determinística em vez
+//     de deixar a IA improvisar confirmação falsa.
+//   - retryable=true   → guard pode rodar recovery normal (default).
+// Hoje a AppBarber não tem um cenário de erro de negócio definitivo mapeado
+// como "assinatura vencida" da Bemp, então a lista abaixo é conservadora e
+// serve principalmente como estrutura pronta pra receber casos reais assim
+// que aparecerem — mesmo caminho evolutivo que a Bemp teve.
+function classifyAppBarberFailure(
+  status: number,
+  rawText: string | undefined,
+  parsed: any,
+): { retryable: boolean; clientMessage?: string; reason: string } {
+  const msg = String(parsed?.message || parsed?.error || rawText || "").toLowerCase();
+
+  // 1) Auth / config quebrada — não adianta a IA insistir, é problema do tenant.
+  //    Sem clientMessage: o guard usa fallback genérico ("já te retorno").
+  if (status === 401 || status === 403) {
+    return { retryable: false, reason: `auth_${status}` };
+  }
+
+  // 2) 404 no endpoint de criar — endpoint/estabelecimento inválido, definitivo.
+  if (status === 404) {
+    return { retryable: false, reason: "not_found" };
+  }
+
+  // 3) Regra de negócio explícita da AppBarber (placeholders para casos reais
+  //    que aparecerem — mesma evolução da Bemp). Se em algum log real
+  //    aparecer uma mensagem definitiva (ex.: "cliente bloqueado",
+  //    "estabelecimento inativo"), adicionar o match aqui.
+  if (/estabelecimento (inativo|bloqueado|suspenso)/i.test(msg)) {
+    return {
+      retryable: false,
+      reason: "establishment_inactive",
+      clientMessage:
+        "Não consegui concluir esse agendamento agora porque o estabelecimento está temporariamente indisponível no sistema. Assim que normalizar, te confirmo.",
+    };
+  }
+
+  // 4) 422 = "horário indisponível / conflito". Retryable no sentido do guard:
+  //    a IA pode oferecer outro horário. Sem clientMessage — deixa o fluxo
+  //    normal de recovery/oferta de novos slots correr.
+  if (status === 422) return { retryable: true, reason: "conflict_422" };
+
+  // 5) 429 e 5xx são transitórios por definição.
+  if (status === 429 || status >= 500) return { retryable: true, reason: `transient_${status}` };
+
+  // 6) Default: retryable=true (mesma postura conservadora da Bemp).
+  return { retryable: true, reason: `http_${status}` };
+}
+
+
 // ===================== APPBARBER PROVIDER =====================
 
 const APPBARBER_DEFAULT_BASE_URL = "https://proxy.zayloia.com";
