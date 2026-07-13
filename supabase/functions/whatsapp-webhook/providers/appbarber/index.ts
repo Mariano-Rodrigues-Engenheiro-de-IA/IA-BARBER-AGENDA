@@ -999,13 +999,13 @@ export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): Booking
   // bookedCount (senão o MultiBookingGuard acha que faltou reserva). Mesma
   // correção já aplicada na Frizzar (caso Matheus/Henrico, jul/2026).
   const abServices = Array.isArray(args?.services) ? args.services : [];
-  const extraServiceCount = abServices.length > 1 ? abServices.length - 1 : 0;
+  const serviceCount = abServices.length;
   return {
     succeeded: true,
     bookedCount: 1,
     dateStr: String(args.start_date || ""),
     timeStr: String(args.start_time || ""),
-    ...(extraServiceCount > 0 ? { extraServiceCount } : {}),
+    ...(serviceCount > 1 ? { extraServiceCount: serviceCount } : {}),
   };
 }
 
