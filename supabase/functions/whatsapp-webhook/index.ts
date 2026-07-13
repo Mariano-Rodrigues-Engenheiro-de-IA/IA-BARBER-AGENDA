@@ -938,18 +938,6 @@ const extractExplicitClientName = (userMessage: unknown, previousAssistantMessag
 //   "Erro ao cadastrar..."
 // Returns true ONLY when we have strong evidence the registration succeeded.
 
-function _serviceSupabase() {
-  return createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-  );
-}
-
-function _generateAliasPhone(tenantId: string, n: number) {
-  // 11 dígitos, começa com 9 (formato celular BR); 4 dígitos derivados do tenant + 6 sequenciais
-  const tHash = parseInt(tenantId.replace(/-/g, "").slice(0, 4), 16) % 10000;
-  return `9${String(tHash).padStart(4, "0")}${String(n).padStart(6, "0")}`;
-}
 
 // Marca um alias como queimado para que nunca mais seja reutilizado.
 
