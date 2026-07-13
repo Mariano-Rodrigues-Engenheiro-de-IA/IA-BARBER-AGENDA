@@ -7273,6 +7273,7 @@ async function callAIAgent(
         guardOverrideResponse = true;
         guardLog("recovery_exhausted_no_human");
       }
+      } // fim else (sem falha definitiva → executou recovery loop)
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
