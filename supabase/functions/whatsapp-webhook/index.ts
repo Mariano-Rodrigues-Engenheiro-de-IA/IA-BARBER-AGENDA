@@ -4632,7 +4632,13 @@ function countSuccessfulBookingsInTurn(
       case "appbarber": {
         // AppBarber não devolve nome de serviço no sucesso do agendamento (só
         // service_code numérico) — fica sem nome, só data/hora humanizada.
+        // Personalização multi-booking AppBarber: uma chamada `criar_agendamento`
+        // pode carregar `services[]` (comanda com N serviços no mesmo slot). Cada
+        // item do array conta como 1 booking pro guard, pra o count bater com
+        // "quantos serviços o cliente pediu".
         succeeded = r.ok === true && !!r.appointment_id;
+        const abServices = Array.isArray((args as any)?.services) ? (args as any).services : [];
+        if (succeeded && abServices.length > 1) bookedCount = abServices.length;
         summary = formatBookingWhen(String(args.start_date || ""), String(args.start_time || ""));
         break;
       }
