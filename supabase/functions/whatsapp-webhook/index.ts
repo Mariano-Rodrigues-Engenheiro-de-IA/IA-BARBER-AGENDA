@@ -1,5 +1,15 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
+// PROVIDER FRIZZAR — módulo isolado (extraído em jul/2026 pra evitar que
+// mexer em outra API quebre a Frizzar). Regra: nada de Frizzar mora aqui.
+import {
+  buildFrizzarTools,
+  executeFrizzarTool,
+  frizzarGetLastListed,
+  frizzarSetLastListed,
+  isRecoverableFrizzarScheduleResult,
+  buildFrizzarScheduleRecoveryInstruction,
+} from "./providers/frizzar/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
