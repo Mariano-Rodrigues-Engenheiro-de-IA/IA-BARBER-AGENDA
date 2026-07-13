@@ -10,6 +10,10 @@ import {
   isRecoverableFrizzarScheduleResult,
   buildFrizzarScheduleRecoveryInstruction,
 } from "./providers/frizzar/index.ts";
+import {
+  buildAppBarberTools,
+  executeAppBarberTool,
+} from "./providers/appbarber/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
