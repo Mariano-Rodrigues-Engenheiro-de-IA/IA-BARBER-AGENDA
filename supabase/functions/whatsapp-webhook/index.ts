@@ -5820,7 +5820,9 @@ async function callAIAgent(
             const recoveryMsg = [
               "⚠️ Conflito de horário ao tentar agendar (não é falha de sistema).",
               `Motivo: ${r?.error || "horário indisponível"}.`,
-              "Ação OBRIGATÓRIA: chame listar_horarios novamente para o MESMO serviço e profissional na MESMA data e ofereça ao cliente os horários realmente livres.",
+              r?.hint
+                ? `Ação OBRIGATÓRIA: siga este hint técnico da ferramenta: ${r.hint}`
+                : "Ação OBRIGATÓRIA: chame listar_horarios novamente para o serviço/profissional/data corretos e ofereça ao cliente os horários realmente livres.",
               "NÃO escale humano. NÃO diga que houve erro/problema. NÃO confirme o agendamento.",
               "Fale de forma natural: o horário escolhido acabou de ficar indisponível e ofereça as alternativas que vierem da próxima consulta.",
             ].join(" ");
