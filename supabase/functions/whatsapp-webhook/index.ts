@@ -12041,23 +12041,41 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         const text = await res.text();
         console.log(`[Bemp] agendar (${res.status}):`, text.slice(0, 600));
 
-        // Detecção de inadimplência (Bemp + CelCash): se a Bemp recusou por pagamento pendente,
-        // devolvemos um erro padronizado para a IA seguir a regra "subscription_overdue".
-        const overdueRegex = /pagamento.*pendente|inadimpl|assinatura.*atras|atras.*assinatura|payment.*overdue|subscription.*overdue|em\s+atraso/i;
-        if (!res.ok && overdueRegex.test(text)) {
+        const failure = !res.ok ? classifyBempFailure(res.status, text) : null;
+
+        // Inadimplência / erros de negócio detectados pela classificação: devolvemos
+        // um erro estruturado com retryable=false + clientMessage pra o MultiBookingGuard
+        // pular recovery e usar a mensagem determinística correta.
+        if (failure && !failure.retryable && failure.reason === "subscription_overdue") {
           console.log(`[Bemp] agendar BLOQUEADO por pagamento pendente (cliente inadimplente).`);
           return {
             error: "subscription_overdue",
             blocked: true,
-            message: "Cliente está com pagamento pendente na assinatura. NÃO tente agendar de novo. Responda ao cliente: \"Não consegui concluir seu agendamento porque há um pagamento pendente na sua assinatura. Deseja regularizar?\" e aguarde resposta.",
+            retryable: false,
+            clientMessage: failure.clientMessage,
+            message: "Cliente está com pagamento pendente na assinatura. NÃO tente agendar de novo. Responda ao cliente: \"" + failure.clientMessage + "\" e aguarde resposta.",
           };
         }
 
         try {
           const parsed = JSON.parse(text);
           if (res.ok) return { ok: true, ...parsed };
-          return { error: `Status ${res.status}`, ...parsed };
-        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure?.retryable ?? true,
+            ...(failure?.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure?.reason ? { failureReason: failure.reason } : {}),
+            ...parsed,
+          };
+        } catch {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure?.retryable ?? true,
+            ...(failure?.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure?.reason ? { failureReason: failure.reason } : {}),
+            raw: text.slice(0, 200),
+          };
+        }
       }
 
       case "cancelar_agendamento": {
