@@ -8640,32 +8640,7 @@ function isSingleCancellationConfirmationPrompt(value: string): boolean {
   return words.has("esse") || words.has("esta") || words.has("este");
 }
 
-async function fetchActiveAppointmentsByPhone(tenant: any, phoneNumber: string) {
-  if (!tenant?.trinks_api_key || !tenant?.trinks_establishment_id || !phoneNumber) return [];
-
-  const baseUrl = "https://api.trinks.com/v1";
-  const headers: Record<string, string> = {
-    "X-Api-Key": tenant.trinks_api_key,
-    "Accept": "application/json",
-    "estabelecimentoId": tenant.trinks_establishment_id,
-  };
-
-  try {
-    const clienteIds = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
-    const activeRaw = await trinksListActiveByClienteIds(baseUrl, headers, clienteIds, phoneNumber);
-    return activeRaw.map((a: any) => ({
-      id: a.id,
-      status: a.status?.nome,
-      servico: a.servico?.nome,
-      profissional: a.profissional?.nome,
-      clienteId: a.cliente?.id,
-      dataHoraInicio: a.dataHoraInicio,
-    }));
-  } catch (error) {
-    console.error("fetchActiveAppointmentsByPhone error:", error);
-    return [];
-  }
-}
+// (fetchActiveAppointmentsByPhone extraído para providers/trinks/index.ts)
 
 
 async function maybeHandleDirectCancellationConfirmation(
