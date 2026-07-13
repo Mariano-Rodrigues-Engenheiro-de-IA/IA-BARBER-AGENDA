@@ -95,6 +95,16 @@ function getBrasiliaDate(): {
 
 type AgentSessionState = any;
 
+const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
+
+interface IdResolutionResult {
+  resolvedArgs: any;
+  corrected: boolean;
+  correctionReason: string | null;
+  blocked: boolean;
+  blockMessage: string | null;
+}
+
 export const buildOneBelezaGenericEmail = (phone: unknown) => {
   const digits = digitsOnly(phone) || `${Date.now()}`;
   return `cliente+${digits}.${Date.now()}.${crypto.randomUUID().slice(0, 8)}@example.com`;
