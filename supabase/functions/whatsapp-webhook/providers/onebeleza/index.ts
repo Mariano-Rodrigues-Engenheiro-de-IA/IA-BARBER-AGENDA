@@ -93,7 +93,17 @@ function getBrasiliaDate(): {
   return { dateComplete, todayName, todayDate, year, month, day, hours, minutes, timeHHMM, periodOfDay, greeting, dayType, todayDateBR };
 }
 
-type AgentSessionState = any;
+type AgentSessionState = {
+  oneBelezaServiceOptions: OneBelezaServiceOption[];
+  oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
+  oneBelezaSlotOptions: OneBelezaSlotOption[];
+  allowedServiceIds: number[];
+  selectedServiceId?: number | null;
+  selectedProfessionalId?: number | null;
+  selectedDate?: string | null;
+  validAgendasIds?: number[];
+  [key: string]: any;
+};
 
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
