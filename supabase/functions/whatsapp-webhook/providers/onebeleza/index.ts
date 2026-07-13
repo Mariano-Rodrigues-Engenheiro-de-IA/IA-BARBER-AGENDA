@@ -101,7 +101,7 @@ type AgentSessionState = {
   selectedServiceId?: number | null;
   selectedProfessionalId?: number | null;
   selectedDate?: string | null;
-  validAgendasIds?: number[];
+  validAgendasIds: number[];
   [key: string]: any;
 };
 
