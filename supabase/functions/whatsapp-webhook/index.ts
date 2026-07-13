@@ -8587,14 +8587,8 @@ function normalizePhoneNumber(value: unknown): string | null {
   return null;
 }
 
-function normalizePhoneForTrinks(phoneNumber: string): string {
-  let tel = phoneNumber.replace(/\D/g, "");
-  if (tel.startsWith("55") && tel.length >= 12) tel = tel.substring(2);
-  const ddd = tel.substring(0, 2);
-  let rest = tel.substring(2);
-  if (rest.length === 8) rest = "9" + rest;
-  return ddd + rest;
-}
+// (normalizePhoneForTrinks removido — não era usado em lugar nenhum)
+
 
 function isAffirmativeReply(value: string): boolean {
   const raw = value.trim();
