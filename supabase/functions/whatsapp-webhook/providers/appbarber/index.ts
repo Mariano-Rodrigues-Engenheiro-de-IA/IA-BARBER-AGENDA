@@ -14,6 +14,60 @@ function toPositiveInteger(value: unknown): number | null {
   return i > 0 ? i : null;
 }
 
+// Classificação genérica de falha da AppBarber em 2 eixos: retryable + clientMessage.
+// Mesmo padrão já validado na Bemp (jul/2026, caso de pendência de pagamento):
+//   - retryable=false  → MultiBookingGuard NÃO roda recovery (definitivo).
+//     Se vier `clientMessage`, o guard usa essa mensagem determinística em vez
+//     de deixar a IA improvisar confirmação falsa.
+//   - retryable=true   → guard pode rodar recovery normal (default).
+// Hoje a AppBarber não tem um cenário de erro de negócio definitivo mapeado
+// como "assinatura vencida" da Bemp, então a lista abaixo é conservadora e
+// serve principalmente como estrutura pronta pra receber casos reais assim
+// que aparecerem — mesmo caminho evolutivo que a Bemp teve.
+function classifyAppBarberFailure(
+  status: number,
+  rawText: string | undefined,
+  parsed: any,
+): { retryable: boolean; clientMessage?: string; reason: string } {
+  const msg = String(parsed?.message || parsed?.error || rawText || "").toLowerCase();
+
+  // 1) Auth / config quebrada — não adianta a IA insistir, é problema do tenant.
+  //    Sem clientMessage: o guard usa fallback genérico ("já te retorno").
+  if (status === 401 || status === 403) {
+    return { retryable: false, reason: `auth_${status}` };
+  }
+
+  // 2) 404 no endpoint de criar — endpoint/estabelecimento inválido, definitivo.
+  if (status === 404) {
+    return { retryable: false, reason: "not_found" };
+  }
+
+  // 3) Regra de negócio explícita da AppBarber (placeholders para casos reais
+  //    que aparecerem — mesma evolução da Bemp). Se em algum log real
+  //    aparecer uma mensagem definitiva (ex.: "cliente bloqueado",
+  //    "estabelecimento inativo"), adicionar o match aqui.
+  if (/estabelecimento (inativo|bloqueado|suspenso)/i.test(msg)) {
+    return {
+      retryable: false,
+      reason: "establishment_inactive",
+      clientMessage:
+        "Não consegui concluir esse agendamento agora porque o estabelecimento está temporariamente indisponível no sistema. Assim que normalizar, te confirmo.",
+    };
+  }
+
+  // 4) 422 = "horário indisponível / conflito". Retryable no sentido do guard:
+  //    a IA pode oferecer outro horário. Sem clientMessage — deixa o fluxo
+  //    normal de recovery/oferta de novos slots correr.
+  if (status === 422) return { retryable: true, reason: "conflict_422" };
+
+  // 5) 429 e 5xx são transitórios por definição.
+  if (status === 429 || status >= 500) return { retryable: true, reason: `transient_${status}` };
+
+  // 6) Default: retryable=true (mesma postura conservadora da Bemp).
+  return { retryable: true, reason: `http_${status}` };
+}
+
+
 // ===================== APPBARBER PROVIDER =====================
 
 const APPBARBER_DEFAULT_BASE_URL = "https://proxy.zayloia.com";
@@ -590,19 +644,39 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
           const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+          const failure = classifyAppBarberFailure(res.status, text, parsed);
+          if (!failure.retryable) {
+            console.warn(`[AppBarber] criar_agendamento FALHA DEFINITIVA (${failure.reason}) → MultiBookingGuard não vai tentar recovery.`);
+          }
           if (res.status === 422) {
             return {
               error: `Horário indisponível ou conflito de regra de negócio: ${baseErr}`,
               status: 422,
               recoverable: true,
+              retryable: failure.retryable,
+              ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+              failureReason: failure.reason,
               hint: "Chame listar_horarios novamente para o mesmo serviço/profissional e ofereça outro horário ao cliente. NÃO escale humano.",
               details: parsed?.data ?? parsed?.details,
             };
           }
           if (res.status === 429) {
-            return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+            return {
+              error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.",
+              status: 429,
+              recoverable: true,
+              retryable: failure.retryable,
+              failureReason: failure.reason,
+            };
           }
-          return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+          return {
+            error: baseErr,
+            status: res.status,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            failureReason: failure.reason,
+            details: parsed?.data ?? parsed?.details,
+          };
         }
         return {
           ok: true,
@@ -992,13 +1066,20 @@ export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): Booking
   const args = tc?.args || {};
   const succeeded = r.ok === true && !!r.appointment_id;
   if (!succeeded) return null;
+  // AppBarber: 1 chamada de criar_agendamento = 1 pessoa em 1 horário, mesmo
+  // que o array `services` tenha N itens (combo tipo "corte + barba" cai na
+  // mesma visita). Contamos SEMPRE 1 reserva. A quantidade extra de serviços
+  // fica em `extraServiceCount` só para exibição na mensagem — nunca no
+  // bookedCount (senão o MultiBookingGuard acha que faltou reserva). Mesma
+  // correção já aplicada na Frizzar (caso Matheus/Henrico, jul/2026).
   const abServices = Array.isArray(args?.services) ? args.services : [];
-  const bookedCount = abServices.length > 1 ? abServices.length : 1;
+  const serviceCount = abServices.length;
   return {
     succeeded: true,
-    bookedCount,
+    bookedCount: 1,
     dateStr: String(args.start_date || ""),
     timeStr: String(args.start_time || ""),
+    ...(serviceCount > 1 ? { extraServiceCount: serviceCount } : {}),
   };
 }
 
