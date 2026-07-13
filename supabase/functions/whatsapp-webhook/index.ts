@@ -15,7 +15,6 @@ import {
 import {
   buildAppBarberTools,
   executeAppBarberTool,
-  inferAppBarberServicesForSameSlot,
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
 } from "./providers/appbarber/index.ts";
@@ -3772,7 +3771,7 @@ async function classifyPendingBookings(params: {
 
 
 /** Mensagem determinística quando a recuperação automática esgotou as tentativas.
- * NUNCA pede dado ao cliente e NUNCA escala humano: mantém a conversa com a IA. */
+ * NUNCA promete continuar tentando em background: deixa claro que a equipe será acionada. */
 function buildPartialBookingFallback(
   criados: number,
   prometidos: number,
@@ -5201,34 +5200,6 @@ async function callAIAgent(
           }
         }
 
-        if (!toolResult && provider === "appbarber" && toolCall.function.name === "criar_agendamento") {
-          const contextText = [
-            ...messages.slice(-12).map((m: any) => typeof m?.content === "string" ? m.content : ""),
-            JSON.stringify(parsedArgs || {}),
-          ].join("\n");
-          const inferredServices = inferAppBarberServicesForSameSlot(parsedArgs, sessionState, contextText);
-          const existingServiceCodes = new Set<number>();
-          if (Array.isArray(parsedArgs?.services)) {
-            for (const s of parsedArgs.services) {
-              const code = toPositiveInteger(s?.service_code ?? s?.serviceCode ?? s?.code ?? s?.id);
-              if (code) existingServiceCodes.add(code);
-            }
-          }
-          if (inferredServices.length > Math.max(1, existingServiceCodes.size)) {
-            parsedArgs.services = inferredServices.map((service) => ({
-              service_code: service.service_code,
-              duration: service.duration_minutes,
-            }));
-            toolCallToExecute = {
-              ...toolCall,
-              function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
-            };
-            const autoMergeReason = `appbarber multi-service auto-merged: ${inferredServices.map((service) => `${service.service_code}:${service.name}`).join(", ")}`;
-            correctionReason = correctionReason ? `${correctionReason}; ${autoMergeReason}` : autoMergeReason;
-            console.log(`[AppBarber] criar_agendamento auto-merged services for same slot: ${JSON.stringify(parsedArgs.services)}`);
-          }
-        }
-
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode, sessionState });
@@ -5505,10 +5476,9 @@ async function callAIAgent(
         }
 
         // ===== APPBARBER: slots consultados por serviço/profissional/data =====
-        // Caso real: cliente pediu 2 serviços, a IA consultou horários dos 2, mas
-        // chamou criar_agendamento só com o primeiro. O POST do AppBarber aceita
-        // `services[]`, então guardamos as consultas reais para fundir serviços do
-        // MESMO profissional/data/hora em uma única comanda quando o texto pedir.
+        // Guardamos as consultas reais para validar que criar_agendamento use um
+        // horário/profissional efetivamente listado. Importante: AppBarber NÃO deve
+        // receber múltiplos `services[]` soltos; multi-serviço só via combo cadastrado.
         if (provider === "appbarber" && toolResult && !(toolResult as any)?.error && ["listar_horarios", "listar_horarios_geral"].includes(toolCall.function.name)) {
           const catalog = (((sessionState as any).appbarberServiceCatalog || []) as Array<{ service_code: number; name: string; duration_minutes: number | null }>);
           const serviceCode = toPositiveInteger(parsedArgs?.service_code ?? (toolResult as any)?.service_code);
@@ -6341,6 +6311,25 @@ async function callAIAgent(
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
+    }
+
+    // 🛡️ PROMISE-TO-CONTINUE GUARD — nunca deixar a IA prometer que vai
+    // "continuar tentando" depois que o turno de ferramentas já acabou. Esse texto
+    // é ruim operacionalmente porque o webhook não executa nada em background; se
+    // ficou parcial, a resposta correta é acionar humano/equipe.
+    if (
+      finalResponse &&
+      provider === "appbarber" &&
+      /(?:ainda\s+falta|falta\s+concluir|vou\s+continuar\s+tentando|continuar\s+tentando\s+por\s+aqui)/i.test(finalResponse)
+    ) {
+      const current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+      if (current.count > 0) {
+        console.warn(`[PromiseToContinueGuard] AppBarber response prometia continuar tentando após tools; substituindo por fallback com escalação.`);
+        logErrors.push({ message: `Resposta prometia continuar tentando após encerramento das tools — corrigida para acionar equipe.`, level: "warning" });
+        finalResponse = buildPartialBookingFallback(current.count, current.count + 1, current.breakdown);
+        guardOverrideResponse = true;
+        guardLog("promise_to_continue_rewritten");
+      }
     }
 
     // Camada 3 — mismatch texto↔execução. Se ainda restar incompleto, bloqueia
