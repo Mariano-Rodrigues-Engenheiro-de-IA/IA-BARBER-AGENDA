@@ -18,6 +18,37 @@ import {
   buildBempTools,
   executeBempTool,
 } from "./providers/bemp/index.ts";
+// PROVIDER ONE BELEZA — módulo isolado (extraído em jul/2026).
+import {
+  buildOneBelezaTools,
+  executeOneBelezaTool,
+  buildOneBelezaGenericEmail,
+  isOneBelezaPhoneInUseError,
+  isOneBelezaRegistrationSuccess,
+  burnOneBelezaAlias,
+  getOrCreateOneBelezaAlias,
+  resolveOneBelezaClientPhone,
+  fetchOneBelezaWithRetry,
+  shouldRetryOneBelezaWithEmail,
+  verifyOneBelezaClientExists,
+  registerOneBelezaClient,
+  resolveOneBelezaServiceId,
+  resolveOneBelezaProfessionalId,
+  resolveOneBelezaToolArgs,
+  reconcileOneBelezaAgendaId,
+  normalizeOneBelezaDate,
+  normalizeOneBelezaTime,
+  getOneBelezaUnitFilterList,
+  getAllowedOneBelezaServiceIds,
+  extractOneBelezaServiceOptions,
+  extractOneBelezaProfessionalOptions,
+  extractOneBelezaProfessionalOptionsFromAvailability,
+  extractOneBelezaSlotOptions,
+  buildNormalizedOneBelezaAgendarArgs,
+  reconcileOneBelezaSchedulingArgs,
+  buildOneBelezaSchedulingValidationResult,
+  hydrateOneBelezaSessionStateFromProvider,
+} from "./providers/onebeleza/index.ts";
 // PROVIDER TRINKS — módulo isolado (extraído em jul/2026 na mesma linha do
 // Frizzar/AppBarber). Nada de Trinks deve morar neste arquivo.
 import {
