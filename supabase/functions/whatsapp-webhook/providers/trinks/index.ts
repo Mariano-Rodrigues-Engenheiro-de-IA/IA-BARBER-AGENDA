@@ -1167,3 +1167,41 @@ export async function maybeHandleDirectCancellationConfirmation(
   if (cancelResult?.status === 405) return "Esse agendamento já foi realizado e não pode ser cancelado.";
   return "Tive um probleminha aqui. Pode tentar novamente?";
 }
+
+// ===================== BOOKING EVALUATION (MultiBookingGuard support) =====================
+// Chamado pelo countSuccessfulBookingsInTurn no index.ts. Retorna null se o
+// resultado da tool não caracteriza sucesso; se sucesso, devolve os campos
+// crus que o main usa pra montar o summary humano com formatBookingWhen.
+export interface BookingEvaluation {
+  succeeded: boolean;
+  bookedCount: number;
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}
+
+export function evaluateSuccessfulBooking(tc: any, sessionState?: any): BookingEvaluation | null {
+  const r = tc?.result || {};
+  const args = tc?.args || {};
+  const succeeded = !r.code && (typeof r.id !== "undefined" || typeof r.data !== "undefined" || r.success === true);
+  if (!succeeded) return null;
+  const catalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
+  const serviceName = catalog.find((s) => Number(s.id) === Number(args.servicoId))?.nome;
+  return {
+    succeeded: true,
+    bookedCount: 1,
+    serviceName,
+    dateStr: String(args.dataHoraInicio || ""),
+    fallbackSuffix: serviceName ? undefined : `(serviço ${args.servicoId ?? "?"})`,
+  };
+}
+
+export function extractBookedServiceNames(tc: any, sessionState?: any): string[] {
+  const args = tc?.args || {};
+  const catalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
+  const name = catalog.find((s) => Number(s.id) === Number(args.servicoId))?.nome;
+  return name ? [name] : [];
+}

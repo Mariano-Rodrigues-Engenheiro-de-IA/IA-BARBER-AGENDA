@@ -974,3 +974,36 @@ export function inferAppBarberServicesForSameSlot(
     return !_abServiceNameImpliesAnotherService(requestedName, service.name);
   });
 }
+
+// ===================== BOOKING EVALUATION (MultiBookingGuard support) =====================
+export interface BookingEvaluation {
+  succeeded: boolean;
+  bookedCount: number;
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}
+
+export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): BookingEvaluation | null {
+  const r = tc?.result || {};
+  const args = tc?.args || {};
+  const succeeded = r.ok === true && !!r.appointment_id;
+  if (!succeeded) return null;
+  const abServices = Array.isArray(args?.services) ? args.services : [];
+  const bookedCount = abServices.length > 1 ? abServices.length : 1;
+  return {
+    succeeded: true,
+    bookedCount,
+    dateStr: String(args.start_date || ""),
+    timeStr: String(args.start_time || ""),
+  };
+}
+
+export function extractBookedServiceNames(tc: any, _sessionState?: any): string[] {
+  const r = tc?.result || {};
+  const name = r?.service_name ?? r?.data?.service_name;
+  return name ? [String(name)] : [];
+}

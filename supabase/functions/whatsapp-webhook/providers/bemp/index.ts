@@ -696,3 +696,39 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
+
+// ===================== BOOKING EVALUATION (MultiBookingGuard support) =====================
+export interface BookingEvaluation {
+  succeeded: boolean;
+  bookedCount: number;
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}
+
+export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): BookingEvaluation | null {
+  const r = tc?.result || {};
+  const args = tc?.args || {};
+  if (r.ok !== true) return null;
+  const bempData = (r.data || {}) as Record<string, any>;
+  const startIso = bempData.start || args.start;
+  const serviceName = bempData.service_name;
+  const professionalName = bempData.professional_name;
+  return {
+    succeeded: true,
+    bookedCount: 1,
+    serviceName,
+    dateStr: typeof startIso === "string" ? startIso : "",
+    professionalName,
+    fallbackSuffix: serviceName ? undefined : `(serviço ${args.serviceId ?? args.service_id ?? "?"})`,
+  };
+}
+
+export function extractBookedServiceNames(tc: any, _sessionState?: any): string[] {
+  const r = tc?.result || {};
+  const name = r?.data?.service_name;
+  return name ? [String(name)] : [];
+}

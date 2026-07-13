@@ -1927,3 +1927,31 @@ export async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumb
   }
 }
 
+
+// ===================== BOOKING EVALUATION (MultiBookingGuard support) =====================
+export interface BookingEvaluation {
+  succeeded: boolean;
+  bookedCount: number;
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}
+
+export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): BookingEvaluation | null {
+  const r = tc?.result || {};
+  const args = tc?.args || {};
+  if (r.success !== true) return null;
+  const serviceName = r.servicoNome || r.nomeServico || r.ServicoNome || r.NomeServico;
+  const dateStr = String(args.datanumero || args.dataAg || args.data || "");
+  const timeStr = String(args.horarioinicio || args.horarioInicio || "");
+  return { succeeded: true, bookedCount: 1, serviceName, dateStr, timeStr };
+}
+
+export function extractBookedServiceNames(tc: any, _sessionState?: any): string[] {
+  const r = tc?.result || {};
+  const name = r?.servicoNome ?? r?.nomeServico;
+  return name ? [String(name)] : [];
+}
