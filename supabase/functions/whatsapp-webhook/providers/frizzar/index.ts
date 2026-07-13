@@ -794,3 +794,47 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
+
+// ===================== BOOKING EVALUATION (MultiBookingGuard support) =====================
+export interface BookingEvaluation {
+  succeeded: boolean;
+  bookedCount: number;
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}
+
+export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): BookingEvaluation | null {
+  const r = tc?.result || {};
+  const args = tc?.args || {};
+  const succeeded = r.ok === true && (r.agendamentoId != null || Array.isArray(r.agendamentos));
+  if (!succeeded) return null;
+  let serviceName: string | undefined;
+  let serviceCount = 0;
+  if (Array.isArray(r.agendamentos) && r.agendamentos.length > 0) {
+    serviceName = r.agendamentos[0]?.servicoNome;
+    serviceCount = r.agendamentos.length;
+  }
+  return {
+    succeeded: true,
+    bookedCount: 1,
+    serviceName,
+    dateStr: String(args.dia || ""),
+    timeStr: String(args.hora || ""),
+    extraServiceCount: serviceCount > 1 ? serviceCount : undefined,
+  };
+}
+
+export function extractBookedServiceNames(tc: any, _sessionState?: any): string[] {
+  const r = tc?.result || {};
+  const names: string[] = [];
+  if (Array.isArray(r?.agendamentos)) {
+    for (const item of r.agendamentos) {
+      if (item?.servicoNome && !names.includes(item.servicoNome)) names.push(item.servicoNome);
+    }
+  }
+  return names;
+}
