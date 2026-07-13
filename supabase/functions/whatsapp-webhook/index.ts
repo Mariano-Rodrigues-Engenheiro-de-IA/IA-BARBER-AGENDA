@@ -4813,7 +4813,18 @@ async function classifyPendingBookings(params: {
     // nenhuma evidência determinística de múltiplas reservas (horários explícitos
     // ou múltiplos "com Profissional"), não deixa o classificador inflar para 4, 7 etc.
     // Caso real: cliente disse "Hoje, 15:20" e o LLM contou 7 horários da lista anterior.
-    if (attempts === 1 && heuristic <= 1 && !isAffirmativeReply(lastUserText) && capped > 1) {
+    // Pula o clamp quando o reasoning do próprio LLM enumerou explicitamente
+    // ≥2 (extrator determinístico já validou — ex: "corte + sobrancelha +
+    // epilação = 3 agendamentos"). O clamp é pra defender contra LLM que
+    // conta horários de uma lista anterior; não contra enumeração explícita.
+    const reasoningBackedMulti = reasoningN != null && reasoningN >= 2;
+    if (
+      attempts === 1 &&
+      heuristic <= 1 &&
+      !isAffirmativeReply(lastUserText) &&
+      capped > 1 &&
+      !reasoningBackedMulti
+    ) {
       console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
       capped = 1;
     }
