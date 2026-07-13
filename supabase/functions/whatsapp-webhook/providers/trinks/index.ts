@@ -1090,3 +1090,80 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
     return { error: `Erro ao executar ${funcName}: ${errorMessage}` };
   }
 }
+
+// ===================== ATALHO DE CANCELAMENTO DIRETO (Trinks-only) =====================
+// Quando a IA acabou de perguntar "quer cancelar esse agendamento?" e o cliente
+// respondeu "sim/ok/pode/etc.", este atalho executa o cancelamento sem passar
+// pelo loop de tool-calling. Só funciona pra Trinks porque só a Trinks tem o
+// fetchActiveAppointmentsByPhone + executeTrinksTool + cancelar_agendamento
+// bem definidos hoje.
+
+function _trinksIsAffirmativeReply(value: string): boolean {
+  const raw = value.trim();
+  if (["👍", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿", "✅"].includes(raw)) return true;
+  const normalized = normalizeUserFacingText(raw);
+  if (!normalized) return false;
+  return /^(sim|s|ok|okay|pode|pode sim|isso|isso mesmo|confirmo|confirmado|certo|beleza|perfeito|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
+}
+
+function _trinksGetLastAssistantMessage(history: { role: string; content: string }[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message?.role === "assistant" && typeof message.content === "string" && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return null;
+}
+
+function _trinksIsSingleCancellationConfirmationPrompt(value: string): boolean {
+  const normalized = normalizeUserFacingText(value);
+  if (!normalized.includes("quer cancelar")) return false;
+  const words = new Set(normalized.split(" "));
+  return words.has("esse") || words.has("esta") || words.has("este");
+}
+
+export async function maybeHandleDirectCancellationConfirmation(
+  tenant: any,
+  phoneNumber: string,
+  history: { role: string; content: string }[],
+  userMessage: string,
+): Promise<string | null> {
+  if (!_trinksIsAffirmativeReply(userMessage)) return null;
+
+  const lastAssistantMessage = _trinksGetLastAssistantMessage(history);
+  if (!lastAssistantMessage || !_trinksIsSingleCancellationConfirmationPrompt(lastAssistantMessage)) {
+    return null;
+  }
+
+  const activeAgendamentos = await fetchActiveAppointmentsByPhone(tenant, phoneNumber);
+  console.log(
+    `Direct cancel confirmation detected for ${phoneNumber}: ${activeAgendamentos.length} active appointment(s)`,
+  );
+
+  if (activeAgendamentos.length === 0) {
+    return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
+  }
+  if (activeAgendamentos.length > 1) {
+    return "Encontrei mais de um agendamento ativo. Me diz qual deles você quer cancelar.";
+  }
+
+  const target = activeAgendamentos[0];
+  const cancelResult = await executeTrinksTool(
+    tenant,
+    {
+      function: {
+        name: "cancelar_agendamento",
+        arguments: JSON.stringify({ agendamentoId: target.id, motivo: "Solicitação do cliente" }),
+      },
+    },
+    phoneNumber,
+  );
+
+  console.log("Direct cancel confirmation result:", JSON.stringify(cancelResult).slice(0, 500));
+
+  if (cancelResult?.success) return "✅ Cancelado! Se precisar remarcar, é só falar.";
+  if (cancelResult?.status === 404) return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
+  if (cancelResult?.status === 405) return "Esse agendamento já foi realizado e não pode ser cancelado.";
+  return "Tive um probleminha aqui. Pode tentar novamente?";
+}
