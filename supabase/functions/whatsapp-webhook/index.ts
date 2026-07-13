@@ -48,6 +48,10 @@ import {
   reconcileOneBelezaSchedulingArgs,
   buildOneBelezaSchedulingValidationResult,
   hydrateOneBelezaSessionStateFromProvider,
+  hydrateOneBelezaSessionStateFromProvider,
+  type OneBelezaServiceOption,
+  type OneBelezaProfessionalOption,
+  type OneBelezaSlotOption,
 } from "./providers/onebeleza/index.ts";
 // PROVIDER TRINKS — módulo isolado (extraído em jul/2026 na mesma linha do
 // Frizzar/AppBarber). Nada de Trinks deve morar neste arquivo.
