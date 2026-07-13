@@ -2804,6 +2804,11 @@ interface AgentSessionState {
   // alucinado em `criar_agendamento` (grave: /v1/availability tem bug que
   // ignora filtro por profissional e devolve grade de todos).
   appbarberValidProfessionalCodes?: number[];
+  appbarberServiceCatalog?: Array<{
+    service_code: number;
+    name: string;
+    duration_minutes: number | null;
+  }>;
   // APPBARBER — slots reais consultados por serviço/profissional/data.
   // Usado para montar uma ÚNICA comanda com múltiplos serviços quando a IA
   // consultou disponibilidade de corte + sobrancelha, mas tenta criar só o
