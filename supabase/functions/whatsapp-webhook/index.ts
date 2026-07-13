@@ -11675,7 +11675,11 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
     const body = (text || "").toLowerCase();
 
     // 1) Inadimplência / assinatura em atraso (Bemp + CelCash).
-    if (/pagamento.*pendente|inadimpl|em\s+atraso|assinatura.*(atras|pendente|vencid)|payment.*overdue|subscription.*overdue/i.test(body)) {
+    // Cobre "pendente" (adj) e "pendência(s)" (subst) via `pend\w*`, em qualquer
+    // ordem em relação a "pagamento"/"assinatura" (janela de 40 chars). O texto
+    // real do provider é "...pendência no pagamento da sua assinatura..." — o
+    // padrão antigo (`pagamento.*pendente`) não cobria essa forma.
+    if (/(?:pagamento|assinatura).{0,40}pend\w*|pend\w*.{0,40}(?:pagamento|assinatura)|inadimpl|em\s+atraso|assinatura.{0,40}(atras|vencid)|payment.*overdue|subscription.*overdue/i.test(body)) {
       return {
         retryable: false,
         reason: "subscription_overdue",
