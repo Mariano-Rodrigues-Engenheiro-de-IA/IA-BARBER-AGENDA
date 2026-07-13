@@ -6314,6 +6314,25 @@ async function callAIAgent(
       guardLog("released");
     }
 
+    // 🛡️ PROMISE-TO-CONTINUE GUARD — nunca deixar a IA prometer que vai
+    // "continuar tentando" depois que o turno de ferramentas já acabou. Esse texto
+    // é ruim operacionalmente porque o webhook não executa nada em background; se
+    // ficou parcial, a resposta correta é acionar humano/equipe.
+    if (
+      finalResponse &&
+      provider === "appbarber" &&
+      /(?:ainda\s+falta|falta\s+concluir|vou\s+continuar\s+tentando|continuar\s+tentando\s+por\s+aqui)/i.test(finalResponse)
+    ) {
+      const current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+      if (current.count > 0) {
+        console.warn(`[PromiseToContinueGuard] AppBarber response prometia continuar tentando após tools; substituindo por fallback com escalação.`);
+        logErrors.push({ message: `Resposta prometia continuar tentando após encerramento das tools — corrigida para acionar equipe.`, level: "warning" });
+        finalResponse = buildPartialBookingFallback(current.count, current.count + 1, current.breakdown);
+        guardOverrideResponse = true;
+        guardLog("promise_to_continue_rewritten");
+      }
+    }
+
     // Camada 3 — mismatch texto↔execução. Se ainda restar incompleto, bloqueia
     // qualquer texto de confirmação total. Não escala humano e não pede dados.
     const postGuardCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
