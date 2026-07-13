@@ -11642,6 +11642,44 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
     return lastRes!;
   };
 
+  // Classificação genérica de falha da Bemp em 2 eixos: retryable + clientMessage.
+  // Objetivo: separar "deu ruim agora, vale tentar de novo" (transitório) de
+  // "não vai adiantar tentar, é regra de negócio" (definitivo). Consumido pelo
+  // MultiBookingGuard pra pular o loop de recuperação quando não há o que
+  // recuperar, e pra devolver a mensagem certa ao cliente sem alucinação da IA.
+  const classifyBempFailure = (
+    status: number,
+    text: string,
+  ): { retryable: boolean; clientMessage?: string; reason?: string } => {
+    const body = (text || "").toLowerCase();
+
+    // 1) Inadimplência / assinatura em atraso (Bemp + CelCash).
+    if (/pagamento.*pendente|inadimpl|em\s+atraso|assinatura.*(atras|pendente|vencid)|payment.*overdue|subscription.*overdue/i.test(body)) {
+      return {
+        retryable: false,
+        reason: "subscription_overdue",
+        clientMessage:
+          'Não consegui concluir seu agendamento porque há um pagamento pendente na sua assinatura. Deseja regularizar?',
+      };
+    }
+
+    // 2) Regras de negócio / conflitos / dados rejeitados pela API — não adianta
+    //    tentar de novo com os mesmos dados. Sem clientMessage: o guard usa fallback
+    //    neutro em vez de vazar detalhe técnico ou o texto "cru" do provider.
+    if ([400, 402, 403, 409, 422].includes(status)) {
+      return { retryable: false, reason: `http_${status}` };
+    }
+
+    // 3) Transitórios (429/5xx): já passaram pelo retry interno; se chegou aqui,
+    //    ainda são transitórios sob o ponto de vista da IA.
+    if (status === 429 || status >= 500) {
+      return { retryable: true, reason: `http_${status}` };
+    }
+
+    // 4) Default conservador: tratar como transitório (não bloquear recovery).
+    return { retryable: true, reason: `http_${status}` };
+  };
+
   let cachedSalons: any[] | null = null;
   const fetchBempSalons = async (): Promise<any[]> => {
     if (cachedSalons) return cachedSalons;
