@@ -58,6 +58,14 @@ function classifyAppBarberFailure(
   // 4) 422 = "horário indisponível / conflito". Retryable no sentido do guard:
   //    a IA pode oferecer outro horário. Sem clientMessage — deixa o fluxo
   //    normal de recovery/oferta de novos slots correr.
+  if (/limite de agendamentos futuros.*excedido|agendamentos futuros foi excedido/i.test(msg)) {
+    return {
+      retryable: false,
+      reason: "future_appointments_limit",
+      clientMessage:
+        "Não consegui criar outro agendamento porque já existe um agendamento futuro ativo para esse cliente no AppBarber. Se a intenção for remarcar, primeiro é obrigatório localizar e cancelar o agendamento antigo; depois criar o novo. Não tente criar outro horário direto.",
+    };
+  }
   if (status === 422) return { retryable: true, reason: "conflict_422" };
 
   // 5) 429 e 5xx são transitórios por definição.
@@ -802,7 +810,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             return {
               error: `Horário indisponível ou conflito de regra de negócio: ${baseErr}`,
               status: 422,
-              recoverable: true,
+              recoverable: failure.retryable,
               retryable: failure.retryable,
               ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
               failureReason: failure.reason,
