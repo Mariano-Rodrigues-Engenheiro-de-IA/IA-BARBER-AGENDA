@@ -992,13 +992,20 @@ export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): Booking
   const args = tc?.args || {};
   const succeeded = r.ok === true && !!r.appointment_id;
   if (!succeeded) return null;
+  // AppBarber: 1 chamada de criar_agendamento = 1 pessoa em 1 horário, mesmo
+  // que o array `services` tenha N itens (combo tipo "corte + barba" cai na
+  // mesma visita). Contamos SEMPRE 1 reserva. A quantidade extra de serviços
+  // fica em `extraServiceCount` só para exibição na mensagem — nunca no
+  // bookedCount (senão o MultiBookingGuard acha que faltou reserva). Mesma
+  // correção já aplicada na Frizzar (caso Matheus/Henrico, jul/2026).
   const abServices = Array.isArray(args?.services) ? args.services : [];
-  const bookedCount = abServices.length > 1 ? abServices.length : 1;
+  const extraServiceCount = abServices.length > 1 ? abServices.length - 1 : 0;
   return {
     succeeded: true,
-    bookedCount,
+    bookedCount: 1,
     dateStr: String(args.start_date || ""),
     timeStr: String(args.start_time || ""),
+    ...(extraServiceCount > 0 ? { extraServiceCount } : {}),
   };
 }
 
