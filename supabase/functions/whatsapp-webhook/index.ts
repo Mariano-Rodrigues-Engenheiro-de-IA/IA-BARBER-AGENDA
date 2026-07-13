@@ -4246,10 +4246,16 @@ async function callAIAgent(
 
   const messages: any[] = [
     { role: "system", content: systemPrompt },
-    ...history.map((m: any) => ({
-      role: m.role,
-      content: typeof m.content === "string" ? `${tsPrefix(m.created_at)}${m.content}` : m.content,
-    })),
+    ...history
+      // Histórico persistido nunca deve reentrar como role:"tool": tool messages
+      // só são válidas imediatamente após o assistant.tool_calls da MESMA request.
+      // Se uma delas entra em nova chamada isolada, o gateway retorna 400
+      // "messages with role 'tool' must be a response to a preceding message".
+      .filter((m: any) => m?.role === "user" || m?.role === "assistant")
+      .map((m: any) => ({
+        role: m.role,
+        content: typeof m.content === "string" ? `${tsPrefix(m.created_at)}${m.content}` : m.content,
+      })),
   ];
 
   // Build the user message — multimodal if media is present
