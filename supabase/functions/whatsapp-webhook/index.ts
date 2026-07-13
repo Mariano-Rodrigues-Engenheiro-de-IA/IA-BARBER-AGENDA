@@ -10005,12 +10005,15 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           valor: args.valor,
         };
         console.log("criar_agendamento body:", JSON.stringify(body));
-        // Retry loop 429 (Trinks às vezes rate-limita 2 criações consecutivas).
-        // Mesmo padrão do cancelar_agendamento (linha ~9618). Backoff 800ms/1600ms.
+        // Retry loop 429 — Trinks rate-limita quando várias requests caem na mesma
+        // janela de ~1s (rajada normal do fluxo IA: buscar/listar/criar). Backoff mais
+        // agressivo garante que a retentativa caia numa janela nova.
+        // Sequência: 4 tentativas com waits 1500ms / 4000ms / 8000ms (total ~13,5s pior caso).
         let res: Response;
         let text = "";
         let attempt = 0;
-        const maxAttempts = 3;
+        const maxAttempts = 4;
+        const backoffMs = [1500, 4000, 8000];
         while (true) {
           attempt++;
           res = await fetch(`${baseUrl}/agendamentos`, {
@@ -10021,7 +10024,9 @@ async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?: strin
           text = await res.text();
           console.log(`criar_agendamento response (${res.status}, attempt ${attempt}):`, text.slice(0, 500));
           if (res.status !== 429 || attempt >= maxAttempts) break;
-          await new Promise((r) => setTimeout(r, 800 * attempt));
+          const wait = backoffMs[attempt - 1] ?? 8000;
+          console.log(`criar_agendamento: 429 recebido, aguardando ${wait}ms antes de retry ${attempt + 1}/${maxAttempts}`);
+          await new Promise((r) => setTimeout(r, wait));
         }
         if (res.status === 429) {
           return {
