@@ -865,7 +865,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     const msg = error instanceof Error ? error.message : String(error);
     return { error: `Erro ao executar ${funcName}: ${msg}` };
   }
-}}
+}
 
 // ===================== HELPERS DE NOME DE SERVIÇO (locais) =====================
 // Duplicados do index.ts pra manter o módulo independente. Só usados pelo
