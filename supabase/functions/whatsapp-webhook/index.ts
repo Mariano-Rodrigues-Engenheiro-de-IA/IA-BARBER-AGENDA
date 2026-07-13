@@ -14,6 +14,10 @@ import {
   buildAppBarberTools,
   executeAppBarberTool,
 } from "./providers/appbarber/index.ts";
+import {
+  buildBempTools,
+  executeBempTool,
+} from "./providers/bemp/index.ts";
 // PROVIDER TRINKS — módulo isolado (extraído em jul/2026 na mesma linha do
 // Frizzar/AppBarber). Nada de Trinks deve morar neste arquivo.
 import {
