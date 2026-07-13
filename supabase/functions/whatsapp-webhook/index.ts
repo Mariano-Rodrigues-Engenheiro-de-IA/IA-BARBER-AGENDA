@@ -3233,61 +3233,7 @@ function serviceNameImpliesAnotherService(bookedServiceName: string, candidateSe
   return booked.includes(candidate) || candidate.includes(booked);
 }
 
-function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSessionState, contextText = ""): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
-  const requestedServiceCode = toPositiveInteger(args?.service_code);
-  const requestedProfessionalCode = toPositiveInteger(args?.professional_code);
-  const requestedDate = typeof args?.start_date === "string" ? args.start_date.slice(0, 10) : "";
-  const requestedTime = String(args?.start_time || "").slice(0, 5);
-  if (!requestedServiceCode || !requestedProfessionalCode || !requestedDate || !/^\d{2}:\d{2}$/.test(requestedTime)) return [];
-
-  const catalog = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string; duration_minutes?: number | null }>;
-  const slots = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
-    service_code: number;
-    service_name: string;
-    duration_minutes: number | null;
-    professional_code: number;
-    professional_name: string;
-    start_date: string;
-    start_time: string;
-  }>;
-
-  if (catalog.length === 0 || slots.length === 0) return [];
-  const requestedCatalog = catalog.find((s) => Number(s.service_code) === requestedServiceCode);
-  if (!requestedCatalog) return [];
-
-  const servicesAtSameSlot = slots
-    .filter((slot) =>
-      slot.service_code > 0 &&
-      slot.professional_code === requestedProfessionalCode &&
-      slot.start_date === requestedDate &&
-      slot.start_time.slice(0, 5) === requestedTime,
-    )
-    .map((slot) => {
-      const catalogItem = catalog.find((s) => Number(s.service_code) === Number(slot.service_code));
-      return {
-        service_code: Number(slot.service_code),
-        name: catalogItem?.name || slot.service_name || `Serviço ${slot.service_code}`,
-        duration_minutes: toPositiveInteger(catalogItem?.duration_minutes ?? slot.duration_minutes),
-      };
-    });
-
-  const deduped = dedupeByKey(servicesAtSameSlot, (service) => String(service.service_code));
-  if (!deduped.some((service) => service.service_code === requestedServiceCode)) return [];
-
-  const requestedName = requestedCatalog.name || "";
-  const normalizedContext = normalizeServiceText(contextText);
-  return deduped.filter((service) => {
-    if (service.service_code === requestedServiceCode) return true;
-    const candidate = normalizeServiceText(service.name);
-    const candidateParts = splitServiceNameTokens(service.name);
-    const mentionedByClientOrAssistant = candidate.length >= 3 && (
-      normalizedContext.includes(candidate) ||
-      candidateParts.some((part) => part.length >= 3 && normalizedContext.includes(part))
-    );
-    if (!mentionedByClientOrAssistant) return false;
-    return !serviceNameImpliesAnotherService(requestedName, service.name);
-  });
-}
+// inferAppBarberServicesForSameSlot foi movido para providers/appbarber/index.ts.
 
 
 
