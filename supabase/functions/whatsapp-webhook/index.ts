@@ -3780,11 +3780,23 @@ function buildPartialBookingFallback(
 ): string {
   const feitos = breakdown.length > 0
     ? breakdown.map((b) => b.summary).filter((s) => !!s).join("; ")
-    : (criados > 0 ? `${criados} agendamento(s)` : "");
+    : "";
   const faltam = Math.max(0, prometidos - criados);
   const partes: string[] = [];
-  if (feitos) partes.push(`Já consegui registrar: ${feitos}.`);
-  partes.push(`Ainda falta concluir ${faltam > 0 ? `${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"}; vou continuar tentando por aqui com os dados que você já enviou.`);
+  if (criados > 0 && feitos) {
+    partes.push(`Consegui agendar: ${feitos}.`);
+  } else if (criados > 0) {
+    partes.push(`Consegui registrar ${criados} agendamento${criados > 1 ? "s" : ""}.`);
+  }
+  if (faltam > 0) {
+    const alvo = criados > 0
+      ? (faltam > 1 ? `os outros ${faltam} serviços` : "o segundo serviço")
+      : (faltam > 1 ? `os ${faltam} agendamentos` : "o agendamento");
+    partes.push(`Porém, tive um probleminha ao tentar finalizar ${alvo}.`);
+    partes.push("Vou acionar a equipe aqui pra concluir isso pra você o mais rápido possível.");
+  } else {
+    partes.push("Vou acionar a equipe aqui pra concluir o restante o mais rápido possível.");
+  }
   return partes.join(" ");
 }
 
