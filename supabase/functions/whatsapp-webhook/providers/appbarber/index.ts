@@ -644,19 +644,39 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
           const baseErr = parsed?.message || parsed?.data?.error_type || parsed?.error || `HTTP ${res.status}`;
+          const failure = classifyAppBarberFailure(res.status, text, parsed);
+          if (!failure.retryable) {
+            console.warn(`[AppBarber] criar_agendamento FALHA DEFINITIVA (${failure.reason}) → MultiBookingGuard não vai tentar recovery.`);
+          }
           if (res.status === 422) {
             return {
               error: `Horário indisponível ou conflito de regra de negócio: ${baseErr}`,
               status: 422,
               recoverable: true,
+              retryable: failure.retryable,
+              ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+              failureReason: failure.reason,
               hint: "Chame listar_horarios novamente para o mesmo serviço/profissional e ofereça outro horário ao cliente. NÃO escale humano.",
               details: parsed?.data ?? parsed?.details,
             };
           }
           if (res.status === 429) {
-            return { error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.", status: 429, recoverable: true };
+            return {
+              error: "Limite de requisições do AppBarber excedido. Aguarde alguns segundos e tente de novo.",
+              status: 429,
+              recoverable: true,
+              retryable: failure.retryable,
+              failureReason: failure.reason,
+            };
           }
-          return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
+          return {
+            error: baseErr,
+            status: res.status,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            failureReason: failure.reason,
+            details: parsed?.data ?? parsed?.details,
+          };
         }
         return {
           ok: true,
