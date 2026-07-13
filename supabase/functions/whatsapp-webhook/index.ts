@@ -7125,6 +7125,26 @@ async function callAIAgent(
       guardOverrideResponse = true;
       guardLog("over_limit_no_human");
     } else if (criados < prometidos) {
+      // 🚫 Curto-circuito: se alguma tentativa de agendar/criar nesta rodada falhou
+      // com retryable=false, não adianta rodar o loop de recuperação — a IA vai
+      // bater no mesmo erro definitivo (ex: pagamento pendente, conflito, 4xx de
+      // regra de negócio). Usa clientMessage devolvido pelo provider (mensagem
+      // determinística) em vez de deixar a IA improvisar confirmação falsa.
+      const definitiveFailure = (logToolCalls || []).find((tc: any) => {
+        if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) return false;
+        const r = tc.result;
+        return r && typeof r === "object" && r.retryable === false;
+      });
+      if (definitiveFailure) {
+        const r: any = definitiveFailure.result;
+        console.warn(`[MultiBookingGuard] falha definitiva detectada (reason=${r.failureReason || r.error}) — pulando recovery.`);
+        logErrors.push({ message: `Multi-booking abortado por falha definitiva: ${r.failureReason || r.error}`, level: "warning" });
+        finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
+          ? r.clientMessage.trim()
+          : "Não consegui concluir esse agendamento agora. Vou verificar aqui e já te retorno.";
+        guardOverrideResponse = true;
+        guardLog("definitive_failure_no_recovery");
+      } else {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
       // tool-calling para a IA resolver usando o histórico já disponível.
