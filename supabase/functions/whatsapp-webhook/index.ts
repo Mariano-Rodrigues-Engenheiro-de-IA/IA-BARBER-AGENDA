@@ -7509,73 +7509,8 @@ function isBookingTimeConfirmationPrompt(value: string): boolean {
   return /\b(posso confirmar|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
 }
 
-function isSingleCancellationConfirmationPrompt(value: string): boolean {
-  const normalized = normalizeUserFacingText(value);
-  if (!normalized.includes("quer cancelar")) return false;
-  const words = new Set(normalized.split(" "));
-  return words.has("esse") || words.has("esta") || words.has("este");
-}
-
-// (fetchActiveAppointmentsByPhone extraído para providers/trinks/index.ts)
-
-
-async function maybeHandleDirectCancellationConfirmation(
-  tenant: any,
-  phoneNumber: string,
-  history: { role: string; content: string }[],
-  userMessage: string,
-): Promise<string | null> {
-  if (!isAffirmativeReply(userMessage)) return null;
-
-  const lastAssistantMessage = getLastAssistantMessage(history);
-  if (!lastAssistantMessage || !isSingleCancellationConfirmationPrompt(lastAssistantMessage)) {
-    return null;
-  }
-
-  const activeAgendamentos = await fetchActiveAppointmentsByPhone(tenant, phoneNumber);
-  console.log(
-    `Direct cancel confirmation detected for ${phoneNumber}: ${activeAgendamentos.length} active appointment(s)`,
-  );
-
-  if (activeAgendamentos.length === 0) {
-    return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
-  }
-
-  if (activeAgendamentos.length > 1) {
-    return "Encontrei mais de um agendamento ativo. Me diz qual deles você quer cancelar.";
-  }
-
-  const target = activeAgendamentos[0];
-  const cancelResult = await executeTrinksTool(
-    tenant,
-    {
-      function: {
-        name: "cancelar_agendamento",
-        arguments: JSON.stringify({
-          agendamentoId: target.id,
-          motivo: "Solicitação do cliente",
-        }),
-      },
-    },
-    phoneNumber,
-  );
-
-  console.log("Direct cancel confirmation result:", JSON.stringify(cancelResult).slice(0, 500));
-
-  if (cancelResult?.success) {
-    return "✅ Cancelado! Se precisar remarcar, é só falar.";
-  }
-
-  if (cancelResult?.status === 404) {
-    return "Não encontrei esse agendamento. Pode já ter sido cancelado.";
-  }
-
-  if (cancelResult?.status === 405) {
-    return "Esse agendamento já foi realizado e não pode ser cancelado.";
-  }
-
-  return "Tive um probleminha aqui. Pode tentar novamente?";
-}
+// isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
+// foram movidos para providers/trinks/index.ts (atalho de cancelamento é Trinks-only).
 
 function extractPhoneNumber(payload: any, msg: any): { phone: string; source: string } | null {
   const directCandidates: Array<[string, unknown]> = [
