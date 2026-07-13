@@ -4380,6 +4380,11 @@ async function callAIAgent(
 
     rounds++;
     messages.push(assistantMessage);
+    // OpenAI exige que, após uma mensagem assistant com tool_calls, venham
+    // somente respostas role:"tool" para TODOS os tool_call_ids antes de
+    // qualquer system/user/assistant. Nudges do guard ficam pendentes até o fim
+    // do for, evitando o 400 "messages with role 'tool' must be a response...".
+    const postToolSystemMessages: Array<{ role: "system"; content: string }> = [];
 
     for (const toolCall of assistantMessage.tool_calls) {
       let parsedArgs = parseToolArguments(toolCall.function.arguments);
@@ -5802,12 +5807,11 @@ async function callAIAgent(
           && (r.id || r.ok || r.success === true || r.agendamentoId || r.appointment_id || r.data));
         if (!succeeded) {
           if (provider === "frizzar" && toolCall.function.name === "agendar" && isRecoverableFrizzarScheduleResult(r)) {
-            // 🚨 FIX: precisa SEMPRE fechar este tool_call_id com uma mensagem "tool" antes
-            // de qualquer outra coisa — senão a próxima chamada à API da OpenAI é recusada
-            // com 400 "tool_call_ids did not have response messages" (bug real visto em
-            // produção). A instrução de recuperação vira o próprio conteúdo da resposta da tool.
             const recoveryInstruction = buildFrizzarScheduleRecoveryInstruction(r, parsedArgs);
-            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryInstruction }) });
+            const lastToolMessage = messages[messages.length - 1] as any;
+            if (lastToolMessage?.role === "tool" && lastToolMessage.tool_call_id === toolCall.id) {
+              lastToolMessage.content = JSON.stringify({ ...r, instrucao: recoveryInstruction });
+            }
             logErrors.push({ message: `[BookingGuard] Frizzar agendar failed with recoverable availability — injected alternatives directive`, level: "warning" });
             continue;
           }
@@ -5820,9 +5824,10 @@ async function callAIAgent(
               "NÃO escale humano. NÃO diga que houve erro/problema. NÃO confirme o agendamento.",
               "Fale de forma natural: o horário escolhido acabou de ficar indisponível e ofereça as alternativas que vierem da próxima consulta.",
             ].join(" ");
-            // 🚨 FIX: idem acima — fecha o tool_call_id com role:"tool" antes de qualquer coisa,
-            // senão a próxima chamada à API quebra com 400 (bug real visto em produção).
-            messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ ...r, instrucao: recoveryMsg }) });
+            const lastToolMessage = messages[messages.length - 1] as any;
+            if (lastToolMessage?.role === "tool" && lastToolMessage.tool_call_id === toolCall.id) {
+              lastToolMessage.content = JSON.stringify({ ...r, instrucao: recoveryMsg });
+            }
             logErrors.push({ message: `[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`, level: "warning" });
             continue;
           }
@@ -5838,7 +5843,7 @@ async function callAIAgent(
               ? `OBRIGATÓRIO: chame AGORA a ferramenta "${escalateName}" para acionar um atendente humano. Passe um motivo curto descrevendo a falha.`
               : "OBRIGATÓRIO: responda ao cliente que não foi possível concluir o agendamento agora e que um atendente humano vai assumir em instantes. NÃO confirme o agendamento.",
           ].join(" ");
-          messages.push({ role: "system", content: guardMsg });
+          postToolSystemMessages.push({ role: "system", content: guardMsg });
           logErrors.push({ message: `[BookingGuard] Booking tool ${toolCall.function.name} failed — injected escalate directive`, level: "error" });
         } else {
           // ✅ SUCESSO: força a IA a PARAR de chamar ferramentas e responder agora.
@@ -5859,9 +5864,13 @@ async function callAIAgent(
               "(1) que o agendamento foi feito; (2) data e horário; (3) serviço; (4) profissional. Use os dados do último resultado da ferramenta.",
               "Não invente preço nem nada que não esteja no resultado. Termine com uma despedida curta (ex: 'até lá!' ou um emoji).",
             ].join(" ");
-          messages.push({ role: "system", content: successMsg });
+          postToolSystemMessages.push({ role: "system", content: successMsg });
         }
       }
+    }
+
+    if (postToolSystemMessages.length > 0) {
+      messages.push(...postToolSystemMessages);
     }
 
     const roundBody: any = { model: modelUsed, messages, max_completion_tokens: 4096 };

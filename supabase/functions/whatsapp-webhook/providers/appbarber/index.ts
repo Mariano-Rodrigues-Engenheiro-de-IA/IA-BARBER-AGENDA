@@ -118,11 +118,11 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios_geral",
-        description: "ATALHO RECOMENDADO: consulta horários LIVRES de TODOS os profissionais ao mesmo tempo (executa /v1/availability em paralelo) para um serviço e data. Use logo após listar_servicos para já ter a agenda consolidada ANTES de perguntar preferência de profissional. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ professional_code, name, available_times }] }.",
+        description: "ATALHO RECOMENDADO: consulta horários LIVRES de TODOS os profissionais ao mesmo tempo (executa /v1/availability em paralelo) para UM service_code real e data. Para cliente pedindo combo/múltiplos serviços, use o service_code do combo cadastrado retornado em listar_servicos. Retorna { resumo, totalProfissionaisLivres, horariosConsolidados, profissionais: [{ professional_code, name, available_times }] }.",
         parameters: {
           type: "object",
           properties: {
-            service_code: { type: "number" },
+            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Se for combo cadastrado, use o service_code efetivo que o servidor retornou para esse combo." },
             start_date: { type: "string", description: "Data YYYY-MM-DD" },
             professionals: {
               type: "array",
@@ -145,11 +145,11 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço, profissional, dia e horário EXATO de listar_horarios.",
+        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar UM service_code real, profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. Para combo/múltiplos serviços, use o service_code do combo cadastrado — nunca services[] separados.",
         parameters: {
           type: "object",
           properties: {
-            service_code: { type: "number" },
+            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Para combo/múltiplos serviços, use o service_code do combo cadastrado." },
             professional_code: { type: "number" },
             start_date: { type: "string", description: "YYYY-MM-DD" },
             start_time: { type: "string", description: "HH:MM (exato de available_times)" },
@@ -341,6 +341,37 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     return toPositiveNumber(firstValue(service?.service_interval, service?.duration_minutes, service?.duration));
   };
 
+  const getAppBarberCatalog = (): Array<{ service_code: number; name: string; duration_minutes?: number | null; is_combo?: boolean }> => {
+    return Array.isArray((sessionState as any)?.appbarberServiceCatalog) ? (sessionState as any).appbarberServiceCatalog : [];
+  };
+
+  const findAppBarberCatalogEntry = (code: any) => {
+    const n = toPositiveInteger(code);
+    if (!n) return null;
+    return getAppBarberCatalog().find((s) => Number(s.service_code) === n) || null;
+  };
+
+  const findRegisteredComboForServices = (services: Array<{ service_code: number }>) => {
+    if (services.length < 2) return null;
+    const catalog = getAppBarberCatalog();
+    const selected = services
+      .map((service) => findAppBarberCatalogEntry(service.service_code))
+      .filter(Boolean) as Array<{ service_code: number; name: string }>;
+    if (selected.length < 2) return null;
+    const selectedTokens = selected.map((service) => {
+      const parts = _abSplitServiceNameTokens(service.name || "");
+      return parts.length > 0 ? parts : [_abNormalizeServiceText(service.name || "")].filter(Boolean);
+    });
+    const candidates = catalog.filter((service) => service.is_combo || _abSplitServiceNameTokens(service.name || "").length >= 2);
+    for (const candidate of candidates) {
+      const comboName = _abNormalizeServiceText(candidate.name || "");
+      if (!comboName) continue;
+      const coversAll = selectedTokens.every((tokens) => tokens.some((token) => token.length >= 3 && comboName.includes(token)));
+      if (coversAll) return candidate;
+    }
+    return null;
+  };
+
   try {
     switch (funcName) {
       case "listar_servicos": {
@@ -348,14 +379,19 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         if (r?.error) return r;
         const items = Array.isArray(r?.data) ? r.data : [];
         return {
-          services: items.map((s: any) => ({
-            service_code: s.service_code,
-            name: s.service_description,
-            duration_minutes: s.service_interval,
-            price: s.service_value,
-            category_code: s.category_code,
-            has_subscription: !!s.has_subscription,
-          })),
+          services: items.map((s: any) => {
+            const effectiveCode = toPositiveInteger(s.service_code);
+            const name = String(s.service_description || "");
+            return {
+              service_code: effectiveCode,
+              is_combo: _abSplitServiceNameTokens(name).length >= 2,
+              name,
+              duration_minutes: s.service_interval,
+              price: s.service_value,
+              category_code: s.category_code,
+              has_subscription: !!s.has_subscription,
+            };
+          }),
         };
       }
 
@@ -376,9 +412,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
       }
 
       case "listar_horarios": {
-        if (!args.service_code || !args.professional_code || !args.start_date) return { error: "service_code, professional_code e start_date são obrigatórios." };
+        const requestedCode = toPositiveInteger(args.service_code);
+        if (!requestedCode || !args.professional_code || !args.start_date) return { error: "service_code, professional_code e start_date são obrigatórios." };
         const r = await callGet("/v1/availability", {
-          service_code: args.service_code,
+          service_code: requestedCode,
           start_date: args.start_date,
           professional_code: args.professional_code,
         });
@@ -420,7 +457,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           // O profissional pedido não aparece na resposta → não trabalha nesse dia
           return {
             date: args.start_date,
-            service_code: args.service_code,
+            service_code: requestedCode,
             professional_code: wantedProf,
             available_times: [],
             note: "Esse profissional não tem horários nesse dia. Ofereça outra data ou outro profissional.",
@@ -428,14 +465,15 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         }
         return {
           date: args.start_date,
-          service_code: args.service_code,
+          service_code: requestedCode,
           professional_code: args.professional_code,
           available_times: times,
         };
       }
 
       case "listar_horarios_geral": {
-        if (!args.service_code || !args.start_date) {
+        const requestedCode = toPositiveInteger(args.service_code);
+        if (!requestedCode || !args.start_date) {
           return { error: "service_code e start_date são obrigatórios." };
         }
 
@@ -498,7 +536,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         const consultaUm = async (prof: { professional_code: number; name: string | null }) => {
           try {
             const r = await callGet("/v1/availability", {
-              service_code: args.service_code,
+              service_code: requestedCode,
               start_date: args.start_date,
               professional_code: prof.professional_code,
             });
@@ -540,7 +578,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         return {
           date: args.start_date,
-          service_code: Number(args.service_code),
+          service_code: requestedCode,
           resumo,
           totalProfissionaisLivres: comHorario.length,
           horariosConsolidados,
@@ -570,7 +608,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         if (!primaryServiceCode || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
         {
-          const abCat = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string }>;
+          const abCat = getAppBarberCatalog();
           const invalidServiceCodes = requestedServices
             .map((service: any) => service.service_code)
             .filter((code: number) => code > 0 && !abCat.some((s) => s.service_code === code));
@@ -582,6 +620,33 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               validServiceCodes: abCat.map((s) => s.service_code),
             };
           }
+        }
+        if (requestedServices.length > 1) {
+          const combo = findRegisteredComboForServices(requestedServices);
+          if (combo?.service_code) {
+            const comboCode = combo.service_code;
+            return {
+              error: `O cliente pediu múltiplos serviços na mesma visita. No AppBarber isso deve usar o combo cadastrado "${combo.name}" (service_code ${comboCode}), não services[] separados — caso contrário a API retorna Choque de Horário.`,
+              blocked: true,
+              recoverable: true,
+              retryable: true,
+              reason: "registered_combo_required",
+              combo: {
+                service_code: combo.service_code,
+                name: combo.name,
+                duration_minutes: combo.duration_minutes ?? null,
+              },
+              hint: `Chame listar_horarios_geral novamente para ${combo.name} usando service_code=${comboCode} e só depois chame criar_agendamento com UM único service_code. NÃO use services[] com corte + sobrancelha separados.`,
+            };
+          }
+          return {
+            error: "O AppBarber não aceita criar vários services[] separados na mesma visita sem um combo cadastrado/selecionado; isso causa Choque de Horário.",
+            blocked: true,
+            recoverable: true,
+            retryable: true,
+            reason: "multi_service_without_combo",
+            hint: "Se existir um combo no catálogo cobrindo esses serviços, use esse combo e consulte disponibilidade dele. Se não existir, ofereça dividir em horários separados.",
+          };
         }
         // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
         // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
