@@ -2864,6 +2864,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     frizzarClienteId: null,
     frizzarValidProfessionalIds: [],
     appbarberValidProfessionalCodes: [],
+    appbarberServiceCatalog: [],
     appbarberSlotOptions: [],
     recentActiveBookingsLookup: null,
   };
