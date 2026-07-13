@@ -6682,6 +6682,54 @@ async function callAIAgent(
           console.log(`[AppBarberLock] catalog tracked: ${catalog.length} serviços`);
         }
 
+        // ===== APPBARBER: slots consultados por serviço/profissional/data =====
+        // Caso real: cliente pediu 2 serviços, a IA consultou horários dos 2, mas
+        // chamou criar_agendamento só com o primeiro. O POST do AppBarber aceita
+        // `services[]`, então guardamos as consultas reais para fundir serviços do
+        // MESMO profissional/data/hora em uma única comanda quando o texto pedir.
+        if (provider === "appbarber" && toolResult && !(toolResult as any)?.error && ["listar_horarios", "listar_horarios_geral"].includes(toolCall.function.name)) {
+          const catalog = (((sessionState as any).appbarberServiceCatalog || []) as Array<{ service_code: number; name: string; duration_minutes: number | null }>);
+          const serviceCode = toPositiveInteger(parsedArgs?.service_code ?? (toolResult as any)?.service_code);
+          const service = catalog.find((s) => s.service_code === serviceCode);
+          const serviceName = service?.name || `Serviço ${serviceCode || ""}`.trim();
+          const duration = service?.duration_minutes ?? null;
+          const startDate = String(parsedArgs?.start_date || (toolResult as any)?.date || "").slice(0, 10);
+          const slotOptions: NonNullable<AgentSessionState["appbarberSlotOptions"]> = [];
+
+          if (serviceCode && startDate && toolCall.function.name === "listar_horarios" && Array.isArray((toolResult as any)?.available_times)) {
+            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code);
+            if (professionalCode) {
+              for (const time of (toolResult as any).available_times) {
+                const hhmm = String(time || "").slice(0, 5);
+                if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
+                }
+              }
+            }
+          }
+
+          if (serviceCode && startDate && toolCall.function.name === "listar_horarios_geral" && Array.isArray((toolResult as any)?.profissionais)) {
+            for (const prof of (toolResult as any).profissionais) {
+              const professionalCode = toPositiveInteger(prof?.professional_code);
+              if (!professionalCode || !Array.isArray(prof?.available_times)) continue;
+              for (const time of prof.available_times) {
+                const hhmm = String(time || "").slice(0, 5);
+                if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: String(prof?.name || ""), start_date: startDate, start_time: hhmm });
+                }
+              }
+            }
+          }
+
+          if (slotOptions.length > 0) {
+            (sessionState as any).appbarberSlotOptions = dedupeByKey(
+              [...(((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>), ...slotOptions].slice(-500),
+              (slot) => `${slot.service_code}:${slot.professional_code}:${slot.start_date}:${slot.start_time}`,
+            );
+            console.log(`[AppBarber] tracked slot options: +${slotOptions.length} total=${((sessionState as any).appbarberSlotOptions || []).length}`);
+          }
+        }
+
         // ===== FRIZZAR: rastreia agendasIds do cliente após buscar_agendamentos (para checagem de propriedade em cancelar_agendamento).
         // A Frizzar retorna cada agendamento com o campo `codigo` (é o próprio agendamentoId
         // usado depois em cancelar_agendamento). Os aliases agendamentoId/agendaId/id existem
