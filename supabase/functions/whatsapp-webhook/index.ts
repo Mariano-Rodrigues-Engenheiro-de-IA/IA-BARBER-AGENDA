@@ -7125,6 +7125,26 @@ async function callAIAgent(
       guardOverrideResponse = true;
       guardLog("over_limit_no_human");
     } else if (criados < prometidos) {
+      // 🚫 Curto-circuito: se alguma tentativa de agendar/criar nesta rodada falhou
+      // com retryable=false, não adianta rodar o loop de recuperação — a IA vai
+      // bater no mesmo erro definitivo (ex: pagamento pendente, conflito, 4xx de
+      // regra de negócio). Usa clientMessage devolvido pelo provider (mensagem
+      // determinística) em vez de deixar a IA improvisar confirmação falsa.
+      const definitiveFailure = (logToolCalls || []).find((tc: any) => {
+        if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) return false;
+        const r = tc.result;
+        return r && typeof r === "object" && r.retryable === false;
+      });
+      if (definitiveFailure) {
+        const r: any = definitiveFailure.result;
+        console.warn(`[MultiBookingGuard] falha definitiva detectada (reason=${r.failureReason || r.error}) — pulando recovery.`);
+        logErrors.push({ message: `Multi-booking abortado por falha definitiva: ${r.failureReason || r.error}`, level: "warning" });
+        finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
+          ? r.clientMessage.trim()
+          : "Não consegui concluir esse agendamento agora. Vou verificar aqui e já te retorno.";
+        guardOverrideResponse = true;
+        guardLog("definitive_failure_no_recovery");
+      } else {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
       // tool-calling para a IA resolver usando o histórico já disponível.
@@ -7253,6 +7273,7 @@ async function callAIAgent(
         guardOverrideResponse = true;
         guardLog("recovery_exhausted_no_human");
       }
+      } // fim else (sem falha definitiva → executou recovery loop)
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
@@ -11642,6 +11663,44 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
     return lastRes!;
   };
 
+  // Classificação genérica de falha da Bemp em 2 eixos: retryable + clientMessage.
+  // Objetivo: separar "deu ruim agora, vale tentar de novo" (transitório) de
+  // "não vai adiantar tentar, é regra de negócio" (definitivo). Consumido pelo
+  // MultiBookingGuard pra pular o loop de recuperação quando não há o que
+  // recuperar, e pra devolver a mensagem certa ao cliente sem alucinação da IA.
+  const classifyBempFailure = (
+    status: number,
+    text: string,
+  ): { retryable: boolean; clientMessage?: string; reason?: string } => {
+    const body = (text || "").toLowerCase();
+
+    // 1) Inadimplência / assinatura em atraso (Bemp + CelCash).
+    if (/pagamento.*pendente|inadimpl|em\s+atraso|assinatura.*(atras|pendente|vencid)|payment.*overdue|subscription.*overdue/i.test(body)) {
+      return {
+        retryable: false,
+        reason: "subscription_overdue",
+        clientMessage:
+          'Não consegui concluir seu agendamento porque há um pagamento pendente na sua assinatura. Deseja regularizar?',
+      };
+    }
+
+    // 2) Regras de negócio / conflitos / dados rejeitados pela API — não adianta
+    //    tentar de novo com os mesmos dados. Sem clientMessage: o guard usa fallback
+    //    neutro em vez de vazar detalhe técnico ou o texto "cru" do provider.
+    if ([400, 402, 403, 409, 422].includes(status)) {
+      return { retryable: false, reason: `http_${status}` };
+    }
+
+    // 3) Transitórios (429/5xx): já passaram pelo retry interno; se chegou aqui,
+    //    ainda são transitórios sob o ponto de vista da IA.
+    if (status === 429 || status >= 500) {
+      return { retryable: true, reason: `http_${status}` };
+    }
+
+    // 4) Default conservador: tratar como transitório (não bloquear recovery).
+    return { retryable: true, reason: `http_${status}` };
+  };
+
   let cachedSalons: any[] | null = null;
   const fetchBempSalons = async (): Promise<any[]> => {
     if (cachedSalons) return cachedSalons;
@@ -12003,23 +12062,41 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         const text = await res.text();
         console.log(`[Bemp] agendar (${res.status}):`, text.slice(0, 600));
 
-        // Detecção de inadimplência (Bemp + CelCash): se a Bemp recusou por pagamento pendente,
-        // devolvemos um erro padronizado para a IA seguir a regra "subscription_overdue".
-        const overdueRegex = /pagamento.*pendente|inadimpl|assinatura.*atras|atras.*assinatura|payment.*overdue|subscription.*overdue|em\s+atraso/i;
-        if (!res.ok && overdueRegex.test(text)) {
+        const failure = !res.ok ? classifyBempFailure(res.status, text) : null;
+
+        // Inadimplência / erros de negócio detectados pela classificação: devolvemos
+        // um erro estruturado com retryable=false + clientMessage pra o MultiBookingGuard
+        // pular recovery e usar a mensagem determinística correta.
+        if (failure && !failure.retryable && failure.reason === "subscription_overdue") {
           console.log(`[Bemp] agendar BLOQUEADO por pagamento pendente (cliente inadimplente).`);
           return {
             error: "subscription_overdue",
             blocked: true,
-            message: "Cliente está com pagamento pendente na assinatura. NÃO tente agendar de novo. Responda ao cliente: \"Não consegui concluir seu agendamento porque há um pagamento pendente na sua assinatura. Deseja regularizar?\" e aguarde resposta.",
+            retryable: false,
+            clientMessage: failure.clientMessage,
+            message: "Cliente está com pagamento pendente na assinatura. NÃO tente agendar de novo. Responda ao cliente: \"" + failure.clientMessage + "\" e aguarde resposta.",
           };
         }
 
         try {
           const parsed = JSON.parse(text);
           if (res.ok) return { ok: true, ...parsed };
-          return { error: `Status ${res.status}`, ...parsed };
-        } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure?.retryable ?? true,
+            ...(failure?.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure?.reason ? { failureReason: failure.reason } : {}),
+            ...parsed,
+          };
+        } catch {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure?.retryable ?? true,
+            ...(failure?.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure?.reason ? { failureReason: failure.reason } : {}),
+            raw: text.slice(0, 200),
+          };
+        }
       }
 
       case "cancelar_agendamento": {
@@ -12030,8 +12107,25 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         const text = await res.text();
         console.log(`[Bemp] cancelar_agendamento (${res.status}):`, text.slice(0, 400));
         if (res.ok) return { ok: true, message: "Agendamento cancelado." };
-        try { return { error: `Status ${res.status}`, ...JSON.parse(text) }; }
-        catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        const failure = classifyBempFailure(res.status, text);
+        try {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure.reason ? { failureReason: failure.reason } : {}),
+            ...JSON.parse(text),
+          };
+        }
+        catch {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure.reason ? { failureReason: failure.reason } : {}),
+            raw: text.slice(0, 200),
+          };
+        }
       }
 
       default:
