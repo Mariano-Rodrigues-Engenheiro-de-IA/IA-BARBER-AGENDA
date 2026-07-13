@@ -12892,15 +12892,26 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         }
         const phoneDigits = normalizePhoneDigits(phoneNumber || args.customer_phone || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
-        if (!args.service_code || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
+        const requestedServices = (Array.isArray(args.services) && args.services.length > 0
+          ? args.services
+          : [{ service_code: args.service_code, duration: args.service_duration_minutes }])
+          .map((service: any) => ({
+            service_code: toPositiveInteger(service?.service_code ?? service?.serviceCode ?? service?.code ?? service?.id),
+            duration: toPositiveInteger(service?.duration ?? service?.service_duration_minutes ?? service?.duration_minutes),
+          }))
+          .filter((service: any) => typeof service.service_code === "number");
+        const primaryServiceCode = requestedServices[0]?.service_code ?? toPositiveInteger(args.service_code);
+        if (!primaryServiceCode || !args.professional_code) return { error: "service_code e professional_code são obrigatórios." };
         // 🛡️ Catálogo: se listar_servicos rodou nesta conversa, service_code precisa estar no catálogo.
         {
           const abCat = (((sessionState as any)?.appbarberServiceCatalog) || []) as Array<{ service_code: number; name: string }>;
-          const sc = Number(args.service_code);
-          if (abCat.length > 0 && sc > 0 && !abCat.some((s) => s.service_code === sc)) {
-            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_code=${sc} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
+          const invalidServiceCodes = requestedServices
+            .map((service: any) => service.service_code)
+            .filter((code: number) => code > 0 && !abCat.some((s) => s.service_code === code));
+          if (abCat.length > 0 && invalidServiceCodes.length > 0) {
+            console.warn(`[AppBarber] criar_agendamento BLOCKED: service_codes=${invalidServiceCodes.join(",")} fora do catálogo (${abCat.map((s) => s.service_code).join(",")})`);
             return {
-              error: `service_code ${sc} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
+              error: `service_code ${invalidServiceCodes.join(", ")} não está no catálogo desta conversa. Chame listar_servicos novamente e use um dos codes retornados.`,
               blocked: true,
               validServiceCodes: abCat.map((s) => s.service_code),
             };
@@ -12926,9 +12937,13 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
           return { error: "start_date/start_time inválidos. Use start_date YYYY-MM-DD e start_time HH:MM.", recoverable: true };
         }
-        const serviceDuration = await resolveAppBarberServiceDuration(args.service_code, args.service_duration_minutes);
-        if (!serviceDuration) {
-          return { error: "Duração do serviço não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.", recoverable: true };
+        const serviceItems: Array<{ service_code: number; duration: number }> = [];
+        for (const service of requestedServices) {
+          const duration = await resolveAppBarberServiceDuration(service.service_code, service.duration);
+          if (!duration) {
+            return { error: `Duração do serviço ${service.service_code} não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.`, recoverable: true };
+          }
+          serviceItems.push({ service_code: service.service_code, duration });
         }
         const url = buildUrl("/v1/appointments", {});
         const customerName = String(args.customer_name || "Cliente").trim();
@@ -12941,7 +12956,7 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           customer_name: customerName,
           start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
-          services: [{ service_code: Number(args.service_code), duration: serviceDuration }],
+          services: serviceItems,
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
@@ -12981,7 +12996,9 @@ async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: st
           ok: true,
           appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
           start_date: body.start_date,
-          service_code: Number(args.service_code),
+          service_code: primaryServiceCode,
+          service_codes: serviceItems.map((service) => service.service_code),
+          services: serviceItems,
           professional_code: Number(args.professional_code),
           raw: parsed?.data ?? parsed,
         };
