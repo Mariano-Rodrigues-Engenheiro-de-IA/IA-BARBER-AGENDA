@@ -3857,7 +3857,7 @@ function serviceNameImpliesAnotherService(bookedServiceName: string, candidateSe
   return booked.includes(candidate) || candidate.includes(booked);
 }
 
-function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSessionState): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
+function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSessionState, contextText = ""): Array<{ service_code: number; name: string; duration_minutes: number | null }> {
   const requestedServiceCode = toPositiveInteger(args?.service_code);
   const requestedProfessionalCode = toPositiveInteger(args?.professional_code);
   const requestedDate = typeof args?.start_date === "string" ? args.start_date.slice(0, 10) : "";
@@ -3899,8 +3899,16 @@ function inferAppBarberServicesForSameSlot(args: any, sessionState: AgentSession
   if (!deduped.some((service) => service.service_code === requestedServiceCode)) return [];
 
   const requestedName = requestedCatalog.name || "";
+  const normalizedContext = normalizeServiceText(contextText);
   return deduped.filter((service) => {
     if (service.service_code === requestedServiceCode) return true;
+    const candidate = normalizeServiceText(service.name);
+    const candidateParts = splitServiceNameTokens(service.name);
+    const mentionedByClientOrAssistant = candidate.length >= 3 && (
+      normalizedContext.includes(candidate) ||
+      candidateParts.some((part) => part.length >= 3 && normalizedContext.includes(part))
+    );
+    if (!mentionedByClientOrAssistant) return false;
     return !serviceNameImpliesAnotherService(requestedName, service.name);
   });
 }
