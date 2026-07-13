@@ -4579,6 +4579,11 @@ function countExplicitProfessionalSelections(text: string): number {
     "Pode", "Hoje", "Amanhã", "Amanha", "Corte", "Barba", "Sobrancelha", "Acabamento",
     "Combo", "Masculino", "Feminino", "Infantil", "Idoso", "Express", "Limpeza",
     "Hidratação", "Hidratacao", "Depilação", "Depilacao", "Nariz", "Orelha",
+    // Verbos/comandos comuns no começo da frase não são nomes de profissional.
+    // Caso real Trinks: "Marca 18:00 com Ramon" virava 2 porque contava
+    // "Marca" + "Ramon" como dois nomes próprios.
+    "Marca", "Marcar", "Agende", "Agenda", "Agendar", "Quero", "Queria", "Gostaria",
+    "Por", "Favor", "Obrigado", "Obrigada", "Boa", "Bom", "Oi", "Ola", "Olá",
   ]);
   const names = [...new Set(properNameMatches.filter((name) => !ignored.has(name)))];
   const hasSelectionConnector = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|fechado|beleza|sim)\b/i.test(normalized)
@@ -4586,6 +4591,55 @@ function countExplicitProfessionalSelections(text: string): number {
   if (hasSelectionConnector && names.length >= 2) return names.length;
 
   return professionalMentions.length;
+}
+
+function countExplicitUserTimeSelections(text: string): number {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return 0;
+
+  const explicitUserTimes = new Set<string>();
+  const timeRe = /\b(\d{1,2})(?::|h)(\d{2})?\b/gi;
+  const normalizeTimeToken = (m: RegExpExecArray): string | null => {
+    const h = Number(m[1]);
+    if (h < 0 || h > 23) return null;
+    const mm = m[2] ? m[2].padStart(2, "0") : "00";
+    return `${h.toString().padStart(2, "0")}:${mm}`;
+  };
+
+  let userMatch: RegExpExecArray | null;
+  while ((userMatch = timeRe.exec(normalized)) !== null) {
+    const token = normalizeTimeToken(userMatch);
+    if (token) explicitUserTimes.add(token);
+  }
+
+  // Hora solta ("14 e 15") só conta em contexto de escolha/agendamento.
+  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b(?!\s*[:h]\d{2})/gi;
+  let hourOnlyMatch: RegExpExecArray | null;
+  while ((hourOnlyMatch = hourOnlyContextRe.exec(normalized)) !== null) {
+    const h = Number(hourOnlyMatch[1]);
+    if (h >= 0 && h <= 23) explicitUserTimes.add(`${h.toString().padStart(2, "0")}:00`);
+  }
+
+  return explicitUserTimes.size;
+}
+
+function hasHighConfidenceHeuristicOverride(messages: any[]): boolean {
+  const visible = messages.filter(
+    (m: any) =>
+      (m?.role === "user" || m?.role === "assistant") &&
+      typeof m?.content === "string" &&
+      m.content.trim(),
+  );
+  const lastUser = [...visible].reverse().find((m: any) => m.role === "user")?.content || "";
+
+  // Só permite a heurística passar por cima do LLM quando há sinal determinístico
+  // de multi-agendamento na fala do cliente, ou uma confirmação curta após oferta.
+  // Evita o caso Trinks: LLM acertou 1, heurística errou 2, e o guard bloqueou.
+  return (
+    countExplicitProfessionalSelections(lastUser) >= 2 ||
+    countExplicitUserTimeSelections(lastUser) >= 2 ||
+    isAffirmativeReply(lastUser)
+  );
 }
 
 // ⚠️ FRIZZAR-ONLY: só usado por classifyPendingBookings (ver aviso acima).
@@ -4644,24 +4698,9 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
 
   // Se o CLIENTE explicitamente escolheu 2+ horários na própria mensagem
   // (ex.: "pode ser 14 e 15"), isso é promessa multi-booking mesmo sem "sim" seco.
-  const explicitUserTimes = new Set<string>();
-  let userMatch: RegExpExecArray | null;
-  timeRe.lastIndex = 0;
-  while ((userMatch = timeRe.exec(lastUser)) !== null) {
-    const token = normalizeTimeToken(userMatch);
-    if (token) explicitUserTimes.add(token);
-  }
-  // Hora solta ("14 e 15") só conta quando NÃO é parte de HH:MM/HHhMM.
-  // Caso real: "As 10:30" virava dois horários (10:30 + 10:00) porque
-  // o trecho "As 10" batia aqui. Isso inflava agendamento único para 2.
-  const hourOnlyContextRe = /\b(?:pode\s+ser|prefiro|quero|marca|marcar|agenda|agendar|[aà]s?|e|ou)\s+(\d{1,2})\b(?!\s*[:h]\d{2})/gi;
-  let hourOnlyMatch: RegExpExecArray | null;
-  while ((hourOnlyMatch = hourOnlyContextRe.exec(lastUser)) !== null) {
-    const h = Number(hourOnlyMatch[1]);
-    if (h >= 0 && h <= 23) explicitUserTimes.add(`${h.toString().padStart(2, "0")}:00`);
-  }
-  if (explicitUserTimes.size >= 2) {
-    return Math.max(1, attempts, explicitUserTimes.size);
+  const explicitUserTimes = countExplicitUserTimeSelections(lastUser);
+  if (explicitUserTimes >= 2) {
+    return Math.max(1, attempts, explicitUserTimes);
   }
 
   // Só interpreta múltiplos horários da ÚLTIMA fala da IA como múltiplos
@@ -4828,11 +4867,15 @@ async function classifyPendingBookings(params: {
       console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
       capped = 1;
     }
-    const total = Math.max(capped, heuristic);
+    const heuristicOverrideAllowed = heuristic > capped && hasHighConfidenceHeuristicOverride(messages);
+    const total = heuristicOverrideAllowed ? heuristic : capped;
+    if (heuristic > capped && !heuristicOverrideAllowed) {
+      console.warn(`[MultiBookingGuard] heuristic ignored: llm=${capped} heur=${heuristic} sem sinal determinístico de multi-agendamento.`);
+    }
     return {
       total,
       source: "llm",
-      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}`,
+      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? ` heur_${heuristicOverrideAllowed ? "used" : "ignored"}` : ""}`,
     };
   } catch (e) {
     console.warn(`[MultiBookingGuard] classifier failed:`, (e as Error)?.message);
