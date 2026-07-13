@@ -3780,11 +3780,23 @@ function buildPartialBookingFallback(
 ): string {
   const feitos = breakdown.length > 0
     ? breakdown.map((b) => b.summary).filter((s) => !!s).join("; ")
-    : (criados > 0 ? `${criados} agendamento(s)` : "");
+    : "";
   const faltam = Math.max(0, prometidos - criados);
   const partes: string[] = [];
-  if (feitos) partes.push(`Já consegui registrar: ${feitos}.`);
-  partes.push(`Ainda falta concluir ${faltam > 0 ? `${faltam} agendamento${faltam > 1 ? "s" : ""}` : "o restante"}; vou continuar tentando por aqui com os dados que você já enviou.`);
+  if (criados > 0 && feitos) {
+    partes.push(`Consegui agendar: ${feitos}.`);
+  } else if (criados > 0) {
+    partes.push(`Consegui registrar ${criados} agendamento${criados > 1 ? "s" : ""}.`);
+  }
+  if (faltam > 0) {
+    const alvo = criados > 0
+      ? (faltam > 1 ? `os outros ${faltam} serviços` : "o segundo serviço")
+      : (faltam > 1 ? `os ${faltam} agendamentos` : "o agendamento");
+    partes.push(`Porém, tive um probleminha ao tentar finalizar ${alvo}.`);
+    partes.push("Vou acionar a equipe aqui pra concluir isso pra você o mais rápido possível.");
+  } else {
+    partes.push("Vou acionar a equipe aqui pra concluir o restante o mais rápido possível.");
+  }
   return partes.join(" ");
 }
 
@@ -6183,9 +6195,17 @@ async function callAIAgent(
         const r: any = definitiveFailure.result;
         console.warn(`[MultiBookingGuard] falha definitiva detectada (reason=${r.failureReason || r.error}) — pulando recovery.`);
         logErrors.push({ message: `Multi-booking abortado por falha definitiva: ${r.failureReason || r.error}`, level: "warning" });
-        finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
-          ? r.clientMessage.trim()
-          : "Não consegui concluir esse agendamento agora. Vou verificar aqui e já te retorno.";
+        // Se já rolou pelo menos um agendamento com sucesso, usar o fallback
+        // transparente (o que criou + probleminha no restante + aciona equipe).
+        // Se nada foi criado, respeita o clientMessage do provider.
+        const partialCount = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+        if (partialCount.count > 0 && partialCount.count < prometidos) {
+          finalResponse = buildPartialBookingFallback(partialCount.count, prometidos, partialCount.breakdown);
+        } else {
+          finalResponse = (typeof r.clientMessage === "string" && r.clientMessage.trim())
+            ? r.clientMessage.trim()
+            : "Não consegui concluir esse agendamento agora. Vou acionar a equipe aqui pra resolver e já te retorno.";
+        }
         guardOverrideResponse = true;
         guardLog("definitive_failure_no_recovery");
       } else {
