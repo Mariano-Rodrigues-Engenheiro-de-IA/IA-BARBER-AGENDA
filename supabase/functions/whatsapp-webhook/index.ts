@@ -6407,6 +6407,34 @@ async function callAIAgent(
           }
         }
 
+        if (!toolResult && provider === "appbarber" && toolCall.function.name === "criar_agendamento") {
+          const contextText = [
+            ...messages.slice(-12).map((m: any) => typeof m?.content === "string" ? m.content : ""),
+            JSON.stringify(parsedArgs || {}),
+          ].join("\n");
+          const inferredServices = inferAppBarberServicesForSameSlot(parsedArgs, sessionState, contextText);
+          const existingServiceCodes = new Set<number>();
+          if (Array.isArray(parsedArgs?.services)) {
+            for (const s of parsedArgs.services) {
+              const code = toPositiveInteger(s?.service_code ?? s?.serviceCode ?? s?.code ?? s?.id);
+              if (code) existingServiceCodes.add(code);
+            }
+          }
+          if (inferredServices.length > Math.max(1, existingServiceCodes.size)) {
+            parsedArgs.services = inferredServices.map((service) => ({
+              service_code: service.service_code,
+              duration: service.duration_minutes,
+            }));
+            toolCallToExecute = {
+              ...toolCall,
+              function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+            };
+            const autoMergeReason = `appbarber multi-service auto-merged: ${inferredServices.map((service) => `${service.service_code}:${service.name}`).join(", ")}`;
+            correctionReason = correctionReason ? `${correctionReason}; ${autoMergeReason}` : autoMergeReason;
+            console.log(`[AppBarber] criar_agendamento auto-merged services for same slot: ${JSON.stringify(parsedArgs.services)}`);
+          }
+        }
+
         if (!toolResult) {
           // ===== PROVIDER DISPATCHER: execute tool based on provider =====
           toolResult = await executeToolForProvider(provider, tenant, toolCallToExecute, phoneNumber, { supabase, simulatorMode, sessionState });
