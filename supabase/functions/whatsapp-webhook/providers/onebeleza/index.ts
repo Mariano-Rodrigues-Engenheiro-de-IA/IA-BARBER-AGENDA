@@ -107,6 +107,59 @@ type AgentSessionState = {
 
 const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
+// Duplicated locally from whatsapp-webhook/index.ts to keep the OneBeleza module
+// self-contained. Any change to name-validation logic must be mirrored in both
+// places until a shared module is extracted (structural refactor, needs approval).
+const _sanitizeClientName = (value: unknown) => String(value ?? "")
+  .replace(/[\p{Extended_Pictographic}\u200d\uFE0F]/gu, "")
+  .replace(/[^\p{L}\s\-']/gu, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+const _NON_NAME_STOPWORDS = new Set([
+  "oi","ola","alo","bom","dia","boa","tarde","noite","sim","nao","ok","okay","blz","beleza",
+  "valeu","obrigado","obrigada","tchau","ate","logo",
+  "eu","voce","vc","tu","ele","ela","nos","a","o","um","uma","com","sem","de","do","da","dos","das",
+  "pra","para","por","em","no","na","nos","nas","que","quem","onde","como","quando","quanto",
+  "isso","aquilo","esse","essa","aqui","ali","la","ai","mas","tambem","tb","entao","ne","tipo",
+  "ta","tah","uhum","aham","hum","hmm",
+  "quero","queria","gostaria","posso","pode","preciso","tem","temos","ter","ir","vou","vai","vamos",
+  "agendar","agenda","agendamento","marcar","marca","marcado","desmarcar","cancelar","cancela",
+  "confirmar","confirma","reagendar","mudar","trocar","ver","saber","aumenta","aumentar","incluir",
+  "fazer","faz","fica","ficou","esta","estah","sao","ser",
+  "corte","barba","bigode","cabelo","cabelinho","sobrancelha","pezinho","platinado","luzes","tintura",
+  "hidratacao","escova","progressiva","botox","relaxamento","servico","servicos","valor","valores",
+  "preco","precos","quanto","custa","custo","combo",
+  "hoje","amanha","ontem","agora","depois","antes","cedo","tarde","manha","manhã","horario","horarios",
+  "hora","horas","minuto","minutos","dia","dias","semana","mes","ano",
+  "segunda","terca","quarta","quinta","sexta","sabado","domingo",
+  "feira","feriado",
+  "cliente","fulano","ciclano","beltrano","teste","testando",
+]);
+
+const _NAME_CONNECTORS = new Set(["de","da","do","das","dos","e","del","della","di"]);
+
+function looksLikeRealName(value: unknown): boolean {
+  const cleaned = _sanitizeClientName(value);
+  if (!cleaned || cleaned.length < 4 || cleaned.length > 60) return false;
+  if (/\d/.test(cleaned)) return false;
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (parts.length < 2 || parts.length > 4) return false;
+  for (const p of parts) {
+    if (p.length < 2) return false;
+    if (!/^[\p{L}'\-]+$/u.test(p)) return false;
+  }
+  const normalizedParts = parts.map((p) => normalizeUserFacingText(p));
+  const first = normalizedParts[0];
+  const last = normalizedParts[normalizedParts.length - 1];
+  if (_NON_NAME_STOPWORDS.has(first) || _NAME_CONNECTORS.has(first)) return false;
+  if (_NON_NAME_STOPWORDS.has(last) || _NAME_CONNECTORS.has(last)) return false;
+  for (const np of normalizedParts) {
+    if (_NON_NAME_STOPWORDS.has(np)) return false;
+  }
+  return true;
+}
+
 interface IdResolutionResult {
   resolvedArgs: any;
   corrected: boolean;
