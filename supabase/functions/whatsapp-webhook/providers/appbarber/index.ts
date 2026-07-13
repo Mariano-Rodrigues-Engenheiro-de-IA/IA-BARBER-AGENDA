@@ -603,6 +603,40 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(startDateTime)) {
           return { error: "start_date/start_time inválidos. Use start_date YYYY-MM-DD e start_time HH:MM.", recoverable: true };
         }
+        // 🛡️ Correção A — checagem prévia obrigatória.
+        // Se o par (service, prof, data, hora) não aparece em appbarberSlotOptions
+        // (populado a cada listar_horarios / listar_horarios_geral bem-sucedido),
+        // rejeitamos e pedimos pra IA re-consultar. Evita o 422 "Choque de Horário"
+        // quando a IA vai direto pro POST sem listar valer (caso 556183012868).
+        {
+          const slotOptions = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
+            service_code: number;
+            professional_code: number;
+            start_date: string;
+            start_time: string;
+            duration_minutes: number | null;
+          }>;
+          const wantedDate = String(args.start_date).slice(0, 10);
+          const wantedTime = String(args.start_time).slice(0, 5);
+          const pc = Number(args.professional_code);
+          if (slotOptions.length > 0) {
+            const hasChecked = slotOptions.some((s) =>
+              s.service_code === primaryServiceCode &&
+              s.professional_code === pc &&
+              s.start_date === wantedDate &&
+              s.start_time.slice(0, 5) === wantedTime
+            );
+            if (!hasChecked) {
+              console.warn(`[AppBarber] criar_agendamento BLOCKED: sem checagem prévia em slotOptions para svc=${primaryServiceCode} prof=${pc} ${wantedDate} ${wantedTime}`);
+              return {
+                error: `Sem confirmação prévia de disponibilidade para service_code=${primaryServiceCode}, professional_code=${pc} em ${wantedDate} ${wantedTime}. Chame listar_horarios ANTES de criar_agendamento.`,
+                blocked: true,
+                reason: "no_availability_check",
+                hint: "Chame listar_horarios (ou listar_horarios_geral) com service_code, professional_code e start_date. Só ofereça horários que aparecerem em available_times.",
+              };
+            }
+          }
+        }
         const serviceItems: Array<{ service_code: number; duration: number }> = [];
         for (const service of requestedServices) {
           const duration = await resolveAppBarberServiceDuration(service.service_code, service.duration);
@@ -610,6 +644,57 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             return { error: `Duração do serviço ${service.service_code} não encontrada. Chame listar_servicos novamente e use service_interval como service_duration_minutes.`, recoverable: true };
           }
           serviceItems.push({ service_code: service.service_code, duration });
+        }
+        // 🛡️ Correção B — combo multi-serviço não cabe em 1 slot só.
+        // A API /v1/availability é ESTRITAMENTE por-serviço-único: duration_minutes,
+        // total_duration e service_interval são silenciosamente ignorados (comprovado
+        // por probe no proxy em jul/2026 — resposta idêntica ao baseline). Quando o
+        // cliente pediu N serviços (ex: corte 45 + barba 30 = 75min) e a IA só
+        // checou o primeiro, validamos client-side que os slots de 15min consecutivos
+        // cobrem a duração total. Regra: cada slot presente na resposta de um serviço
+        // de duração d garante [slot, slot+d] livre. Encadeando slots presentes a
+        // cada 15min de T até T+(D-d), cobrimos [T, T+D] onde D=total.
+        if (serviceItems.length > 0) {
+          const totalDuration = serviceItems.reduce((sum, item) => sum + item.duration, 0);
+          const primaryDuration = serviceItems[0].duration;
+          if (totalDuration > primaryDuration) {
+            const slotOptions = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
+              service_code: number;
+              professional_code: number;
+              start_date: string;
+              start_time: string;
+            }>;
+            const wantedDate = String(args.start_date).slice(0, 10);
+            const pc = Number(args.professional_code);
+            const primaryTimes = new Set(
+              slotOptions
+                .filter((s) => s.service_code === primaryServiceCode && s.professional_code === pc && s.start_date === wantedDate)
+                .map((s) => s.start_time.slice(0, 5))
+            );
+            if (primaryTimes.size > 0) {
+              const [hh, mm] = String(args.start_time).slice(0, 5).split(":").map(Number);
+              const startMin = hh * 60 + mm;
+              const chainEnd = totalDuration - primaryDuration;
+              const missing: string[] = [];
+              for (let offset = 0; offset <= chainEnd; offset += 15) {
+                const t = startMin + offset;
+                const key = `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+                if (!primaryTimes.has(key)) missing.push(key);
+              }
+              if (missing.length > 0) {
+                console.warn(`[AppBarber] criar_agendamento BLOCKED combo ${totalDuration}min@${args.start_time}: slots ausentes ${missing.join(",")} svc=${primaryServiceCode} prof=${pc}`);
+                return {
+                  error: `Combo de ${totalDuration}min começando em ${args.start_time} não cabe: os slots ${missing.join(", ")} não estão livres para o profissional ${pc}. A grade AppBarber só confirmou [${args.start_time}, +${primaryDuration}min].`,
+                  blocked: true,
+                  reason: "combo_slots_not_consecutive",
+                  totalDurationMinutes: totalDuration,
+                  primaryDurationMinutes: primaryDuration,
+                  missingSlots: missing,
+                  hint: "Ofereça só horários T onde T, T+15, T+30... T+(totalDuration-primaryDuration) TODOS apareçam em available_times do serviço principal. Se nenhum couber, ofereça outro dia ou dividir os serviços em horários separados.",
+                };
+              }
+            }
+          }
         }
         const url = buildUrl("/v1/appointments", {});
         const customerName = String(args.customer_name || "Cliente").trim();
