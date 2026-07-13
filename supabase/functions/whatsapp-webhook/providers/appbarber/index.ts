@@ -973,3 +973,4 @@ export function inferAppBarberServicesForSameSlot(
     if (!mentionedByClientOrAssistant) return false;
     return !_abServiceNameImpliesAnotherService(requestedName, service.name);
   });
+}
