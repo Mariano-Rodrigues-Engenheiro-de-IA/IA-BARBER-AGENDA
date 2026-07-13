@@ -3275,35 +3275,28 @@ function countBookingCallAttempts(logToolCalls: any[]): number {
 // Usado pelo classificador do MultiBookingGuard pra reconciliar "o cliente falou
 // X" com "o serviço que de fato foi agendado já é um combo cobrindo X sozinho"
 // (ex: cliente diz "corte e barba", mas o catálogo já vende isso como 1 serviço).
+// Dispatcher que delega a extração do nome do serviço reservado pro módulo
+// do provider correto. A lógica específica de cada API vive no provider.
 function extractBookedServiceNames(
   logToolCalls: Array<{ name: string; args: any; result: any; blocked?: boolean }>,
   provider: string,
   sessionState: any,
 ): string[] {
+  const perProviderExtractor: Record<string, (tc: any, s: any) => string[]> = {
+    trinks: extractTrinksBookedServiceNames,
+    onebeleza: extractOneBelezaBookedServiceNames,
+    frizzar: extractFrizzarBookedServiceNames,
+    bemp: extractBempBookedServiceNames,
+    appbarber: extractAppBarberBookedServiceNames,
+  };
+  const extractor = perProviderExtractor[provider];
+  if (!extractor) return [];
   const names: string[] = [];
   for (const tc of logToolCalls || []) {
     if (!tc || tc.blocked || !BOOKING_TOOL_NAMES.has(tc.name)) continue;
-    const r: any = tc.result || {};
-    const args: any = tc.args || {};
-    if (provider === "frizzar" && Array.isArray(r?.agendamentos)) {
-      for (const item of r.agendamentos) {
-        if (item?.servicoNome && !names.includes(item.servicoNome)) names.push(item.servicoNome);
-      }
-      continue;
+    for (const name of extractor(tc, sessionState)) {
+      if (name && !names.includes(name)) names.push(name);
     }
-    let name: string | undefined;
-    if (provider === "bemp") {
-      name = r?.data?.service_name;
-    } else if (provider === "appbarber") {
-      name = r?.service_name ?? r?.data?.service_name;
-    } else if (provider === "trinks") {
-      const catalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
-      const sid = Number(args?.servicoId);
-      name = catalog.find((s) => s.id === sid)?.nome;
-    } else if (provider === "onebeleza") {
-      name = r?.servicoNome ?? r?.nomeServico;
-    }
-    if (name && !names.includes(name)) names.push(name);
   }
   return names;
 }
@@ -3340,6 +3333,31 @@ function formatBookingWhen(dateStr: string, timeStr?: string): string {
   return timePart ? `${dateFormatted} às ${timePart}` : dateFormatted;
 }
 
+// Monta o summary humanizado a partir da BookingEvaluation devolvida pelo
+// provider. Toda a lógica de "hoje às HH:MM" fica aqui; cada provider só devolve
+// os pedaços crus (data, hora, nome do serviço/profissional). Se um dia mudar o
+// formato de exibição, muda só neste ponto — nenhum provider precisa saber.
+function formatBookingSummary(ev: {
+  serviceName?: string;
+  dateStr: string;
+  timeStr?: string;
+  professionalName?: string;
+  extraServiceCount?: number;
+  fallbackSuffix?: string;
+}): string {
+  const when = formatBookingWhen(ev.dateStr, ev.timeStr);
+  const head = ev.serviceName ? `${ev.serviceName} ${when}` : when;
+  const withPro = ev.professionalName ? `${head} com ${ev.professionalName}` : head;
+  const withCount = ev.extraServiceCount && ev.extraServiceCount > 1
+    ? `${withPro} (${ev.extraServiceCount} serviços)`
+    : withPro;
+  if (!ev.serviceName && ev.fallbackSuffix) return `${withCount} ${ev.fallbackSuffix}`;
+  return withCount;
+}
+
+// Dispatcher que delega a avaliação de sucesso pro módulo do provider correto.
+// A parte transversal (alreadyBooked/blocked/error/status>=400) fica aqui;
+// cada provider só decide "esse `tc` é sucesso? quantos? qual summary?".
 function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
@@ -3348,6 +3366,24 @@ function countSuccessfulBookingsInTurn(
   const breakdown: Array<{ tool: string; summary: string }> = [];
   let count = 0;
 
+  const perProviderEvaluator: Record<string, (tc: any, s?: any) => {
+    succeeded: boolean;
+    bookedCount: number;
+    serviceName?: string;
+    dateStr: string;
+    timeStr?: string;
+    professionalName?: string;
+    extraServiceCount?: number;
+    fallbackSuffix?: string;
+  } | null> = {
+    trinks: evaluateTrinksBooking,
+    onebeleza: evaluateOneBelezaBooking,
+    frizzar: evaluateFrizzarBooking,
+    bemp: evaluateBempBooking,
+    appbarber: evaluateAppBarberBooking,
+  };
+  const evaluator = perProviderEvaluator[provider];
+
   for (const tc of logToolCalls || []) {
     if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) continue;
     const r = tc.result;
@@ -3355,9 +3391,8 @@ function countSuccessfulBookingsInTurn(
     const args = tc.args || {};
     const isAlreadyBooked = r.alreadyBooked === true || r.status === "SUCESSO_ANTERIOR_JA_REGISTRADO";
 
-    // Bloqueio de duplicidade significa que a reserva exata já existe: para o
-    // MultiBookingGuard isso conta como concluído, senão ele tenta repetir a
-    // mesma reserva, zera `criados` e pode cair em rota indevida.
+    // Duplicidade já registrada conta como concluído — senão o guard tenta
+    // repetir a mesma reserva e zera `criados`.
     if (isAlreadyBooked) {
       const when = formatBookingWhen(
         String(args.dia || args.data || args.date || args.dataHoraInicio || args.start || args.start_date || ""),
@@ -3368,96 +3403,18 @@ function countSuccessfulBookingsInTurn(
       continue;
     }
 
-    // Regra transversal: bloqueado ou com erro NUNCA conta, exceto duplicidade já registrada acima.
+    // Regra transversal: bloqueado ou com erro NUNCA conta.
     if (r.blocked === true) continue;
     if (r.error) continue;
     if (Array.isArray(r.Errors) && r.Errors.length > 0) continue;
     if (typeof r.status === "number" && r.status >= 400) continue;
 
-    let succeeded = false;
-    let bookedCount = 1;
-    let summary = "";
-
-    switch (provider) {
-      case "trinks": {
-        // Sucesso: resposta crua da API, sem `error`/`blocked`/`code` de erro.
-        // Falha detectável no código: { id: "duplicate", blocked: true } → já filtrado acima.
-        // Sucesso típico da Trinks devolve o objeto do agendamento (só o id, sem
-        // nome de serviço) — usa o catálogo salvo em sessionState pra traduzir.
-        succeeded = !r.code && (typeof r.id !== "undefined" || typeof r.data !== "undefined" || r.success === true);
-        const trinksCatalog = (sessionState?.trinksServiceCatalog || []) as Array<{ id: number; nome: string }>;
-        const trinksServiceName = trinksCatalog.find((s) => Number(s.id) === Number(args.servicoId))?.nome;
-        const trinksWhen = formatBookingWhen(args.dataHoraInicio || "");
-        summary = trinksServiceName
-          ? `${trinksServiceName} ${trinksWhen}`
-          : `${trinksWhen} (serviço ${args.servicoId ?? "?"})`;
-        break;
-      }
-      case "onebeleza": {
-        // Sucesso confiável: success: true (sempre presente). NÃO usar `id` (vira boolean true às vezes).
-        succeeded = r.success === true;
-        // A API pode devolver nome do serviço espalhado no resultado (...parsed) —
-        // tenta os campos mais prováveis; se não vier, fica só com data/hora.
-        const obServiceName = r.servicoNome || r.nomeServico || r.ServicoNome || r.NomeServico;
-        const obDate = args.datanumero || args.dataAg || args.data || "";
-        const obTime = args.horarioinicio || args.horarioInicio || "";
-        const obWhen = formatBookingWhen(String(obDate), String(obTime));
-        summary = obServiceName ? `${obServiceName} ${obWhen}` : obWhen;
-        break;
-      }
-      case "frizzar": {
-        // Sucesso: ok:true + agendamentoId. Uma chamada `agendar` = 1 reserva (1 pessoa),
-        // independente de quantos serviços vieram no combo (agendamentos[] pode ter N
-        // linhas por serviço, mas é a mesma pessoa/horário). Se o cliente quiser marcar
-        // pra outra pessoa, a IA precisa fazer outra chamada — e é isso que o Guard
-        // vai cobrar via reinjeção/fallback parcial.
-        succeeded = r.ok === true && (r.agendamentoId != null || Array.isArray(r.agendamentos));
-        let frizzarServiceName: string | undefined;
-        let frizzarServiceCount = 0;
-        if (succeeded && Array.isArray(r.agendamentos) && r.agendamentos.length > 0) {
-          frizzarServiceName = r.agendamentos[0]?.servicoNome;
-          frizzarServiceCount = r.agendamentos.length;
-        }
-        if (succeeded) bookedCount = 1;
-        const frizzarWhen = formatBookingWhen(String(args.dia || ""), String(args.hora || ""));
-        summary = `${frizzarServiceName ? `${frizzarServiceName} ` : ""}${frizzarWhen}${frizzarServiceCount > 1 ? ` (${frizzarServiceCount} serviços)` : ""}`;
-        break;
-      }
-      case "bemp": {
-        succeeded = r.ok === true;
-        // Usa o retorno real da API (r.data já vem com service_name/professional_name
-        // prontos) em vez de reimprimir os args crus (ISO completo + ID numérico).
-        const bempData = (r.data || {}) as Record<string, any>;
-        const startIso = bempData.start || args.start;
-        const bempWhen = formatBookingWhen(typeof startIso === "string" ? startIso : "");
-        const serviceName = bempData.service_name;
-        const professionalName = bempData.professional_name;
-        summary = serviceName
-          ? `${serviceName} ${bempWhen}${professionalName ? ` com ${professionalName}` : ""}`
-          : `${bempWhen} (serviço ${args.serviceId ?? args.service_id ?? "?"})`;
-        break;
-      }
-      case "appbarber": {
-        // AppBarber não devolve nome de serviço no sucesso do agendamento (só
-        // service_code numérico) — fica sem nome, só data/hora humanizada.
-        // Personalização multi-booking AppBarber: uma chamada `criar_agendamento`
-        // pode carregar `services[]` (comanda com N serviços no mesmo slot). Cada
-        // item do array conta como 1 booking pro guard, pra o count bater com
-        // "quantos serviços o cliente pediu".
-        succeeded = r.ok === true && !!r.appointment_id;
-        const abServices = Array.isArray((args as any)?.services) ? (args as any).services : [];
-        if (succeeded && abServices.length > 1) bookedCount = abServices.length;
-        summary = formatBookingWhen(String(args.start_date || ""), String(args.start_time || ""));
-        break;
-      }
-      default:
-        succeeded = false;
-    }
-
-    if (succeeded) {
-      count += bookedCount;
-      for (let i = 0; i < bookedCount; i++) breakdown.push({ tool: tc.name, summary });
-    }
+    if (!evaluator) continue;
+    const ev = evaluator(tc, sessionState);
+    if (!ev?.succeeded) continue;
+    const summary = formatBookingSummary(ev);
+    count += ev.bookedCount;
+    for (let i = 0; i < ev.bookedCount; i++) breakdown.push({ tool: tc.name, summary });
   }
 
   return { count, breakdown };
