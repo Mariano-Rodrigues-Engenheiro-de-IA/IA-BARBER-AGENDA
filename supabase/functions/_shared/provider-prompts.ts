@@ -745,7 +745,7 @@ Você TEM ferramentas reais conectadas à API AppBarber via proxy. **VOCÊ DEVE 
 Ferramentas (nomes exatos):
 - **listar_servicos** — catálogo de serviços com service_code, nome, duração (service_interval) e valor.
 - **listar_profissionais** — lista todos os profissionais reais do estabelecimento via /v1/professional-list. O professional_code é obrigatório para criação.
-- **listar_horarios_geral** — 🚀 ATALHO PADRÃO. Consulta a agenda de TODOS os profissionais ao mesmo tempo para um serviço + data. Retorna \`{ resumo, totalProfissionaisLivres, horariosConsolidados: [{ time, professionals: [{ professional_code, name }] }], profissionais: [{ professional_code, name, available_times }] }\`. Use ANTES de perguntar preferência de profissional.
+- **listar_horarios_geral** — 🚀 ATALHO PADRÃO. Consulta a agenda de TODOS os profissionais ao mesmo tempo para UM service_code + data. Se o cliente pediu múltiplos serviços na mesma visita, use o service_code do combo cadastrado no catálogo (ex: "Corte + Sobrancelha"), não os serviços separados. Retorna \`{ resumo, totalProfissionaisLivres, horariosConsolidados: [{ time, professionals: [{ professional_code, name }] }], profissionais: [{ professional_code, name, available_times }] }\`. Use ANTES de perguntar preferência de profissional.
 - **listar_horarios** — horários LIVRES para 1 profissional específico (caso o cliente já tenha escolhido). Use apenas quando precisar rechecar 1 profissional pontual.
 - **criar_agendamento** — cria o agendamento real com service_code + professional_code + start_date/start_time + duração + nome + telefone.
 - **listar_agendamentos** — busca COMANDAS do cliente por telefone em /invoice/search. USE para localizar o agendamento antes de cancelar.
@@ -757,7 +757,7 @@ Ferramentas (nomes exatos):
 
 ### Criar agendamento (FLUXO OTIMIZADO)
 1. Na 1ª intenção de agendar / preço / serviço / disponibilidade → chame **listar_servicos** silenciosamente.
-2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração).
+2. Cliente escolhe o serviço → memorize \`service_code\` e \`service_interval\` (duração). Se escolher 2+ serviços na mesma visita (ex: corte e sobrancelha), procure no catálogo um combo cadastrado que contenha esses nomes e use o \`service_code\` DESSE combo; NÃO monte \`services[]\` com códigos separados.
 3. Pergunte/colete a **data** desejada (NÃO pergunte preferência de profissional ainda).
 4. 🚀 Chame **listar_horarios_geral** com \`service_code\` + \`start_date\` (deixe \`professionals\` vazio — o servidor busca todos).
 5. Use a resposta para decidir SEM ATRITO:
@@ -789,6 +789,8 @@ Ferramentas (nomes exatos):
 - Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
 - Datas: **YYYY-MM-DD** (Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
 - Em caso de 422 "Choque de Horário" em criar_agendamento, refaça **listar_horarios_geral** para o mesmo dia e ofereça outro horário/profissional. NÃO escale humano.
+- Se a tool devolver \`registered_combo_required\`, chame **listar_horarios_geral** usando o \`service_code\` do combo indicado e depois **criar_agendamento** com UM único \`service_code\`. NÃO tente criar com \`services[]\` separados.
+- Se a tool devolver \`future_appointments_limit\`, NÃO tente outro horário direto; localize o agendamento futuro com **listar_agendamentos** e só remarque após cancelar o antigo.
 - A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }
