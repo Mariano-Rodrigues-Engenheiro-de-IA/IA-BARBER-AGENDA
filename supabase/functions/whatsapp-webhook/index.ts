@@ -12086,8 +12086,25 @@ async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: string,
         const text = await res.text();
         console.log(`[Bemp] cancelar_agendamento (${res.status}):`, text.slice(0, 400));
         if (res.ok) return { ok: true, message: "Agendamento cancelado." };
-        try { return { error: `Status ${res.status}`, ...JSON.parse(text) }; }
-        catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
+        const failure = classifyBempFailure(res.status, text);
+        try {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure.reason ? { failureReason: failure.reason } : {}),
+            ...JSON.parse(text),
+          };
+        }
+        catch {
+          return {
+            error: `Status ${res.status}`,
+            retryable: failure.retryable,
+            ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure.reason ? { failureReason: failure.reason } : {}),
+            raw: text.slice(0, 200),
+          };
+        }
       }
 
       default:
