@@ -14,6 +14,13 @@ import {
   buildAppBarberTools,
   executeAppBarberTool,
 } from "./providers/appbarber/index.ts";
+// PROVIDER TRINKS — módulo isolado (extraído em jul/2026 na mesma linha do
+// Frizzar/AppBarber). Nada de Trinks deve morar neste arquivo.
+import {
+  buildTrinksTools,
+  executeTrinksTool,
+  fetchActiveAppointmentsByPhone,
+} from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CelCash / GalaxPay — consulta LOCAL na tabela celcash_subscribers.
