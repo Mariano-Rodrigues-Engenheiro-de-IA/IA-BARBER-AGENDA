@@ -5827,10 +5827,17 @@ async function callAIAgent(
           parsedArgs?.servicoId,
           parsedArgs?.servicoid,
           parsedArgs?.servicosId,
+          parsedArgs?.service_code,
+          parsedArgs?.serviceCode,
         ];
         if (Array.isArray(parsedArgs?.servicos)) {
           for (const s of parsedArgs.servicos) {
             candidateIds.push(s?.codigo, s?.servicoId, s?.servicosId);
+          }
+        }
+        if (Array.isArray(parsedArgs?.services)) {
+          for (const s of parsedArgs.services) {
+            candidateIds.push(s?.service_code, s?.serviceCode, s?.code, s?.id);
           }
         }
         attemptedServiceIds = candidateIds
@@ -5851,10 +5858,12 @@ async function callAIAgent(
           (typeof parsedArgs?.hora === "string" && parsedArgs.hora) ||
           (typeof parsedArgs?.horario === "string" && parsedArgs.horario) ||
           (typeof parsedArgs?.time === "string" && parsedArgs.time) ||
+          (typeof parsedArgs?.start_time === "string" && parsedArgs.start_time) ||
           (dt && dt.length >= 16 ? dt.slice(11, 16) : "");
         const prof =
           toPositiveInteger(parsedArgs?.profissionalId) ??
           toPositiveInteger(parsedArgs?.professionalId) ??
+          toPositiveInteger(parsedArgs?.professional_code) ??
           "";
         const servicesKey = [...attemptedServiceIds].sort((a, b) => a - b).join(",");
         attemptedSlotSignature = `${servicesKey}|${date}|${time}|${prof}`;
