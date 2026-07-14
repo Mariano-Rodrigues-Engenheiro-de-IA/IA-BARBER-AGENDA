@@ -3667,8 +3667,9 @@ async function classifyPendingBookings(params: {
   modelUsed: string;
   attempts: number;
   bookedServiceNames?: string[];
+  bookedExecutionCount?: number;
 }): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
-  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames } = params;
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
     source: "fallback" as const,
@@ -3685,17 +3686,21 @@ async function classifyPendingBookings(params: {
   const servicosInfo = bookedServiceNames && bookedServiceNames.length > 0
     ? `Serviço(s) REALMENTE reservado(s) com sucesso nesta rodada (nome exato do catálogo do negócio): ${JSON.stringify(bookedServiceNames)}. Se um desses nomes já é um combo que cobre tudo que o cliente pediu numa mesma fala (ex: cliente disse "corte e barba" e o serviço reservado se chama "Corte e Barba" ou similar), conte esse serviço como 1 agendamento — não infle o número só porque o cliente usou "e"/"mais" na frase. O catálogo do negócio, não a frase do cliente, decide se é 1 serviço ou 2.`
     : "";
+  const execInfo = typeof bookedExecutionCount === "number" && bookedExecutionCount > 0
+    ? `Chamadas de "agendar/criar_agendamento" que tiveram sucesso NESTA rodada: ${bookedExecutionCount}. Uma única execução bem-sucedida representa 1 visita/comanda mesmo que contenha vários serviços no mesmo array (ex: {servicos:[corte, barba]} para o MESMO cliente/profissional/horário sequencial = 1 agendamento, não 2). Só considere prometidos > número de execuções bem-sucedidas se a fala do cliente exigir múltiplas execuções separadas (2+ pessoas distintas, 2+ horários distintos, ou 2+ profissionais distintos). Diferença de NOMES de serviço dentro da mesma execução NÃO justifica inflar o total.`
+    : "";
 
   const sys = [
     "Você é um classificador de intenção.",
     "Dada a janela de conversa a seguir entre CLIENTE e ATENDENTE, conte quantos AGENDAMENTOS DISTINTOS o cliente pediu/confirmou nesta rodada.",
     "Regras:",
-    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3), EXCETO quando o catálogo do negócio já vende essa combinação como um serviço único (ver seção de serviços reservados abaixo, se houver).",
+    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3), EXCETO quando o catálogo do negócio já vende essa combinação como um serviço único OU quando o negócio permite vários serviços na MESMA visita/comanda (mesmo cliente, mesmo profissional, horários sequenciais) — nesses casos conta como 1.",
     "- Cada pessoa distinta = +1 (ex: '2 cortes pra amanhã' = 2).",
     "- Se o atendente ofereceu opções e o cliente respondeu apenas 'sim'/'pode'/'beleza'/'fechado', considere que ele aceitou TODAS as opções ofertadas na última fala do atendente.",
     "- Se não há intenção clara de agendar, retorne 1.",
     "- Nunca retorne 0.",
     ...(servicosInfo ? [servicosInfo.trim()] : []),
+    ...(execInfo ? [execInfo.trim()] : []),
     'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "reasoning": "<curto>"}',
   ].join("\n");
 
