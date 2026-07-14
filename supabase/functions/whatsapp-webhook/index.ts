@@ -3379,9 +3379,15 @@ function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
   sessionState?: any,
-): { count: number; breakdown: Array<{ tool: string; summary: string }> } {
+): { count: number; breakdown: Array<{ tool: string; summary: string }>; executions: number } {
   const breakdown: Array<{ tool: string; summary: string }> = [];
   let count = 0;
+  // executions = quantas chamadas distintas de agendar/criar_agendamento tiveram sucesso
+  // nesta rodada. Diferente de `count`, que pode ser inflado por bookedCount>1 dentro
+  // da MESMA chamada (ex.: Frizzar aceita servicos:[A,B] no mesmo agendar → 1 execução,
+  // mas count=2 se cada serviço vira uma linha). Usado pelo classifier para não inflar
+  // "prometidos" só porque há N nomes de serviço dentro de UMA única execução.
+  let executions = 0;
 
   const perProviderEvaluator: Record<string, (tc: any, s?: any) => {
     succeeded: boolean;
@@ -3417,6 +3423,7 @@ function countSuccessfulBookingsInTurn(
       );
       breakdown.push({ tool: tc.name, summary: `${when} (já registrado)` });
       count += 1;
+      executions += 1;
       continue;
     }
 
@@ -3431,10 +3438,11 @@ function countSuccessfulBookingsInTurn(
     if (!ev?.succeeded) continue;
     const summary = formatBookingSummary(ev);
     count += ev.bookedCount;
+    executions += 1;
     for (let i = 0; i < ev.bookedCount; i++) breakdown.push({ tool: tc.name, summary });
   }
 
-  return { count, breakdown };
+  return { count, breakdown, executions };
 }
 
 function parseSmallPtNumber(value: string): number | null {
