@@ -1067,15 +1067,37 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
           valor: args.valor,
         };
         console.log(`editar_agendamento body:`, JSON.stringify(body));
-        const res = await fetch(`${baseUrl}/agendamentos/${args.agendamentoId}`, {
-          method: "PUT",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const text = await res.text();
-        console.log(`editar_agendamento response (${res.status}):`, text.slice(0, 500));
+        // Retry loop 429/5xx — mesmo padrão de criar_agendamento/cancelar_agendamento.
+        // Trinks rate-limita quando várias requests chegam quase juntas; sem retry
+        // uma remarcação legítima vira falha definitiva e escala humano à toa.
+        let res!: Response;
+        let text = "";
+        const maxAttempts = 3;
+        const backoffMs = [800, 1600, 3000];
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          res = await fetch(`${baseUrl}/agendamentos/${args.agendamentoId}`, {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          text = await res.text();
+          console.log(`editar_agendamento response (${res.status}, attempt ${attempt}):`, text.slice(0, 500));
+          const transient = res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504;
+          if (!transient || attempt >= maxAttempts) break;
+          const wait = backoffMs[attempt - 1] ?? 3000;
+          console.log(`editar_agendamento: ${res.status} transiente, aguardando ${wait}ms antes de retry ${attempt + 1}/${maxAttempts}`);
+          await new Promise((r) => setTimeout(r, wait));
+        }
         if (res.status === 200 || res.status === 204) {
           return { success: true, message: "Agendamento alterado com sucesso" };
+        }
+        if (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504) {
+          return {
+            error: `Trinks respondeu ${res.status} após ${maxAttempts} tentativas.`,
+            status: res.status,
+            recoverable: true,
+            message: "Trinks limitou/instabilizou as requisições. Aguarde alguns segundos e chame editar_agendamento novamente com os MESMOS dados — a remarcação NÃO foi concluída e nenhum dado do agendamento mudou. NÃO invente que o horário mudou, NÃO peça dados novos ao cliente.",
+          };
         }
         try { return { status: res.status, ...JSON.parse(text) }; } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
