@@ -6139,7 +6139,7 @@ async function callAIAgent(
   const _multiBookingGuardProviders = new Set(["frizzar", "appbarber"]);
   if (_bookingAttempts > 0 && _multiBookingGuardProviders.has(provider)) {
 
-    const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+    const { count: criados, breakdown, executions: bookedExecutionCount } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
       messages,
@@ -6148,11 +6148,35 @@ async function callAIAgent(
       modelUsed,
       attempts: _bookingAttempts,
       bookedServiceNames,
+      bookedExecutionCount,
     });
-    const prometidos = cls.total;
+    let prometidos = cls.total;
+
+    // 🔒 Clamp determinístico "1 execução = 1 visita".
+    // Caso real Frizzar (Blackburn/Heider): cliente pediu "corte e barba" (1 pessoa,
+    // 1 visita), a IA fez 1 única chamada de `agendar` com servicos:[corte, barba]
+    // na mesma comanda. bookedExecutionCount=1, criados=1, mas o LLM classificou
+    // prometidos=2 só porque viu 2 nomes distintos. Sem sinal determinístico de
+    // múltiplas pessoas OU múltiplos horários OU múltiplos profissionais na fala do
+    // cliente, forçamos prometidos = executions para não disparar recovery falso.
+    if (bookedExecutionCount >= 1 && prometidos > bookedExecutionCount) {
+      const visibleMsgs = messages.filter((m: any) =>
+        (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim()
+      );
+      const lastUser = [...visibleMsgs].reverse().find((m: any) => m.role === "user")?.content || "";
+      const explicitPeople = countExplicitProfessionalSelections(lastUser);
+      const explicitTimes = countExplicitUserTimeSelections(lastUser);
+      const hasMultiSignal = explicitPeople >= 2 || explicitTimes >= 2;
+      if (!hasMultiSignal) {
+        console.log(
+          `[MultiBookingGuard] clamp 1-exec-1-visita: prometidos=${prometidos} → ${bookedExecutionCount} (executions=${bookedExecutionCount}, explicitPeople=${explicitPeople}, explicitTimes=${explicitTimes}, reasoning="${cls.reasoning || ""}")`,
+        );
+        prometidos = bookedExecutionCount;
+      }
+    }
 
     console.log(
-      `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
+      `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} executions=${bookedExecutionCount} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
     );
 
     // Log estruturado no rastro de tool_calls pra auditoria.
