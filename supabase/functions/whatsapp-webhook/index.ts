@@ -1652,7 +1652,25 @@ Deno.serve(async (req) => {
         }
 
         if (dbHasIaOff && !waHasIaOff) {
-          console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — releasing AI`);
+          console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — clearing stale flag and releasing AI`);
+          // ⚠️ CRÍTICO: precisa REMOVER a flag do DB, senão o recheck pós-debounce
+          // lê o DB, ainda encontra a IA OFF antiga e bloqueia a resposta pra sempre.
+          // Isso é especialmente importante pra tenants que não têm coluna IA OFF
+          // configurada no Kanban (allConfiguredFlagIds não inclui o ID vindo do
+          // fallback UAZAPI, então a reconciliação bidirecional acima não limpa).
+          try {
+            if (leadData?.[0]) {
+              const cleaned = flagLabels.filter(
+                (f: string) => !iaOffLabelIds.includes(f) && !/ia\s*off/i.test(f),
+              );
+              await supabase.from("crm_leads")
+                .update({ flag_labels: cleaned, updated_at: new Date().toISOString() })
+                .eq("id", leadData[0].id);
+              console.log(`[IA OFF Check] Cleared stale IA OFF flag for ${phoneNumber} in DB`);
+            }
+          } catch (e) {
+            console.error("[IA OFF Check] Failed to clear stale IA OFF flag:", e);
+          }
         }
 
         const configuredFunnelIds = kanbanCols
