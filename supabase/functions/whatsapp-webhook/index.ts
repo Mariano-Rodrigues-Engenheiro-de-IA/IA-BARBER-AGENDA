@@ -3379,9 +3379,15 @@ function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
   sessionState?: any,
-): { count: number; breakdown: Array<{ tool: string; summary: string }> } {
+): { count: number; breakdown: Array<{ tool: string; summary: string }>; executions: number } {
   const breakdown: Array<{ tool: string; summary: string }> = [];
   let count = 0;
+  // executions = quantas chamadas distintas de agendar/criar_agendamento tiveram sucesso
+  // nesta rodada. Diferente de `count`, que pode ser inflado por bookedCount>1 dentro
+  // da MESMA chamada (ex.: Frizzar aceita servicos:[A,B] no mesmo agendar → 1 execução,
+  // mas count=2 se cada serviço vira uma linha). Usado pelo classifier para não inflar
+  // "prometidos" só porque há N nomes de serviço dentro de UMA única execução.
+  let executions = 0;
 
   const perProviderEvaluator: Record<string, (tc: any, s?: any) => {
     succeeded: boolean;
@@ -3417,6 +3423,7 @@ function countSuccessfulBookingsInTurn(
       );
       breakdown.push({ tool: tc.name, summary: `${when} (já registrado)` });
       count += 1;
+      executions += 1;
       continue;
     }
 
@@ -3431,10 +3438,11 @@ function countSuccessfulBookingsInTurn(
     if (!ev?.succeeded) continue;
     const summary = formatBookingSummary(ev);
     count += ev.bookedCount;
+    executions += 1;
     for (let i = 0; i < ev.bookedCount; i++) breakdown.push({ tool: tc.name, summary });
   }
 
-  return { count, breakdown };
+  return { count, breakdown, executions };
 }
 
 function parseSmallPtNumber(value: string): number | null {
@@ -3659,8 +3667,9 @@ async function classifyPendingBookings(params: {
   modelUsed: string;
   attempts: number;
   bookedServiceNames?: string[];
+  bookedExecutionCount?: number;
 }): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
-  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames } = params;
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
     source: "fallback" as const,
@@ -3677,17 +3686,21 @@ async function classifyPendingBookings(params: {
   const servicosInfo = bookedServiceNames && bookedServiceNames.length > 0
     ? `Serviço(s) REALMENTE reservado(s) com sucesso nesta rodada (nome exato do catálogo do negócio): ${JSON.stringify(bookedServiceNames)}. Se um desses nomes já é um combo que cobre tudo que o cliente pediu numa mesma fala (ex: cliente disse "corte e barba" e o serviço reservado se chama "Corte e Barba" ou similar), conte esse serviço como 1 agendamento — não infle o número só porque o cliente usou "e"/"mais" na frase. O catálogo do negócio, não a frase do cliente, decide se é 1 serviço ou 2.`
     : "";
+  const execInfo = typeof bookedExecutionCount === "number" && bookedExecutionCount > 0
+    ? `Chamadas de "agendar/criar_agendamento" que tiveram sucesso NESTA rodada: ${bookedExecutionCount}. Uma única execução bem-sucedida representa 1 visita/comanda mesmo que contenha vários serviços no mesmo array (ex: {servicos:[corte, barba]} para o MESMO cliente/profissional/horário sequencial = 1 agendamento, não 2). Só considere prometidos > número de execuções bem-sucedidas se a fala do cliente exigir múltiplas execuções separadas (2+ pessoas distintas, 2+ horários distintos, ou 2+ profissionais distintos). Diferença de NOMES de serviço dentro da mesma execução NÃO justifica inflar o total.`
+    : "";
 
   const sys = [
     "Você é um classificador de intenção.",
     "Dada a janela de conversa a seguir entre CLIENTE e ATENDENTE, conte quantos AGENDAMENTOS DISTINTOS o cliente pediu/confirmou nesta rodada.",
     "Regras:",
-    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3), EXCETO quando o catálogo do negócio já vende essa combinação como um serviço único (ver seção de serviços reservados abaixo, se houver).",
+    "- Cada horário distinto = 1 agendamento. Cada serviço adicional na MESMA hora = +1 agendamento (ex: corte+barba+sobrancelha = 3), EXCETO quando o catálogo do negócio já vende essa combinação como um serviço único OU quando o negócio permite vários serviços na MESMA visita/comanda (mesmo cliente, mesmo profissional, horários sequenciais) — nesses casos conta como 1.",
     "- Cada pessoa distinta = +1 (ex: '2 cortes pra amanhã' = 2).",
     "- Se o atendente ofereceu opções e o cliente respondeu apenas 'sim'/'pode'/'beleza'/'fechado', considere que ele aceitou TODAS as opções ofertadas na última fala do atendente.",
     "- Se não há intenção clara de agendar, retorne 1.",
     "- Nunca retorne 0.",
     ...(servicosInfo ? [servicosInfo.trim()] : []),
+    ...(execInfo ? [execInfo.trim()] : []),
     'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "reasoning": "<curto>"}',
   ].join("\n");
 
@@ -6126,7 +6139,7 @@ async function callAIAgent(
   const _multiBookingGuardProviders = new Set(["frizzar", "appbarber"]);
   if (_bookingAttempts > 0 && _multiBookingGuardProviders.has(provider)) {
 
-    const { count: criados, breakdown } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+    const { count: criados, breakdown, executions: bookedExecutionCount } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
     const cls = await classifyPendingBookings({
       messages,
@@ -6135,11 +6148,35 @@ async function callAIAgent(
       modelUsed,
       attempts: _bookingAttempts,
       bookedServiceNames,
+      bookedExecutionCount,
     });
-    const prometidos = cls.total;
+    let prometidos = cls.total;
+
+    // 🔒 Clamp determinístico "1 execução = 1 visita".
+    // Caso real Frizzar (Blackburn/Heider): cliente pediu "corte e barba" (1 pessoa,
+    // 1 visita), a IA fez 1 única chamada de `agendar` com servicos:[corte, barba]
+    // na mesma comanda. bookedExecutionCount=1, criados=1, mas o LLM classificou
+    // prometidos=2 só porque viu 2 nomes distintos. Sem sinal determinístico de
+    // múltiplas pessoas OU múltiplos horários OU múltiplos profissionais na fala do
+    // cliente, forçamos prometidos = executions para não disparar recovery falso.
+    if (bookedExecutionCount >= 1 && prometidos > bookedExecutionCount) {
+      const visibleMsgs = messages.filter((m: any) =>
+        (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim()
+      );
+      const lastUser = [...visibleMsgs].reverse().find((m: any) => m.role === "user")?.content || "";
+      const explicitPeople = countExplicitProfessionalSelections(lastUser);
+      const explicitTimes = countExplicitUserTimeSelections(lastUser);
+      const hasMultiSignal = explicitPeople >= 2 || explicitTimes >= 2;
+      if (!hasMultiSignal) {
+        console.log(
+          `[MultiBookingGuard] clamp 1-exec-1-visita: prometidos=${prometidos} → ${bookedExecutionCount} (executions=${bookedExecutionCount}, explicitPeople=${explicitPeople}, explicitTimes=${explicitTimes}, reasoning="${cls.reasoning || ""}")`,
+        );
+        prometidos = bookedExecutionCount;
+      }
+    }
 
     console.log(
-      `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
+      `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} executions=${bookedExecutionCount} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
     );
 
     // Log estruturado no rastro de tool_calls pra auditoria.
