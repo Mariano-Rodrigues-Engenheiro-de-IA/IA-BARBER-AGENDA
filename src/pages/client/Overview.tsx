@@ -189,7 +189,12 @@ export default function ClientOverview() {
     const isRealAi = (m: any) =>
       m.role === "assistant" && !(typeof m.content === "string" && m.content.startsWith(HUMAN_PREFIX));
     const aiMessages = (messages ?? []).filter(isRealAi).length;
-    const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
+    // "Clientes atendidos" = telefones únicos que receberam ao menos uma
+    // resposta real da IA no período. Clientes que só falaram com o atendente
+    // humano (ou que nem foram respondidos) não entram aqui.
+    const uniqueClients = new Set(
+      (messages ?? []).filter(isRealAi).map((m: any) => m.phone_number)
+    ).size;
     return { bookings: seen.size, revenue, aiMessages, uniqueClients };
   }, [agentLogs, messages, priceMap]);
 
