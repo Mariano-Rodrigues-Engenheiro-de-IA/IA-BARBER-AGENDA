@@ -105,7 +105,7 @@ export default function MetaCostPanel() {
         <div>
           <h2 className="text-xl font-bold text-foreground">API Oficial Meta</h2>
           <p className="text-muted-foreground text-sm">
-            Acompanhamento cumulativo de mensagens de saída da IA por empresa e custo estimado sob a cobrança da Meta.
+            Acompanhamento cumulativo de mensagens de saída da IA por empresa e custo estimado sob a cobrança da Meta. Lista todas as empresas cadastradas.
           </p>
         </div>
         <div className="text-xs text-muted-foreground">
