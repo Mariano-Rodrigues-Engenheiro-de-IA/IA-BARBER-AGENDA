@@ -5973,12 +5973,17 @@ async function callAIAgent(
 
   // ============================================================================
   // 🛡️ PHANTOM CONFIRMATION GUARD
-  // Cobre o caso em que a IA afirma "confirmado"/"agendei" SEM NUNCA TER CHAMADO
-  // agendar/criar_agendamento nesta rodada (0 tentativas) — bug real observado em
-  // produção, ex: cliente manda "marca outro horário / pode confirmar" numa
-  // mensagem só, a IA confunde e alucina a confirmação do agendamento anterior
-  // sem rodar a ferramenta. O MultiBookingGuard abaixo só roda quando há pelo
-  // menos 1 tentativa — este guard cobre exatamente o caso complementar (0).
+  // ÚNICA função: impedir a IA de PROMETER/INDUZIR que um agendamento NOVO foi
+  // finalizado quando ela não criou nada de verdade nesta rodada.
+  //
+  // Importante: confirmação de agendamento PRÉ-EXISTENTE enviada pela barbearia
+  // (mensagem [ATENDENTE HUMANO] / lembrete externo: "posso confirmar?") NÃO é
+  // criação nova e NÃO deve acionar este guard. Nesse cenário o agendamento já
+  // existe; o cliente está apenas respondendo ao estabelecimento.
+  //
+  // O MultiBookingGuard abaixo só roda quando houve pelo menos 1 tentativa de
+  // criação; este guard cobre o caso complementar: 0 tentativas + resposta final
+  // que deixa o cliente entender que está tudo criado/confirmado.
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
   // ⚠️ ESCOPO: os 5 providers (trinks, appbarber, bemp, onebeleza, frizzar).
@@ -5990,25 +5995,37 @@ async function callAIAgent(
   const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
 
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
-    // ⚠️ Regex propositalmente ESTREITO — só dispara quando a IA afirma, em
-    // 1ª pessoa e no PASSADO, que ACABOU DE CRIAR um agendamento novo neste
-    // turno. Nada de "confirmado", "está marcado", "horário confirmado" — essas
-    // frases aparecem legitimamente no fluxo de confirmação (cliente responde
-    // "sim/pode/confirmo" a "posso confirmar às 10?" e a IA ecoa "confirmado").
-    // O guard só existe para pegar o caso "IA prometeu criação e não chamou
-    // ferramenta / ferramenta falhou". Padrões aceitos como "claim de criação":
-    //   - "agendei" / "já agendei" / "acabei de agendar" / "acabo de agendar"
-    //   - "criei o(seu) agendamento" / "criei a reserva"
-    //   - "marcamos (seu|o) horário"
-    //   - "agendamento criado/feito/realizado COM SUCESSO"
-    //   - "reserva criada/feita COM SUCESSO"
-    //   - "prontinho ... agendei/criei/marcamos"
-    // Deliberadamente NÃO usamos heurística no texto do cliente (BARE_AFFIRM_RE)
-    // — se a IA não afirma criação nova em 1ª pessoa aqui, o guard nem entra.
+    const lastAssistantMessage = getLastAssistantMessage(history) || "";
+    const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
+    const userIsShortConfirmation = isAffirmativeReply(userMessage || "");
+
+    // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia,
+    // isso é confirmação de agendamento já existente. Não é fluxo de criação da
+    // IA, então este guard fica completamente fora do caminho.
+    const isHumanExistingBookingConfirmation = lastAssistantWasHuman && userIsShortConfirmation;
+
+    // Contexto estrutural de CRIAÇÃO NOVA: a ÚLTIMA mensagem da IA (não humana)
+    // ofereceu/ancorou um horário e pediu confirmação; o cliente respondeu curto
+    // confirmando. Neste ponto a IA precisa chamar agendar/criar_agendamento.
+    // Se ela apenas disser "tudo certo, te esperamos", isso é promessa fantasma.
+    const isNewBookingFinalStep = !lastAssistantWasHuman
+      && userIsShortConfirmation
+      && !!lastAssistantMessage
+      && isBookingTimeConfirmationPrompt(lastAssistantMessage);
+
+    // Claim explícito de criação nova — ainda útil para pegar "já agendei" mesmo
+    // quando a mensagem anterior não foi detectada como prompt de confirmação.
     const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos))\b/i;
+    // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
+    // cliente a impressão inequívoca de que pode ir à barbearia.
+    const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
     const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
     const sentences = finalResponse.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-    const claimsNewBookingConfirmed = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const hasExplicitCreationClaim = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const hasImpliedFinalizationClaim = isNewBookingFinalStep
+      && sentences.some((s) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
+      && (hasExplicitCreationClaim || hasImpliedFinalizationClaim);
 
     if (claimsNewBookingConfirmed) {
       // Só é alucinação de verdade se NÃO houver nenhum agendamento real JÁ EXISTENTE
@@ -6042,15 +6059,15 @@ async function callAIAgent(
       }
 
       if (!recentBookingSuccess && !lookupLegit) {
-        console.warn(`[PhantomConfirmationGuard] Resposta afirma agendamento confirmado mas 0 tentativas de agendar/criar_agendamento nesta rodada, nenhum sucesso na sessão, e nenhuma busca ativa recente bate. Tentando reinjeção.`);
-        logErrors.push({ message: `Resposta afirmava confirmação sem chamada real de agendar e sem busca ativa que confirme — tentando reinjeção antes de responder.`, level: "warning" });
+        console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim}. Tentando reinjeção.`);
+        logErrors.push({ message: `Resposta prometia finalização de agendamento novo sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
         try {
           const nudge = {
             role: "system",
             content:
-              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você afirmou que um agendamento está confirmado, mas NÃO chamou nenhuma ferramenta de agendar nem de busca de agendamento nesta execução — não dá pra afirmar confirmação sem verificar. " +
+              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você deu a entender que um agendamento NOVO estava finalizado, mas NÃO chamou nenhuma ferramenta de agendar nesta execução — não dá pra prometer criação sem criar de verdade. " +
               "Faça AGORA uma das duas coisas, obrigatoriamente via ferramenta:\n" +
               "1) Se o cliente está reafirmando/confirmando um agendamento que JÁ EXISTE (ex: respondeu 'sim' a uma pergunta de confirmação, ou o agendamento pode ter sido criado no app do estabelecimento), chame a ferramenta de BUSCA de agendamentos do cliente (buscar_agendamento / listar_agendamentos / buscar_agendamentos_dia — o nome varia por provedor). Se achar um ativo compatível, responda confirmando com os dados reais retornados.\n" +
               "2) Se é um agendamento NOVO com todos os dados já coletados na conversa (serviço, profissional, data, hora), chame a ferramenta de agendar/criar_agendamento AGORA com esses dados.\n" +
