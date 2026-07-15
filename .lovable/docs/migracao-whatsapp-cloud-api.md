@@ -203,11 +203,10 @@ Business Verification: 1-5 dias. Display Name: 1-3 dias por número. Template: 1
 
 ### 4.4 Custo
 
-- **Meta cobra por conversa iniciada**, não por mensagem. Categorias: Marketing, Utility, Authentication, Service. Preço Brasil aproximado (2026):
-  - Utility (lembrete de agendamento): ~R$ 0,04-0,08 por conversa 24h.
-  - Marketing: ~R$ 0,20-0,35 por conversa 24h.
-  - Service (iniciada pelo cliente): **grátis** (dentro do free tier de 1000/mês por número).
-- Fluxo atual (cliente sempre inicia → tudo cai em Service) tende a ficar quase todo gratuito. Follow-ups e lembretes automáticos entram como Utility.
+- **Mensagens de serviço (resposta dentro de 24h) deixam de ser grátis a partir de 01/10/2026.** Antes desse date, o modelo era cobrança por conversa iniciada e Service tinha free tier de 1000/mês por número. A partir de outubro, a Meta cobra **por mensagem enviada** — incluindo exatamente as respostas de IA/chatbot dentro da janela de 24h.
+- Valor de referência no Brasil: ~**R$ 0,035 por mensagem** (~US$ 0,0068), com desconto por volume alto. Cada mensagem da IA (texto, confirmação, recondução, follow-up dentro de 24h) conta.
+- **Utility** (lembretes de agendamento, fora da janela de 24h) e **Marketing** mantêm a lógica de categoria por conversa iniciada (~R$ 0,04-0,08 para Utility e ~R$ 0,20-0,35 para Marketing, valores orientativos).
+- **Fluxo atual (cliente sempre inicia, IA responde dentro de 24h) não é mais "quase gratuito"** — é o cenário que mais será impactado pelo novo preço por mensagem. A estimativa de custo real esperada só será possível quando o levantamento de volume real dos últimos 15 dias (contagem de mensagens de IA enviadas) retornar.
 
 ---
 
