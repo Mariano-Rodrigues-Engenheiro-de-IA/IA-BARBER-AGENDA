@@ -7120,15 +7120,39 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
       }
 
       case "escalate_human": {
+        const sbEscalate = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+        const extractSentMessageId = (payload: any): string | null => {
+          if (!payload || typeof payload !== "object") return null;
+          return payload?.messageid || payload?.id || payload?.message?.id || payload?.messages?.[0]?.id || null;
+        };
+
         const silentMode = config.silent_mode === true;
         if (!silentMode) {
           const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
-          const clientRes = await fetch(`${uazapiUrl}/send/text`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-            body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 2000 }),
-          });
-          await readResponsePayload(clientRes);
+          try {
+            const clientRes = await fetch(`${uazapiUrl}/send/text`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+              body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 2000 }),
+            });
+            const clientData = await readResponsePayload(clientRes);
+            const clientMsgId = extractSentMessageId(clientData);
+            // Persistir mensagem enviada ao cliente (conta como saída da IA p/ métrica Meta)
+            try {
+              await sbEscalate.from("chat_messages").insert({
+                tenant_id: tenant.id,
+                phone_number: phoneNumber,
+                role: "assistant",
+                content: clientText,
+                message_id: clientMsgId,
+                processed: true,
+              });
+            } catch (persistErr: any) {
+              console.error("[EscalateHuman] persist client msg error:", persistErr?.message || persistErr);
+            }
+          } catch (e: any) {
+            console.error("[EscalateHuman] send client msg error:", e?.message || e);
+          }
         } else {
           console.log(`[EscalateHuman] Silent mode — skipping client message`);
         }
@@ -7157,12 +7181,31 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             `📋 *Motivo:* ${motivo}\n` +
             `💬 *Últimas mensagens:*\n${lastClientMsg || "(sem mensagens)"}`;
 
-          await fetch(`${uazapiUrl}/send/text`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-            body: JSON.stringify({ number: humanNumber, text: summaryText, delay: 1000 }),
-          });
-          console.log(`[EscalateHuman] Summary sent to human ${humanNumber}`);
+          try {
+            const humanRes = await fetch(`${uazapiUrl}/send/text`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+              body: JSON.stringify({ number: humanNumber, text: summaryText, delay: 1000 }),
+            });
+            const humanData = await readResponsePayload(humanRes);
+            const humanMsgId = extractSentMessageId(humanData);
+            // Persistir mensagem enviada ao atendente humano (conta como saída da IA p/ métrica Meta)
+            try {
+              await sbEscalate.from("chat_messages").insert({
+                tenant_id: tenant.id,
+                phone_number: humanNumber,
+                role: "assistant",
+                content: summaryText,
+                message_id: humanMsgId,
+                processed: true,
+              });
+            } catch (persistErr: any) {
+              console.error("[EscalateHuman] persist human msg error:", persistErr?.message || persistErr);
+            }
+            console.log(`[EscalateHuman] Summary sent to human ${humanNumber}`);
+          } catch (e: any) {
+            console.error("[EscalateHuman] send human msg error:", e?.message || e);
+          }
         }
 
         const labelId = config.label_id;
@@ -7174,8 +7217,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             } else {
               console.log(`[EscalateHuman] Label ${labelId} ensured present (${labelResult.already ? "already present" : "changed"})`);
               // CRM upsert
-              const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-              await upsertCrmLead(sb, tenant.id, phoneNumber, String(labelId), "Escalado Humano", "ai");
+              await upsertCrmLead(sbEscalate, tenant.id, phoneNumber, String(labelId), "Escalado Humano", "ai");
             }
           } catch (e) {
             console.error("[EscalateHuman] Error adding label:", e);
