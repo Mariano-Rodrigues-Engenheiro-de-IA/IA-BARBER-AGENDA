@@ -182,12 +182,19 @@ export default function ClientOverview() {
     });
     let revenue = 0;
     seen.forEach((v) => (revenue += v));
-    const aiMessages = (messages ?? []).filter((m: any) => m.role === "assistant").length;
+    // "Respostas da IA" = apenas mensagens realmente geradas pela IA.
+    // Excluímos as mensagens digitadas manualmente pelo atendente humano
+    // (prefixadas com "[ATENDENTE HUMANO]:"), pra bater com a auditoria.
+    const HUMAN_PREFIX = "[ATENDENTE HUMANO]:";
+    const isRealAi = (m: any) =>
+      m.role === "assistant" && !(typeof m.content === "string" && m.content.startsWith(HUMAN_PREFIX));
+    const aiMessages = (messages ?? []).filter(isRealAi).length;
     const uniqueClients = new Set((messages ?? []).filter((m: any) => m.role === "user").map((m: any) => m.phone_number)).size;
     return { bookings: seen.size, revenue, aiMessages, uniqueClients };
   }, [agentLogs, messages, priceMap]);
 
   const activityData = useMemo(() => {
+    const HUMAN_PREFIX = "[ATENDENTE HUMANO]:";
     const map: Record<string, { date: string; cliente: number; ia: number }> = {};
     bucketDates.forEach((d) => {
       map[d] = { date: d.slice(5), cliente: 0, ia: 0 };
@@ -196,7 +203,7 @@ export default function ClientOverview() {
       const k = m.created_at.slice(0, 10);
       if (!map[k]) return;
       if (m.role === "user") map[k].cliente++;
-      else if (m.role === "assistant") map[k].ia++;
+      else if (m.role === "assistant" && !(typeof m.content === "string" && m.content.startsWith(HUMAN_PREFIX))) map[k].ia++;
     });
     return Object.values(map);
   }, [messages, bucketDates]);
