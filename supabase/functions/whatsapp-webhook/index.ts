@@ -6017,8 +6017,7 @@ async function callAIAgent(
     if (isBareAffirmation) {
       // não roda o guard nesse turno
     } else if (claimsNewBookingConfirmed) {
-
-    if (claimsNewBookingConfirmed) {
+      {
       // Só é alucinação de verdade se NÃO houver nenhum agendamento real JÁ EXISTENTE
       // registrado nesta sessão (senão pode ser reconfirmação legítima — ex: cliente
       // responde "positivo"/"sim" a um lembrete de agendamento feito dias atrás).
