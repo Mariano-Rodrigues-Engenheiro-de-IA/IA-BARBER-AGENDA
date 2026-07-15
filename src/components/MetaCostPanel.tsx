@@ -61,19 +61,37 @@ export default function MetaCostPanel() {
     const now = Date.now();
     const startMs = new Date(COUNTER_START_AT).getTime();
     const daysElapsed = Math.max(1, (now - startMs) / (1000 * 60 * 60 * 24));
-    const list = Array.from(counts.entries()).map(([tenantId, total]) => {
-      const t = tenantMap.get(tenantId);
+
+    // Incluir TODAS as empresas cadastradas, mesmo sem mensagens,
+    // para permitir auditoria completa do tenant base.
+    const list = Array.from(tenantMap.entries()).map(([tenantId, t]) => {
+      const total = counts.get(tenantId) ?? 0;
       const costAccum = total * COST_PER_MESSAGE_BRL;
       const projMonthly = (total / daysElapsed) * 30 * COST_PER_MESSAGE_BRL;
       return {
         tenantId,
-        name: t?.name ?? "(empresa removida)",
-        status: t?.status ?? null,
+        name: t.name ?? "(empresa sem nome)",
+        status: t.status ?? null,
         total,
         costAccum,
         projMonthly,
       };
     });
+
+    // Adicionar mensagens órfãs de tenants removidos, se houver.
+    for (const [tenantId, total] of counts.entries()) {
+      if (!tenantMap.has(tenantId)) {
+        list.push({
+          tenantId,
+          name: "(empresa removida)",
+          status: null,
+          total,
+          costAccum: total * COST_PER_MESSAGE_BRL,
+          projMonthly: (total / daysElapsed) * 30 * COST_PER_MESSAGE_BRL,
+        });
+      }
+    }
+
     list.sort((a, b) => b.total - a.total);
     const grandTotalMsgs = list.reduce((s, r) => s + r.total, 0);
     const grandTotalCost = grandTotalMsgs * COST_PER_MESSAGE_BRL;
