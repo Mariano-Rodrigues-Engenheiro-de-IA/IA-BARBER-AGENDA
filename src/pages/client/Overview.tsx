@@ -99,7 +99,7 @@ export default function ClientOverview() {
       const pageSize = 1000;
       while (true) {
         const { data, error } = await supabase.from("chat_messages")
-          .select("phone_number, role, created_at")
+          .select("phone_number, role, created_at, content")
           .eq("tenant_id", tenantId!)
           .gte("created_at", since)
           .lte("created_at", until)
