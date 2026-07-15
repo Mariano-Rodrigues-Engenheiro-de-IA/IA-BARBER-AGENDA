@@ -5990,12 +5990,33 @@ async function callAIAgent(
   const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
 
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
-    const CONFIRM_CLAIM_RE = /\b(est[aá]\s+confirmad[oa]|confirmad[oa]\s*!|agendei|hor[aá]rio\s+(?:j[aá]\s+)?confirmad[oa]|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}confirmad[oa])\b/i;
+    // ⚠️ Regex propositalmente ESTREITO: só dispara em afirmações de CRIAÇÃO NOVA
+    // de agendamento. Frases genéricas do tipo "está confirmado!"/"horário confirmado"
+    // (que a IA usa como eco em fluxo de confirmação de agendamento pré-existente,
+    // ex: barbearia manda lembrete → cliente responde "perfeito"/"sim" → IA
+    // devolve "confirmado!") NÃO são novo agendamento — não devem ativar o guard.
+    // Só entram aqui verbos/frases inequívocas de criação: "agendei",
+    // "acabei de agendar", "agendamento criado/feito/realizado", "reserva feita",
+    // "marcamos seu horário", "marcado com sucesso".
+    const CONFIRM_CLAIM_RE = /\b(agendei|acabei\s+de\s+agendar|agendamento\s+(criado|feito|realizado|marcado)|reserva\s+(criada|feita)|marcamos\s+(seu|o)\s+hor[aá]rio|marcad[oa]\s+com\s+sucesso|prontinho[^.!?]{0,40}(agendei|marcad[oa]\s+com\s+sucesso|agendamento\s+(criado|feito)))\b/i;
     const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
     const sentences = finalResponse.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
     const claimsNewBookingConfirmed = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
 
-    if (claimsNewBookingConfirmed) {
+    // Trava extra: se a mensagem do cliente é uma afirmação curta ("perfeito",
+    // "sim", "ok", "beleza", "confirmo", "isso mesmo"...) sem NENHUM pedido de
+    // agendar, é fluxo de confirmação de agendamento pré-existente — o guard
+    // não deve interferir mesmo que o regex acima dê match por acaso.
+    const lastUserText = (userMessage || "").trim().toLowerCase();
+    const BARE_AFFIRM_RE = /^(perfeito|perfeita|sim|ss|s|ok|okay|okey|blz|beleza|confirmo|confirmado|confirmar|pode|pode ser|pode confirmar|isso|isso mesmo|certo|certeza|claro|show|top|otimo|ótimo|👍+|✅+|👌+)[.!?\s]*$/i;
+    const BOOKING_REQUEST_RE = /\b(agenda[rn]?|marca[rn]?|marcar|hor[aá]rio|reserva[rn]?|remarc|troca[rn]? (hor|dia))\b/i;
+    const isBareAffirmation = BARE_AFFIRM_RE.test(lastUserText) && !BOOKING_REQUEST_RE.test(lastUserText);
+    if (isBareAffirmation) {
+      console.log(`[PhantomConfirmationGuard] Skip: mensagem do cliente é afirmação curta ("${lastUserText.slice(0,40)}") sem pedido de agendar — fluxo de confirmação, não novo agendamento.`);
+    }
+    if (isBareAffirmation) {
+      // não roda o guard nesse turno
+    } else if (claimsNewBookingConfirmed) {
       // Só é alucinação de verdade se NÃO houver nenhum agendamento real JÁ EXISTENTE
       // registrado nesta sessão (senão pode ser reconfirmação legítima — ex: cliente
       // responde "positivo"/"sim" a um lembrete de agendamento feito dias atrás).
