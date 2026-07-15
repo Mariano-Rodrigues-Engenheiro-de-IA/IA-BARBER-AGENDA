@@ -23,6 +23,14 @@ export default function AuditPage() {
         <h1 className="text-2xl font-bold text-foreground">Auditoria</h1>
         <p className="text-muted-foreground">Histórico de alterações nos painéis</p>
       </div>
+
+      <MetaCostPanel />
+
+      <div>
+        <h2 className="text-xl font-bold text-foreground">Histórico de alterações</h2>
+        <p className="text-muted-foreground text-sm">Registros recentes de mudanças feitas nos painéis.</p>
+      </div>
+
       <div className="glass-card p-0 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
