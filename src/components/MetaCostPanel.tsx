@@ -61,19 +61,37 @@ export default function MetaCostPanel() {
     const now = Date.now();
     const startMs = new Date(COUNTER_START_AT).getTime();
     const daysElapsed = Math.max(1, (now - startMs) / (1000 * 60 * 60 * 24));
-    const list = Array.from(counts.entries()).map(([tenantId, total]) => {
-      const t = tenantMap.get(tenantId);
+
+    // Incluir TODAS as empresas cadastradas, mesmo sem mensagens,
+    // para permitir auditoria completa do tenant base.
+    const list = Array.from(tenantMap.entries()).map(([tenantId, t]) => {
+      const total = counts.get(tenantId) ?? 0;
       const costAccum = total * COST_PER_MESSAGE_BRL;
       const projMonthly = (total / daysElapsed) * 30 * COST_PER_MESSAGE_BRL;
       return {
         tenantId,
-        name: t?.name ?? "(empresa removida)",
-        status: t?.status ?? null,
+        name: t.name ?? "(empresa sem nome)",
+        status: t.status ?? null,
         total,
         costAccum,
         projMonthly,
       };
     });
+
+    // Adicionar mensagens órfãs de tenants removidos, se houver.
+    for (const [tenantId, total] of counts.entries()) {
+      if (!tenantMap.has(tenantId)) {
+        list.push({
+          tenantId,
+          name: "(empresa removida)",
+          status: null,
+          total,
+          costAccum: total * COST_PER_MESSAGE_BRL,
+          projMonthly: (total / daysElapsed) * 30 * COST_PER_MESSAGE_BRL,
+        });
+      }
+    }
+
     list.sort((a, b) => b.total - a.total);
     const grandTotalMsgs = list.reduce((s, r) => s + r.total, 0);
     const grandTotalCost = grandTotalMsgs * COST_PER_MESSAGE_BRL;
@@ -87,7 +105,7 @@ export default function MetaCostPanel() {
         <div>
           <h2 className="text-xl font-bold text-foreground">API Oficial Meta</h2>
           <p className="text-muted-foreground text-sm">
-            Acompanhamento cumulativo de mensagens de saída da IA por empresa e custo estimado sob a cobrança da Meta.
+            Acompanhamento cumulativo de mensagens de saída da IA por empresa e custo estimado sob a cobrança da Meta. Lista todas as empresas cadastradas.
           </p>
         </div>
         <div className="text-xs text-muted-foreground">
@@ -131,6 +149,7 @@ export default function MetaCostPanel() {
             <tr>
               <th className="p-3">#</th>
               <th className="p-3">Empresa</th>
+              <th className="p-3">Status</th>
               <th className="p-3 text-right">Mensagens</th>
               <th className="p-3 text-right">Custo acumulado</th>
               <th className="p-3 text-right">Projeção mensal</th>
@@ -139,15 +158,15 @@ export default function MetaCostPanel() {
           <tbody>
             {isLoading && (
               <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
+                <td className="p-6 text-center text-muted-foreground" colSpan={6}>
                   Carregando...
                 </td>
               </tr>
             )}
             {!isLoading && stats.list.length === 0 && (
               <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
-                  Nenhuma mensagem contabilizada ainda.
+                <td className="p-6 text-center text-muted-foreground" colSpan={6}>
+                  Nenhuma empresa cadastrada.
                 </td>
               </tr>
             )}
@@ -155,6 +174,15 @@ export default function MetaCostPanel() {
               <tr key={r.tenantId} className="border-t border-border">
                 <td className="p-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
                 <td className="p-3 font-medium text-foreground">{r.name}</td>
+                <td className="p-3">
+                  {r.status ? (
+                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground capitalize">
+                      {r.status}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </td>
                 <td className="p-3 text-right font-mono">{r.total.toLocaleString("pt-BR")}</td>
                 <td className="p-3 text-right font-mono">{formatBRL(r.costAccum)}</td>
                 <td className="p-3 text-right font-mono text-muted-foreground">{formatBRL(r.projMonthly)}</td>
