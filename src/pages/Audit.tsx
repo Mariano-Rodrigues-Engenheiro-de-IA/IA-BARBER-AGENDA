@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { useTenants } from "@/hooks/useTenants";
+import MetaCostPanel from "@/components/MetaCostPanel";
 
 export default function AuditPage() {
   const { data: tenants } = useTenants();
