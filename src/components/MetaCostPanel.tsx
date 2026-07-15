@@ -149,6 +149,7 @@ export default function MetaCostPanel() {
             <tr>
               <th className="p-3">#</th>
               <th className="p-3">Empresa</th>
+              <th className="p-3">Status</th>
               <th className="p-3 text-right">Mensagens</th>
               <th className="p-3 text-right">Custo acumulado</th>
               <th className="p-3 text-right">Projeção mensal</th>
@@ -157,15 +158,15 @@ export default function MetaCostPanel() {
           <tbody>
             {isLoading && (
               <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
+                <td className="p-6 text-center text-muted-foreground" colSpan={6}>
                   Carregando...
                 </td>
               </tr>
             )}
             {!isLoading && stats.list.length === 0 && (
               <tr>
-                <td className="p-6 text-center text-muted-foreground" colSpan={5}>
-                  Nenhuma mensagem contabilizada ainda.
+                <td className="p-6 text-center text-muted-foreground" colSpan={6}>
+                  Nenhuma empresa cadastrada.
                 </td>
               </tr>
             )}
@@ -173,6 +174,15 @@ export default function MetaCostPanel() {
               <tr key={r.tenantId} className="border-t border-border">
                 <td className="p-3 text-muted-foreground font-mono text-xs">{i + 1}</td>
                 <td className="p-3 font-medium text-foreground">{r.name}</td>
+                <td className="p-3">
+                  {r.status ? (
+                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground capitalize">
+                      {r.status}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">—</span>
+                  )}
+                </td>
                 <td className="p-3 text-right font-mono">{r.total.toLocaleString("pt-BR")}</td>
                 <td className="p-3 text-right font-mono">{formatBRL(r.costAccum)}</td>
                 <td className="p-3 text-right font-mono text-muted-foreground">{formatBRL(r.projMonthly)}</td>
