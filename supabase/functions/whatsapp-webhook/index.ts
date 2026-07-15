@@ -7537,7 +7537,7 @@ function isAffirmativeReply(value: string): boolean {
   const normalized = normalizeUserFacingText(raw);
   if (!normalized) return false;
 
-  return /^(sim|s|ok|okay|pode|pode sim|isso|isso mesmo|confirmo|confirmado|certo|beleza|perfeito|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
+  return /^(sim|s|ok|okay|pode|pode sim|pode ser|pode confirmar|confirmo|confirmo sim|confirmado|positivo|isso|isso mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
 }
 
 function getLastAssistantMessage(history: { role: string; content: string }[]): string | null {
@@ -7564,7 +7564,7 @@ function extractSingleTimeReference(value: string): string | null {
 function isBookingTimeConfirmationPrompt(value: string): boolean {
   const normalized = normalizeUserFacingText(value);
   if (!normalized) return false;
-  return /\b(posso confirmar|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
+  return /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
 }
 
 // isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
