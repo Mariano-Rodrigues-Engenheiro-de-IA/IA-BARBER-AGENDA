@@ -60,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isStaff, setIsStaff] = useState(false);
   const [role, setRole] = useState<Role>(null);
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<PermissionsMap>({});
@@ -67,11 +68,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileLoading, setProfileLoading] = useState(false);
   const profileRequestId = useRef(0);
 
-  const apply = (p: { isAdmin: boolean; role: Role; tenantId: string | null; permissions: PermissionsMap }) => {
-    setIsAdmin(p.isAdmin); setRole(p.role); setTenantId(p.tenantId); setPermissions(p.permissions);
+  const apply = (p: { isAdmin: boolean; isStaff: boolean; role: Role; tenantId: string | null; permissions: PermissionsMap }) => {
+    setIsAdmin(p.isAdmin); setIsStaff(p.isStaff); setRole(p.role); setTenantId(p.tenantId); setPermissions(p.permissions);
   };
 
-  const resetProfile = () => apply({ isAdmin: false, role: null, tenantId: null, permissions: {} });
+  const resetProfile = () => apply({ isAdmin: false, isStaff: false, role: null, tenantId: null, permissions: {} });
 
   const loadAndApplyProfile = async (userId: string) => {
     const requestId = ++profileRequestId.current;
