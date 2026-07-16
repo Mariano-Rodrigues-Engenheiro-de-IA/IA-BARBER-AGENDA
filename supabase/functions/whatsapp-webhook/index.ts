@@ -3388,6 +3388,10 @@ function countSuccessfulBookingsInTurn(
   // mas count=2 se cada serviço vira uma linha). Usado pelo classifier para não inflar
   // "prometidos" só porque há N nomes de serviço dentro de UMA única execução.
   let executions = 0;
+  // Frizzar pode receber duas chamadas separadas para serviços da mesma pessoa
+  // na mesma visita. Para o MultiBookingGuard isso continua sendo UMA visita;
+  // deduplica pela identidade operacional da comanda sem afetar outros providers.
+  const frizzarVisitKeys = new Set<string>();
 
   const perProviderEvaluator: Record<string, (tc: any, s?: any) => {
     succeeded: boolean;
@@ -3436,6 +3440,16 @@ function countSuccessfulBookingsInTurn(
     if (!evaluator) continue;
     const ev = evaluator(tc, sessionState);
     if (!ev?.succeeded) continue;
+    if (provider === "frizzar") {
+      const visitKey = [
+        String(args.clienteId ?? ""),
+        String(args.dia ?? ""),
+        String(args.hora ?? ""),
+        String(args.profissionalId ?? ""),
+      ].join("|");
+      if (frizzarVisitKeys.has(visitKey)) continue;
+      frizzarVisitKeys.add(visitKey);
+    }
     const summary = formatBookingSummary(ev);
     count += ev.bookedCount;
     executions += 1;
