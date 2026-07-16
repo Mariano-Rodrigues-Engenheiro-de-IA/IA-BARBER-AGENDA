@@ -21,6 +21,7 @@ import {
 export default function TenantsPage() {
   const { data: tenants, isLoading } = useTenants();
   const deleteTenant = useDeleteTenant();
+  const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
