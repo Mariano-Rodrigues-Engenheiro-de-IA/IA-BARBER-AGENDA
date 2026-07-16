@@ -1193,24 +1193,32 @@ export default function TenantFormPage() {
             <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
               Você alterou o prompt do sistema. Uma nova versão (v{(versions?.[0]?.version ?? 0) + 1}) será
-              criada e o cliente verá a alteração imediatamente. Descreva o que mudou nesta versão.
+              criada e o cliente verá a alteração imediatamente. Descreva o que mudou nesta versão
+              (mínimo de 150 caracteres) — esse resumo aparece em "Ações da equipe".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="admin-change-summary">Resumo das alterações</Label>
+            <Label htmlFor="admin-change-summary">Resumo das alterações (obrigatório)</Label>
             <Textarea
               id="admin-change-summary"
-              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              placeholder="Descreva de forma clara o que mudou, por quê, e o efeito esperado no atendimento (mínimo 150 caracteres)."
               value={promptSummary}
               onChange={(e) => setPromptSummary(e.target.value)}
-              rows={3}
+              rows={5}
             />
+            <p className={`text-xs ${promptSummary.trim().length < 150 ? "text-destructive" : "text-muted-foreground"}`}>
+              {promptSummary.trim().length}/150 caracteres mínimos
+            </p>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
+              disabled={promptSummary.trim().length < 150}
               onClick={async () => {
-                if (!promptSummary.trim()) { toast.error("Descreva um resumo das alterações"); return; }
+                if (promptSummary.trim().length < 150) {
+                  toast.error("O resumo precisa ter no mínimo 150 caracteres");
+                  return;
+                }
                 const s = promptSummary.trim();
                 setPromptSummaryOpen(false);
                 setPromptSummary("");

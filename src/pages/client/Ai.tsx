@@ -112,8 +112,13 @@ export default function ClientAi() {
 
   const handleSavePrompt = async () => {
     if (!tenantId) return;
+    if (changeSummary.trim().length < 150) {
+      toast.error("O resumo precisa ter no mínimo 150 caracteres");
+      return;
+    }
     const prompt = form.agent_system_prompt ?? "";
     const nextVersion = (versions?.[0]?.version ?? 0) + 1;
+    const summary = changeSummary.trim();
 
     const { error: upErr } = await supabase
       .from("tenants")
@@ -127,14 +132,14 @@ export default function ClientAi() {
       prompt,
       created_by: user?.id,
       created_by_role: "client",
-      change_summary: changeSummary.trim() || null,
+      change_summary: summary,
     } as any);
     if (vErr) toast.error("Salvo, mas não foi possível registrar a versão: " + vErr.message);
 
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId, user_id: user?.id, actor_role: "client",
       action: "edit_ai_prompt", entity: "tenants", entity_id: tenantId,
-      after: { agent_system_prompt: prompt, version: nextVersion, change_summary: changeSummary.trim() },
+      after: { agent_system_prompt: prompt, version: nextVersion, change_summary: summary },
     });
 
     toast.success(`Prompt salvo — versão ${nextVersion}`);
@@ -284,23 +289,28 @@ export default function ClientAi() {
             <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
               Uma nova versão (v{currentVersion + 1}) será criada e a IA passará a responder
-              com essas instruções imediatamente. Descreva (opcional) o que mudou nesta versão
-              para consultar depois no histórico.
+              com essas instruções imediatamente. Descreva o que mudou nesta versão
+              (mínimo de 150 caracteres) — esse resumo aparece em "Ações da equipe".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="change-summary">Resumo das alterações (opcional)</Label>
+            <Label htmlFor="change-summary">Resumo das alterações (obrigatório)</Label>
             <Textarea
               id="change-summary"
-              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              placeholder="Descreva de forma clara o que mudou, por quê, e o efeito esperado no atendimento (mínimo 150 caracteres)."
               value={changeSummary}
               onChange={(e) => setChangeSummary(e.target.value)}
-              rows={3}
+              rows={5}
             />
+            <p className={`text-xs ${changeSummary.trim().length < 150 ? "text-destructive" : "text-muted-foreground"}`}>
+              {changeSummary.trim().length}/150 caracteres mínimos
+            </p>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</Button>
+            <Button disabled={changeSummary.trim().length < 150} onClick={handleSavePrompt}>
+              Confirmar e salvar v{currentVersion + 1}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
