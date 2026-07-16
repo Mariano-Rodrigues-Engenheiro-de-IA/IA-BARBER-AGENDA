@@ -351,7 +351,7 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
