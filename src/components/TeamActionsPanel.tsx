@@ -266,7 +266,7 @@ export default function TeamActionsPanel() {
 }
 
 // ---- Detail body renderer (with prompt summary tab) ----
-function renderDetailBody(detail: LogRow) {
+function DetailBody({ detail }: { detail: LogRow }) {
   const isPromptEdit =
     detail.action === "prompt_updated" ||
     detail.action === "edit_ai_prompt" ||
@@ -275,45 +275,52 @@ function renderDetailBody(detail: LogRow) {
       Array.isArray((detail.after as any)?._changes) &&
       (detail.after as any)._changes.includes("prompt_updated"));
 
+  const beforeText = String((detail.before as any)?.agent_system_prompt ?? "");
+  const afterText = String((detail.after as any)?.agent_system_prompt ?? "");
+  const afterSummaryInLog: string | null =
+    (detail.after as any)?.change_summary && String((detail.after as any).change_summary).trim().length > 0
+      ? String((detail.after as any).change_summary)
+      : null;
+
+  // Fallback: fetch the change_summary from ai_prompt_versions matching this tenant + prompt text.
+  const { data: versionSummary } = useQuery({
+    queryKey: ["prompt-version-summary", detail.tenant_id, detail.id],
+    enabled: !!isPromptEdit && !!detail.tenant_id && !afterSummaryInLog && afterText.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("ai_prompt_versions")
+        .select("change_summary, created_at, version")
+        .eq("tenant_id", detail.tenant_id!)
+        .eq("prompt", afterText)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return (data as any)?.change_summary as string | null;
+    },
+  });
+
   if (isPromptEdit) {
-    const beforeText = String((detail.before as any)?.agent_system_prompt ?? "");
-    const afterText = String((detail.after as any)?.agent_system_prompt ?? "");
-    const summary = summarizePromptDiff(beforeText, afterText);
+    const summaryText = afterSummaryInLog ?? versionSummary ?? "";
     return (
       <Tabs defaultValue="summary">
         <TabsList>
-          <TabsTrigger value="summary">Resumo da alteração</TabsTrigger>
+          <TabsTrigger value="summary">Resumo do colaborador</TabsTrigger>
           <TabsTrigger value="prompt">Prompt (antes / depois)</TabsTrigger>
         </TabsList>
         <TabsContent value="summary" className="space-y-3">
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <StatCard label="Caracteres antes" value={beforeText.length.toLocaleString("pt-BR")} />
-            <StatCard label="Caracteres depois" value={afterText.length.toLocaleString("pt-BR")} />
-            <StatCard label="Variação" value={`${summary.deltaChars >= 0 ? "+" : ""}${summary.deltaChars.toLocaleString("pt-BR")}`} />
-            <StatCard label="Linhas adicionadas" value={String(summary.added.length)} />
-            <StatCard label="Linhas removidas" value={String(summary.removed.length)} />
-            <StatCard label="Total de linhas" value={`${summary.totalBefore} → ${summary.totalAfter}`} />
-          </div>
-          {summary.added.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-muted-foreground mb-1">Trechos adicionados</div>
-              <pre className="bg-emerald-500/10 text-emerald-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
-                {summary.added.slice(0, 40).map((l) => `+ ${l}`).join("\n")}
-                {summary.added.length > 40 ? `\n… (+${summary.added.length - 40} linhas)` : ""}
-              </pre>
+          {summaryText ? (
+            <div className="rounded border border-border/60 bg-muted/20 p-4">
+              <div className="text-[10px] uppercase text-muted-foreground mb-2">
+                Resumo escrito por quem editou
+              </div>
+              <p className="text-sm whitespace-pre-wrap leading-relaxed text-foreground">
+                {summaryText}
+              </p>
             </div>
-          )}
-          {summary.removed.length > 0 && (
-            <div>
-              <div className="text-xs font-semibold text-muted-foreground mb-1">Trechos removidos</div>
-              <pre className="bg-red-500/10 text-red-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
-                {summary.removed.slice(0, 40).map((l) => `- ${l}`).join("\n")}
-                {summary.removed.length > 40 ? `\n… (-${summary.removed.length - 40} linhas)` : ""}
-              </pre>
-            </div>
-          )}
-          {summary.added.length === 0 && summary.removed.length === 0 && (
-            <p className="text-xs text-muted-foreground">Sem diferença textual detectada.</p>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">
+              Esta versão foi salva antes da obrigatoriedade de resumo — nenhum texto foi registrado.
+            </p>
           )}
         </TabsContent>
         <TabsContent value="prompt">
