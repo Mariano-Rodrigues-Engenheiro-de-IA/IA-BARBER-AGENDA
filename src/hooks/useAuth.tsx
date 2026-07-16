@@ -15,6 +15,7 @@ interface AuthContextType {
   session: Session | null;
   user: User | null;
   isAdmin: boolean;
+  isStaff: boolean;
   role: Role;
   tenantId: string | null;
   permissions: PermissionsMap;
@@ -28,14 +29,16 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function loadProfile(userId: string) {
-  const [adminRes, clientRes, tenantRes] = await Promise.all([
+  const [adminRes, staffRes, clientRes, tenantRes] = await Promise.all([
     supabase.rpc("has_role", { _user_id: userId, _role: "admin" as any }),
+    supabase.rpc("has_role", { _user_id: userId, _role: "staff" as any }),
     supabase.rpc("has_role", { _user_id: userId, _role: "client" as any }),
     supabase.from("tenant_users").select("tenant_id").eq("user_id", userId).maybeSingle(),
   ]);
   const isAdmin = !!adminRes.data;
+  const isStaff = !!staffRes.data;
   const isClient = !!clientRes.data;
-  const role: Role = isAdmin ? "admin" : isClient ? "client" : null;
+  const role: Role = isAdmin ? "admin" : isStaff ? "staff" : isClient ? "client" : null;
   const tenantId = (tenantRes.data?.tenant_id as string | undefined) ?? null;
 
   let permissions: PermissionsMap = {};
@@ -50,7 +53,7 @@ async function loadProfile(userId: string) {
     }, {});
   }
 
-  return { isAdmin, role, tenantId, permissions };
+  return { isAdmin, isStaff, role, tenantId, permissions };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
