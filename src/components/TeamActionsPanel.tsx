@@ -35,6 +35,12 @@ const ACTION_LABELS: Record<string, string> = {
   restore_ai_prompt: "Restaurou versão anterior do prompt",
   knowledge_updated: "Editou a base de conhecimento",
   edit_custom_tools: "Editou ferramentas customizadas",
+  custom_tools_updated: "Editou ferramentas da IA",
+  response_delay_updated: "Alterou tempo de resposta da IA",
+  follow_ups_updated: "Alterou follow-ups da IA",
+  agent_settings_updated: "Alterou configurações do agente",
+  kanban_updated: "Alterou colunas do Kanban",
+  profile_updated: "Alterou dados da empresa (nome/WhatsApp/logo)",
   agent_paused: "Pausou o agente",
   pause_agent: "Pausou o agente",
   agent_resumed: "Despausou o agente",
@@ -53,6 +59,7 @@ const ACTION_LABELS: Record<string, string> = {
   // crm
   lead_moved: "Moveu lead no CRM",
 };
+
 
 // Only human, write-type actions. Excludes service-role/system noise.
 const HUMAN_ROLES = new Set(["admin", "staff"]);
