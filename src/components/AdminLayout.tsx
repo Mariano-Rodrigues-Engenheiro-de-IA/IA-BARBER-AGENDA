@@ -23,7 +23,7 @@ const navItems: NavItem[] = [
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { signOut, user } = useAuth();
+  const { signOut, user, isAdmin, isStaff } = useAuth();
   const location = useLocation();
   const { data: tenants } = useTenants();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -31,6 +31,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const counts = {
     tenants: tenants?.length ?? 0,
   };
+  const visibleNav = navItems.filter((i) => !i.adminOnly || isAdmin);
+  const roleLabel = isAdmin ? "Painel Admin" : isStaff ? "Painel Colaborador" : "Painel";
 
   const userInitials = user?.email
     ? user.email.slice(0, 2).toUpperCase()
