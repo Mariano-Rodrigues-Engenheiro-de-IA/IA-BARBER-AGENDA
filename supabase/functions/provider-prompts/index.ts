@@ -64,13 +64,27 @@ Deno.serve(async (req) => {
     if (!userId) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(supabaseUrl, serviceKey);
-    const { data: roleRow } = await admin
+    const { data: roleRows } = await admin
       .from("user_roles")
       .select("role")
-      .eq("user_id", userId)
-      .eq("role", "admin")
-      .maybeSingle();
-    if (!roleRow) return json({ error: "Forbidden" }, 403);
+      .eq("user_id", userId);
+    const roles = new Set((roleRows || []).map((r: any) => r.role));
+    const isAdmin = roles.has("admin");
+    let allowed = isAdmin;
+    if (!allowed && roles.has("staff")) {
+      const { data: mod } = await admin
+        .from("staff_module_access")
+        .select("module")
+        .eq("user_id", userId)
+        .eq("module", "prompts")
+        .maybeSingle();
+      allowed = !!mod;
+    }
+    if (!allowed) return json({ error: "Forbidden" }, 403);
+    // Writes still require admin
+    if ((req.method === "POST" || req.method === "DELETE") && !isAdmin) {
+      return json({ error: "Forbidden" }, 403);
+    }
 
     if (req.method === "GET") {
       const { data: rows } = await admin.from("provider_prompts").select("*");
