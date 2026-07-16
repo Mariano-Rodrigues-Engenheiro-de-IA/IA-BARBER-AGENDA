@@ -3668,7 +3668,17 @@ async function classifyPendingBookings(params: {
   attempts: number;
   bookedServiceNames?: string[];
   bookedExecutionCount?: number;
-}): Promise<{ total: number; source: "llm" | "fallback"; reasoning?: string }> {
+}): Promise<{
+  total: number;
+  source: "llm" | "fallback";
+  reasoning?: string;
+  intentShape?: {
+    distinctPeople: number;
+    distinctTimes: number;
+    distinctProfessionals: number;
+    sameVisitServicesOnly: boolean;
+  };
+}> {
   const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
@@ -3701,7 +3711,9 @@ async function classifyPendingBookings(params: {
     "- Nunca retorne 0.",
     ...(servicosInfo ? [servicosInfo.trim()] : []),
     ...(execInfo ? [execInfo.trim()] : []),
-    'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "reasoning": "<curto>"}',
+    "- IMPORTANTE PARA FRIZZAR: vários serviços para a MESMA pessoa, na MESMA visita, formam 1 agendamento/comanda. Corte + barba não são 2 agendamentos. Duas pessoas, ainda que no mesmo horário, são 2 agendamentos.",
+    '- Preencha também as dimensões da intenção: pessoas distintas, horários distintos e profissionais distintos. Se a conversa diz "dois cortes", "para mim e outra pessoa", "nós dois" ou equivalente, distinct_people deve ser 2 mesmo quando a última resposta do cliente for apenas "sim".',
+    'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "distinct_people": <numero>, "distinct_times": <numero>, "distinct_professionals": <numero>, "same_visit_services_only": <boolean>, "reasoning": "<curto>"}',
   ].join("\n");
 
   const isGpt5 = modelUsed.includes("gpt-5");
@@ -3741,6 +3753,18 @@ async function classifyPendingBookings(params: {
     const parsed = JSON.parse(raw);
     let n = Number(parsed?.total_bookings_requested);
     if (!Number.isFinite(n) || n < 1) return fallback();
+    const dimension = (value: unknown): number => {
+      const parsedValue = Number(value);
+      return Number.isFinite(parsedValue) && parsedValue >= 1
+        ? Math.min(Math.floor(parsedValue), 10)
+        : 1;
+    };
+    const intentShape = {
+      distinctPeople: dimension(parsed?.distinct_people),
+      distinctTimes: dimension(parsed?.distinct_times),
+      distinctProfessionals: dimension(parsed?.distinct_professionals),
+      sameVisitServicesOnly: parsed?.same_visit_services_only === true,
+    };
 
     // 🚨 FIX — o classificador às vezes erra a própria conta: o texto de
     // `reasoning` soma corretamente (ex: "corte (1) + avô (1) = total 2
@@ -3793,6 +3817,7 @@ async function classifyPendingBookings(params: {
       total,
       source: "llm",
       reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? ` heur_${heuristicOverrideAllowed ? "used" : "ignored"}` : ""}`,
+      intentShape,
     };
   } catch (e) {
     console.warn(`[MultiBookingGuard] classifier failed:`, (e as Error)?.message);
@@ -6184,6 +6209,23 @@ async function callAIAgent(
     });
     let prometidos = cls.total;
 
+    // 🔒 FRIZZAR: a unidade do guard é VISITA/COMANDA, não quantidade de
+    // serviços. O classificador devolve dimensões separadas para impedir os dois
+    // erros opostos observados em produção:
+    //  - corte + barba, mesma pessoa/visita => 1;
+    //  - duas pessoas, mesmo horário => 2.
+    // Não usamos apenas a última fala (que pode ser só "Sim"); a classificação
+    // considera a janela inteira da negociação imediatamente anterior.
+    if (provider === "frizzar" && cls.intentShape) {
+      const { distinctPeople, distinctTimes, distinctProfessionals, sameVisitServicesOnly } = cls.intentShape;
+      const visitsByDimensions = Math.max(distinctPeople, distinctTimes, distinctProfessionals);
+      if (sameVisitServicesOnly && visitsByDimensions === 1) {
+        prometidos = 1;
+      } else if (visitsByDimensions > 1) {
+        prometidos = visitsByDimensions;
+      }
+    }
+
     // 🔒 Clamp determinístico "1 execução = 1 visita".
     // Caso real Frizzar (Blackburn/Heider): cliente pediu "corte e barba" (1 pessoa,
     // 1 visita), a IA fez 1 única chamada de `agendar` com servicos:[corte, barba]
@@ -6198,7 +6240,14 @@ async function callAIAgent(
       const lastUser = [...visibleMsgs].reverse().find((m: any) => m.role === "user")?.content || "";
       const explicitPeople = countExplicitProfessionalSelections(lastUser);
       const explicitTimes = countExplicitUserTimeSelections(lastUser);
-      const hasMultiSignal = explicitPeople >= 2 || explicitTimes >= 2;
+      const classifiedMultiSignal = provider === "frizzar" && cls.intentShape
+        ? Math.max(
+          cls.intentShape.distinctPeople,
+          cls.intentShape.distinctTimes,
+          cls.intentShape.distinctProfessionals,
+        ) >= 2
+        : false;
+      const hasMultiSignal = explicitPeople >= 2 || explicitTimes >= 2 || classifiedMultiSignal;
       if (!hasMultiSignal) {
         console.log(
           `[MultiBookingGuard] clamp 1-exec-1-visita: prometidos=${prometidos} → ${bookedExecutionCount} (executions=${bookedExecutionCount}, explicitPeople=${explicitPeople}, explicitTimes=${explicitTimes}, reasoning="${cls.reasoning || ""}")`,
@@ -6226,11 +6275,17 @@ async function callAIAgent(
           acao,
           classifier_source: cls.source,
           classifier_reasoning: cls.reasoning,
+          ...(provider === "frizzar" && cls.intentShape ? { classifier_intent_shape: cls.intentShape } : {}),
         },
       });
     };
 
-    if (prometidos > MAX_AUTO_BOOKINGS) {
+    if (provider === "frizzar" && prometidos <= 1) {
+      // Não sequestra falhas de disponibilidade de uma visita simples. O
+      // BookingGuard/provider já devolve as alternativas corretas; este guard
+      // existe exclusivamente para garantir múltiplas visitas.
+      guardLog("not_multi_booking");
+    } else if (prometidos > MAX_AUTO_BOOKINGS) {
       // Escalada humana — mais de 3 agendamentos na mesma conversa.
       console.warn(`[MultiBookingGuard] prometidos=${prometidos} > ${MAX_AUTO_BOOKINGS} → acima do limite automático desta rodada, sem escalar humano.`);
       logErrors.push({ message: `Multi-booking > ${MAX_AUTO_BOOKINGS} (${prometidos}) — acima do limite automático.`, level: "warning" });
@@ -6295,7 +6350,9 @@ async function callAIAgent(
             messages,
             max_completion_tokens: 4096,
             tools,
-            tool_choice: "auto",
+            // Frizzar: recovery em texto não corrige nada. Obriga ao menos uma
+            // tool_call por rodada; consultas auxiliares continuam permitidas.
+            tool_choice: provider === "frizzar" ? "required" : "auto",
           };
           if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
           const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `guard-reinject-${recoveryRound}`);
