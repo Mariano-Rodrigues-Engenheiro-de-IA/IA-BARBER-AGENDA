@@ -357,28 +357,4 @@ function DetailBody({ detail }: { detail: LogRow }) {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-border/60 bg-muted/20 p-2">
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
-      <div className="text-sm font-semibold text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function summarizePromptDiff(before: string, after: string) {
-  const beforeLines = before.split(/\r?\n/);
-  const afterLines = after.split(/\r?\n/);
-  const beforeSet = new Set(beforeLines.map((l) => l.trim()).filter(Boolean));
-  const afterSet = new Set(afterLines.map((l) => l.trim()).filter(Boolean));
-  const added = afterLines.filter((l) => l.trim() && !beforeSet.has(l.trim()));
-  const removed = beforeLines.filter((l) => l.trim() && !afterSet.has(l.trim()));
-  return {
-    deltaChars: after.length - before.length,
-    totalBefore: beforeLines.length,
-    totalAfter: afterLines.length,
-    added,
-    removed,
-  };
-}
 
