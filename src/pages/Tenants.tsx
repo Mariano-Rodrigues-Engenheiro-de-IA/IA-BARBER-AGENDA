@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Trash2, Pencil, Building2, BarChart3 } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
