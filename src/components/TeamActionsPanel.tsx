@@ -256,7 +256,7 @@ export default function TeamActionsPanel() {
                 <div><span className="text-muted-foreground">Quem:</span> {actorName(detail.user_id)}</div>
                 <div><span className="text-muted-foreground">Empresa:</span> {tenantName(detail.tenant_id)}</div>
               </div>
-              {renderDetailBody(detail)}
+              <DetailBody detail={detail} />
             </div>
           )}
         </DialogContent>
