@@ -323,6 +323,14 @@ export default function StaffPage() {
           )}
         </div>
       </div>
+        </TabsContent>
+
+        <TabsContent value="actions" className="mt-4">
+          <TeamActionsPanel />
+        </TabsContent>
+      </Tabs>
+
+
 
       <Dialog open={showInvite} onOpenChange={setShowInvite}>
         <DialogContent>
