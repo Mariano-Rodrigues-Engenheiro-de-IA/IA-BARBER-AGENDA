@@ -118,7 +118,6 @@ export default function TenantsPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground">{tenant.slug}</p>
                     </td>
                     <td className="p-4">
                       <StatusBadge status={tenant.status} />
