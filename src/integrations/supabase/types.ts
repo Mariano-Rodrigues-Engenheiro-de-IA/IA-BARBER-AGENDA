@@ -672,6 +672,30 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_module_access: {
+        Row: {
+          created_at: string
+          granted_by: string | null
+          id: string
+          module: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          granted_by?: string | null
+          id?: string
+          module: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          granted_by?: string | null
+          id?: string
+          module?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       staff_tenant_access: {
         Row: {
           created_at: string
@@ -898,6 +922,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      _current_actor_role: { Args: never; Returns: string }
       can_access_tenant: {
         Args: { _tenant_id: string; _user_id: string }
         Returns: boolean
@@ -917,6 +942,10 @@ export type Database = {
       module_visibility: {
         Args: { _module: string; _tenant_id: string; _user_id: string }
         Returns: string
+      }
+      staff_has_module: {
+        Args: { _module: string; _user_id: string }
+        Returns: boolean
       }
       staff_has_tenant_access: {
         Args: { _tenant_id: string; _user_id: string }
