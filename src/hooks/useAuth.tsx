@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authReady = !loading && (!user || (!profileLoading && role !== null));
 
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, role, tenantId, permissions, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
+    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );
