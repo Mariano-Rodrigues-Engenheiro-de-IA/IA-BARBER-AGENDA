@@ -672,6 +672,38 @@ export type Database = {
         }
         Relationships: []
       }
+      staff_tenant_access: {
+        Row: {
+          created_at: string
+          granted_by: string | null
+          id: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          granted_by?: string | null
+          id?: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          granted_by?: string | null
+          id?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "staff_tenant_access_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenant_permissions: {
         Row: {
           created_at: string
@@ -739,6 +771,7 @@ export type Database = {
           celcash_galax_hash: string | null
           celcash_galax_id: string | null
           created_at: string
+          created_by: string | null
           email: string | null
           frizzar_base_url: string | null
           frizzar_token: string | null
@@ -756,6 +789,7 @@ export type Database = {
           uazapi_token: string | null
           uazapi_url: string | null
           updated_at: string
+          visibility: string
           whatsapp_number: string | null
         }
         Insert: {
@@ -776,6 +810,7 @@ export type Database = {
           celcash_galax_hash?: string | null
           celcash_galax_id?: string | null
           created_at?: string
+          created_by?: string | null
           email?: string | null
           frizzar_base_url?: string | null
           frizzar_token?: string | null
@@ -793,6 +828,7 @@ export type Database = {
           uazapi_token?: string | null
           uazapi_url?: string | null
           updated_at?: string
+          visibility?: string
           whatsapp_number?: string | null
         }
         Update: {
@@ -813,6 +849,7 @@ export type Database = {
           celcash_galax_hash?: string | null
           celcash_galax_id?: string | null
           created_at?: string
+          created_by?: string | null
           email?: string | null
           frizzar_base_url?: string | null
           frizzar_token?: string | null
@@ -830,6 +867,7 @@ export type Database = {
           uazapi_token?: string | null
           uazapi_url?: string | null
           updated_at?: string
+          visibility?: string
           whatsapp_number?: string | null
         }
         Relationships: []
@@ -860,6 +898,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_access_tenant: {
+        Args: { _tenant_id: string; _user_id: string }
+        Returns: boolean
+      }
       can_edit_module: {
         Args: { _module: string; _tenant_id: string; _user_id: string }
         Returns: boolean
@@ -875,6 +917,10 @@ export type Database = {
       module_visibility: {
         Args: { _module: string; _tenant_id: string; _user_id: string }
         Returns: string
+      }
+      staff_has_tenant_access: {
+        Args: { _tenant_id: string; _user_id: string }
+        Returns: boolean
       }
     }
     Enums: {
