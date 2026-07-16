@@ -93,11 +93,11 @@ export default function TenantsPage() {
               <thead>
                 <tr className="border-b border-border text-left">
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Nome</th>
-                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Contato</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">API</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider text-right">Ações</th>
                 </tr>
+
               </thead>
               <tbody>
                 {filtered.map((tenant, idx) => (
@@ -120,19 +120,13 @@ export default function TenantsPage() {
                       </div>
                       <p className="text-xs text-muted-foreground">{tenant.slug}</p>
                     </td>
-                    <td className="p-4 text-sm text-muted-foreground hidden sm:table-cell">
-                      {tenant.email || tenant.phone || "—"}
-                    </td>
                     <td className="p-4">
                       <StatusBadge status={tenant.status} />
                     </td>
                     <td className="p-4 hidden md:table-cell">
-                      {tenant.trinks_api_key ? (
-                        <span className="text-xs text-accent">Configurado</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Pendente</span>
-                      )}
+                      <ApiBadge provider={(tenant as any).api_provider} />
                     </td>
+
                     <td className="p-4 text-right space-x-1">
                       <Button variant="ghost" size="icon" asChild title="Dashboard">
                         <Link to={`/tenants/${tenant.id}/dashboard`}>
@@ -184,7 +178,21 @@ export default function TenantsPage() {
   );
 }
 
+function ApiBadge({ provider }: { provider?: string | null }) {
+  const map: Record<string, { label: string; className: string }> = {
+    trinks: { label: "Trinks", className: "bg-primary/10 text-primary" },
+    onebeleza: { label: "OneBeleza", className: "bg-primary/10 text-primary" },
+    bemp: { label: "Bemp", className: "bg-primary/10 text-primary" },
+    appbarber: { label: "AppBarber", className: "bg-primary/10 text-primary" },
+    frizzar: { label: "Frizzar", className: "bg-primary/10 text-primary" },
+  };
+  const c = provider ? map[provider] : null;
+  if (!c) return <span className="text-xs text-muted-foreground">Nenhum</span>;
+  return <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${c.className}`}>{c.label}</span>;
+}
+
 function StatusBadge({ status }: { status: string }) {
+
   const config: Record<string, { label: string; className: string }> = {
     active: { label: "Ativa", className: "bg-accent/10 text-accent" },
     inactive: { label: "Inativa", className: "bg-muted text-muted-foreground" },
