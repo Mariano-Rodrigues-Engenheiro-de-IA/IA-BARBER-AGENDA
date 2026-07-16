@@ -10,20 +10,20 @@ import { cn } from "@/lib/utils";
 import logoZaylo from "@/assets/logo-zaylo.png";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; adminOnly?: boolean };
+type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; module?: string };
 const navItems: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "Visão Geral" },
   { to: "/tenants", icon: Building2, label: "Empresas", countKey: "tenants" },
-  { to: "/follow-ups", icon: Clock, label: "Follow-ups" },
-  { to: "/agent-logs", icon: Activity, label: "Monitor IA" },
-  { to: "/prompts", icon: FileText, label: "Prompts", adminOnly: true },
-  { to: "/staff", icon: Users, label: "Colaboradores", adminOnly: true },
-  { to: "/audit", icon: ShieldCheck, label: "Auditoria", adminOnly: true },
-  { to: "/settings", icon: Settings, label: "Configurações", adminOnly: true },
+  { to: "/follow-ups", icon: Clock, label: "Follow-ups", module: "follow-ups" },
+  { to: "/agent-logs", icon: Activity, label: "Monitor IA", module: "agent-logs" },
+  { to: "/prompts", icon: FileText, label: "Prompts", module: "prompts" },
+  { to: "/staff", icon: Users, label: "Colaboradores", module: "staff" },
+  { to: "/audit", icon: ShieldCheck, label: "Auditoria", module: "audit" },
+  { to: "/settings", icon: Settings, label: "Configurações", module: "settings" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { signOut, user, isAdmin, isStaff } = useAuth();
+  const { signOut, user, isAdmin, isStaff, staffModules } = useAuth();
   const location = useLocation();
   const { data: tenants } = useTenants();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -31,7 +31,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const counts = {
     tenants: tenants?.length ?? 0,
   };
-  const visibleNav = navItems.filter((i) => !i.adminOnly || isAdmin);
+  const visibleNav = navItems.filter((i) => {
+    if (!i.module) return true;
+    if (isAdmin) return true;
+    return staffModules.has(i.module as any);
+  });
   const roleLabel = isAdmin ? "Painel Admin" : isStaff ? "Painel Colaborador" : "Painel";
 
   const userInitials = user?.email

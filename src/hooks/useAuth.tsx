@@ -11,6 +11,8 @@ export type AppModule =
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 
+export type StaffModule = "follow-ups" | "agent-logs" | "prompts" | "staff" | "audit" | "settings";
+
 interface AuthContextType {
   session: Session | null;
   user: User | null;
@@ -19,6 +21,7 @@ interface AuthContextType {
   role: Role;
   tenantId: string | null;
   permissions: PermissionsMap;
+  staffModules: Set<StaffModule>;
   loading: boolean;
   authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -29,17 +32,19 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function loadProfile(userId: string) {
-  const [adminRes, staffRes, clientRes, tenantRes] = await Promise.all([
+  const [adminRes, staffRes, clientRes, tenantRes, modulesRes] = await Promise.all([
     supabase.rpc("has_role", { _user_id: userId, _role: "admin" as any }),
     supabase.rpc("has_role", { _user_id: userId, _role: "staff" as any }),
     supabase.rpc("has_role", { _user_id: userId, _role: "client" as any }),
     supabase.from("tenant_users").select("tenant_id").eq("user_id", userId).maybeSingle(),
+    supabase.from("staff_module_access").select("module").eq("user_id", userId),
   ]);
   const isAdmin = !!adminRes.data;
   const isStaff = !!staffRes.data;
   const isClient = !!clientRes.data;
   const role: Role = isAdmin ? "admin" : isStaff ? "staff" : isClient ? "client" : null;
   const tenantId = (tenantRes.data?.tenant_id as string | undefined) ?? null;
+  const staffModules = new Set<StaffModule>(((modulesRes.data ?? []) as any[]).map((r) => r.module as StaffModule));
 
   let permissions: PermissionsMap = {};
   if (tenantId) {
@@ -53,8 +58,10 @@ async function loadProfile(userId: string) {
     }, {});
   }
 
-  return { isAdmin, isStaff, role, tenantId, permissions };
+  return { isAdmin, isStaff, role, tenantId, permissions, staffModules };
 }
+
+type Profile = Awaited<ReturnType<typeof loadProfile>>;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -64,15 +71,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<Role>(null);
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<PermissionsMap>({});
+  const [staffModules, setStaffModules] = useState<Set<StaffModule>>(new Set());
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
   const profileRequestId = useRef(0);
 
-  const apply = (p: { isAdmin: boolean; isStaff: boolean; role: Role; tenantId: string | null; permissions: PermissionsMap }) => {
-    setIsAdmin(p.isAdmin); setIsStaff(p.isStaff); setRole(p.role); setTenantId(p.tenantId); setPermissions(p.permissions);
+  const apply = (p: Profile) => {
+    setIsAdmin(p.isAdmin); setIsStaff(p.isStaff); setRole(p.role);
+    setTenantId(p.tenantId); setPermissions(p.permissions); setStaffModules(p.staffModules);
   };
 
-  const resetProfile = () => apply({ isAdmin: false, isStaff: false, role: null, tenantId: null, permissions: {} });
+  const resetProfile = () => apply({ isAdmin: false, isStaff: false, role: null, tenantId: null, permissions: {}, staffModules: new Set() });
 
   const loadAndApplyProfile = async (userId: string) => {
     const requestId = ++profileRequestId.current;
@@ -107,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s); setUser(s?.user ?? null);
       const newUserId = s?.user?.id ?? null;
-      if (newUserId === lastUserId) return; // ignore TOKEN_REFRESHED etc.
+      if (newUserId === lastUserId) return;
       lastUserId = newUserId;
       if (s?.user) {
         void loadAndApplyProfile(s.user.id);
@@ -139,11 +148,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const authReady = !loading && (!user || (!profileLoading && role !== null));
 
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
+    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );
 }
+
 
 export function useAuth() {
   const context = useContext(AuthContext);

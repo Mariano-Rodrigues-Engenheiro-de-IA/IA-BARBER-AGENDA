@@ -39,14 +39,17 @@ function Loading() {
   );
 }
 
-function AdminRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
-  const { user, isAdmin, isStaff, role, authReady } = useAuth();
+function AdminRoute({ children, adminOnly = false, module }: { children: React.ReactNode; adminOnly?: boolean; module?: string }) {
+  const { user, isAdmin, isStaff, role, staffModules, authReady } = useAuth();
   if (!authReady) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
   if (adminOnly) {
     if (!isAdmin) return <Navigate to="/" replace />;
   } else if (!isAdmin && !isStaff) {
     return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
+  }
+  if (module && !isAdmin && !staffModules.has(module as any)) {
+    return <Navigate to="/" replace />;
   }
   return <AdminLayout>{children}</AdminLayout>;
 }
@@ -79,12 +82,12 @@ function AppRoutes() {
       <Route path="/tenants/:id/access" element={<AdminRoute adminOnly><TenantAccessPage /></AdminRoute>} />
       <Route path="/tenants/:id/dashboard" element={<AdminRoute><TenantDashboardPage /></AdminRoute>} />
       <Route path="/tenants/:id/kanban" element={<AdminRoute><TenantKanbanPage /></AdminRoute>} />
-      <Route path="/follow-ups" element={<AdminRoute><FollowUpsDashboardPage /></AdminRoute>} />
-      <Route path="/audit" element={<AdminRoute adminOnly><AuditPage /></AdminRoute>} />
-      <Route path="/settings" element={<AdminRoute adminOnly><SettingsPage /></AdminRoute>} />
-      <Route path="/prompts" element={<AdminRoute adminOnly><PromptsPage /></AdminRoute>} />
-      <Route path="/staff" element={<AdminRoute adminOnly><StaffPage /></AdminRoute>} />
-      <Route path="/agent-logs" element={<AdminRoute><AgentLogsPage /></AdminRoute>} />
+      <Route path="/follow-ups" element={<AdminRoute module="follow-ups"><FollowUpsDashboardPage /></AdminRoute>} />
+      <Route path="/audit" element={<AdminRoute module="audit"><AuditPage /></AdminRoute>} />
+      <Route path="/settings" element={<AdminRoute adminOnly module="settings"><SettingsPage /></AdminRoute>} />
+      <Route path="/prompts" element={<AdminRoute module="prompts"><PromptsPage /></AdminRoute>} />
+      <Route path="/staff" element={<AdminRoute adminOnly module="staff"><StaffPage /></AdminRoute>} />
+      <Route path="/agent-logs" element={<AdminRoute module="agent-logs"><AgentLogsPage /></AdminRoute>} />
 
       {/* Client */}
       <Route path="/app" element={<ClientRoute><ClientOverview /></ClientRoute>} />
