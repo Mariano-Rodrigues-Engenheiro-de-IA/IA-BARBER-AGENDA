@@ -171,7 +171,31 @@ export default function StaffPage() {
   };
 
   const copyCreds = () => {
+    if (!credentials) return;
+    navigator.clipboard.writeText(`Email: ${credentials.email}\nSenha: ${credentials.password}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
+  return (
+    <div className="space-y-6 max-w-6xl">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Colaboradores</h2>
+          <p className="text-muted-foreground mt-1">Cadastre sua equipe, libere empresas e abas do painel, acompanhe as ações</p>
+        </div>
+        <Button onClick={() => setShowInvite(true)}>
+          <UserPlus className="w-4 h-4 mr-2" />Adicionar colaborador
+        </Button>
+      </div>
+
+      <Tabs defaultValue="team">
+        <TabsList>
+          <TabsTrigger value="team"><Users className="w-4 h-4 mr-2" />Equipe & acessos</TabsTrigger>
+          <TabsTrigger value="actions"><Activity className="w-4 h-4 mr-2" />Ações da equipe</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="team" className="space-y-6 mt-4">
       {/* Raio-x de responsabilidades */}
       <div className="glass-card p-6 space-y-4">
         <h3 className="font-semibold text-foreground flex items-center gap-2">
