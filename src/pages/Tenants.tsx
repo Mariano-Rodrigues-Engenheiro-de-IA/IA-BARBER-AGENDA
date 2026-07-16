@@ -93,11 +93,11 @@ export default function TenantsPage() {
               <thead>
                 <tr className="border-b border-border text-left">
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Nome</th>
-                  <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden sm:table-cell">Contato</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider hidden md:table-cell">API</th>
                   <th className="p-4 text-xs font-medium text-muted-foreground uppercase tracking-wider text-right">Ações</th>
                 </tr>
+
               </thead>
               <tbody>
                 {filtered.map((tenant, idx) => (
