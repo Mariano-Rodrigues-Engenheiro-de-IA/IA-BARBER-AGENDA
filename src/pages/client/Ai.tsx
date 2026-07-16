@@ -112,8 +112,13 @@ export default function ClientAi() {
 
   const handleSavePrompt = async () => {
     if (!tenantId) return;
+    if (changeSummary.trim().length < 150) {
+      toast.error("O resumo precisa ter no mínimo 150 caracteres");
+      return;
+    }
     const prompt = form.agent_system_prompt ?? "";
     const nextVersion = (versions?.[0]?.version ?? 0) + 1;
+    const summary = changeSummary.trim();
 
     const { error: upErr } = await supabase
       .from("tenants")
@@ -127,14 +132,14 @@ export default function ClientAi() {
       prompt,
       created_by: user?.id,
       created_by_role: "client",
-      change_summary: changeSummary.trim() || null,
+      change_summary: summary,
     } as any);
     if (vErr) toast.error("Salvo, mas não foi possível registrar a versão: " + vErr.message);
 
     await supabase.from("audit_logs").insert({
       tenant_id: tenantId, user_id: user?.id, actor_role: "client",
       action: "edit_ai_prompt", entity: "tenants", entity_id: tenantId,
-      after: { agent_system_prompt: prompt, version: nextVersion, change_summary: changeSummary.trim() },
+      after: { agent_system_prompt: prompt, version: nextVersion, change_summary: summary },
     });
 
     toast.success(`Prompt salvo — versão ${nextVersion}`);
