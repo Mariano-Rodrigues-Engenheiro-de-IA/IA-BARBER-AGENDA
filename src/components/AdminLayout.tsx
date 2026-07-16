@@ -45,7 +45,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <img src={logoZaylo} alt="IA Barber Pro" className="w-12 h-12 rounded-xl object-contain" />
           <div>
             <h1 className="font-bold text-foreground text-lg leading-tight">IA Barber Pro</h1>
-            <p className="text-xs text-muted-foreground">Painel Admin</p>
+            <p className="text-xs text-muted-foreground">{roleLabel}</p>
           </div>
         </div>
       </div>
