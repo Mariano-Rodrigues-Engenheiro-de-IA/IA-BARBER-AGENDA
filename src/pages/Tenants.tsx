@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Trash2, Pencil, Building2, BarChart3 } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -20,6 +21,7 @@ import {
 export default function TenantsPage() {
   const { data: tenants, isLoading } = useTenants();
   const deleteTenant = useDeleteTenant();
+  const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
@@ -104,7 +106,18 @@ export default function TenantsPage() {
                     className={`hover:bg-muted/30 transition-colors ${idx % 2 === 1 ? "bg-muted/10" : ""}`}
                   >
                     <td className="p-4">
-                      <p className="font-medium text-foreground">{tenant.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="font-medium text-foreground">{tenant.name}</p>
+                        {(tenant as any).visibility === "general" ? (
+                          <span title="Visível para todos os colaboradores" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-accent/10 text-accent">
+                            <Globe className="w-3 h-3" />geral
+                          </span>
+                        ) : (
+                          <span title="Restrita: só admin e liberados enxergam" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] bg-muted text-muted-foreground">
+                            <Lock className="w-3 h-3" />restrita
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">{tenant.slug}</p>
                     </td>
                     <td className="p-4 text-sm text-muted-foreground hidden sm:table-cell">
@@ -131,15 +144,17 @@ export default function TenantsPage() {
                           <Pencil className="w-4 h-4" />
                         </Link>
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="hover:text-destructive"
-                        onClick={() => setDeleteId(tenant.id)}
-                        title="Excluir"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="hover:text-destructive"
+                          onClick={() => setDeleteId(tenant.id)}
+                          title="Excluir"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}

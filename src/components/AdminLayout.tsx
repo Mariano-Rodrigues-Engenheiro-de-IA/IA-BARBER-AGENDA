@@ -5,23 +5,25 @@ import { useTenants } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck, FileText } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck, FileText, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoZaylo from "@/assets/logo-zaylo.png";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const navItems = [
+type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; adminOnly?: boolean };
+const navItems: NavItem[] = [
   { to: "/", icon: LayoutDashboard, label: "Visão Geral" },
-  { to: "/tenants", icon: Building2, label: "Empresas", countKey: "tenants" as const },
+  { to: "/tenants", icon: Building2, label: "Empresas", countKey: "tenants" },
   { to: "/follow-ups", icon: Clock, label: "Follow-ups" },
   { to: "/agent-logs", icon: Activity, label: "Monitor IA" },
-  { to: "/prompts", icon: FileText, label: "Prompts" },
-  { to: "/audit", icon: ShieldCheck, label: "Auditoria" },
-  { to: "/settings", icon: Settings, label: "Configurações" },
+  { to: "/prompts", icon: FileText, label: "Prompts", adminOnly: true },
+  { to: "/staff", icon: Users, label: "Colaboradores", adminOnly: true },
+  { to: "/audit", icon: ShieldCheck, label: "Auditoria", adminOnly: true },
+  { to: "/settings", icon: Settings, label: "Configurações", adminOnly: true },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { signOut, user } = useAuth();
+  const { signOut, user, isAdmin, isStaff } = useAuth();
   const location = useLocation();
   const { data: tenants } = useTenants();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -29,6 +31,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const counts = {
     tenants: tenants?.length ?? 0,
   };
+  const visibleNav = navItems.filter((i) => !i.adminOnly || isAdmin);
+  const roleLabel = isAdmin ? "Painel Admin" : isStaff ? "Painel Colaborador" : "Painel";
 
   const userInitials = user?.email
     ? user.email.slice(0, 2).toUpperCase()
@@ -41,13 +45,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <img src={logoZaylo} alt="IA Barber Pro" className="w-12 h-12 rounded-xl object-contain" />
           <div>
             <h1 className="font-bold text-foreground text-lg leading-tight">IA Barber Pro</h1>
-            <p className="text-xs text-muted-foreground">Painel Admin</p>
+            <p className="text-xs text-muted-foreground">{roleLabel}</p>
           </div>
         </div>
       </div>
 
       <nav className="flex-1 p-4 space-y-1">
-        {navItems.map((item) => {
+        {visibleNav.map((item) => {
           const isActive = location.pathname === item.to ||
             (item.to !== "/" && location.pathname.startsWith(item.to));
           const count = item.countKey ? counts[item.countKey] : undefined;

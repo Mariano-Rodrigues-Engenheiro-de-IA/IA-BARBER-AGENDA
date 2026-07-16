@@ -20,6 +20,7 @@ import TenantDashboardPage from "@/pages/TenantDashboard";
 import TenantKanbanPage from "@/pages/TenantKanban";
 import AuditPage from "@/pages/Audit";
 import PromptsPage from "@/pages/Prompts";
+import StaffPage from "@/pages/Staff";
 import ClientOverview from "@/pages/client/Overview";
 import ClientConversations from "@/pages/client/Conversations";
 import ClientFollowUps from "@/pages/client/FollowUps";
@@ -38,11 +39,15 @@ function Loading() {
   );
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin, role, authReady } = useAuth();
+function AdminRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+  const { user, isAdmin, isStaff, role, authReady } = useAuth();
   if (!authReady) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
-  if (!isAdmin) return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
+  if (adminOnly) {
+    if (!isAdmin) return <Navigate to="/" replace />;
+  } else if (!isAdmin && !isStaff) {
+    return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
+  }
   return <AdminLayout>{children}</AdminLayout>;
 }
 
@@ -71,13 +76,14 @@ function AppRoutes() {
       <Route path="/tenants" element={<AdminRoute><TenantsPage /></AdminRoute>} />
       <Route path="/tenants/new" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
       <Route path="/tenants/:id" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
-      <Route path="/tenants/:id/access" element={<AdminRoute><TenantAccessPage /></AdminRoute>} />
+      <Route path="/tenants/:id/access" element={<AdminRoute adminOnly><TenantAccessPage /></AdminRoute>} />
       <Route path="/tenants/:id/dashboard" element={<AdminRoute><TenantDashboardPage /></AdminRoute>} />
       <Route path="/tenants/:id/kanban" element={<AdminRoute><TenantKanbanPage /></AdminRoute>} />
       <Route path="/follow-ups" element={<AdminRoute><FollowUpsDashboardPage /></AdminRoute>} />
-      <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
-      <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
-      <Route path="/prompts" element={<AdminRoute><PromptsPage /></AdminRoute>} />
+      <Route path="/audit" element={<AdminRoute adminOnly><AuditPage /></AdminRoute>} />
+      <Route path="/settings" element={<AdminRoute adminOnly><SettingsPage /></AdminRoute>} />
+      <Route path="/prompts" element={<AdminRoute adminOnly><PromptsPage /></AdminRoute>} />
+      <Route path="/staff" element={<AdminRoute adminOnly><StaffPage /></AdminRoute>} />
       <Route path="/agent-logs" element={<AdminRoute><AgentLogsPage /></AdminRoute>} />
 
       {/* Client */}
