@@ -8,8 +8,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { UserPlus, Trash2, ShieldAlert, Users, Copy, Check, Building2 } from "lucide-react";
+import { UserPlus, Trash2, Users, Copy, Check, Building2, Activity } from "lucide-react";
 import { toast } from "sonner";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import TeamActionsPanel from "@/components/TeamActionsPanel";
 
 type StaffUser = { user_id: string; email: string | null; created_at: string };
 type TenantRow = { id: string; name: string; visibility: string; created_by: string | null };
