@@ -282,20 +282,30 @@ function DetailBody({ detail }: { detail: LogRow }) {
       ? String((detail.after as any).change_summary)
       : null;
 
-  // Fallback: fetch the change_summary from ai_prompt_versions matching this tenant + prompt text.
+  // Fallback: fetch the change_summary from ai_prompt_versions closest to this log timestamp.
   const { data: versionSummary } = useQuery({
     queryKey: ["prompt-version-summary", detail.tenant_id, detail.id],
-    enabled: !!isPromptEdit && !!detail.tenant_id && !afterSummaryInLog && afterText.length > 0,
+    enabled: !!isPromptEdit && !!detail.tenant_id && !afterSummaryInLog,
     queryFn: async () => {
+      const logTs = new Date(detail.created_at).getTime();
+      const windowStart = new Date(logTs - 15_000).toISOString();
+      const windowEnd = new Date(logTs + 15_000).toISOString();
       const { data } = await supabase
         .from("ai_prompt_versions")
         .select("change_summary, created_at, version")
         .eq("tenant_id", detail.tenant_id!)
-        .eq("prompt", afterText)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      return (data as any)?.change_summary as string | null;
+        .gte("created_at", windowStart)
+        .lte("created_at", windowEnd)
+        .order("created_at", { ascending: true });
+      if (!data || data.length === 0) return null;
+      // pick the version with smallest time delta to the log
+      let best: any = null;
+      let bestDelta = Infinity;
+      for (const v of data as any[]) {
+        const d = Math.abs(new Date(v.created_at).getTime() - logTs);
+        if (d < bestDelta) { bestDelta = d; best = v; }
+      }
+      return (best?.change_summary as string | null) ?? null;
     },
   });
 
