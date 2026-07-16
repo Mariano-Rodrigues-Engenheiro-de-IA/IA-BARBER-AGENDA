@@ -251,26 +251,12 @@ export default function TeamActionsPanel() {
           </DialogHeader>
           {detail && (
             <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="space-y-1.5 text-xs">
                 <div><span className="text-muted-foreground">Quando:</span> {new Date(detail.created_at).toLocaleString("pt-BR")}</div>
                 <div><span className="text-muted-foreground">Quem:</span> {actorName(detail.user_id)}</div>
                 <div><span className="text-muted-foreground">Empresa:</span> {tenantName(detail.tenant_id)}</div>
-                <div><span className="text-muted-foreground">Entidade:</span> {detail.entity ?? "—"}</div>
               </div>
-              <div className="grid md:grid-cols-2 gap-3">
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground mb-1">Antes</div>
-                  <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">
-                    {detail.before ? JSON.stringify(detail.before, null, 2) : "—"}
-                  </pre>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground mb-1">Depois</div>
-                  <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">
-                    {detail.after ? JSON.stringify(detail.after, null, 2) : "—"}
-                  </pre>
-                </div>
-              </div>
+              {renderDetailBody(detail)}
             </div>
           )}
         </DialogContent>
@@ -278,3 +264,114 @@ export default function TeamActionsPanel() {
     </div>
   );
 }
+
+// ---- Detail body renderer (with prompt summary tab) ----
+function renderDetailBody(detail: LogRow) {
+  const isPromptEdit =
+    detail.action === "prompt_updated" ||
+    detail.action === "edit_ai_prompt" ||
+    detail.action === "restore_ai_prompt" ||
+    (detail.action === "tenant_updated_multi" &&
+      Array.isArray((detail.after as any)?._changes) &&
+      (detail.after as any)._changes.includes("prompt_updated"));
+
+  if (isPromptEdit) {
+    const beforeText = String((detail.before as any)?.agent_system_prompt ?? "");
+    const afterText = String((detail.after as any)?.agent_system_prompt ?? "");
+    const summary = summarizePromptDiff(beforeText, afterText);
+    return (
+      <Tabs defaultValue="summary">
+        <TabsList>
+          <TabsTrigger value="summary">Resumo da alteração</TabsTrigger>
+          <TabsTrigger value="prompt">Prompt (antes / depois)</TabsTrigger>
+        </TabsList>
+        <TabsContent value="summary" className="space-y-3">
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <StatCard label="Caracteres antes" value={beforeText.length.toLocaleString("pt-BR")} />
+            <StatCard label="Caracteres depois" value={afterText.length.toLocaleString("pt-BR")} />
+            <StatCard label="Variação" value={`${summary.deltaChars >= 0 ? "+" : ""}${summary.deltaChars.toLocaleString("pt-BR")}`} />
+            <StatCard label="Linhas adicionadas" value={String(summary.added.length)} />
+            <StatCard label="Linhas removidas" value={String(summary.removed.length)} />
+            <StatCard label="Total de linhas" value={`${summary.totalBefore} → ${summary.totalAfter}`} />
+          </div>
+          {summary.added.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">Trechos adicionados</div>
+              <pre className="bg-emerald-500/10 text-emerald-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
+                {summary.added.slice(0, 40).map((l) => `+ ${l}`).join("\n")}
+                {summary.added.length > 40 ? `\n… (+${summary.added.length - 40} linhas)` : ""}
+              </pre>
+            </div>
+          )}
+          {summary.removed.length > 0 && (
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">Trechos removidos</div>
+              <pre className="bg-red-500/10 text-red-200 rounded p-3 text-xs overflow-auto max-h-64 whitespace-pre-wrap">
+                {summary.removed.slice(0, 40).map((l) => `- ${l}`).join("\n")}
+                {summary.removed.length > 40 ? `\n… (-${summary.removed.length - 40} linhas)` : ""}
+              </pre>
+            </div>
+          )}
+          {summary.added.length === 0 && summary.removed.length === 0 && (
+            <p className="text-xs text-muted-foreground">Sem diferença textual detectada.</p>
+          )}
+        </TabsContent>
+        <TabsContent value="prompt">
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">Antes</div>
+              <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">{beforeText || "—"}</pre>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-muted-foreground mb-1">Depois</div>
+              <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">{afterText || "—"}</pre>
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    );
+  }
+
+  return (
+    <div className="grid md:grid-cols-2 gap-3">
+      <div>
+        <div className="text-xs font-semibold text-muted-foreground mb-1">Antes</div>
+        <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">
+          {detail.before ? JSON.stringify(detail.before, null, 2) : "—"}
+        </pre>
+      </div>
+      <div>
+        <div className="text-xs font-semibold text-muted-foreground mb-1">Depois</div>
+        <pre className="bg-muted/40 rounded p-3 text-xs overflow-auto max-h-96 whitespace-pre-wrap">
+          {detail.after ? JSON.stringify(detail.after, null, 2) : "—"}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-border/60 bg-muted/20 p-2">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-sm font-semibold text-foreground">{value}</div>
+    </div>
+  );
+}
+
+function summarizePromptDiff(before: string, after: string) {
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const beforeSet = new Set(beforeLines.map((l) => l.trim()).filter(Boolean));
+  const afterSet = new Set(afterLines.map((l) => l.trim()).filter(Boolean));
+  const added = afterLines.filter((l) => l.trim() && !beforeSet.has(l.trim()));
+  const removed = beforeLines.filter((l) => l.trim() && !afterSet.has(l.trim()));
+  return {
+    deltaChars: after.length - before.length,
+    totalBefore: beforeLines.length,
+    totalAfter: afterLines.length,
+    added,
+    removed,
+  };
+}
+
