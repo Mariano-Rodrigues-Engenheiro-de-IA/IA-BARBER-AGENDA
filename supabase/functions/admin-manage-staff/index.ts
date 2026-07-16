@@ -65,6 +65,15 @@ Deno.serve(async (req) => {
       return json({ users });
     }
 
+    if (action === "resolve_users") {
+      const ids: string[] = Array.isArray(body?.user_ids) ? body.user_ids.filter((s: any) => typeof s === "string") : [];
+      if (ids.length === 0) return json({ users: {} });
+      const { data: list } = await admin.auth.admin.listUsers({ perPage: 1000 });
+      const map: Record<string, string | null> = {};
+      for (const u of list?.users ?? []) if (ids.includes(u.id)) map[u.id] = u.email ?? null;
+      return json({ users: map });
+    }
+
     if (action === "invite") {
       if (!email) return json({ error: "email obrigatório" }, 400);
       if (password && (typeof password !== "string" || password.length < 6)) {
