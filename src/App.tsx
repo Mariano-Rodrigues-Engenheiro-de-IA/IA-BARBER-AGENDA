@@ -76,13 +76,14 @@ function AppRoutes() {
       <Route path="/tenants" element={<AdminRoute><TenantsPage /></AdminRoute>} />
       <Route path="/tenants/new" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
       <Route path="/tenants/:id" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
-      <Route path="/tenants/:id/access" element={<AdminRoute><TenantAccessPage /></AdminRoute>} />
+      <Route path="/tenants/:id/access" element={<AdminRoute adminOnly><TenantAccessPage /></AdminRoute>} />
       <Route path="/tenants/:id/dashboard" element={<AdminRoute><TenantDashboardPage /></AdminRoute>} />
       <Route path="/tenants/:id/kanban" element={<AdminRoute><TenantKanbanPage /></AdminRoute>} />
       <Route path="/follow-ups" element={<AdminRoute><FollowUpsDashboardPage /></AdminRoute>} />
-      <Route path="/audit" element={<AdminRoute><AuditPage /></AdminRoute>} />
-      <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
-      <Route path="/prompts" element={<AdminRoute><PromptsPage /></AdminRoute>} />
+      <Route path="/audit" element={<AdminRoute adminOnly><AuditPage /></AdminRoute>} />
+      <Route path="/settings" element={<AdminRoute adminOnly><SettingsPage /></AdminRoute>} />
+      <Route path="/prompts" element={<AdminRoute adminOnly><PromptsPage /></AdminRoute>} />
+      <Route path="/staff" element={<AdminRoute adminOnly><StaffPage /></AdminRoute>} />
       <Route path="/agent-logs" element={<AdminRoute><AgentLogsPage /></AdminRoute>} />
 
       {/* Client */}
