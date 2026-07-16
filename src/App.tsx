@@ -39,11 +39,15 @@ function Loading() {
   );
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAdmin, role, authReady } = useAuth();
+function AdminRoute({ children, adminOnly = false }: { children: React.ReactNode; adminOnly?: boolean }) {
+  const { user, isAdmin, isStaff, role, authReady } = useAuth();
   if (!authReady) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
-  if (!isAdmin) return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
+  if (adminOnly) {
+    if (!isAdmin) return <Navigate to="/" replace />;
+  } else if (!isAdmin && !isStaff) {
+    return <Navigate to={role === "client" ? "/app" : "/login"} replace />;
+  }
   return <AdminLayout>{children}</AdminLayout>;
 }
 
