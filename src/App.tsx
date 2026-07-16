@@ -20,6 +20,7 @@ import TenantDashboardPage from "@/pages/TenantDashboard";
 import TenantKanbanPage from "@/pages/TenantKanban";
 import AuditPage from "@/pages/Audit";
 import PromptsPage from "@/pages/Prompts";
+import StaffPage from "@/pages/Staff";
 import ClientOverview from "@/pages/client/Overview";
 import ClientConversations from "@/pages/client/Conversations";
 import ClientFollowUps from "@/pages/client/FollowUps";
