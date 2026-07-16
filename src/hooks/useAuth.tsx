@@ -11,6 +11,8 @@ export type AppModule =
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 
+export type StaffModule = "follow-ups" | "agent-logs" | "prompts" | "staff" | "audit" | "settings";
+
 interface AuthContextType {
   session: Session | null;
   user: User | null;
@@ -19,6 +21,7 @@ interface AuthContextType {
   role: Role;
   tenantId: string | null;
   permissions: PermissionsMap;
+  staffModules: Set<StaffModule>;
   loading: boolean;
   authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
