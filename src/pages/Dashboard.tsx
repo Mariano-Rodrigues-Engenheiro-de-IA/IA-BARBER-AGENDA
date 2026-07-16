@@ -103,7 +103,6 @@ export default function DashboardPage() {
               <div key={tenant.id} className="p-4 flex items-center justify-between">
                 <div>
                   <p className="font-medium text-foreground">{tenant.name}</p>
-                  <p className="text-sm text-muted-foreground">{tenant.email || tenant.phone || "—"}</p>
                 </div>
                 <StatusBadge status={tenant.status} />
               </div>
