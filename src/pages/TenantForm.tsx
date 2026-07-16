@@ -593,7 +593,7 @@ export default function TenantFormPage() {
             {isEditing ? "Atualize as informações do estabelecimento" : "Cadastre um novo salão ou barbearia"}
           </p>
         </div>
-        {isEditing && id && (
+        {isEditing && id && isAdmin && (
           <Button variant="outline" onClick={() => navigate(`/tenants/${id}/access`)}>
             Acessos &amp; Permissões
           </Button>
