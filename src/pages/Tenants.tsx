@@ -120,19 +120,13 @@ export default function TenantsPage() {
                       </div>
                       <p className="text-xs text-muted-foreground">{tenant.slug}</p>
                     </td>
-                    <td className="p-4 text-sm text-muted-foreground hidden sm:table-cell">
-                      {tenant.email || tenant.phone || "—"}
-                    </td>
                     <td className="p-4">
                       <StatusBadge status={tenant.status} />
                     </td>
                     <td className="p-4 hidden md:table-cell">
-                      {tenant.trinks_api_key ? (
-                        <span className="text-xs text-accent">Configurado</span>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Pendente</span>
-                      )}
+                      <ApiBadge provider={(tenant as any).api_provider} />
                     </td>
+
                     <td className="p-4 text-right space-x-1">
                       <Button variant="ghost" size="icon" asChild title="Dashboard">
                         <Link to={`/tenants/${tenant.id}/dashboard`}>
