@@ -257,6 +257,16 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     return tel;
   };
 
+  // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero, 11 dígitos).
+  // Enviar com "55" na frente cria cadastro duplicado porque a busca interna do app
+  // não encontra o cliente existente. Sempre retornar formato local.
+  const appBarberLocalPhone = (raw: string): string => {
+    const full = normalizePhoneDigits(raw);
+    if (!full) return "";
+    if (full.startsWith("55") && (full.length === 12 || full.length === 13)) return full.slice(2);
+    return full;
+  };
+
   const appBarberPhoneVariants = (raw: string): string[] => {
     const full = normalizePhoneDigits(raw);
     const variants = new Set<string>();
