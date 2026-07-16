@@ -257,6 +257,16 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     return tel;
   };
 
+  // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero, 11 dígitos).
+  // Enviar com "55" na frente cria cadastro duplicado porque a busca interna do app
+  // não encontra o cliente existente. Sempre retornar formato local.
+  const appBarberLocalPhone = (raw: string): string => {
+    const full = normalizePhoneDigits(raw);
+    if (!full) return "";
+    if (full.startsWith("55") && (full.length === 12 || full.length === 13)) return full.slice(2);
+    return full;
+  };
+
   const appBarberPhoneVariants = (raw: string): string[] => {
     const full = normalizePhoneDigits(raw);
     const variants = new Set<string>();
@@ -770,13 +780,27 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           }
         }
         const url = buildUrl("/v1/appointments", {});
-        const customerName = String(args.customer_name || "Cliente").trim();
+        const rawName = String(args.customer_name || "").trim();
+        // 🛡️ Anti-cadastro-fantasma: bloqueia nome genérico/curto ou vazio.
+        // Já pegamos casos da IA criar cliente com nome "CLIENTE" no AppBarber.
+        const invalidNamePattern = /^(cliente|client|customer|whatsapp|wpp|zap|teste|test|sem\s*nome|-+|\.+|n\/?a)$/i;
+        if (!rawName || rawName.length < 3 || invalidNamePattern.test(rawName) || !/[a-zA-ZÀ-ú]/.test(rawName)) {
+          return {
+            error: `customer_name inválido ("${rawName || "vazio"}"). Pergunte o nome REAL do cliente antes de agendar — não use "Cliente" nem palavras genéricas. Se o cliente já se identificou nesta conversa, use aquele nome.`,
+            blocked: true,
+            reason: "invalid_customer_name",
+          };
+        }
+        const customerName = rawName;
+        // AppBarber armazena telefone SEM DDI 55 (formato: 61983012868).
+        // Enviar "5561983012868" cria cadastro duplicado. Sempre local (DDD+9+numero).
+        const customerPhoneLocal = appBarberLocalPhone(phoneDigits);
         // Schema real do AppBarber (validado via erro 400):
         // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
         // professionals: [{ professional_code }] | services: [{ service_code, duration }]
         const body: Record<string, unknown> = {
           establishment_code: Number(estCode),
-          customer_phone: Number(phoneDigits),
+          customer_phone: Number(customerPhoneLocal || phoneDigits),
           customer_name: customerName,
           start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
