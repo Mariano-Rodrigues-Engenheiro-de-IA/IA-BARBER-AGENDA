@@ -289,23 +289,28 @@ export default function ClientAi() {
             <AlertDialogTitle>Salvar nova versão do prompt</AlertDialogTitle>
             <AlertDialogDescription>
               Uma nova versão (v{currentVersion + 1}) será criada e a IA passará a responder
-              com essas instruções imediatamente. Descreva (opcional) o que mudou nesta versão
-              para consultar depois no histórico.
+              com essas instruções imediatamente. Descreva o que mudou nesta versão
+              (mínimo de 150 caracteres) — esse resumo aparece em "Ações da equipe".
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="change-summary">Resumo das alterações (opcional)</Label>
+            <Label htmlFor="change-summary">Resumo das alterações (obrigatório)</Label>
             <Textarea
               id="change-summary"
-              placeholder="Ex.: Ajustei a saudação e adicionei instruções para perguntar nome antes de agendar."
+              placeholder="Descreva de forma clara o que mudou, por quê, e o efeito esperado no atendimento (mínimo 150 caracteres)."
               value={changeSummary}
               onChange={(e) => setChangeSummary(e.target.value)}
-              rows={3}
+              rows={5}
             />
+            <p className={`text-xs ${changeSummary.trim().length < 150 ? "text-destructive" : "text-muted-foreground"}`}>
+              {changeSummary.trim().length}/150 caracteres mínimos
+            </p>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button onClick={handleSavePrompt}>Confirmar e salvar v{currentVersion + 1}</Button>
+            <Button disabled={changeSummary.trim().length < 150} onClick={handleSavePrompt}>
+              Confirmar e salvar v{currentVersion + 1}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
