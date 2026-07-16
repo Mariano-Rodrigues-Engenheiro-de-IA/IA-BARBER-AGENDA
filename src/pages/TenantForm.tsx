@@ -351,7 +351,7 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isStaff } = useAuth();
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
@@ -593,7 +593,7 @@ export default function TenantFormPage() {
             {isEditing ? "Atualize as informações do estabelecimento" : "Cadastre um novo salão ou barbearia"}
           </p>
         </div>
-        {isEditing && id && isAdmin && (
+        {isEditing && id && (isAdmin || isStaff) && (
           <Button variant="outline" onClick={() => navigate(`/tenants/${id}/access`)}>
             Acessos &amp; Permissões
           </Button>
