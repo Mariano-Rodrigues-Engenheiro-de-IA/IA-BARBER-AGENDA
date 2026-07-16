@@ -885,7 +885,7 @@ export type Database = {
         | "bemp"
         | "appbarber"
         | "none"
-      app_role: "admin" | "client"
+      app_role: "admin" | "client" | "staff"
       tenant_status: "active" | "inactive" | "suspended"
     }
     CompositeTypes: {
@@ -1022,7 +1022,7 @@ export const Constants = {
         "appbarber",
         "none",
       ],
-      app_role: ["admin", "client"],
+      app_role: ["admin", "client", "staff"],
       tenant_status: ["active", "inactive", "suspended"],
     },
   },
