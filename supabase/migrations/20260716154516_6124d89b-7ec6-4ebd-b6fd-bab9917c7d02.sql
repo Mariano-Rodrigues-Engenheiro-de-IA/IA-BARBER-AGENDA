@@ -1,0 +1,1 @@
+DROP POLICY IF EXISTS "Triggers can insert audit logs" ON public.audit_logs;
