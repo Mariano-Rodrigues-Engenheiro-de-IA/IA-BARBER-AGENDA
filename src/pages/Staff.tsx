@@ -170,52 +170,7 @@ export default function StaffPage() {
     refetchTenants();
   };
 
-  const staffIds = new Set((staffList ?? []).map((s) => s.user_id));
-  const orphans = (tenants ?? []).filter(
-    (t) => t.visibility === "restricted" && (!t.created_by || !staffIds.has(t.created_by))
-  );
-
   const copyCreds = () => {
-    if (!credentials) return;
-    navigator.clipboard.writeText(`Email: ${credentials.email}\nSenha: ${credentials.password}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="space-y-6 max-w-6xl">
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground">Colaboradores</h2>
-          <p className="text-muted-foreground mt-1">Cadastre sua equipe, libere empresas e abas do painel</p>
-        </div>
-        <Button onClick={() => setShowInvite(true)}>
-          <UserPlus className="w-4 h-4 mr-2" />Adicionar colaborador
-        </Button>
-      </div>
-
-      {orphans.length > 0 && (
-        <div className="glass-card p-6 border-warning/40 bg-warning/5">
-          <div className="flex items-start gap-3">
-            <ShieldAlert className="w-5 h-5 text-warning shrink-0 mt-0.5" />
-            <div className="flex-1 space-y-2">
-              <h3 className="font-semibold text-foreground">Empresas restritas sem responsável ativo ({orphans.length})</h3>
-              <p className="text-sm text-muted-foreground">
-                Estas empresas são restritas mas quem as cadastrou não é mais colaborador. Só você (admin) enxerga elas.
-                Libere para um colaborador ou marque como geral.
-              </p>
-              <ul className="mt-2 space-y-1 text-sm">
-                {orphans.slice(0, 20).map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-2 p-2 rounded bg-background/40">
-                    <span className="font-medium text-foreground">{t.name}</span>
-                    <span className="text-xs text-muted-foreground">criador removido / ausente</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Raio-x de responsabilidades */}
       <div className="glass-card p-6 space-y-4">
