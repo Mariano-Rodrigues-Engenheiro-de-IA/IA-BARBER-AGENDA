@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState, ReactNode } fro
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 
-export type Role = "admin" | "client" | null;
+export type Role = "admin" | "staff" | "client" | null;
 export type ModuleVisibility = "hidden" | "read_only" | "editable";
 export type AppModule =
   | "overview" | "conversations" | "followups" | "crm"
