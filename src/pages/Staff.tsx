@@ -372,7 +372,7 @@ export default function StaffPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remover colaborador?</AlertDialogTitle>
             <AlertDialogDescription>
-              <strong>{deleteUser?.email}</strong> perderá acesso ao painel imediatamente. As empresas restritas que ele criou continuarão existindo, mas ficarão sem responsável (você verá na lista de "sem responsável ativo" acima).
+              <strong>{deleteUser?.email}</strong> perderá acesso ao painel imediatamente.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
