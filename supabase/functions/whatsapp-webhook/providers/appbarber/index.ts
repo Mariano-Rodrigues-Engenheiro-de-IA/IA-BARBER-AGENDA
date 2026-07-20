@@ -263,25 +263,21 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   const appBarberLocalPhone = (raw: string): string => {
     const full = normalizePhoneDigits(raw);
     if (!full) return "";
-    if (full.startsWith("55") && (full.length === 12 || full.length === 13)) return full.slice(2);
-    return full;
+    const local = full.startsWith("55") && (full.length === 12 || full.length === 13)
+      ? full.slice(2)
+      : full;
+    // Números móveis antigos podem chegar com DDD + 8 dígitos. O AppBarber
+    // usa sempre DDD + 9 + 8 dígitos (ex.: 61983012868).
+    if (local.length === 10) return `${local.slice(0, 2)}9${local.slice(2)}`;
+    return local;
   };
 
   const appBarberPhoneVariants = (raw: string): string[] => {
     // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero).
     // Enviar com "55" na frente não encontra o cadastro. Buscar sempre em formato local.
-    // Testamos com e sem o 9 após o DDD porque bases antigas podem variar.
-    const full = normalizePhoneDigits(raw);
-    const variants = new Set<string>();
-    const add = (value: string) => {
-      const digits = String(value || "").replace(/\D/g, "");
-      if (digits) variants.add(digits);
-    };
-    const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
-    add(local);
-    if (local.length === 10) add(`${local.slice(0, 2)}9${local.slice(2)}`);
-    if (local.length === 11 && local[2] === "9") add(`${local.slice(0, 2)}${local.slice(3)}`);
-    return Array.from(variants);
+    // A API deve receber somente o padrão atual: DDD + 9 + 8 dígitos.
+    const local = appBarberLocalPhone(raw);
+    return local ? [local] : [];
   };
 
   const extractAppBarberInvoiceList = (payload: any): any[] => {
