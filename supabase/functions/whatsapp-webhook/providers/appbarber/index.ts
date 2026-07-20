@@ -162,7 +162,7 @@ export function buildAppBarberTools(tenant: any) {
             start_date: { type: "string", description: "YYYY-MM-DD" },
             start_time: { type: "string", description: "HH:MM (exato de available_times)" },
             customer_name: { type: "string" },
-            customer_phone: { type: "string", description: "Telefone com DDI (ex: 5561999998888 ou +55...)" },
+            customer_phone: { type: "string", description: "Telefone local SEM DDI 55 (ex: 61999998888). Use o telefone da conversa removendo o prefixo 55." },
             service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval retornado por listar_servicos). Obrigatório para evitar rejeição da API." },
             scheduling_observation: { type: "string", description: "Observação opcional. O sistema sempre acrescenta nome e telefone para facilitar busca/cancelamento." },
           },
@@ -178,7 +178,7 @@ export function buildAppBarberTools(tenant: any) {
         parameters: {
           type: "object",
           properties: {
-            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos, com ou sem DDI 55). Padrão: telefone da conversa." },
+            customer_phone: { type: "string", description: "Telefone local do cliente SEM DDI 55 (só dígitos). Padrão: telefone da conversa removendo o prefixo 55." },
             start_date: { type: "string", description: "YYYY-MM-DD — início do período. Padrão: hoje (Brasília)." },
             end_date: { type: "string", description: "YYYY-MM-DD — fim do período (máx 31 dias após start_date). Padrão: hoje + 31 dias." },
             status_type: { type: "number", description: "1=Agendado, 2=Realizado, 3=Cancelado, 4=Bloqueado, 5=Ausente. Padrão: 1 (Agendado)." },
@@ -198,7 +198,7 @@ export function buildAppBarberTools(tenant: any) {
             invoice_code: { type: "number", description: "invoice_code do agendamento (obtido em listar_agendamentos)." },
             invoice_item_code: { type: "number", description: "Opcional — invoice_item_code obtido em listar_agendamentos para remover apenas um item da comanda." },
             cancel_scope: { type: "string", enum: ["invoice", "item"], description: "Padrão invoice. Use item apenas quando for remover um item específico da comanda." },
-            customer_phone: { type: "string", description: "Telefone do cliente (só dígitos). Padrão: telefone da conversa." },
+            customer_phone: { type: "string", description: "Telefone local do cliente SEM DDI 55 (só dígitos). Padrão: telefone da conversa removendo o prefixo 55." },
             reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
           },
           required: [],

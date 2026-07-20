@@ -4479,6 +4479,29 @@ async function callAIAgent(
       let toolCallToExecute = toolCall;
       let correctionReason: string | null = null;
 
+      // AppBarber trabalha com telefone local (DDD + número), sem o DDI 55.
+      // Normalize ANTES dos guards, da execução e do agent_logs para que o prefixo
+      // não apareça nem mesmo nos argumentos registrados da ferramenta.
+      if (provider === "appbarber" && typeof parsedArgs?.customer_phone === "string") {
+        const originalPhone = parsedArgs.customer_phone;
+        const digits = originalPhone.replace(/\D/g, "");
+        const localPhone = digits.startsWith("55") && (digits.length === 12 || digits.length === 13)
+          ? digits.slice(2)
+          : digits;
+        if (localPhone && localPhone !== originalPhone) {
+          parsedArgs = { ...parsedArgs, customer_phone: localPhone };
+          correctionReason = `customer_phone normalizado para o padrão AppBarber sem DDI 55`;
+          toolCallToExecute = {
+            ...toolCall,
+            function: {
+              ...toolCall.function,
+              arguments: JSON.stringify(parsedArgs),
+            },
+          };
+          console.log(`[AppBarber] customer_phone normalizado nos argumentos: ${digits} -> ${localPhone}`);
+        }
+      }
+
       if (toolCall.function.name === "cadastrar_cliente") {
         const explicit = sessionState.explicitClientName;
         const forcedName = isUsableClientName(explicit) ? sanitizeClientName(explicit) : "";
