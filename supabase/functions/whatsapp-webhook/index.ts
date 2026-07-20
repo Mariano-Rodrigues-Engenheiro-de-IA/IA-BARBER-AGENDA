@@ -4501,9 +4501,9 @@ async function callAIAgent(
         if (typeof parsedArgs?.scheduling_observation === "string") {
           const original = parsedArgs.scheduling_observation;
           const normalized = original
-            .replace(/\b55(\d{2})(\d{8})\b/g, "$19$2")
+            .replace(/\b55(\d{2})(\d{8})\b/g, (_match: string, ddd: string, number: string) => `${ddd}9${number}`)
             .replace(/\b55(\d{11})\b/g, "$1")
-            .replace(/\b(\d{2})(\d{8})\b/g, "$19$2");
+            .replace(/\b(\d{2})(\d{8})\b/g, (_match: string, ddd: string, number: string) => `${ddd}9${number}`);
           if (normalized !== original) {
             parsedArgs.scheduling_observation = normalized;
             changed = true;
