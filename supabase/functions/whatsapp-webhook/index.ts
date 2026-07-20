@@ -4487,9 +4487,12 @@ async function callAIAgent(
         if (parsedArgs?.customer_phone) {
           const original = String(parsedArgs.customer_phone);
           const digits = original.replace(/\D/g, "");
-          const normalized = (digits.startsWith("55") && (digits.length === 12 || digits.length === 13))
+          const withoutCountryCode = (digits.startsWith("55") && (digits.length === 12 || digits.length === 13))
             ? digits.slice(2)
             : digits;
+          const normalized = withoutCountryCode.length === 10
+            ? `${withoutCountryCode.slice(0, 2)}9${withoutCountryCode.slice(2)}`
+            : withoutCountryCode;
           if (normalized !== original) {
             parsedArgs.customer_phone = normalized;
             changed = true;
@@ -4497,14 +4500,17 @@ async function callAIAgent(
         }
         if (typeof parsedArgs?.scheduling_observation === "string") {
           const original = parsedArgs.scheduling_observation;
-          const normalized = original.replace(/\b55(\d{10,11})\b/g, "$1");
+          const normalized = original
+            .replace(/\b55(\d{2})(\d{8})\b/g, (_match: string, ddd: string, number: string) => `${ddd}9${number}`)
+            .replace(/\b55(\d{11})\b/g, "$1")
+            .replace(/\b(\d{2})(\d{8})\b/g, (_match: string, ddd: string, number: string) => `${ddd}9${number}`);
           if (normalized !== original) {
             parsedArgs.scheduling_observation = normalized;
             changed = true;
           }
         }
         if (changed) {
-          correctionReason = "Argumentos AppBarber normalizados (removido DDI 55)";
+          correctionReason = "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
           toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
         }
       }
