@@ -268,22 +268,19 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   };
 
   const appBarberPhoneVariants = (raw: string): string[] => {
+    // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero).
+    // Enviar com "55" na frente não encontra o cadastro. Buscar sempre em formato local.
+    // Testamos com e sem o 9 após o DDD porque bases antigas podem variar.
     const full = normalizePhoneDigits(raw);
     const variants = new Set<string>();
     const add = (value: string) => {
       const digits = String(value || "").replace(/\D/g, "");
       if (digits) variants.add(digits);
     };
-    add(full);
     const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
     add(local);
-    // AppBarber documenta /invoice/search como DDD+número, sem DDI, e bases antigas
-    // podem ter celular com ou sem o 9 após o DDD. Testamos as duas formas.
     if (local.length === 10) add(`${local.slice(0, 2)}9${local.slice(2)}`);
     if (local.length === 11 && local[2] === "9") add(`${local.slice(0, 2)}${local.slice(3)}`);
-    for (const v of Array.from(variants)) {
-      if (!v.startsWith("55") && (v.length === 10 || v.length === 11)) add(`55${v}`);
-    }
     return Array.from(variants);
   };
 
@@ -994,7 +991,8 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
 
       case "cancelar_agendamento": {
-        const phoneDigits = normalizePhoneDigits(args.customer_phone || phoneNumber || "");
+        // AppBarber espera telefone SEM o DDI 55 em todas as rotas (search e delete).
+        const phoneDigits = appBarberLocalPhone(normalizePhoneDigits(args.customer_phone || phoneNumber || ""));
         const cancelScope = String(args.cancel_scope || "invoice").toLowerCase();
         const reason = String(args.reason || "Cancelamento solicitado pelo cliente via WhatsApp");
         let removingItem = cancelScope === "item" && args.invoice_item_code;
