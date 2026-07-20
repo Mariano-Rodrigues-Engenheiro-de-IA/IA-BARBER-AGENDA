@@ -4508,8 +4508,6 @@ async function callAIAgent(
           toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
         }
       }
-        }
-      }
 
       if (toolCall.function.name === "cadastrar_cliente") {
         const explicit = sessionState.explicitClientName;
