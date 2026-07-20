@@ -4482,23 +4482,32 @@ async function callAIAgent(
       // AppBarber trabalha com telefone local (DDD + número), sem o DDI 55.
       // Normalize ANTES dos guards, da execução e do agent_logs para que o prefixo
       // não apareça nem mesmo nos argumentos registrados da ferramenta.
-      if (provider === "appbarber" && typeof parsedArgs?.customer_phone === "string") {
-        const originalPhone = parsedArgs.customer_phone;
-        const digits = originalPhone.replace(/\D/g, "");
-        const localPhone = digits.startsWith("55") && (digits.length === 12 || digits.length === 13)
-          ? digits.slice(2)
-          : digits;
-        if (localPhone && localPhone !== originalPhone) {
-          parsedArgs = { ...parsedArgs, customer_phone: localPhone };
-          correctionReason = `customer_phone normalizado para o padrão AppBarber sem DDI 55`;
-          toolCallToExecute = {
-            ...toolCall,
-            function: {
-              ...toolCall.function,
-              arguments: JSON.stringify(parsedArgs),
-            },
-          };
-          console.log(`[AppBarber] customer_phone normalizado nos argumentos: ${digits} -> ${localPhone}`);
+      if (provider === "appbarber") {
+        let changed = false;
+        if (parsedArgs?.customer_phone) {
+          const original = String(parsedArgs.customer_phone);
+          const digits = original.replace(/\D/g, "");
+          const normalized = (digits.startsWith("55") && (digits.length === 12 || digits.length === 13))
+            ? digits.slice(2)
+            : digits;
+          if (normalized !== original) {
+            parsedArgs.customer_phone = normalized;
+            changed = true;
+          }
+        }
+        if (typeof parsedArgs?.scheduling_observation === "string") {
+          const original = parsedArgs.scheduling_observation;
+          const normalized = original.replace(/\b55(\d{10,11})\b/g, "$1");
+          if (normalized !== original) {
+            parsedArgs.scheduling_observation = normalized;
+            changed = true;
+          }
+        }
+        if (changed) {
+          correctionReason = "Argumentos AppBarber normalizados (removido DDI 55)";
+          toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
+        }
+      }
         }
       }
 
