@@ -802,7 +802,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
           services: serviceItems,
-          scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${phoneDigits}`,
+          scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${customerPhoneLocal || phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
         // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
