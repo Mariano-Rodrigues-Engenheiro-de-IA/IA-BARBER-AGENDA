@@ -26,6 +26,37 @@ function toPositiveInteger(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+// Normaliza o campo `dia` retornado pela Frizzar para yyyy-MM-dd no fuso
+// America/Sao_Paulo. A API às vezes devolve `"2026-07-21"`, às vezes um ISO
+// completo com timezone (`"2026-07-20T21:00:00-03:00"` = 21/07 BRT, mas
+// `startsWith("2026-07-21")` retornaria false). Sem isso, dias inteiros com
+// grade cheia foram interpretados como "sem vaga".
+function frizzarNormalizeApiDay(rawDia: unknown): string | null {
+  if (typeof rawDia !== "string" || !rawDia) return null;
+  // Caso simples: já vem como yyyy-MM-dd (com ou sem sufixo T...)
+  const bare = rawDia.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bare) && !rawDia.includes("T") && !rawDia.includes("Z") && !/[+-]\d{2}:?\d{2}$/.test(rawDia)) {
+    return bare;
+  }
+  // ISO com timezone: converter para BRT (America/Sao_Paulo)
+  const parsed = new Date(rawDia);
+  if (isNaN(parsed.getTime())) return /^\d{4}-\d{2}-\d{2}$/.test(bare) ? bare : null;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    return fmt.format(parsed); // en-CA => yyyy-MM-dd
+  } catch {
+    return /^\d{4}-\d{2}-\d{2}$/.test(bare) ? bare : null;
+  }
+}
+
+function frizzarMatchesRequestedDay(rawDia: unknown, requested: string): boolean {
+  const n = frizzarNormalizeApiDay(rawDia);
+  return !!n && n === requested;
+}
+
 // ===================== FRIZZAR TOOLS DEFINITION =====================
 
 export function buildFrizzarTools(tenant: any) {
