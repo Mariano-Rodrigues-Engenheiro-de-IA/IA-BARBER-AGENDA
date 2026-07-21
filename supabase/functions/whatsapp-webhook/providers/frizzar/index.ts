@@ -644,6 +644,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           data: args.data,
           resumo,
           totalProfissionaisLivres: comHorario.length,
+          totalProfissionaisComErro: comErro.length,
           horariosConsolidados,
           profissionais: resultados,
         };
