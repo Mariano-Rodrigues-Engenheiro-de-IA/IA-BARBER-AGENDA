@@ -89,7 +89,7 @@ export function buildFrizzarTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_profissionais",
-        description: "Lista profissionais que atendem TODOS os serviços informados e têm horário disponível. Sempre chame após listar_servicos e o cliente ter escolhido o(s) serviço(s).",
+        description: "Lista profissionais que atendem TODOS os serviços informados. O campo proximoHorario da API NÃO comprova disponibilidade ou indisponibilidade na data desejada e não deve ser mostrado ao cliente. Sempre chame listar_horarios_geral com os profissionais retornados e a data pedida antes de afirmar que há ou não há vagas.",
         parameters: {
           type: "object",
           properties: {
@@ -479,10 +479,26 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
         if (Array.isArray(parsed) && parsed.length === 0) {
           return {
             profissionais: [],
-            aviso: "Nenhum profissional com horário livre nas próximas horas (a API filtra por disponibilidade imediata). Pergunte ao cliente uma DATA específica (ex.: amanhã, sexta, 30/04) e tente listar_horarios para cada profissional conhecido, ou peça ao cliente o nome do profissional preferido.",
+            disponibilidadeVerificada: false,
+            aviso: "A listagem de profissionais veio vazia, mas isso NÃO comprova agenda lotada. Não diga que não há vagas sem consultar a grade da data solicitada. Se houver profissionais já conhecidos nesta conversa, use-os em listar_horarios_geral; caso contrário, peça preferência de profissional ou outra data sem afirmar indisponibilidade.",
           };
         }
-        return parsed;
+        // `proximoHorario` já divergiu da grade real da própria Frizzar: em
+        // 21/07/2026 apontou o dia seguinte para todos os profissionais, embora
+        // `/listar/horarios/{id}/{data}` ainda tivesse várias vagas no mesmo dia.
+        // Não expomos esse resumo inconsistente como fonte de disponibilidade.
+        const profissionais = Array.isArray(parsed)
+          ? parsed.map((profissional: any) => {
+              if (!profissional || typeof profissional !== "object") return profissional;
+              const { proximoHorario: _proximoHorarioIgnorado, ...dadosConfiaveis } = profissional;
+              return dadosConfiaveis;
+            })
+          : parsed;
+        return {
+          profissionais,
+          disponibilidadeVerificada: false,
+          acaoObrigatoria: "Chame listar_horarios_geral com estes profissionais, os serviços escolhidos e a data pedida. Somente essa grade pode confirmar se há ou não vagas.",
+        };
       }
 
       case "listar_horarios": {
