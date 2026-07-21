@@ -26,6 +26,37 @@ function toPositiveInteger(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+// Normaliza o campo `dia` retornado pela Frizzar para yyyy-MM-dd no fuso
+// America/Sao_Paulo. A API às vezes devolve `"2026-07-21"`, às vezes um ISO
+// completo com timezone (`"2026-07-20T21:00:00-03:00"` = 21/07 BRT, mas
+// `startsWith("2026-07-21")` retornaria false). Sem isso, dias inteiros com
+// grade cheia foram interpretados como "sem vaga".
+function frizzarNormalizeApiDay(rawDia: unknown): string | null {
+  if (typeof rawDia !== "string" || !rawDia) return null;
+  // Caso simples: já vem como yyyy-MM-dd (com ou sem sufixo T...)
+  const bare = rawDia.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bare) && !rawDia.includes("T") && !rawDia.includes("Z") && !/[+-]\d{2}:?\d{2}$/.test(rawDia)) {
+    return bare;
+  }
+  // ISO com timezone: converter para BRT (America/Sao_Paulo)
+  const parsed = new Date(rawDia);
+  if (isNaN(parsed.getTime())) return /^\d{4}-\d{2}-\d{2}$/.test(bare) ? bare : null;
+  try {
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    return fmt.format(parsed); // en-CA => yyyy-MM-dd
+  } catch {
+    return /^\d{4}-\d{2}-\d{2}$/.test(bare) ? bare : null;
+  }
+}
+
+function frizzarMatchesRequestedDay(rawDia: unknown, requested: string): boolean {
+  const n = frizzarNormalizeApiDay(rawDia);
+  return !!n && n === requested;
+}
+
 // ===================== FRIZZAR TOOLS DEFINITION =====================
 
 export function buildFrizzarTools(tenant: any) {
@@ -518,7 +549,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
         try {
           const parsed = JSON.parse(text);
           if (Array.isArray(parsed)) {
-            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const exato = parsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.data));
             if (exato && args.profissionalId) {
               frizzarSetLastListed(sessionState, args.profissionalId, args.data);
             }
@@ -557,7 +588,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], diaSolicitadoEncontrado: false };
             const parsed = JSON.parse(text);
             if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], diaSolicitadoEncontrado: false, raw: parsed };
-            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const exato = parsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.data));
             if (exato) {
               frizzarSetLastListed(sessionState, profissionalId, args.data);
             }
@@ -589,15 +620,22 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           }
         }
         const comHorario = resultados.filter((r: any) => Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0);
+        const comErro = resultados.filter((r: any) => r?.erro);
         const horariosConsolidados = Array.from(new Set(
           comHorario.flatMap((r: any) => r.horariosLivres)
         )).sort();
 
         let resumo: string;
-        if (comHorario.length === 0) {
+        if (comHorario.length === 0 && comErro.length > 0 && comErro.length === resultados.length) {
+          // Todas as consultas falharam — NÃO afirmar "sem vaga".
+          resumo = `Consulta de horários falhou em ${args.data} para todos os profissionais (${comErro.length}). NÃO diga ao cliente que não há vaga; peça desculpas por instabilidade momentânea e ofereça tentar novamente.`;
+        } else if (comHorario.length === 0 && comErro.length > 0) {
+          // Parcial: alguns falharam, o resto veio vazio. Distinguir explicitamente.
+          resumo = `Consulta parcial em ${args.data}: ${comErro.length} profissional(is) falharam na consulta e ${resultados.length - comErro.length} responderam sem horários. NÃO afirme categoricamente "sem vaga" — os que falharam podem ter grade livre. Peça desculpas por instabilidade e ofereça reconsultar, ou pergunte outra data.`;
+        } else if (comHorario.length === 0) {
           resumo = `Nenhum profissional com vaga em ${args.data}. Pergunte qual outro dia o cliente quer consultar; não sugira horários de outra data sem nova busca.`;
         } else if (comHorario.length === 1) {
-          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.`;
+          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.${comErro.length > 0 ? ` (${comErro.length} outro(s) profissional(is) falharam na consulta — mencionar apenas se cliente pedir preferência.)` : ""}`;
         } else {
           resumo = `${comHorario.length} profissionais livres em ${args.data}. Se a agenda estiver cheia de opções, pergunte se há preferência; se o cliente já disse o horário desejado, escolha sem perguntar.`;
         }
@@ -606,6 +644,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           data: args.data,
           resumo,
           totalProfissionaisLivres: comHorario.length,
+          totalProfissionaisComErro: comErro.length,
           horariosConsolidados,
           profissionais: resultados,
         };
