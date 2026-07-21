@@ -588,7 +588,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], diaSolicitadoEncontrado: false };
             const parsed = JSON.parse(text);
             if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], diaSolicitadoEncontrado: false, raw: parsed };
-            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const exato = parsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.data));
             if (exato) {
               frizzarSetLastListed(sessionState, profissionalId, args.data);
             }
