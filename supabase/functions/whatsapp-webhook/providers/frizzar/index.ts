@@ -620,15 +620,22 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           }
         }
         const comHorario = resultados.filter((r: any) => Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0);
+        const comErro = resultados.filter((r: any) => r?.erro);
         const horariosConsolidados = Array.from(new Set(
           comHorario.flatMap((r: any) => r.horariosLivres)
         )).sort();
 
         let resumo: string;
-        if (comHorario.length === 0) {
+        if (comHorario.length === 0 && comErro.length > 0 && comErro.length === resultados.length) {
+          // Todas as consultas falharam — NÃO afirmar "sem vaga".
+          resumo = `Consulta de horários falhou em ${args.data} para todos os profissionais (${comErro.length}). NÃO diga ao cliente que não há vaga; peça desculpas por instabilidade momentânea e ofereça tentar novamente.`;
+        } else if (comHorario.length === 0 && comErro.length > 0) {
+          // Parcial: alguns falharam, o resto veio vazio. Distinguir explicitamente.
+          resumo = `Consulta parcial em ${args.data}: ${comErro.length} profissional(is) falharam na consulta e ${resultados.length - comErro.length} responderam sem horários. NÃO afirme categoricamente "sem vaga" — os que falharam podem ter grade livre. Peça desculpas por instabilidade e ofereça reconsultar, ou pergunte outra data.`;
+        } else if (comHorario.length === 0) {
           resumo = `Nenhum profissional com vaga em ${args.data}. Pergunte qual outro dia o cliente quer consultar; não sugira horários de outra data sem nova busca.`;
         } else if (comHorario.length === 1) {
-          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.`;
+          resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.${comErro.length > 0 ? ` (${comErro.length} outro(s) profissional(is) falharam na consulta — mencionar apenas se cliente pedir preferência.)` : ""}`;
         } else {
           resumo = `${comHorario.length} profissionais livres em ${args.data}. Se a agenda estiver cheia de opções, pergunte se há preferência; se o cliente já disse o horário desejado, escolha sem perguntar.`;
         }
