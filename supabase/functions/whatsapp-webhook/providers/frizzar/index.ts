@@ -549,7 +549,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
         try {
           const parsed = JSON.parse(text);
           if (Array.isArray(parsed)) {
-            const exato = parsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.data));
+            const exato = parsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.data));
             if (exato && args.profissionalId) {
               frizzarSetLastListed(sessionState, args.profissionalId, args.data);
             }
