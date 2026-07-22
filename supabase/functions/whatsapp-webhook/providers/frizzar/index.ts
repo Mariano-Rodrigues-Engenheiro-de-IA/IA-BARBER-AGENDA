@@ -53,6 +53,11 @@ function frizzarNormalizeApiDay(rawDia: unknown): string | null {
 }
 
 function frizzarMatchesRequestedDay(rawDia: unknown, requested: string): boolean {
+  // `dia` é um dia de agenda, não um instante. Algumas instalações devolvem
+  // meia-noite com offset/UTC; converter esse valor de fuso pode deslocá-lo
+  // para o dia anterior. O prefixo literal tem prioridade e a normalização
+  // fica apenas como fallback para formatos alternativos.
+  if (typeof rawDia === "string" && rawDia.slice(0, 10) === requested) return true;
   const n = frizzarNormalizeApiDay(rawDia);
   return !!n && n === requested;
 }
@@ -568,9 +573,52 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
 
       case "listar_horarios_geral": {
         const body = Array.isArray(args.servicos) ? args.servicos : [];
-        const profs = Array.isArray(args.profissionais) ? args.profissionais : [];
-        if (profs.length === 0 || !args.data || body.length === 0) {
-          return { error: "Faltam parâmetros: profissionais (array com codigo), data (yyyy-MM-dd) e servicos." };
+        const profissionaisInformados = Array.isArray(args.profissionais) ? args.profissionais : [];
+        if (!args.data || body.length === 0) {
+          return { error: "Faltam parâmetros: data (yyyy-MM-dd) e servicos." };
+        }
+
+        // Não confiar apenas na lista montada pela IA: ela pode estar
+        // incompleta ou reaproveitada de outro serviço. Recarregamos os
+        // profissionais elegíveis diretamente da Frizzar com os mesmos
+        // serviços desta consulta e unimos pelo código.
+        let profissionaisDescobertos: any[] = [];
+        try {
+          const profissionaisRes = await frizzarFetch(`/listar/profissionais`, {
+            method: "POST",
+            headers: jsonHeaders,
+            body: JSON.stringify(body),
+          });
+          const profissionaisText = await profissionaisRes.text();
+          console.log(`[Frizzar] listar_horarios_geral descoberta de profissionais (${profissionaisRes.status}):`, profissionaisText.slice(0, 1200));
+          if (profissionaisRes.ok) {
+            const profissionaisParsed = JSON.parse(profissionaisText);
+            if (Array.isArray(profissionaisParsed)) profissionaisDescobertos = profissionaisParsed;
+          }
+        } catch (error) {
+          console.warn(`[Frizzar] listar_horarios_geral não conseguiu atualizar profissionais:`, (error as Error)?.message || String(error));
+        }
+
+        const profissionaisPorId = new Map<number, { codigo: number; nome: string | null }>();
+        for (const profissional of [...profissionaisDescobertos, ...profissionaisInformados]) {
+          const codigo = toPositiveInteger(profissional?.codigo);
+          if (!codigo) continue;
+          const atual = profissionaisPorId.get(codigo);
+          profissionaisPorId.set(codigo, {
+            codigo,
+            nome: typeof profissional?.nome === "string" && profissional.nome.trim()
+              ? profissional.nome.trim()
+              : atual?.nome ?? null,
+          });
+        }
+        const profs = Array.from(profissionaisPorId.values());
+        if (profs.length === 0) {
+          return {
+            data: args.data,
+            disponibilidadeVerificada: false,
+            error: "A Frizzar não retornou profissionais elegíveis para consultar a grade. NÃO diga que não há vagas; encaminhe para atendimento humano.",
+            blocked: true,
+          };
         }
         console.log(`[Frizzar] listar_horarios_geral data=${args.data} profs=${profs.map((p: any) => p.codigo).join(",")}`);
 
@@ -673,7 +721,9 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           // Parcial: alguns falharam, o resto veio vazio. Distinguir explicitamente.
           resumo = `Consulta parcial em ${args.data}: ${comErro.length} profissional(is) falharam na consulta e ${resultados.length - comErro.length} responderam sem horários. NÃO afirme categoricamente "sem vaga" — os que falharam podem ter grade livre. Peça desculpas por instabilidade e ofereça reconsultar, ou pergunte outra data.`;
         } else if (comHorario.length === 0) {
-          resumo = `Nenhum profissional com vaga em ${args.data}. Pergunte qual outro dia o cliente quer consultar; não sugira horários de outra data sem nova busca.`;
+          // HTTP 200 com todas as grades vazias já divergiu da agenda real da
+          // Frizzar. Mesmo repetido, não é prova suficiente de agenda lotada.
+          resumo = `Não foi possível confirmar a grade de ${args.data}: todos os profissionais retornaram uma resposta vazia. NÃO diga ao cliente que não há vagas. Encaminhe para atendimento humano para conferir a agenda.`;
         } else if (comHorario.length === 1) {
           resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.${comErro.length > 0 ? ` (${comErro.length} outro(s) profissional(is) falharam na consulta — mencionar apenas se cliente pedir preferência.)` : ""}`;
         } else {
@@ -683,6 +733,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
         return {
           data: args.data,
           resumo,
+          disponibilidadeVerificada: comHorario.length > 0,
           totalProfissionaisLivres: comHorario.length,
           totalProfissionaisComErro: comErro.length,
           horariosConsolidados,
