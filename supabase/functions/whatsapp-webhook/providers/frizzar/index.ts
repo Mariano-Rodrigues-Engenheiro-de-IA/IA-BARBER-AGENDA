@@ -574,7 +574,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
         }
         console.log(`[Frizzar] listar_horarios_geral data=${args.data} profs=${profs.map((p: any) => p.codigo).join(",")}`);
 
-        const consultaUm = async (prof: any) => {
+        const consultaUm = async (prof: any, rodada: number) => {
           const profissionalId = prof?.codigo;
           const nome = prof?.nome ?? null;
           if (!profissionalId) return { profissionalId: null, nome, erro: "codigo ausente", horariosLivres: [], diaSolicitadoEncontrado: false };
@@ -585,6 +585,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
               body: JSON.stringify(body),
             });
             const text = await res.text();
+            console.log(`[Frizzar] listar_horarios_geral profissional=${profissionalId} rodada=${rodada} response (${res.status}):`, text.slice(0, 1200));
             if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], diaSolicitadoEncontrado: false };
             const parsed = JSON.parse(text);
             if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], diaSolicitadoEncontrado: false, raw: parsed };
@@ -597,6 +598,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
               nome,
               data: args.data,
               diaSolicitadoEncontrado: Boolean(exato),
+              erro: exato ? undefined : `data ${args.data} ausente na resposta`,
               horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
             };
           } catch (e: any) {
@@ -604,7 +606,45 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           }
         };
 
-        const resultados = await Promise.all(profs.map(consultaUm));
+        // A Frizzar já devolveu HTTP 200 + grade vazia para TODOS os barbeiros e,
+        // minutos depois, dezenas de horários para a mesma data/serviço. Os casos
+        // ocorreram quando este fanout disparava as consultas simultaneamente com
+        // o mesmo token. Portanto consultamos sequencialmente e uma resposta
+        // totalmente vazia precisa ser reproduzida em 3 rodadas independentes
+        // antes de poder significar "sem vaga".
+        const consultarRodada = async (rodada: number) => {
+          const rodadaResultados: any[] = [];
+          for (const prof of profs) {
+            rodadaResultados.push(await consultaUm(prof, rodada));
+            if (profs.length > 1) await sleep(150);
+          }
+          return rodadaResultados;
+        };
+
+        let resultados = await consultarRodada(1);
+        const rodadaSemVagaConfiavel = (itens: any[]) => itens.length > 0 && itens.every((r: any) =>
+          !r?.erro && r?.diaSolicitadoEncontrado === true && Array.isArray(r?.horariosLivres) && r.horariosLivres.length === 0
+        );
+
+        if (rodadaSemVagaConfiavel(resultados)) {
+          console.warn(`[Frizzar] grade vazia para todos na rodada 1 (${args.data}); iniciando contraprova sequencial.`);
+          await sleep(800);
+          const segundaRodada = await consultarRodada(2);
+          if (!rodadaSemVagaConfiavel(segundaRodada)) {
+            resultados = segundaRodada;
+            console.warn(`[Frizzar] falso vazio detectado: rodada 2 divergiu da rodada 1 em ${args.data}.`);
+          } else {
+            await sleep(1600);
+            const terceiraRodada = await consultarRodada(3);
+            if (!rodadaSemVagaConfiavel(terceiraRodada)) {
+              resultados = terceiraRodada;
+              console.warn(`[Frizzar] falso vazio detectado: rodada 3 divergiu das anteriores em ${args.data}.`);
+            } else {
+              resultados = terceiraRodada;
+              console.log(`[Frizzar] grade vazia confirmada em 3 rodadas independentes para ${args.data}.`);
+            }
+          }
+        }
         if (sessionState) {
           const ids = resultados
             .map((r: any) => toPositiveInteger(r?.profissionalId))
@@ -723,7 +763,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             const hTxt = await hRes.text();
             const hParsed = JSON.parse(hTxt);
             if (Array.isArray(hParsed)) {
-              const entry = hParsed.find((d: any) => typeof d?.dia === "string" && d.dia.startsWith(args.dia));
+              const entry = hParsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.dia));
               return {
                 checked: true,
                 horariosLivres: Array.isArray(entry?.horariosLivres) ? entry.horariosLivres : [],
