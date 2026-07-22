@@ -636,7 +636,17 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             console.log(`[Frizzar] listar_horarios_geral profissional=${profissionalId} rodada=${rodada} response (${res.status}):`, text.slice(0, 1200));
             if (!res.ok) return { profissionalId, nome, erro: `status ${res.status}`, horariosLivres: [], diaSolicitadoEncontrado: false };
             const parsed = JSON.parse(text);
-            if (!Array.isArray(parsed)) return { profissionalId, nome, horariosLivres: [], diaSolicitadoEncontrado: false, raw: parsed };
+            if (!Array.isArray(parsed)) {
+              console.warn(`[Frizzar] listar_horarios_geral profissional=${profissionalId} retornou formato inesperado:`, JSON.stringify(parsed).slice(0, 1200));
+              return {
+                profissionalId,
+                nome,
+                erro: `formato inesperado da API (esperava array de dias, recebeu ${parsed === null ? "null" : typeof parsed})`,
+                horariosLivres: [],
+                diaSolicitadoEncontrado: false,
+                raw: parsed,
+              };
+            }
             const exato = parsed.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.data));
             if (exato) {
               frizzarSetLastListed(sessionState, profissionalId, args.data);
