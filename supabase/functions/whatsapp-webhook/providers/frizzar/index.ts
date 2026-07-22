@@ -598,6 +598,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
               nome,
               data: args.data,
               diaSolicitadoEncontrado: Boolean(exato),
+              erro: exato ? undefined : `data ${args.data} ausente na resposta`,
               horariosLivres: Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [],
             };
           } catch (e: any) {
