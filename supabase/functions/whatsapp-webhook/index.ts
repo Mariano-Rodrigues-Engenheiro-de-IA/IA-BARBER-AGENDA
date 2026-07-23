@@ -6386,6 +6386,63 @@ async function callAIAgent(
         guardOverrideResponse = true;
         guardLog("definitive_failure_no_recovery");
       } else {
+      // 🔀 FRIZZAR — "escolha do cliente pendente": quando `agendar` devolveu
+      // um erro estruturado com alternativas (horário indisponível MAS outros
+      // barbeiros têm vaga, ou dia sem vaga com outrosDias), NÃO faz sentido
+      // rodar o recovery loop com `tool_choice: required` — a IA vai tentar
+      // agendar cegamente de novo ou ficar chamando `listar_horarios` sem
+      // parar (foi o que aconteceu no caso 2868). O correto é uma rodada
+      // EXTRA de texto (sem forçar tool) pra IA compor a resposta oferecendo
+      // as alternativas que o provider já devolveu no payload da tool.
+      const alternativesFailure = provider === "frizzar"
+        ? (logToolCalls || []).find((tc: any) => {
+            if (!tc || tc.name !== "agendar") return false;
+            const r = tc.result;
+            if (!r || typeof r !== "object" || !r.error) return false;
+            const hasPeers = Array.isArray(r.horariosOutrosProfissionais) && r.horariosOutrosProfissionais.length > 0;
+            const hasPeerHours = Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0;
+            const hasOtherDays = Array.isArray(r.outrosDias) && r.outrosDias.length > 0;
+            return hasPeers || hasPeerHours || hasOtherDays;
+          })
+        : null;
+      if (alternativesFailure) {
+        console.warn(`[MultiBookingGuard] Frizzar devolveu alternativas estruturadas — pulando recovery loop, forçando resposta em texto com alternativas.`);
+        try {
+          const nudge = [
+            `[SISTEMA — INTERNO, NÃO REPETIR AO CLIENTE]`,
+            `A última tentativa de agendar devolveu ERRO com alternativas prontas no payload da tool (horariosOutrosProfissionais, horariosLivres do próprio profissional ou outrosDias).`,
+            `NÃO chame nenhuma tool agora. NÃO peça desculpa técnica genérica ("tive um probleminha").`,
+            `Responda ao cliente em UMA mensagem curta e natural oferecendo, nesta ordem: 1) se houver outros barbeiros com EXATAMENTE o horário pedido no mesmo dia, ofereça esses barbeiros com nome; 2) se não houver, ofereça horários próximos do MESMO profissional no MESMO dia (horariosLivres); 3) só se nenhum barbeiro tiver o horário e o profissional pedido não tiver vaga naquele dia, ofereça outrosDias.`,
+            `Pergunte ao cliente qual opção ele prefere antes de agendar. Não invente alternativa que não esteja no payload.`,
+          ].join(" ");
+          messages.push({ role: "system", content: nudge });
+          const altBody: any = { model: modelUsed, messages, max_completion_tokens: 500, tool_choice: "none" };
+          if (modelUsed.includes("gpt-5")) altBody.reasoning_effort = "minimal";
+          const altResp = await fetchAIWithRetry(JSON.stringify(altBody), "guard-alternatives-answer");
+          if (altResp.ok) {
+            const altJson: any = await altResp.json();
+            const altText = altJson?.choices?.[0]?.message?.content?.trim();
+            if (altText) {
+              finalResponse = altText;
+              guardOverrideResponse = true;
+              guardLog("alternatives_offered_no_recovery");
+            }
+          }
+          if (!guardOverrideResponse) {
+            const r: any = alternativesFailure.result;
+            finalResponse = typeof r?.error === "string" && r.error
+              ? "Esse horário ficou indisponível. Quer que eu confira outras opções?"
+              : "Deixa eu te passar outras opções aqui rapidinho.";
+            guardOverrideResponse = true;
+            guardLog("alternatives_fallback_text");
+          }
+        } catch (e) {
+          console.error(`[MultiBookingGuard] alternatives-answer exception:`, (e as Error)?.message);
+          finalResponse = "Esse horário ficou indisponível. Quer que eu confira outras opções?";
+          guardOverrideResponse = true;
+          guardLog("alternatives_fallback_after_exception");
+        }
+      } else {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
       // tool-calling para a IA resolver usando o histórico já disponível.
