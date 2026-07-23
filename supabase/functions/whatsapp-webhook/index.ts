@@ -3714,6 +3714,9 @@ async function classifyPendingBookings(params: {
   const execInfo = typeof bookedExecutionCount === "number" && bookedExecutionCount > 0
     ? `Chamadas de "agendar/criar_agendamento" que tiveram sucesso NESTA rodada: ${bookedExecutionCount}. Uma única execução bem-sucedida representa 1 visita/comanda mesmo que contenha vários serviços no mesmo array (ex: {servicos:[corte, barba]} para o MESMO cliente/profissional/horário sequencial = 1 agendamento, não 2). Só considere prometidos > número de execuções bem-sucedidas se a fala do cliente exigir múltiplas execuções separadas (2+ pessoas distintas, 2+ horários distintos, ou 2+ profissionais distintos). Diferença de NOMES de serviço dentro da mesma execução NÃO justifica inflar o total.`
     : "";
+  const priorInfo = priorTurnBookings && priorTurnBookings.length > 0
+    ? `Agendamentos JÁ concluídos em RODADAS ANTERIORES desta conversa (não conte de novo, mesmo que apareçam citados na janela): ${JSON.stringify(priorTurnBookings)}. Só conte pedidos NOVOS feitos pelo cliente nesta rodada atual.`
+    : "";
 
   const sys = [
     "Você é um classificador de intenção.",
