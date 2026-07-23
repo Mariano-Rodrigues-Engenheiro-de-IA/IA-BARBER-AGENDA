@@ -3729,6 +3729,7 @@ async function classifyPendingBookings(params: {
     "- Nunca retorne 0.",
     ...(servicosInfo ? [servicosInfo.trim()] : []),
     ...(execInfo ? [execInfo.trim()] : []),
+    ...(priorInfo ? [priorInfo.trim()] : []),
     "- IMPORTANTE PARA FRIZZAR: vários serviços para a MESMA pessoa, na MESMA visita, formam 1 agendamento/comanda. Corte + barba não são 2 agendamentos. Duas pessoas, ainda que no mesmo horário, são 2 agendamentos.",
     '- Preencha também as dimensões da intenção: pessoas distintas, horários distintos e profissionais distintos. Se a conversa diz "dois cortes", "para mim e outra pessoa", "nós dois" ou equivalente, distinct_people deve ser 2 mesmo quando a última resposta do cliente for apenas "sim".',
     'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "distinct_people": <numero>, "distinct_times": <numero>, "distinct_professionals": <numero>, "same_visit_services_only": <boolean>, "reasoning": "<curto>"}',
