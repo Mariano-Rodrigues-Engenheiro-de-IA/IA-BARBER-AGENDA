@@ -896,19 +896,63 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             profissionalId: args.profissionalId,
           };
         }
+
+        // Caso 553488498243: quando o horário escolhido cai fora da lista do
+        // profissional (ou ele fica sem vaga), a IA precisa oferecer OUTROS
+        // BARBEIROS no mesmo dia antes de mudar de dia. Sondamos aqui e
+        // devolvemos estruturado por barbeiro, com nome legível.
+        const buscarHorariosOutrosProfissionais = async (): Promise<Array<{ profissionalId: number; nome: string; horariosLivres: string[] }>> => {
+          const validProfs = (((sessionState as any)?.frizzarValidProfessionalIds) || []) as number[];
+          const nomes = (((sessionState as any)?.frizzarProfessionalNames) || {}) as Record<string, string>;
+          const outros = validProfs.filter((pid) => pid !== toPositiveInteger(args.profissionalId)).slice(0, 5);
+          const resultado: Array<{ profissionalId: number; nome: string; horariosLivres: string[] }> = [];
+          for (const pid of outros) {
+            try {
+              const r = await frizzarFetch(`/listar/horarios/${pid}/${args.dia}`, { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) });
+              if (!r.ok) continue;
+              const parsedDias = JSON.parse(await r.text());
+              if (!Array.isArray(parsedDias)) continue;
+              const exato = parsedDias.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.dia));
+              const horarios = Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [];
+              if (horarios.length > 0) {
+                resultado.push({ profissionalId: pid, nome: nomes[String(pid)] || `Profissional ${pid}`, horariosLivres: horarios });
+              }
+            } catch { /* ignore */ }
+            await sleep(120);
+          }
+          return resultado;
+        };
+        const nomes = (((sessionState as any)?.frizzarProfessionalNames) || {}) as Record<string, string>;
+        const nomeEscolhido = nomes[String(args.profissionalId)] || `Profissional ${args.profissionalId}`;
+
         if (disponibilidadePre.checked && horariosLivresPre.length === 0) {
+          const outrosProfs = await buscarHorariosOutrosProfissionais();
+          const dica = outrosProfs.length > 0
+            ? ` No MESMO DIA, ${outrosProfs.length} outro(s) barbeiro(s) têm vaga (veja horariosOutrosProfissionais). Ofereça essas opções PRIMEIRO antes de mudar de dia.`
+            : ` Nenhum outro barbeiro tem vaga em ${args.dia} também; aí sim ofereça outro dia usando outrosDias.`;
           return {
-            error: `Sem vagas disponíveis em ${args.dia} para este profissional. NÃO peça confirmação e NÃO tente agendar nessa data. Ofereça outro dia ou opções de outrosDias.`,
+            error: `${nomeEscolhido} está sem vagas em ${args.dia}.${dica} NÃO peça confirmação e NÃO tente agendar nessa data com esse profissional.`,
+            profissionalNome: nomeEscolhido,
             horariosLivres: [],
+            horariosOutrosProfissionais: outrosProfs,
             outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
         }
         if (disponibilidadePre.checked && !horariosLivresPre.includes(args.hora)) {
+          const outrosProfs = await buscarHorariosOutrosProfissionais();
+          const outrosComHora = outrosProfs.filter((p) => p.horariosLivres.includes(args.hora));
+          const dica = outrosComHora.length > 0
+            ? ` MAS ${outrosComHora.map((p) => p.nome).join(", ")} tem(êm) exatamente ${args.hora} livre no MESMO dia — ofereça isso ao cliente.`
+            : outrosProfs.length > 0
+              ? ` Outro(s) barbeiro(s) têm outras vagas no MESMO dia (veja horariosOutrosProfissionais). Ofereça essas alternativas antes de mudar de dia.`
+              : ` Nenhum outro barbeiro tem vaga em ${args.dia}; aí sim ofereça horariosLivres de ${nomeEscolhido} ou outrosDias.`;
           return {
-            error: `Horário ${args.hora} indisponível em ${args.dia} para o profissional. Escolha um dos horários livres abaixo e tente novamente.`,
+            error: `${args.hora} indisponível com ${nomeEscolhido} em ${args.dia}.${dica}`,
+            profissionalNome: nomeEscolhido,
             horariosLivres: horariosLivresPre,
+            horariosOutrosProfissionais: outrosProfs,
             outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
