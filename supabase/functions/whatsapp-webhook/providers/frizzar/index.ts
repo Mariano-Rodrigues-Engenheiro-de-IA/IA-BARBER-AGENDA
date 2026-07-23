@@ -719,6 +719,13 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
           for (const id of ids) existing.add(id);
           (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+          const nomes = (sessionState as any).frizzarProfessionalNames || {};
+          for (const r of resultados) {
+            const cid = toPositiveInteger(r?.profissionalId);
+            const nome = typeof r?.nome === "string" ? r.nome.trim() : "";
+            if (cid && nome) nomes[cid] = nome;
+          }
+          (sessionState as any).frizzarProfessionalNames = nomes;
         }
         if (resultados.length > 0 && resultados.every((r: any) => r?.erro && r.horariosLivres?.length === 0)) {
           const anyTransient = resultados.some((r: any) => typeof r?.erro === "string" && /status (5\d\d|429)/i.test(r.erro));
@@ -732,17 +739,43 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           comHorario.flatMap((r: any) => r.horariosLivres)
         )).sort();
 
+        // Se ninguém retornou horário, sondar próximos 7 dias com UM profissional
+        // para não devolver só "encaminhar humano" — caso 553899459400 recebeu
+        // essa mensagem mesmo com a agenda tendo vaga.
+        let sugestaoProximosDias: Array<{ dia: string; totalHorarios: number }> = [];
+        if (comHorario.length === 0 && profs.length > 0) {
+          const probe = profs[0];
+          const baseDate = new Date(`${args.data}T12:00:00-03:00`);
+          if (!isNaN(baseDate.getTime())) {
+            const acumulados = new Map<string, number>();
+            for (let offset = 1; offset <= 7 && acumulados.size < 3; offset++) {
+              const d = new Date(baseDate.getTime() + offset * 86400000);
+              const proxima = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+              try {
+                const res = await frizzarFetch(`/listar/horarios/${probe.codigo}/${proxima}`, { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) });
+                if (!res.ok) continue;
+                const parsedDias = JSON.parse(await res.text());
+                if (!Array.isArray(parsedDias)) continue;
+                const exato = parsedDias.find((e: any) => frizzarMatchesRequestedDay(e?.dia, proxima));
+                const total = Array.isArray(exato?.horariosLivres) ? exato.horariosLivres.length : 0;
+                if (total > 0) acumulados.set(proxima, total);
+              } catch { /* segue para próximo dia */ }
+              await sleep(120);
+            }
+            sugestaoProximosDias = Array.from(acumulados.entries()).map(([dia, totalHorarios]) => ({ dia, totalHorarios }));
+          }
+        }
+
         let resumo: string;
         if (comHorario.length === 0 && comErro.length > 0 && comErro.length === resultados.length) {
-          // Todas as consultas falharam — NÃO afirmar "sem vaga".
           resumo = `Consulta de horários falhou em ${args.data} para todos os profissionais (${comErro.length}). NÃO diga ao cliente que não há vaga; peça desculpas por instabilidade momentânea e ofereça tentar novamente.`;
         } else if (comHorario.length === 0 && comErro.length > 0) {
-          // Parcial: alguns falharam, o resto veio vazio. Distinguir explicitamente.
           resumo = `Consulta parcial em ${args.data}: ${comErro.length} profissional(is) falharam na consulta e ${resultados.length - comErro.length} responderam sem horários. NÃO afirme categoricamente "sem vaga" — os que falharam podem ter grade livre. Peça desculpas por instabilidade e ofereça reconsultar, ou pergunte outra data.`;
         } else if (comHorario.length === 0) {
-          // HTTP 200 com todas as grades vazias já divergiu da agenda real da
-          // Frizzar. Mesmo repetido, não é prova suficiente de agenda lotada.
-          resumo = `Não foi possível confirmar a grade de ${args.data}: todos os profissionais retornaram uma resposta vazia. NÃO diga ao cliente que não há vagas. Encaminhe para atendimento humano para conferir a agenda.`;
+          const proxTxt = sugestaoProximosDias.length > 0
+            ? ` Já verifiquei os próximos dias e há vagas em: ${sugestaoProximosDias.map((s) => `${s.dia} (${s.totalHorarios} horários)`).join(", ")}. Ofereça esses dias ao cliente PRIMEIRO em vez de encaminhar humano.`
+            : ` Nenhum dos próximos 7 dias retornou vaga também — aí sim ofereça encaminhar para atendimento humano.`;
+          resumo = `Não foi possível confirmar a grade de ${args.data}: todos os profissionais retornaram uma resposta vazia. NÃO diga ao cliente que não há vagas nesta data.${proxTxt}`;
         } else if (comHorario.length === 1) {
           resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.${comErro.length > 0 ? ` (${comErro.length} outro(s) profissional(is) falharam na consulta — mencionar apenas se cliente pedir preferência.)` : ""}`;
         } else {
@@ -757,6 +790,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           totalProfissionaisComErro: comErro.length,
           horariosConsolidados,
           profissionais: resultados,
+          sugestaoProximosDias,
         };
       }
 
