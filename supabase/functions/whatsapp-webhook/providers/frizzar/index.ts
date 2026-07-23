@@ -510,6 +510,15 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
           for (const id of ids) existing.add(id);
           (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+          // Cache nome→id para poder mostrar o barbeiro em mensagens de erro
+          // (caso 553488498243: erro do `agendar` não mencionava qual barbeiro).
+          const nomes = (sessionState as any).frizzarProfessionalNames || {};
+          for (const p of parsed) {
+            const cid = toPositiveInteger(p?.codigo);
+            const nome = typeof p?.nome === "string" ? p.nome.trim() : "";
+            if (cid && nome) nomes[cid] = nome;
+          }
+          (sessionState as any).frizzarProfessionalNames = nomes;
           console.log(`[Frizzar] frizzarValidProfessionalIds += [${ids.join(",")}] (total=${(sessionState as any).frizzarValidProfessionalIds.length})`);
         }
         if (Array.isArray(parsed) && parsed.length === 0) {
@@ -710,6 +719,13 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
           for (const id of ids) existing.add(id);
           (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+          const nomes = (sessionState as any).frizzarProfessionalNames || {};
+          for (const r of resultados) {
+            const cid = toPositiveInteger(r?.profissionalId);
+            const nome = typeof r?.nome === "string" ? r.nome.trim() : "";
+            if (cid && nome) nomes[cid] = nome;
+          }
+          (sessionState as any).frizzarProfessionalNames = nomes;
         }
         if (resultados.length > 0 && resultados.every((r: any) => r?.erro && r.horariosLivres?.length === 0)) {
           const anyTransient = resultados.some((r: any) => typeof r?.erro === "string" && /status (5\d\d|429)/i.test(r.erro));
@@ -723,17 +739,43 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           comHorario.flatMap((r: any) => r.horariosLivres)
         )).sort();
 
+        // Se ninguém retornou horário, sondar próximos 7 dias com UM profissional
+        // para não devolver só "encaminhar humano" — caso 553899459400 recebeu
+        // essa mensagem mesmo com a agenda tendo vaga.
+        let sugestaoProximosDias: Array<{ dia: string; totalHorarios: number }> = [];
+        if (comHorario.length === 0 && profs.length > 0) {
+          const probe = profs[0];
+          const baseDate = new Date(`${args.data}T12:00:00-03:00`);
+          if (!isNaN(baseDate.getTime())) {
+            const acumulados = new Map<string, number>();
+            for (let offset = 1; offset <= 7 && acumulados.size < 3; offset++) {
+              const d = new Date(baseDate.getTime() + offset * 86400000);
+              const proxima = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+              try {
+                const res = await frizzarFetch(`/listar/horarios/${probe.codigo}/${proxima}`, { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) });
+                if (!res.ok) continue;
+                const parsedDias = JSON.parse(await res.text());
+                if (!Array.isArray(parsedDias)) continue;
+                const exato = parsedDias.find((e: any) => frizzarMatchesRequestedDay(e?.dia, proxima));
+                const total = Array.isArray(exato?.horariosLivres) ? exato.horariosLivres.length : 0;
+                if (total > 0) acumulados.set(proxima, total);
+              } catch { /* segue para próximo dia */ }
+              await sleep(120);
+            }
+            sugestaoProximosDias = Array.from(acumulados.entries()).map(([dia, totalHorarios]) => ({ dia, totalHorarios }));
+          }
+        }
+
         let resumo: string;
         if (comHorario.length === 0 && comErro.length > 0 && comErro.length === resultados.length) {
-          // Todas as consultas falharam — NÃO afirmar "sem vaga".
           resumo = `Consulta de horários falhou em ${args.data} para todos os profissionais (${comErro.length}). NÃO diga ao cliente que não há vaga; peça desculpas por instabilidade momentânea e ofereça tentar novamente.`;
         } else if (comHorario.length === 0 && comErro.length > 0) {
-          // Parcial: alguns falharam, o resto veio vazio. Distinguir explicitamente.
           resumo = `Consulta parcial em ${args.data}: ${comErro.length} profissional(is) falharam na consulta e ${resultados.length - comErro.length} responderam sem horários. NÃO afirme categoricamente "sem vaga" — os que falharam podem ter grade livre. Peça desculpas por instabilidade e ofereça reconsultar, ou pergunte outra data.`;
         } else if (comHorario.length === 0) {
-          // HTTP 200 com todas as grades vazias já divergiu da agenda real da
-          // Frizzar. Mesmo repetido, não é prova suficiente de agenda lotada.
-          resumo = `Não foi possível confirmar a grade de ${args.data}: todos os profissionais retornaram uma resposta vazia. NÃO diga ao cliente que não há vagas. Encaminhe para atendimento humano para conferir a agenda.`;
+          const proxTxt = sugestaoProximosDias.length > 0
+            ? ` Já verifiquei os próximos dias e há vagas em: ${sugestaoProximosDias.map((s) => `${s.dia} (${s.totalHorarios} horários)`).join(", ")}. Ofereça esses dias ao cliente PRIMEIRO em vez de encaminhar humano.`
+            : ` Nenhum dos próximos 7 dias retornou vaga também — aí sim ofereça encaminhar para atendimento humano.`;
+          resumo = `Não foi possível confirmar a grade de ${args.data}: todos os profissionais retornaram uma resposta vazia. NÃO diga ao cliente que não há vagas nesta data.${proxTxt}`;
         } else if (comHorario.length === 1) {
           resumo = `Apenas 1 profissional livre em ${args.data}: ${comHorario[0].nome || comHorario[0].profissionalId}. NÃO pergunte preferência — proponha direto os horários dele.${comErro.length > 0 ? ` (${comErro.length} outro(s) profissional(is) falharam na consulta — mencionar apenas se cliente pedir preferência.)` : ""}`;
         } else {
@@ -748,6 +790,7 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           totalProfissionaisComErro: comErro.length,
           horariosConsolidados,
           profissionais: resultados,
+          sugestaoProximosDias,
         };
       }
 
@@ -853,19 +896,63 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
             profissionalId: args.profissionalId,
           };
         }
+
+        // Caso 553488498243: quando o horário escolhido cai fora da lista do
+        // profissional (ou ele fica sem vaga), a IA precisa oferecer OUTROS
+        // BARBEIROS no mesmo dia antes de mudar de dia. Sondamos aqui e
+        // devolvemos estruturado por barbeiro, com nome legível.
+        const buscarHorariosOutrosProfissionais = async (): Promise<Array<{ profissionalId: number; nome: string; horariosLivres: string[] }>> => {
+          const validProfs = (((sessionState as any)?.frizzarValidProfessionalIds) || []) as number[];
+          const nomes = (((sessionState as any)?.frizzarProfessionalNames) || {}) as Record<string, string>;
+          const outros = validProfs.filter((pid) => pid !== toPositiveInteger(args.profissionalId)).slice(0, 5);
+          const resultado: Array<{ profissionalId: number; nome: string; horariosLivres: string[] }> = [];
+          for (const pid of outros) {
+            try {
+              const r = await frizzarFetch(`/listar/horarios/${pid}/${args.dia}`, { method: "POST", headers: jsonHeaders, body: JSON.stringify(body) });
+              if (!r.ok) continue;
+              const parsedDias = JSON.parse(await r.text());
+              if (!Array.isArray(parsedDias)) continue;
+              const exato = parsedDias.find((d: any) => frizzarMatchesRequestedDay(d?.dia, args.dia));
+              const horarios = Array.isArray(exato?.horariosLivres) ? exato.horariosLivres : [];
+              if (horarios.length > 0) {
+                resultado.push({ profissionalId: pid, nome: nomes[String(pid)] || `Profissional ${pid}`, horariosLivres: horarios });
+              }
+            } catch { /* ignore */ }
+            await sleep(120);
+          }
+          return resultado;
+        };
+        const nomes = (((sessionState as any)?.frizzarProfessionalNames) || {}) as Record<string, string>;
+        const nomeEscolhido = nomes[String(args.profissionalId)] || `Profissional ${args.profissionalId}`;
+
         if (disponibilidadePre.checked && horariosLivresPre.length === 0) {
+          const outrosProfs = await buscarHorariosOutrosProfissionais();
+          const dica = outrosProfs.length > 0
+            ? ` No MESMO DIA, ${outrosProfs.length} outro(s) barbeiro(s) têm vaga (veja horariosOutrosProfissionais). Ofereça essas opções PRIMEIRO antes de mudar de dia.`
+            : ` Nenhum outro barbeiro tem vaga em ${args.dia} também; aí sim ofereça outro dia usando outrosDias.`;
           return {
-            error: `Sem vagas disponíveis em ${args.dia} para este profissional. NÃO peça confirmação e NÃO tente agendar nessa data. Ofereça outro dia ou opções de outrosDias.`,
+            error: `${nomeEscolhido} está sem vagas em ${args.dia}.${dica} NÃO peça confirmação e NÃO tente agendar nessa data com esse profissional.`,
+            profissionalNome: nomeEscolhido,
             horariosLivres: [],
+            horariosOutrosProfissionais: outrosProfs,
             outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
           };
         }
         if (disponibilidadePre.checked && !horariosLivresPre.includes(args.hora)) {
+          const outrosProfs = await buscarHorariosOutrosProfissionais();
+          const outrosComHora = outrosProfs.filter((p) => p.horariosLivres.includes(args.hora));
+          const dica = outrosComHora.length > 0
+            ? ` MAS ${outrosComHora.map((p) => p.nome).join(", ")} tem(êm) exatamente ${args.hora} livre no MESMO dia — ofereça isso ao cliente.`
+            : outrosProfs.length > 0
+              ? ` Outro(s) barbeiro(s) têm outras vagas no MESMO dia (veja horariosOutrosProfissionais). Ofereça essas alternativas antes de mudar de dia.`
+              : ` Nenhum outro barbeiro tem vaga em ${args.dia}; aí sim ofereça horariosLivres de ${nomeEscolhido} ou outrosDias.`;
           return {
-            error: `Horário ${args.hora} indisponível em ${args.dia} para o profissional. Escolha um dos horários livres abaixo e tente novamente.`,
+            error: `${args.hora} indisponível com ${nomeEscolhido} em ${args.dia}.${dica}`,
+            profissionalNome: nomeEscolhido,
             horariosLivres: horariosLivresPre,
+            horariosOutrosProfissionais: outrosProfs,
             outrosDias: disponibilidadePre.outrosDias,
             dia: args.dia,
             profissionalId: args.profissionalId,
