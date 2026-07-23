@@ -510,6 +510,15 @@ export async function executeFrizzarTool(tenant: any, toolCall: any, _phoneNumbe
           const existing = new Set(((sessionState as any).frizzarValidProfessionalIds || []) as number[]);
           for (const id of ids) existing.add(id);
           (sessionState as any).frizzarValidProfessionalIds = Array.from(existing).slice(0, 100);
+          // Cache nome→id para poder mostrar o barbeiro em mensagens de erro
+          // (caso 553488498243: erro do `agendar` não mencionava qual barbeiro).
+          const nomes = (sessionState as any).frizzarProfessionalNames || {};
+          for (const p of parsed) {
+            const cid = toPositiveInteger(p?.codigo);
+            const nome = typeof p?.nome === "string" ? p.nome.trim() : "";
+            if (cid && nome) nomes[cid] = nome;
+          }
+          (sessionState as any).frizzarProfessionalNames = nomes;
           console.log(`[Frizzar] frizzarValidProfessionalIds += [${ids.join(",")}] (total=${(sessionState as any).frizzarValidProfessionalIds.length})`);
         }
         if (Array.isArray(parsed) && parsed.length === 0) {
