@@ -6253,6 +6253,15 @@ async function callAIAgent(
 
     const { count: criados, breakdown, executions: bookedExecutionCount } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
+    // 🔒 Passa pro classificador as reservas já criadas em RODADAS ANTERIORES
+    // desta conversa, pra ele não contá-las de novo quando a janela de mensagens
+    // ainda cita a confirmação (caso real: cliente já tinha 1 agendamento
+    // concluído no turno anterior; ao pedir um NOVO, o classificador contou 2
+    // e o guard entrou em recovery loop pedindo IA "completar" o que já existia).
+    const priorTurnBookings: string[] = ((sessionState.recentCompletedActions || []) as any[])
+      .filter((a) => a && a.category === "booking_create" && a.status === "success" && typeof a.summary === "string")
+      .map((a) => String(a.summary))
+      .slice(-6);
     const cls = await classifyPendingBookings({
       messages,
       aiEndpoint,
@@ -6261,6 +6270,7 @@ async function callAIAgent(
       attempts: _bookingAttempts,
       bookedServiceNames,
       bookedExecutionCount,
+      priorTurnBookings,
     });
     let prometidos = cls.total;
 
