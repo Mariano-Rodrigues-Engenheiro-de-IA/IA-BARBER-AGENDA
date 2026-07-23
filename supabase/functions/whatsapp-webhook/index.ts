@@ -3682,6 +3682,7 @@ async function classifyPendingBookings(params: {
   attempts: number;
   bookedServiceNames?: string[];
   bookedExecutionCount?: number;
+  priorTurnBookings?: string[];
 }): Promise<{
   total: number;
   source: "llm" | "fallback";
@@ -3693,7 +3694,7 @@ async function classifyPendingBookings(params: {
     sameVisitServicesOnly: boolean;
   };
 }> {
-  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount } = params;
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount, priorTurnBookings } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
     source: "fallback" as const,
@@ -3713,6 +3714,9 @@ async function classifyPendingBookings(params: {
   const execInfo = typeof bookedExecutionCount === "number" && bookedExecutionCount > 0
     ? `Chamadas de "agendar/criar_agendamento" que tiveram sucesso NESTA rodada: ${bookedExecutionCount}. Uma única execução bem-sucedida representa 1 visita/comanda mesmo que contenha vários serviços no mesmo array (ex: {servicos:[corte, barba]} para o MESMO cliente/profissional/horário sequencial = 1 agendamento, não 2). Só considere prometidos > número de execuções bem-sucedidas se a fala do cliente exigir múltiplas execuções separadas (2+ pessoas distintas, 2+ horários distintos, ou 2+ profissionais distintos). Diferença de NOMES de serviço dentro da mesma execução NÃO justifica inflar o total.`
     : "";
+  const priorInfo = priorTurnBookings && priorTurnBookings.length > 0
+    ? `Agendamentos JÁ concluídos em RODADAS ANTERIORES desta conversa (não conte de novo, mesmo que apareçam citados na janela): ${JSON.stringify(priorTurnBookings)}. Só conte pedidos NOVOS feitos pelo cliente nesta rodada atual.`
+    : "";
 
   const sys = [
     "Você é um classificador de intenção.",
@@ -3725,6 +3729,7 @@ async function classifyPendingBookings(params: {
     "- Nunca retorne 0.",
     ...(servicosInfo ? [servicosInfo.trim()] : []),
     ...(execInfo ? [execInfo.trim()] : []),
+    ...(priorInfo ? [priorInfo.trim()] : []),
     "- IMPORTANTE PARA FRIZZAR: vários serviços para a MESMA pessoa, na MESMA visita, formam 1 agendamento/comanda. Corte + barba não são 2 agendamentos. Duas pessoas, ainda que no mesmo horário, são 2 agendamentos.",
     '- Preencha também as dimensões da intenção: pessoas distintas, horários distintos e profissionais distintos. Se a conversa diz "dois cortes", "para mim e outra pessoa", "nós dois" ou equivalente, distinct_people deve ser 2 mesmo quando a última resposta do cliente for apenas "sim".',
     'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "distinct_people": <numero>, "distinct_times": <numero>, "distinct_professionals": <numero>, "same_visit_services_only": <boolean>, "reasoning": "<curto>"}',
@@ -6248,6 +6253,15 @@ async function callAIAgent(
 
     const { count: criados, breakdown, executions: bookedExecutionCount } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
+    // 🔒 Passa pro classificador as reservas já criadas em RODADAS ANTERIORES
+    // desta conversa, pra ele não contá-las de novo quando a janela de mensagens
+    // ainda cita a confirmação (caso real: cliente já tinha 1 agendamento
+    // concluído no turno anterior; ao pedir um NOVO, o classificador contou 2
+    // e o guard entrou em recovery loop pedindo IA "completar" o que já existia).
+    const priorTurnBookings: string[] = ((sessionState.recentCompletedActions || []) as any[])
+      .filter((a) => a && a.category === "booking_create" && a.status === "success" && typeof a.summary === "string")
+      .map((a) => String(a.summary))
+      .slice(-6);
     const cls = await classifyPendingBookings({
       messages,
       aiEndpoint,
@@ -6256,6 +6270,7 @@ async function callAIAgent(
       attempts: _bookingAttempts,
       bookedServiceNames,
       bookedExecutionCount,
+      priorTurnBookings,
     });
     let prometidos = cls.total;
 
@@ -6370,6 +6385,63 @@ async function callAIAgent(
         }
         guardOverrideResponse = true;
         guardLog("definitive_failure_no_recovery");
+      } else {
+      // 🔀 FRIZZAR — "escolha do cliente pendente": quando `agendar` devolveu
+      // um erro estruturado com alternativas (horário indisponível MAS outros
+      // barbeiros têm vaga, ou dia sem vaga com outrosDias), NÃO faz sentido
+      // rodar o recovery loop com `tool_choice: required` — a IA vai tentar
+      // agendar cegamente de novo ou ficar chamando `listar_horarios` sem
+      // parar (foi o que aconteceu no caso 2868). O correto é uma rodada
+      // EXTRA de texto (sem forçar tool) pra IA compor a resposta oferecendo
+      // as alternativas que o provider já devolveu no payload da tool.
+      const alternativesFailure = provider === "frizzar"
+        ? (logToolCalls || []).find((tc: any) => {
+            if (!tc || tc.name !== "agendar") return false;
+            const r = tc.result;
+            if (!r || typeof r !== "object" || !r.error) return false;
+            const hasPeers = Array.isArray(r.horariosOutrosProfissionais) && r.horariosOutrosProfissionais.length > 0;
+            const hasPeerHours = Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0;
+            const hasOtherDays = Array.isArray(r.outrosDias) && r.outrosDias.length > 0;
+            return hasPeers || hasPeerHours || hasOtherDays;
+          })
+        : null;
+      if (alternativesFailure) {
+        console.warn(`[MultiBookingGuard] Frizzar devolveu alternativas estruturadas — pulando recovery loop, forçando resposta em texto com alternativas.`);
+        try {
+          const nudge = [
+            `[SISTEMA — INTERNO, NÃO REPETIR AO CLIENTE]`,
+            `A última tentativa de agendar devolveu ERRO com alternativas prontas no payload da tool (horariosOutrosProfissionais, horariosLivres do próprio profissional ou outrosDias).`,
+            `NÃO chame nenhuma tool agora. NÃO peça desculpa técnica genérica ("tive um probleminha").`,
+            `Responda ao cliente em UMA mensagem curta e natural oferecendo, nesta ordem: 1) se houver outros barbeiros com EXATAMENTE o horário pedido no mesmo dia, ofereça esses barbeiros com nome; 2) se não houver, ofereça horários próximos do MESMO profissional no MESMO dia (horariosLivres); 3) só se nenhum barbeiro tiver o horário e o profissional pedido não tiver vaga naquele dia, ofereça outrosDias.`,
+            `Pergunte ao cliente qual opção ele prefere antes de agendar. Não invente alternativa que não esteja no payload.`,
+          ].join(" ");
+          messages.push({ role: "system", content: nudge });
+          const altBody: any = { model: modelUsed, messages, max_completion_tokens: 500, tool_choice: "none" };
+          if (modelUsed.includes("gpt-5")) altBody.reasoning_effort = "minimal";
+          const altResp = await fetchAIWithRetry(JSON.stringify(altBody), "guard-alternatives-answer");
+          if (altResp.ok) {
+            const altJson: any = await altResp.json();
+            const altText = altJson?.choices?.[0]?.message?.content?.trim();
+            if (altText) {
+              finalResponse = altText;
+              guardOverrideResponse = true;
+              guardLog("alternatives_offered_no_recovery");
+            }
+          }
+          if (!guardOverrideResponse) {
+            const r: any = alternativesFailure.result;
+            finalResponse = typeof r?.error === "string" && r.error
+              ? "Esse horário ficou indisponível. Quer que eu confira outras opções?"
+              : "Deixa eu te passar outras opções aqui rapidinho.";
+            guardOverrideResponse = true;
+            guardLog("alternatives_fallback_text");
+          }
+        } catch (e) {
+          console.error(`[MultiBookingGuard] alternatives-answer exception:`, (e as Error)?.message);
+          finalResponse = "Esse horário ficou indisponível. Quer que eu confira outras opções?";
+          guardOverrideResponse = true;
+          guardLog("alternatives_fallback_after_exception");
+        }
       } else {
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
@@ -6502,6 +6574,7 @@ async function callAIAgent(
         guardLog("recovery_exhausted_no_human");
       }
       } // fim else (sem falha definitiva → executou recovery loop)
+      } // fim else (sem alternatives failure → executou recovery loop tradicional)
     } else {
       // criados >= prometidos → libera. Camada 3 abaixo cobre mismatch texto↔ação.
       guardLog("released");
