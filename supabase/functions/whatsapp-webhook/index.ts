@@ -3682,6 +3682,7 @@ async function classifyPendingBookings(params: {
   attempts: number;
   bookedServiceNames?: string[];
   bookedExecutionCount?: number;
+  priorTurnBookings?: string[];
 }): Promise<{
   total: number;
   source: "llm" | "fallback";
@@ -3693,7 +3694,7 @@ async function classifyPendingBookings(params: {
     sameVisitServicesOnly: boolean;
   };
 }> {
-  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount } = params;
+  const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount, priorTurnBookings } = params;
   const fallback = () => ({
     total: heuristicPromisedFromWindow(messages, attempts),
     source: "fallback" as const,
