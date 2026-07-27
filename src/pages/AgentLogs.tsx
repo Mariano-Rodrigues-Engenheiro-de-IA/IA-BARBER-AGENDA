@@ -445,8 +445,20 @@ export default function AgentLogsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Monitor do Agente</h1>
-        <p className="text-muted-foreground mt-1">Passo a passo do que a IA fez em cada interação</p>
+        <p className="text-muted-foreground mt-1">
+          {mode === "simple"
+            ? "Visão resumida: mensagem, ferramentas e resposta"
+            : "Visão detalhada: passo a passo com logs de requisições"}
+        </p>
       </div>
+
+      <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
+        <TabsList>
+          <TabsTrigger value="simple">Monitor simples</TabsTrigger>
+          <TabsTrigger value="advanced">Monitor avançado</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
 
       <div className="flex flex-wrap gap-3">
         <Select value={selectedTenant} onValueChange={(v) => { setSelectedTenant(v); setPage(0); }}>
