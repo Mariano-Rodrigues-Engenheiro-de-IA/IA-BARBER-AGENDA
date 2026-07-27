@@ -502,39 +502,11 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         if (r?.error) return r;
         const blocks = Array.isArray(r?.data) ? r.data : [];
         const wantedProf = args.professional_code != null ? Number(args.professional_code) : null;
-        // ⚠️ Bug conhecido da API: o filtro professional_code é IGNORADO no servidor
-        // e a resposta vem com blocos de TODOS os profissionais. Precisamos filtrar
-        // localmente pelo employee_code, senão oferecemos horário de outro barbeiro
-        // e o POST /appointments retorna 422 "Choque de Horário".
-        const filteredBlocks = blocks.filter((b: any) => {
-          const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
-          return prof == null || Number(prof) === wantedProf;
-        });
-        const seen = new Set<string>();
-        const times: string[] = [];
-        const collectSlots = (value: any) => {
-          if (!value) return;
-          if (Array.isArray(value)) { value.forEach(collectSlots); return; }
-          if (typeof value !== "object") return;
-          const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
-          if (rawTime) {
-            const str = String(rawTime).trim();
-            const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
-            if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
-              seen.add(normalized);
-              times.push(normalized);
-            }
-          }
-          for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
-            if (Array.isArray(value[key])) collectSlots(value[key]);
-          }
-        };
-        for (const block of filteredBlocks) {
-          collectSlots(block);
-        }
-        times.sort();
-        if (wantedProf != null && filteredBlocks.length === 0 && blocks.length > 0) {
-          // O profissional pedido não aparece na resposta → não trabalha nesse dia
+        // Filtro local obrigatório (a API ignora professional_code) — ver
+        // appBarberCollectTimes no topo do arquivo.
+        const times = appBarberCollectTimes(blocks, wantedProf);
+        if (wantedProf != null && times.length === 0 && blocks.length > 0) {
+          // O profissional pedido não tem slot livre nesse dia
           return {
             date: args.start_date,
             service_code: requestedCode,
