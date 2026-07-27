@@ -3288,6 +3288,31 @@ function countBookingCallAttempts(logToolCalls: any[]): number {
   return (logToolCalls || []).filter((tc) => tc && BOOKING_TOOL_NAMES.has(tc.name)).length;
 }
 
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG POR PROVIDER (isolada)
+// Cada API declara os próprios nomes de ferramenta no seu módulo
+// (providers/<api>/index.ts → phantomGuardConfig). Aqui só o dispatcher.
+// Assim, remover/ajustar uma API não mexe no comportamento das outras.
+// ============================================================================
+type PhantomGuardConfig = {
+  enabled: boolean;
+  bookingToolNames: string[];
+  searchToolNames: string[];
+  recoveryToolNames: string[];
+};
+const PHANTOM_GUARD_CONFIG_BY_PROVIDER: Record<string, PhantomGuardConfig> = {
+  trinks: trinksPhantomGuardConfig,
+  appbarber: appbarberPhantomGuardConfig,
+  bemp: bempPhantomGuardConfig,
+  onebeleza: onebelezaPhantomGuardConfig,
+  frizzar: frizzarPhantomGuardConfig,
+};
+function getPhantomGuardConfig(provider: string): PhantomGuardConfig | null {
+  const cfg = PHANTOM_GUARD_CONFIG_BY_PROVIDER[provider];
+  return cfg && cfg.enabled ? cfg : null;
+}
+
+
 /**
  * Conta agendamentos EFETIVAMENTE criados no turno, com regras específicas por provider.
  * Validado contra o código real de cada execute<Provider>Tool.
