@@ -6066,7 +6066,12 @@ async function callAIAgent(
         args: parsedArgs,
         result: toolResult,
         blocked: wasBlocked,
-      };
+        round: rounds,
+        started_at: __toolStartedAt,
+        duration_ms: Date.now() - __toolStartedMs,
+        trace_from: __traceStartSeq,
+        trace_to: getHttpTrace().length,
+      } as any;
       
       // Add correction info if applicable
       if (correctionReason) {
