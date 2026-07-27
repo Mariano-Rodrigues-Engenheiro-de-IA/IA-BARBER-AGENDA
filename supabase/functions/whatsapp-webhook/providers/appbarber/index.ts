@@ -80,6 +80,75 @@ function classifyAppBarberFailure(
 
 const APPBARBER_DEFAULT_BASE_URL = "https://proxy.zayloia.com";
 
+// ⚠️ Bug conhecido da API AppBarber: o filtro `professional_code` do
+// /v1/availability é IGNORADO — a resposta sempre traz os blocos de TODOS os
+// profissionais. Pior: em estabelecimentos com a opção "Sem preferência"
+// habilitada (ex.: 9Cinco), vem um bloco extra com employee_code = "" cujos
+// slots são a UNIÃO da agenda da equipe inteira (cada slot traz o
+// employee_code de quem está livre naquele horário).
+// Se aceitarmos esse bloco genérico, TODO profissional recebe a mesma lista.
+// Regra correta (uma única função usada por listar_horarios e
+// listar_horarios_geral):
+//   1. Bloco com employee_code numérico → só entra se for o profissional pedido.
+//   2. Bloco sem employee_code ("Sem preferência") → só entram os slots cujo
+//      employee_code é o profissional pedido.
+//   3. Fallback: se o profissional pedido não aparece em NENHUM lugar do payload
+//      e existem slots sem dono, a agenda é genérica do estabelecimento
+//      (formato de estabelecimentos sem "Sem preferência") → usa esses slots.
+function appBarberCollectTimes(blocks: any[], wantedProf: number | null): string[] {
+  const pick = (...values: any[]) => values.find((v) => v !== undefined && v !== null && v !== "");
+  const codeOf = (value: any): number | null => {
+    const raw = pick(value?.professional_code, value?.employee_code, value?.professional?.code, value?.employee?.code);
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const normalizeTime = (raw: any): string | null => {
+    if (!raw) return null;
+    const str = String(raw).trim();
+    const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
+    return /^\d{2}:\d{2}:\d{2}$/.test(normalized) ? normalized : null;
+  };
+
+  const matched = new Set<string>();
+  const untagged = new Set<string>();
+  let profAppearsInPayload = false;
+
+  const walk = (value: any, blockProf: number | null, blockIdentified: boolean) => {
+    if (!value) return;
+    if (Array.isArray(value)) { value.forEach((v) => walk(v, blockProf, blockIdentified)); return; }
+    if (typeof value !== "object") return;
+
+    const slotProf = codeOf(value) ?? (blockIdentified ? blockProf : null);
+    if (wantedProf != null && slotProf === wantedProf) profAppearsInPayload = true;
+
+    const time = normalizeTime(pick(value.scheduling_time, value.time, value.start_time, value.hour));
+    if (time) {
+      if (wantedProf == null) {
+        matched.add(time);
+      } else if (slotProf === wantedProf) {
+        matched.add(time);
+      } else if (slotProf == null) {
+        untagged.add(time);
+      }
+    }
+    for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
+      if (Array.isArray(value[key])) walk(value[key], blockProf, blockIdentified);
+    }
+  };
+
+  for (const block of blocks) {
+    const blockProf = codeOf(block);
+    walk(block, blockProf, blockProf != null);
+  }
+
+  const result = matched.size > 0 || profAppearsInPayload
+    ? Array.from(matched)
+    : Array.from(untagged);
+  return result.sort();
+}
+
+
+
 
 export function buildAppBarberTools(tenant: any) {
   if (!tenant?.appbarber_api_key || !tenant?.appbarber_establishment_code) return undefined;
@@ -433,39 +502,11 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         if (r?.error) return r;
         const blocks = Array.isArray(r?.data) ? r.data : [];
         const wantedProf = args.professional_code != null ? Number(args.professional_code) : null;
-        // ⚠️ Bug conhecido da API: o filtro professional_code é IGNORADO no servidor
-        // e a resposta vem com blocos de TODOS os profissionais. Precisamos filtrar
-        // localmente pelo employee_code, senão oferecemos horário de outro barbeiro
-        // e o POST /appointments retorna 422 "Choque de Horário".
-        const filteredBlocks = blocks.filter((b: any) => {
-          const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
-          return prof == null || Number(prof) === wantedProf;
-        });
-        const seen = new Set<string>();
-        const times: string[] = [];
-        const collectSlots = (value: any) => {
-          if (!value) return;
-          if (Array.isArray(value)) { value.forEach(collectSlots); return; }
-          if (typeof value !== "object") return;
-          const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
-          if (rawTime) {
-            const str = String(rawTime).trim();
-            const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
-            if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
-              seen.add(normalized);
-              times.push(normalized);
-            }
-          }
-          for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
-            if (Array.isArray(value[key])) collectSlots(value[key]);
-          }
-        };
-        for (const block of filteredBlocks) {
-          collectSlots(block);
-        }
-        times.sort();
-        if (wantedProf != null && filteredBlocks.length === 0 && blocks.length > 0) {
-          // O profissional pedido não aparece na resposta → não trabalha nesse dia
+        // Filtro local obrigatório (a API ignora professional_code) — ver
+        // appBarberCollectTimes no topo do arquivo.
+        const times = appBarberCollectTimes(blocks, wantedProf);
+        if (wantedProf != null && times.length === 0 && blocks.length > 0) {
+          // O profissional pedido não tem slot livre nesse dia
           return {
             date: args.start_date,
             service_code: requestedCode,
@@ -515,34 +556,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         console.log(`[AppBarber] listar_horarios_geral data=${args.start_date} svc=${args.service_code} profs=${profs.map((p) => p.professional_code).join(",")}`);
 
-        const collectTimes = (blocks: any[], wantedProf: number): string[] => {
-          const seen = new Set<string>();
-          const times: string[] = [];
-          const filtered = blocks.filter((b: any) => {
-            const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
-            return prof == null || Number(prof) === wantedProf;
-          });
-          const walk = (value: any) => {
-            if (!value) return;
-            if (Array.isArray(value)) { value.forEach(walk); return; }
-            if (typeof value !== "object") return;
-            const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
-            if (rawTime) {
-              const str = String(rawTime).trim();
-              const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
-              if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
-                seen.add(normalized);
-                times.push(normalized);
-              }
-            }
-            for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
-              if (Array.isArray(value[key])) walk(value[key]);
-            }
-          };
-          for (const block of filtered) walk(block);
-          times.sort();
-          return times;
-        };
+        // Mesmo filtro local usado por listar_horarios (sem duplicar lógica).
+        const collectTimes = (blocks: any[], wantedProf: number): string[] =>
+          appBarberCollectTimes(blocks, wantedProf);
+
 
         const consultaUm = async (prof: { professional_code: number; name: string | null }) => {
           try {
