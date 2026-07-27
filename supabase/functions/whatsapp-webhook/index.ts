@@ -4866,7 +4866,7 @@ async function callAIAgent(
             wasBlocked = true;
             sessionBlocked = true;
             messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
             continue;
           }
         }
@@ -4928,7 +4928,7 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
         continue;
       }
 
