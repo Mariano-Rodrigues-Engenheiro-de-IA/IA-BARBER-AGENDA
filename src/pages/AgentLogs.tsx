@@ -351,53 +351,134 @@ function LogTimeline({ log, onJson }: { log: AgentLog; onJson: (d: { title: stri
   );
 }
 
-/** Monitor simples: só o essencial — mensagem, ferramentas (args/resultado) e resposta. */
+/** Monitor simples: réplica do monitor original (args/resultado crus + requisições HTTP). */
 function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string; data: any }) => void }) {
-  const toolCalls = (Array.isArray(log.tool_calls) ? log.tool_calls : []).filter((tc: any) => tc?.name !== "__debounce_batch__");
+  const allCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
+  const debounceBatch = allCalls.find((tc) => tc?.name === "__debounce_batch__");
+  const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
+  const toolCalls = allCalls.filter((tc: any) => tc?.name !== "__debounce_batch__");
+  const traces: any[] = Array.isArray((log as any).http_trace) ? (log as any).http_trace : [];
+
   return (
     <div className="space-y-4">
+      {/* Mensagem do cliente */}
       <div>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Mensagem do cliente</h4>
-        <div className="bg-muted rounded p-3 text-sm whitespace-pre-wrap">{log.user_message}</div>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Mensagem do cliente</h4>
+        <div className="bg-muted rounded-lg p-3 text-sm whitespace-pre-wrap">{log.user_message}</div>
+        {batchMessages.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <h5 className="text-xs font-semibold text-muted-foreground uppercase">Mensagens recebidas no lote</h5>
+            <div className="space-y-2">
+              {batchMessages.map((message: any, index: number) => (
+                <div key={`${message.created_at}-${index}`} className="rounded-lg border border-border bg-background p-3 text-sm">
+                  <div className="text-xs text-muted-foreground mb-1">
+                    {message.created_at ? format(new Date(message.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) : "Sem horário"}
+                  </div>
+                  <div className="whitespace-pre-wrap">{message.content || "—"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* Ferramentas chamadas */}
       {toolCalls.length > 0 && (
         <div>
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Ferramentas usadas</h4>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">
+            Ferramentas chamadas ({toolCalls.length})
+          </h4>
           <div className="space-y-2">
-            {toolCalls.map((tc: any, i: number) => {
-              const summary = summarizeResult(tc.result);
-              return (
-                <div key={i} className="rounded-lg border border-border p-3">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Wrench className="w-3 h-3 text-primary" />
-                    <span className="font-medium text-sm">{prettyToolName(tc.name)}</span>
-                    {tc.blocked && <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/50">BLOQUEADA</Badge>}
-                    <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto" onClick={() => onJson({ title: tc.name, data: tc })}>
-                      <Maximize2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <div className="mt-1 text-xs space-y-1">
-                    <div><span className="text-muted-foreground">Consultou com:</span> <span className="font-mono">{argsPreview(tc.resolvedArgs ?? tc.args)}</span></div>
-                    <div>
-                      <span className="text-muted-foreground">Retorno:</span>{" "}
-                      <span className={summary.tone === "err" ? "text-destructive" : summary.tone === "warn" ? "text-warning" : "text-foreground"}>{summary.text}</span>
+            {toolCalls.map((tc: any, i: number) => (
+              <div key={i} className={`rounded-lg border p-3 text-sm ${tc.blocked ? "border-warning/50 bg-warning/5" : "border-border"}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <Wrench className="w-4 h-4 text-primary" />
+                  <span className="font-mono font-medium">{tc.name}</span>
+                  {tc.blocked && <Badge variant="outline" className="text-xs bg-warning/10 text-warning border-warning/50">BLOQUEADA</Badge>}
+                </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Argumentos:</span>
+                      <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => { e.stopPropagation(); onJson({ title: `${tc.name} — Argumentos`, data: tc.args }); }}>
+                        <Maximize2 className="h-3 w-3" />
+                      </Button>
                     </div>
+                    <ScrollArea className="max-h-40">
+                      <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                        {JSON.stringify(tc.args, null, 2)}
+                      </pre>
+                    </ScrollArea>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">Resultado:</span>
+                      <Button variant="ghost" size="icon" className="h-5 w-5" onClick={(e) => { e.stopPropagation(); onJson({ title: `${tc.name} — Resultado`, data: tc.result }); }}>
+                        <Maximize2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <ScrollArea className="max-h-40">
+                      <pre className="text-xs bg-muted p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                        {JSON.stringify(tc.result, null, 2)}
+                      </pre>
+                    </ScrollArea>
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         </div>
       )}
 
+      {/* Requisições HTTP */}
+      {traces.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+            <Globe className="w-3 h-3" /> Requisições HTTP ({traces.length})
+          </h4>
+          <div className="space-y-2">
+            {traces.map((h, i) => (
+              <div key={i} className="border border-border/50 rounded-lg p-2 bg-muted/30">
+                <div className="flex items-center gap-2 flex-wrap text-xs">
+                  <Badge variant={h.ok ? "outline" : "destructive"} className="font-mono">
+                    {h.method} {h.status ?? "ERR"}
+                  </Badge>
+                  <span className="font-mono break-all text-muted-foreground">{h.url}</span>
+                  <span className="text-muted-foreground">{h.duration_ms}ms</span>
+                  <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto" onClick={(e) => { e.stopPropagation(); onJson({ title: `${h.method} ${h.url}`, data: h }); }}>
+                    <Maximize2 className="h-3 w-3" />
+                  </Button>
+                </div>
+                {h.error && <div className="text-xs text-destructive mt-1">{h.error}</div>}
+                {h.request_body && (
+                  <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-24 overflow-auto">
+                    ➜ {h.request_body}
+                  </pre>
+                )}
+                {h.response_body && (
+                  <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-32 overflow-auto">
+                    ⬅ {h.response_body}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Resposta da IA */}
       <div>
-        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Resposta da IA</h4>
-        <div className="bg-primary/5 border border-primary/20 rounded p-3 text-sm whitespace-pre-wrap">{log.ai_response || "—"}</div>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1 flex items-center gap-1">
+          <Bot className="w-3 h-3" /> Resposta da IA
+        </h4>
+        <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 text-sm whitespace-pre-wrap">
+          {log.ai_response || "—"}
+        </div>
       </div>
     </div>
   );
 }
+
 
 export default function AgentLogsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
