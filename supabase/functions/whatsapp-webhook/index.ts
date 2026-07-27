@@ -4915,8 +4915,12 @@ async function callAIAgent(
       // Check if this is a custom tool of type "add_label" (always allow repeats)
       const matchedCustomTool = getEnabledCustomTools(tenant).find((ct: any) => ct.name === toolKey);
       const isAddLabelTool = matchedCustomTool?.type === "add_label";
+      // escalate_human pode repetir: a IA pode precisar escalar de novo em outro
+      // momento da conversa (ex.: nova falha ou novo pedido de atendimento humano).
+      const isEscalateHumanTool = matchedCustomTool?.type === "escalate_human";
 
-      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isSchedulingOrCancelTool) {
+      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isEscalateHumanTool && !isSchedulingOrCancelTool) {
+
         // Special case: for escalate_human, even when deduplicated, make sure the
         // configured label is actually present on the WhatsApp chat. The owner may
         // have removed the label between turns, leaving the lead without the
