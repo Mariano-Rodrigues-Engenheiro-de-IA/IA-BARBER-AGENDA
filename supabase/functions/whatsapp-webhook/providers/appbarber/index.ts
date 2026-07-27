@@ -1304,3 +1304,31 @@ export const phantomGuardConfig = {
     "criar_agendamento",
   ],
 };
+
+// ============================================================================
+// 🛡️ BOOKING GUARDS — CONFIG ISOLADA DO APPBARBER
+// MultiBookingGuard / CancelGuard / RescheduleGuard só rodam para este provider
+// com estes nomes de ferramenta. Mexer aqui não afeta nenhuma outra API.
+// ============================================================================
+export const bookingGuardsConfig = {
+  multiBooking: {
+    enabled: true,
+    bookingToolNames: ["criar_agendamento"],
+    primaryBookingToolName: "criar_agendamento",
+    // Multi-serviço vira `services[]` numa única comanda; a contagem por
+    // execução já resolve, não precisa do classificador de forma de intenção.
+    useIntentShape: false,
+    skipWhenSingleVisit: false,
+    useAlternativesShortCircuit: false,
+    recoveryToolChoice: "auto" as const,
+  },
+  cancel: {
+    enabled: true,
+    cancelToolNames: ["cancelar_agendamento"],
+  },
+  reschedule: {
+    enabled: true,
+    cancelToolNames: ["cancelar_agendamento"],
+    bookingToolNames: ["criar_agendamento"],
+  },
+};

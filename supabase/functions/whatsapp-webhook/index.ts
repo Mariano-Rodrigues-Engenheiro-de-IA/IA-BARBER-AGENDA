@@ -12,6 +12,7 @@ import {
   evaluateSuccessfulBooking as evaluateFrizzarBooking,
   extractBookedServiceNames as extractFrizzarBookedServiceNames,
   phantomGuardConfig as frizzarPhantomGuardConfig,
+  bookingGuardsConfig as frizzarBookingGuardsConfig,
 } from "./providers/frizzar/index.ts";
 import {
   buildAppBarberTools,
@@ -19,6 +20,7 @@ import {
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
   phantomGuardConfig as appbarberPhantomGuardConfig,
+  bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
   buildBempTools,
@@ -26,6 +28,7 @@ import {
   evaluateSuccessfulBooking as evaluateBempBooking,
   extractBookedServiceNames as extractBempBookedServiceNames,
   phantomGuardConfig as bempPhantomGuardConfig,
+  bookingGuardsConfig as bempBookingGuardsConfig,
 } from "./providers/bemp/index.ts";
 // PROVIDER ONE BELEZA — módulo isolado (extraído em jul/2026).
 import {
@@ -60,6 +63,7 @@ import {
   evaluateSuccessfulBooking as evaluateOneBelezaBooking,
   extractBookedServiceNames as extractOneBelezaBookedServiceNames,
   phantomGuardConfig as onebelezaPhantomGuardConfig,
+  bookingGuardsConfig as onebelezaBookingGuardsConfig,
   type OneBelezaServiceOption,
   type OneBelezaProfessionalOption,
   type OneBelezaSlotOption,
@@ -74,6 +78,7 @@ import {
   evaluateSuccessfulBooking as evaluateTrinksBooking,
   extractBookedServiceNames as extractTrinksBookedServiceNames,
   phantomGuardConfig as trinksPhantomGuardConfig,
+  bookingGuardsConfig as trinksBookingGuardsConfig,
 } from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3312,6 +3317,49 @@ function getPhantomGuardConfig(provider: string): PhantomGuardConfig | null {
   return cfg && cfg.enabled ? cfg : null;
 }
 
+// ============================================================================
+// 🛡️ MultiBooking / Cancel / Reschedule Guards — CONFIG POR PROVIDER (isolada)
+// Cada API declara em providers/<api>/index.ts → bookingGuardsConfig se cada
+// guard roda e com quais nomes de ferramenta. Hoje só Frizzar e AppBarber estão
+// ligados, cada um com sua própria config; as demais ficam desligadas.
+// ============================================================================
+type BookingGuardsConfig = {
+  multiBooking: {
+    enabled: boolean;
+    bookingToolNames: string[];
+    primaryBookingToolName: string;
+    useIntentShape: boolean;
+    skipWhenSingleVisit: boolean;
+    useAlternativesShortCircuit: boolean;
+    recoveryToolChoice: "required" | "auto";
+  };
+  cancel: { enabled: boolean; cancelToolNames: string[] };
+  reschedule: { enabled: boolean; cancelToolNames: string[]; bookingToolNames: string[] };
+};
+const BOOKING_GUARDS_CONFIG_BY_PROVIDER: Record<string, BookingGuardsConfig> = {
+  frizzar: frizzarBookingGuardsConfig,
+  appbarber: appbarberBookingGuardsConfig,
+  trinks: trinksBookingGuardsConfig,
+  bemp: bempBookingGuardsConfig,
+  onebeleza: onebelezaBookingGuardsConfig,
+};
+const DISABLED_BOOKING_GUARDS: BookingGuardsConfig = {
+  multiBooking: {
+    enabled: false,
+    bookingToolNames: [],
+    primaryBookingToolName: "",
+    useIntentShape: false,
+    skipWhenSingleVisit: false,
+    useAlternativesShortCircuit: false,
+    recoveryToolChoice: "auto",
+  },
+  cancel: { enabled: false, cancelToolNames: [] },
+  reschedule: { enabled: false, cancelToolNames: [], bookingToolNames: [] },
+};
+function getBookingGuardsConfig(provider: string): BookingGuardsConfig {
+  return BOOKING_GUARDS_CONFIG_BY_PROVIDER[provider] || DISABLED_BOOKING_GUARDS;
+}
+
 
 /**
  * Conta agendamentos EFETIVAMENTE criados no turno, com regras específicas por provider.
@@ -6301,8 +6349,10 @@ async function callAIAgent(
   // ❌ Removidos (Trinks, Bemp, OneBeleza) — o guard genérico estava causando
   // mais falsos positivos do que corrigindo. Cada um será reintroduzido com
   // regras próprias da API depois de validar em produção.
-  const _multiBookingGuardProviders = new Set(["frizzar", "appbarber"]);
-  if (_bookingAttempts > 0 && _multiBookingGuardProviders.has(provider)) {
+  const _guardsCfg = getBookingGuardsConfig(provider);
+  const _mbCfg = _guardsCfg.multiBooking;
+  const _mbBookingNames = new Set(_mbCfg.bookingToolNames);
+  if (_bookingAttempts > 0 && _mbCfg.enabled) {
 
     const { count: criados, breakdown, executions: bookedExecutionCount } = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
     const bookedServiceNames = extractBookedServiceNames(logToolCalls, provider, sessionState);
@@ -6334,7 +6384,7 @@ async function callAIAgent(
     //  - duas pessoas, mesmo horário => 2.
     // Não usamos apenas a última fala (que pode ser só "Sim"); a classificação
     // considera a janela inteira da negociação imediatamente anterior.
-    if (provider === "frizzar" && cls.intentShape) {
+    if (_mbCfg.useIntentShape && cls.intentShape) {
       const { distinctPeople, distinctTimes, distinctProfessionals, sameVisitServicesOnly } = cls.intentShape;
       const visitsByDimensions = Math.max(distinctPeople, distinctTimes, distinctProfessionals);
       if (sameVisitServicesOnly && visitsByDimensions === 1) {
@@ -6358,7 +6408,7 @@ async function callAIAgent(
       const lastUser = [...visibleMsgs].reverse().find((m: any) => m.role === "user")?.content || "";
       const explicitPeople = countExplicitProfessionalSelections(lastUser);
       const explicitTimes = countExplicitUserTimeSelections(lastUser);
-      const classifiedMultiSignal = provider === "frizzar" && cls.intentShape
+      const classifiedMultiSignal = _mbCfg.useIntentShape && cls.intentShape
         ? Math.max(
           cls.intentShape.distinctPeople,
           cls.intentShape.distinctTimes,
@@ -6393,12 +6443,12 @@ async function callAIAgent(
           acao,
           classifier_source: cls.source,
           classifier_reasoning: cls.reasoning,
-          ...(provider === "frizzar" && cls.intentShape ? { classifier_intent_shape: cls.intentShape } : {}),
+          ...(_mbCfg.useIntentShape && cls.intentShape ? { classifier_intent_shape: cls.intentShape } : {}),
         },
       });
     };
 
-    if (provider === "frizzar" && prometidos <= 1) {
+    if (_mbCfg.skipWhenSingleVisit && prometidos <= 1) {
       // Não sequestra falhas de disponibilidade de uma visita simples. O
       // BookingGuard/provider já devolve as alternativas corretas; este guard
       // existe exclusivamente para garantir múltiplas visitas.
@@ -6417,7 +6467,7 @@ async function callAIAgent(
       // regra de negócio). Usa clientMessage devolvido pelo provider (mensagem
       // determinística) em vez de deixar a IA improvisar confirmação falsa.
       const definitiveFailure = (logToolCalls || []).find((tc: any) => {
-        if (!tc || !BOOKING_TOOL_NAMES.has(tc.name)) return false;
+        if (!tc || !_mbBookingNames.has(tc.name)) return false;
         const r = tc.result;
         return r && typeof r === "object" && r.retryable === false;
       });
@@ -6447,9 +6497,9 @@ async function callAIAgent(
       // parar (foi o que aconteceu no caso 2868). O correto é uma rodada
       // EXTRA de texto (sem forçar tool) pra IA compor a resposta oferecendo
       // as alternativas que o provider já devolveu no payload da tool.
-      const alternativesFailure = provider === "frizzar"
+      const alternativesFailure = _mbCfg.useAlternativesShortCircuit
         ? (logToolCalls || []).find((tc: any) => {
-            if (!tc || tc.name !== "agendar") return false;
+            if (!tc || !_mbBookingNames.has(tc.name)) return false;
             const r = tc.result;
             if (!r || typeof r !== "object" || !r.error) return false;
             const hasPeers = Array.isArray(r.horariosOutrosProfissionais) && r.horariosOutrosProfissionais.length > 0;
@@ -6499,7 +6549,7 @@ async function callAIAgent(
       // Faltou completar algum agendamento (2 ou 3 casos). A trava NÃO deve
       // pedir mais dados e NÃO deve escalar humano: ela força novas rodadas de
       // tool-calling para a IA resolver usando o histórico já disponível.
-      const bookingToolName = provider === "trinks" || provider === "appbarber" ? "criar_agendamento" : "agendar";
+      const bookingToolName = _mbCfg.primaryBookingToolName;
       let current = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
       let recoveryError: string | null = null;
 
@@ -6527,7 +6577,7 @@ async function callAIAgent(
             tools,
             // Frizzar: recovery em texto não corrige nada. Obriga ao menos uma
             // tool_call por rodada; consultas auxiliares continuam permitidas.
-            tool_choice: provider === "frizzar" ? "required" : "auto",
+            tool_choice: _mbCfg.recoveryToolChoice,
           };
           if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
           const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `guard-reinject-${recoveryRound}`);
@@ -6552,7 +6602,7 @@ async function callAIAgent(
           let executed = 0;
           for (const tc of retryToolCalls) {
             const tname = tc?.function?.name;
-            const isBookingTool = BOOKING_TOOL_NAMES.has(tname);
+            const isBookingTool = _mbBookingNames.has(tname);
             if (!isBookingTool && (typeof tname !== "string" || isWriteToolName(tname))) {
               messages.push({
                 role: "tool",
@@ -6693,8 +6743,9 @@ async function callAIAgent(
   // segundo nome, cancelamento da OneBeleza ficava sem guard e a IA podia
   // afirmar cancelamento falso.
   // ============================================================================
-  const CANCEL_TOOL_NAMES = new Set(["cancelar_agendamento", "desmarcar_agendamento"]);
-  if (finalResponse && !guardOverrideResponse) {
+  const _cancelCfg = _guardsCfg.cancel;
+  const CANCEL_TOOL_NAMES = new Set(_cancelCfg.cancelToolNames);
+  if (finalResponse && !guardOverrideResponse && _cancelCfg.enabled) {
     const cancelAttempted = (logToolCalls || []).some((tc) => CANCEL_TOOL_NAMES.has(tc?.name));
     if (cancelAttempted) {
       // Todas as chamadas de cancelamento do turno precisam ter dado certo.
@@ -6733,19 +6784,22 @@ async function callAIAgent(
   // que vai continuar tentando por aqui (o item de rollback via `editar_agendamento`
   // atômico só existe hoje na Trinks — cobrir os outros 4 fica pra P2).
   // ============================================================================
-  if (finalResponse && !guardOverrideResponse) {
+  const _reschedCfg = _guardsCfg.reschedule;
+  const _reschedCancelNames = new Set(_reschedCfg.cancelToolNames);
+  const _reschedBookingNames = new Set(_reschedCfg.bookingToolNames);
+  if (finalResponse && !guardOverrideResponse && _reschedCfg.enabled) {
     const cancelOk = (logToolCalls || []).some((tc) => {
-      if (!CANCEL_TOOL_NAMES.has(tc?.name)) return false;
+      if (!_reschedCancelNames.has(tc?.name)) return false;
       const r: any = tc.result || {};
       return !r.error && r.blocked !== true;
     });
     const bookingFailed = (logToolCalls || []).some((tc) => {
-      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      if (!_reschedBookingNames.has(tc?.name)) return false;
       const r: any = tc.result || {};
       return !!r.error || r.blocked === true || r.success === false;
     });
     const bookingOk = (logToolCalls || []).some((tc) => {
-      if (!BOOKING_TOOL_NAMES.has(tc?.name)) return false;
+      if (!_reschedBookingNames.has(tc?.name)) return false;
       const r: any = tc.result || {};
       if (r.error || r.blocked === true) return false;
       if (r.success === false) return false;
@@ -6788,7 +6842,7 @@ async function callAIAgent(
               });
               const toolName = tc?.function?.name;
               logToolCalls.push({ name: toolName, args: parseToolArguments(tc.function?.arguments), result: tResult });
-              if (BOOKING_TOOL_NAMES.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
+              if (_reschedBookingNames.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
                 anyBookingSucceeded = true;
               }
             }

@@ -1100,3 +1100,33 @@ export const phantomGuardConfig = {
     "agendar",
   ],
 };
+
+// ============================================================================
+// 🛡️ BOOKING GUARDS — CONFIG ISOLADA DO FRIZZAR
+// MultiBookingGuard / CancelGuard / RescheduleGuard só rodam para este provider
+// com estes nomes de ferramenta. Mexer aqui não afeta nenhuma outra API.
+// ============================================================================
+export const bookingGuardsConfig = {
+  multiBooking: {
+    enabled: true,
+    bookingToolNames: ["agendar"],
+    primaryBookingToolName: "agendar",
+    // Unidade do guard é VISITA/COMANDA (corte+barba da mesma pessoa = 1).
+    useIntentShape: true,
+    // prometidos <= 1 → não sequestra falha simples de disponibilidade.
+    skipWhenSingleVisit: true,
+    // `agendar` devolve alternativas estruturadas; nesse caso responde em texto.
+    useAlternativesShortCircuit: true,
+    // Recovery em texto não corrige nada nesta API.
+    recoveryToolChoice: "required" as const,
+  },
+  cancel: {
+    enabled: true,
+    cancelToolNames: ["cancelar_agendamento"],
+  },
+  reschedule: {
+    enabled: true,
+    cancelToolNames: ["cancelar_agendamento"],
+    bookingToolNames: ["agendar"],
+  },
+};
