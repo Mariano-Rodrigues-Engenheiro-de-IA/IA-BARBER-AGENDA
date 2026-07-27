@@ -962,10 +962,147 @@ const parseTimestampMs = (value: unknown) => {
 
 // Verifica se um cadastro foi realmente persistido consultando a API por telefone.
 
+// ===================== HTTP TRACE (auditoria ponta a ponta) =====================
+// Captura TODA requisição HTTP de saída feita durante o processamento de uma
+// mensagem (APIs de agenda, UAZAPI, OpenAI) com corpo enviado e corpo recebido,
+// para exibição no Monitor. Chamadas ao próprio Supabase são ignoradas.
+// Segredos (token/apikey/authorization) nunca são gravados.
+type HttpTraceEntry = {
+  seq: number;
+  at: string;
+  method: string;
+  url: string;
+  request_body: string | null;
+  status: number | null;
+  ok: boolean;
+  duration_ms: number;
+  response_body: string | null;
+  error?: string;
+  truncated?: boolean;
+};
 
+const httpTraceStore = new AsyncLocalStorage<HttpTraceEntry[]>();
+const HTTP_TRACE_MAX_CALLS = 60;
+const HTTP_TRACE_MAX_BODY = 4000;
 
+function redactTraceText(text: string | null): string | null {
+  if (!text) return text;
+  return text
+    .replace(/("?(?:token|apikey|api_key|authorization|password|galax_hash|secret)"?\s*[:=]\s*"?)([^"&,\s}]+)/gi, "$1***")
+    .replace(/(Bearer\s+)[A-Za-z0-9._\-]+/g, "$1***");
+}
 
-Deno.serve(async (req) => {
+function truncateTraceBody(text: string | null): { body: string | null; truncated: boolean } {
+  if (!text) return { body: text, truncated: false };
+  if (text.length <= HTTP_TRACE_MAX_BODY) return { body: text, truncated: false };
+  return { body: text.slice(0, HTTP_TRACE_MAX_BODY) + `\n…(+${text.length - HTTP_TRACE_MAX_BODY} chars)`, truncated: true };
+}
+
+const __originalFetch = globalThis.fetch.bind(globalThis);
+globalThis.fetch = async (input: any, init?: any) => {
+  const bucket = httpTraceStore.getStore();
+  if (!bucket) return __originalFetch(input, init);
+
+  const url = typeof input === "string" ? input : (input?.url ?? String(input));
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  // Ignora tráfego interno do Supabase (ruído: chat_messages, logs, state)
+  if (supabaseUrl && url.startsWith(supabaseUrl)) return __originalFetch(input, init);
+  if (bucket.length >= HTTP_TRACE_MAX_CALLS) return __originalFetch(input, init);
+
+  const method = (init?.method || (typeof input === "object" ? input?.method : "") || "GET").toUpperCase();
+  let reqBody: string | null = null;
+  try {
+    if (typeof init?.body === "string") reqBody = init.body;
+    else if (init?.body instanceof URLSearchParams) reqBody = init.body.toString();
+    else if (init?.body instanceof FormData) {
+      const parts: string[] = [];
+      for (const [k, v] of (init.body as FormData).entries()) parts.push(`${k}=${typeof v === "string" ? v : "[file]"}`);
+      reqBody = parts.join("&");
+    }
+  } catch { /* ignore */ }
+
+  const entry: HttpTraceEntry = {
+    seq: bucket.length + 1,
+    at: new Date().toISOString(),
+    method,
+    url: redactTraceText(url.split("?")[0] + (url.includes("?") ? "?" + url.split("?").slice(1).join("?") : "")) || url,
+    request_body: null,
+    status: null,
+    ok: false,
+    duration_ms: 0,
+    response_body: null,
+  };
+  const reqTrunc = truncateTraceBody(redactTraceText(reqBody));
+  entry.request_body = reqTrunc.body;
+
+  const started = Date.now();
+  try {
+    const res = await __originalFetch(input, init);
+    entry.status = res.status;
+    entry.ok = res.ok;
+    entry.duration_ms = Date.now() - started;
+    let text: string | null = null;
+    try {
+      const clone = res.clone();
+      text = await clone.text();
+    } catch { text = null; }
+    const resTrunc = truncateTraceBody(redactTraceText(text));
+    entry.response_body = resTrunc.body;
+    entry.truncated = reqTrunc.truncated || resTrunc.truncated;
+    bucket.push(entry);
+    return res;
+  } catch (e: any) {
+    entry.duration_ms = Date.now() - started;
+    entry.error = e?.message || String(e);
+    bucket.push(entry);
+    throw e;
+  }
+};
+
+function getHttpTrace(): HttpTraceEntry[] {
+  return httpTraceStore.getStore() || [];
+}
+
+// ===================== UAZAPI SEND COM RETRY =====================
+// 503/502/504/429 da UAZAPI são falhas transitórias DO LADO DELES (gateway/instância
+// momentaneamente indisponível). Sem retry, a IA responde no sistema mas o cliente
+// não recebe nada no WhatsApp. 3 tentativas com backoff curto resolvem o caso comum.
+async function uazapiSendTextWithRetry(
+  uazapiUrl: string,
+  uazapiToken: string,
+  number: string,
+  text: string,
+  attempts = 3,
+): Promise<{ ok: boolean; status: number | null; data: any; error: string | null; attempts: number }> {
+  const transient = new Set([408, 429, 500, 502, 503, 504]);
+  let lastStatus: number | null = null;
+  let lastError: string | null = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const res = await fetch(`${uazapiUrl}/send/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+        body: JSON.stringify({ number, text, delay: 0 }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      lastStatus = res.status;
+      if (res.ok) return { ok: true, status: res.status, data, error: null, attempts: attempt };
+      lastError = `UAZAPI status ${res.status}`;
+      if (!transient.has(res.status) || attempt === attempts) {
+        return { ok: false, status: res.status, data, error: lastError, attempts: attempt };
+      }
+    } catch (e: any) {
+      lastError = `UAZAPI fetch error: ${e?.message || String(e)}`;
+      if (attempt === attempts) return { ok: false, status: lastStatus, data: null, error: lastError, attempts: attempt };
+    }
+    const backoff = attempt === 1 ? 800 : 2500;
+    console.warn(`[UAZAPI] envio falhou (${lastError}) — tentativa ${attempt}/${attempts}, aguardando ${backoff}ms`);
+    await new Promise((r) => setTimeout(r, backoff));
+  }
+  return { ok: false, status: lastStatus, data: null, error: lastError, attempts };
+}
+
+const handleWebhookRequest = async (req: Request): Promise<Response> => {
   const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
