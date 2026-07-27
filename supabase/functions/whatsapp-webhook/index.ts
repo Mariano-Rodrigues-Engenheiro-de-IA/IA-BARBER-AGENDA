@@ -2392,6 +2392,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         model_used: agentResult?.model || "direct_handler",
         duration_ms: totalResponseMs,
         session_blocked: agentResult?.sessionBlocked || false,
+        http_trace: getHttpTrace(),
       }).then(({ error }) => {
         if (error) console.error("Failed to log agent execution:", error.message);
       });
