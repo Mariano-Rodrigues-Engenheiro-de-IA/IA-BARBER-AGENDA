@@ -771,6 +771,75 @@ export default function TenantFormPage() {
                   </button>
                 </div>
               </div>
+
+              <div className="space-y-3 border-t border-border pt-4">
+                <div className="space-y-2 max-w-xs">
+                  <Label>Modo da IA</Label>
+                  <Select
+                    value={((form as any).agent_mode as string) ?? "production"}
+                    onValueChange={(v) => handleChange("agent_mode" as any, v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="production">Produção — responde todos</SelectItem>
+                      <SelectItem value="test">Teste — responde só os números liberados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Em modo de teste a IA ignora qualquer número fora da lista abaixo (as mensagens
+                    continuam sendo salvas no painel de Conversas).
+                  </p>
+                </div>
+
+                {((form as any).agent_mode ?? "production") === "test" && (
+                  <div className="space-y-2">
+                    <Label>Números liberados no modo de teste</Label>
+                    {(((form as any).test_phone_numbers as string[]) ?? []).map((num, i) => (
+                      <div key={i} className="flex gap-2 max-w-md">
+                        <Input
+                          value={num}
+                          placeholder="5511999999999"
+                          onChange={(e) => {
+                            const next = [...(((form as any).test_phone_numbers as string[]) ?? [])];
+                            next[i] = e.target.value;
+                            handleChange("test_phone_numbers" as any, next as any);
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            const next = (((form as any).test_phone_numbers as string[]) ?? []).filter((_, j) => j !== i);
+                            handleChange("test_phone_numbers" as any, next as any);
+                          }}
+                        >
+                          Remover
+                        </Button>
+                      </div>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        handleChange(
+                          "test_phone_numbers" as any,
+                          [...(((form as any).test_phone_numbers as string[]) ?? []), ""] as any,
+                        )
+                      }
+                    >
+                      Adicionar número
+                    </Button>
+                    {(((form as any).test_phone_numbers as string[]) ?? []).length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Nenhum número liberado — a IA não responderá ninguém enquanto estiver em modo de teste.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {isEditing && id && form.uazapi_url && form.uazapi_token && (
                 <UazapiTestButton url={form.uazapi_url as string} token={form.uazapi_token as string} />
               )}
