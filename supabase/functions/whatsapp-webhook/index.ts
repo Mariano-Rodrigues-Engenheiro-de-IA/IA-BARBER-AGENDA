@@ -1581,14 +1581,26 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const _testNumbers: string[] = Array.isArray((tenant as any).test_phone_numbers)
         ? (tenant as any).test_phone_numbers
         : [];
+      // Normaliza número BR: remove DDI 55 e o 9º dígito de celular, para que
+      // 5561983012868 e 556183012868 sejam considerados o mesmo contato.
+      const _brKey = (raw: string) => {
+        let d = String(raw ?? "").replace(/\D/g, "");
+        if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+        if (d.length === 11 && d[2] === "9") d = d.slice(0, 2) + d.slice(3); // DDD + 8 dígitos
+        return d;
+      };
       const _allowedTestDigits = new Set(
         _testNumbers.map((n) => String(n ?? "").replace(/\D/g, "")).filter(Boolean),
       );
       const _incomingDigits = String(phoneNumber ?? "").replace(/\D/g, "");
+      const _incomingKey = _brKey(_incomingDigits);
       const _matchesTestNumber = [..._allowedTestDigits].some((d) => {
         if (!d) return false;
-        return d === _incomingDigits || d.endsWith(_incomingDigits) || _incomingDigits.endsWith(d);
+        if (d === _incomingDigits || d.endsWith(_incomingDigits) || _incomingDigits.endsWith(d)) return true;
+        const k = _brKey(d);
+        return !!k && !!_incomingKey && k === _incomingKey;
       });
+
       const testModeBlocked = _agentMode === "test" && !_matchesTestNumber;
       if (testModeBlocked) {
         console.log(`[TEST-MODE] Tenant ${tenant.name} em modo de teste — ${phoneNumber} não autorizado. Mensagem salva sem resposta.`);
