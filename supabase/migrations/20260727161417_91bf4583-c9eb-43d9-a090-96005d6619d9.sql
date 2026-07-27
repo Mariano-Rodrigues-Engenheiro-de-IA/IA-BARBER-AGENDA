@@ -1,0 +1,1 @@
+ALTER TABLE public.agent_logs ADD COLUMN IF NOT EXISTS http_trace jsonb;
