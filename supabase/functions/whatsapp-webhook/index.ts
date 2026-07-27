@@ -4681,6 +4681,11 @@ async function callAIAgent(
     const postToolSystemMessages: Array<{ role: "system"; content: string }> = [];
 
     for (const toolCall of assistantMessage.tool_calls) {
+      // Marcadores para a linha do tempo do Monitor IA: em qual rodada a ferramenta
+      // rodou e qual faixa do http_trace pertence a ela (logs "por dentro" da tool).
+      const __traceStartSeq = getHttpTrace().length + 1;
+      const __toolStartedAt = new Date().toISOString();
+      const __toolStartedMs = Date.now();
       let parsedArgs = parseToolArguments(toolCall.function.arguments);
       const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
       let toolCallToExecute = toolCall;
@@ -4861,7 +4866,7 @@ async function callAIAgent(
             wasBlocked = true;
             sessionBlocked = true;
             messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+            logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
             continue;
           }
         }
@@ -4923,7 +4928,7 @@ async function callAIAgent(
         wasBlocked = true;
         sessionBlocked = true;
         messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
         continue;
       }
 
@@ -6061,7 +6066,12 @@ async function callAIAgent(
         args: parsedArgs,
         result: toolResult,
         blocked: wasBlocked,
-      };
+        round: rounds,
+        started_at: __toolStartedAt,
+        duration_ms: Date.now() - __toolStartedMs,
+        trace_from: __traceStartSeq,
+        trace_to: getHttpTrace().length,
+      } as any;
       
       // Add correction info if applicable
       if (correctionReason) {
