@@ -4681,6 +4681,11 @@ async function callAIAgent(
     const postToolSystemMessages: Array<{ role: "system"; content: string }> = [];
 
     for (const toolCall of assistantMessage.tool_calls) {
+      // Marcadores para a linha do tempo do Monitor IA: em qual rodada a ferramenta
+      // rodou e qual faixa do http_trace pertence a ela (logs "por dentro" da tool).
+      const __traceStartSeq = getHttpTrace().length + 1;
+      const __toolStartedAt = new Date().toISOString();
+      const __toolStartedMs = Date.now();
       let parsedArgs = parseToolArguments(toolCall.function.arguments);
       const originalParsedArgs = JSON.parse(JSON.stringify(parsedArgs || {}));
       let toolCallToExecute = toolCall;
