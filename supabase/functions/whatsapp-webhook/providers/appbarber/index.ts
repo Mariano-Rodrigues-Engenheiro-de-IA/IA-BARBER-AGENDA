@@ -1281,3 +1281,26 @@ export function extractBookedServiceNames(tc: any, _sessionState?: any): string[
   const name = r?.service_name ?? r?.data?.service_name;
   return name ? [String(name)] : [];
 }
+
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG ISOLADA DO APPBARBER
+// Nomes de ferramentas usados pelo guard genérico do webhook. Mantido aqui para
+// que mexer/remover o AppBarber não afete os outros providers.
+// ============================================================================
+export const phantomGuardConfig = {
+  enabled: true,
+  bookingToolNames: ["criar_agendamento"],
+  searchToolNames: ["listar_agendamentos"],
+  // Ferramentas que a IA pode legitimamente precisar chamar na reinjeção para
+  // completar o fluxo (ex: nunca listou horários antes de prometer). Se ela
+  // chamar qualquer uma delas, o turno é considerado recuperado e a IA responde
+  // com base no resultado real — nunca cai na mensagem genérica.
+  recoveryToolNames: [
+    "listar_servicos",
+    "listar_profissionais",
+    "listar_horarios",
+    "listar_horarios_geral",
+    "listar_agendamentos",
+    "criar_agendamento",
+  ],
+};

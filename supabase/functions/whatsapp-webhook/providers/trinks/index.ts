@@ -1227,3 +1227,23 @@ export function extractBookedServiceNames(tc: any, sessionState?: any): string[]
   const name = catalog.find((s) => Number(s.id) === Number(args.servicoId))?.nome;
   return name ? [name] : [];
 }
+
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG ISOLADA DA TRINKS
+// ============================================================================
+export const phantomGuardConfig = {
+  enabled: true,
+  bookingToolNames: ["criar_agendamento"],
+  searchToolNames: ["buscar_agendamento"],
+  recoveryToolNames: [
+    "buscar_cliente",
+    "cadastrar_cliente",
+    "listar_profissionais",
+    "listar_servicos",
+    "listar_servicos_profissional",
+    "listar_horarios",
+    "buscar_agendamento",
+    "criar_agendamento",
+    "editar_agendamento",
+  ],
+};

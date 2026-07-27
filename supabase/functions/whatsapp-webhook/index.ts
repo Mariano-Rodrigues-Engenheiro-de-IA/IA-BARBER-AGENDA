@@ -11,18 +11,21 @@ import {
   buildFrizzarScheduleRecoveryInstruction,
   evaluateSuccessfulBooking as evaluateFrizzarBooking,
   extractBookedServiceNames as extractFrizzarBookedServiceNames,
+  phantomGuardConfig as frizzarPhantomGuardConfig,
 } from "./providers/frizzar/index.ts";
 import {
   buildAppBarberTools,
   executeAppBarberTool,
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
+  phantomGuardConfig as appbarberPhantomGuardConfig,
 } from "./providers/appbarber/index.ts";
 import {
   buildBempTools,
   executeBempTool,
   evaluateSuccessfulBooking as evaluateBempBooking,
   extractBookedServiceNames as extractBempBookedServiceNames,
+  phantomGuardConfig as bempPhantomGuardConfig,
 } from "./providers/bemp/index.ts";
 // PROVIDER ONE BELEZA — módulo isolado (extraído em jul/2026).
 import {
@@ -56,6 +59,7 @@ import {
   hydrateOneBelezaSessionStateFromProvider,
   evaluateSuccessfulBooking as evaluateOneBelezaBooking,
   extractBookedServiceNames as extractOneBelezaBookedServiceNames,
+  phantomGuardConfig as onebelezaPhantomGuardConfig,
   type OneBelezaServiceOption,
   type OneBelezaProfessionalOption,
   type OneBelezaSlotOption,
@@ -69,6 +73,7 @@ import {
   maybeHandleDirectCancellationConfirmation,
   evaluateSuccessfulBooking as evaluateTrinksBooking,
   extractBookedServiceNames as extractTrinksBookedServiceNames,
+  phantomGuardConfig as trinksPhantomGuardConfig,
 } from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3283,6 +3288,31 @@ function countBookingCallAttempts(logToolCalls: any[]): number {
   return (logToolCalls || []).filter((tc) => tc && BOOKING_TOOL_NAMES.has(tc.name)).length;
 }
 
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG POR PROVIDER (isolada)
+// Cada API declara os próprios nomes de ferramenta no seu módulo
+// (providers/<api>/index.ts → phantomGuardConfig). Aqui só o dispatcher.
+// Assim, remover/ajustar uma API não mexe no comportamento das outras.
+// ============================================================================
+type PhantomGuardConfig = {
+  enabled: boolean;
+  bookingToolNames: string[];
+  searchToolNames: string[];
+  recoveryToolNames: string[];
+};
+const PHANTOM_GUARD_CONFIG_BY_PROVIDER: Record<string, PhantomGuardConfig> = {
+  trinks: trinksPhantomGuardConfig,
+  appbarber: appbarberPhantomGuardConfig,
+  bemp: bempPhantomGuardConfig,
+  onebeleza: onebelezaPhantomGuardConfig,
+  frizzar: frizzarPhantomGuardConfig,
+};
+function getPhantomGuardConfig(provider: string): PhantomGuardConfig | null {
+  const cfg = PHANTOM_GUARD_CONFIG_BY_PROVIDER[provider];
+  return cfg && cfg.enabled ? cfg : null;
+}
+
+
 /**
  * Conta agendamentos EFETIVAMENTE criados no turno, com regras específicas por provider.
  * Validado contra o código real de cada execute<Provider>Tool.
@@ -6066,15 +6096,14 @@ async function callAIAgent(
   // que deixa o cliente entender que está tudo criado/confirmado.
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  // ⚠️ ESCOPO: os 5 providers (trinks, appbarber, bemp, onebeleza, frizzar).
-  // A restrição anterior a 3 providers era só reflexo de onde bugs foram
-  // observados; não há particularidade que justifique deixar OneBeleza/Frizzar
-  // fora — o guard só dispara quando NÃO houve tool_call de agendar/criar_agendamento
-  // no turno E não há sucesso recente no ledger da sessão, então não gera
-  // falso positivo em fluxos legítimos desses providers.
-  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
+  // ⚠️ ESCOPO: definido POR PROVIDER, no módulo de cada API
+  // (providers/<api>/index.ts → phantomGuardConfig). Se um dia o AppBarber
+  // (ou qualquer outro) sair do ar ou precisar de regra própria, basta mexer
+  // no módulo dele — os demais não são afetados.
+  const _phantomCfg = getPhantomGuardConfig(provider);
 
-  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
+  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomCfg) {
+
     const lastAssistantMessage = getLastAssistantMessage(history) || "";
     const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
     const userIsShortConfirmation = isAffirmativeReply(userMessage || "");
@@ -6144,82 +6173,106 @@ async function callAIAgent(
 
         let recovered = false;
         try {
+          const _bookingNames = _phantomCfg.bookingToolNames.join(" / ");
+          const _searchNames = _phantomCfg.searchToolNames.join(" / ");
+          const _recoveryNames = _phantomCfg.recoveryToolNames.join(", ");
           const nudge = {
             role: "system",
             content:
               "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você deu a entender que um agendamento NOVO estava finalizado, mas NÃO chamou nenhuma ferramenta de agendar nesta execução — não dá pra prometer criação sem criar de verdade. " +
-              "Faça AGORA uma das duas coisas, obrigatoriamente via ferramenta:\n" +
-              "1) Se o cliente está reafirmando/confirmando um agendamento que JÁ EXISTE (ex: respondeu 'sim' a uma pergunta de confirmação, ou o agendamento pode ter sido criado no app do estabelecimento), chame a ferramenta de BUSCA de agendamentos do cliente (buscar_agendamento / listar_agendamentos / buscar_agendamentos_dia — o nome varia por provedor). Se achar um ativo compatível, responda confirmando com os dados reais retornados.\n" +
-              "2) Se é um agendamento NOVO com todos os dados já coletados na conversa (serviço, profissional, data, hora), chame a ferramenta de agendar/criar_agendamento AGORA com esses dados.\n" +
-              "Depois de ver o resultado da ferramenta, responda ao cliente de forma natural — confirmando (se deu certo/achou) ou pedindo o dado que falta (se não).",
+              "Resolva AGORA, usando ferramentas (você pode encadear quantas precisar): " + _recoveryNames + ".\n" +
+              "1) Se o cliente está reafirmando/confirmando um agendamento que JÁ EXISTE, chame " + _searchNames + ". Se achar um ativo compatível, responda confirmando com os dados reais retornados.\n" +
+              "2) Se é um agendamento NOVO e você ainda NÃO consultou disponibilidade nesta rodada, consulte primeiro (serviços/profissionais/horários) e só então chame " + _bookingNames + ".\n" +
+              "3) Se faltar algum dado que só o cliente pode dar, pergunte de forma natural — sem prometer que já está agendado.\n" +
+              "Nunca responda ao cliente afirmando agendamento criado sem retorno positivo de " + _bookingNames + ".",
           };
           messages.push(nudge);
-          const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
-          const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "phantom-confirmation-reinject");
-          if (retryResp.ok) {
+
+          // Até 3 rodadas de ferramentas: a IA pode precisar de listar_servicos →
+          // listar_horarios → agendar. Antes só valia booking/busca — qualquer outra
+          // ferramenta era descartada e o cliente recebia a mensagem genérica
+          // (caso 554188871221 / AppBarber, 27/07): a IA fez o trabalho certo e o
+          // guard jogou fora. Agora qualquer ferramenta executada conta como
+          // recuperação e a resposta final sai do resultado real.
+          const bookingNamesSet = new Set(_phantomCfg.bookingToolNames);
+          const searchNamesSet = new Set(_phantomCfg.searchToolNames);
+          let anyBookingSucceeded = false;
+          let anyToolExecuted = false;
+          let pendingToolCalls: any[] = [];
+          let assistantText = "";
+
+          for (let round = 0; round < 3; round++) {
+            const retryBody = {
+              model: modelUsed,
+              messages,
+              tools: buildToolsForProvider(provider, tenant),
+              tool_choice: "auto",
+              max_completion_tokens: 700,
+            };
+            const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `phantom-confirmation-reinject-r${round + 1}`);
+            if (!retryResp.ok) break;
             const retryJson = await retryResp.json();
             const retryMsg = retryJson?.choices?.[0]?.message;
-            const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
-            if (retryToolCalls.length > 0) {
-              messages.push(retryMsg);
-              let anyBookingSucceeded = false;
-              let anySearchExecuted = false;
-              const SEARCH_TOOL_NAMES = new Set([
-                "buscar_agendamento",
-                "buscar_agendamentos",
-                "buscar_agendamentos_dia",
-                "listar_agendamentos",
-              ]);
-              for (const tc of retryToolCalls) {
-                let tResult: any;
-                try {
-                  tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
-                } catch (e) {
-                  tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
-                }
-                messages.push({
-                  role: "tool",
-                  tool_call_id: tc.id,
-                  content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
-                });
-                const tname = tc?.function?.name;
-                if (BOOKING_TOOL_NAMES.has(tname) && tResult && !tResult.error && !tResult.blocked) {
-                  anyBookingSucceeded = true;
-                  logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
-                }
-                if (SEARCH_TOOL_NAMES.has(tname) && tResult && !tResult.error) {
-                  anySearchExecuted = true;
-                  logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
-                }
+            pendingToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+            assistantText = String(retryMsg?.content || "").trim();
+            if (pendingToolCalls.length === 0) break;
+
+            messages.push(retryMsg);
+            for (const tc of pendingToolCalls) {
+              let tResult: any;
+              try {
+                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+              } catch (e) {
+                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
               }
-              if (anyBookingSucceeded) {
-                const det = buildDeterministicBookingConfirmation(logToolCalls);
-                if (det) {
-                  finalResponse = det;
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              const tname = tc?.function?.name;
+              anyToolExecuted = true;
+              const ok = tResult && !tResult.error && !tResult.blocked;
+              if (bookingNamesSet.has(tname) && ok) anyBookingSucceeded = true;
+              if (ok && (bookingNamesSet.has(tname) || searchNamesSet.has(tname))) {
+                logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
+              }
+            }
+            if (anyBookingSucceeded) break;
+          }
+
+          if (anyBookingSucceeded) {
+            const det = buildDeterministicBookingConfirmation(logToolCalls);
+            if (det) {
+              finalResponse = det;
+              guardOverrideResponse = true;
+              recovered = true;
+            }
+          }
+
+          if (!recovered && anyToolExecuted) {
+            // A IA já viu resultados reais de ferramenta. Fecha com uma rodada de
+            // texto puro (sem tools) pra ela responder com base neles — confirmando,
+            // oferecendo alternativa ou pedindo o dado que falta.
+            try {
+              const finalBody = { model: modelUsed, messages, max_completion_tokens: 500 };
+              const finalResp = await fetchAIWithRetry(JSON.stringify(finalBody), "phantom-confirmation-final-answer");
+              if (finalResp.ok) {
+                const finalJson = await finalResp.json();
+                const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
+                if (finalMsgText) {
+                  finalResponse = finalMsgText;
                   guardOverrideResponse = true;
                   recovered = true;
                 }
-              } else if (anySearchExecuted) {
-                // Se a IA fez busca (caso "cliente confirmando agendamento pré-existente"),
-                // roda mais uma volta pra ela produzir a resposta em linguagem natural
-                // com base no resultado da busca — não temos como montar isso
-                // deterministicamente sem duplicar lógica por provider.
-                try {
-                  const finalBody = { model: modelUsed, messages, max_completion_tokens: 500 };
-                  const finalResp = await fetchAIWithRetry(JSON.stringify(finalBody), "phantom-confirmation-search-answer");
-                  if (finalResp.ok) {
-                    const finalJson = await finalResp.json();
-                    const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
-                    if (finalMsgText) {
-                      finalResponse = finalMsgText;
-                      guardOverrideResponse = true;
-                      recovered = true;
-                    }
-                  }
-                } catch (e) {
-                  console.error(`[PhantomConfirmationGuard] search-answer exception: ${(e as Error)?.message}`);
-                }
               }
+            } catch (e) {
+              console.error(`[PhantomConfirmationGuard] final-answer exception: ${(e as Error)?.message}`);
+            }
+            if (!recovered && assistantText) {
+              finalResponse = assistantText;
+              guardOverrideResponse = true;
+              recovered = true;
             }
           }
         } catch (e) {

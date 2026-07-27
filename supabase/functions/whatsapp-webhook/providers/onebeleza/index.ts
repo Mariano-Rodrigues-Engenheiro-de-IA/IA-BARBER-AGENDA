@@ -1955,3 +1955,23 @@ export function extractBookedServiceNames(tc: any, _sessionState?: any): string[
   const name = r?.servicoNome ?? r?.nomeServico;
   return name ? [String(name)] : [];
 }
+
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG ISOLADA DA ONE BELEZA
+// ============================================================================
+export const phantomGuardConfig = {
+  enabled: true,
+  bookingToolNames: ["agendar"],
+  searchToolNames: ["buscar_agendamentos_dia"],
+  recoveryToolNames: [
+    "buscar_cliente",
+    "cadastrar_cliente",
+    "buscar_servicos",
+    "buscar_barbeiros_por_servico",
+    "buscar_datas_disponiveis",
+    "buscar_horarios",
+    "buscar_horarios_disponiveis",
+    "buscar_agendamentos_dia",
+    "agendar",
+  ],
+};
