@@ -514,7 +514,10 @@ export default function TenantFormPage() {
       };
       delete (agentSettings as any).follow_up;
 
-      const payload = { ...form, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
+      const cleanedTestNumbers = ((((form as any).test_phone_numbers as string[]) ?? [])
+        .map((n) => String(n ?? "").replace(/\D/g, ""))
+        .filter(Boolean));
+      const payload = { ...form, test_phone_numbers: cleanedTestNumbers, agent_settings: agentSettings, kanban_columns: kanbanColumns, logo_url: logoUrl || null } as any;
 
       let savedId = id;
       if (isEditing && id) {
