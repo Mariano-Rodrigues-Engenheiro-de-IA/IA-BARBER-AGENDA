@@ -408,6 +408,9 @@ export default function TenantFormPage() {
     booking_link: "",
     uazapi_url: "",
     uazapi_token: "",
+    agent_mode: "production",
+    test_phone_numbers: [],
+
     agent_system_prompt: "",
     celcash_enabled: false,
     celcash_env: "sandbox",
