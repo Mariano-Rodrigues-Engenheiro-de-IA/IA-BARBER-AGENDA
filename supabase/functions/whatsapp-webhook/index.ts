@@ -4689,6 +4689,11 @@ async function callAIAgent(
   let assistantMessage: any = result.choices?.[0]?.message;
   let rounds = 0;
   const executedToolsThisSession: Set<string> = new Set<string>(sessionState.executedToolNames || []);
+  // Assinaturas (nome + argumentos) executadas NESTE turno — usado para impedir
+  // que a IA dispare a mesma ferramenta idêntica duas vezes na mesma resposta,
+  // sem travar a ferramenta para o resto da conversa.
+  const executedToolSignaturesThisTurn: Set<string> = new Set<string>();
+
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
 
@@ -4918,8 +4923,29 @@ async function callAIAgent(
       // escalate_human pode repetir: a IA pode precisar escalar de novo em outro
       // momento da conversa (ex.: nova falha ou novo pedido de atendimento humano).
       const isEscalateHumanTool = matchedCustomTool?.type === "escalate_human";
+      // Ferramentas customizadas são informativas/reversíveis (enviar texto, imagem,
+      // áudio, vídeo, documento, localização, link, combo, PIX, contato, etiquetas).
+      // O cliente pode legitimamente pedir o mesmo conteúdo de novo mais tarde, então
+      // elas NÃO ficam travadas para a conversa inteira — apenas não podem repetir
+      // com argumentos idênticos dentro do MESMO turno (evita envio duplicado).
+      const isRepeatableCustomTool = !!matchedCustomTool;
+      const turnSignature = `${toolKey}::${JSON.stringify(parsedArgs ?? {})}`;
+      if (isRepeatableCustomTool && executedToolSignaturesThisTurn.has(turnSignature)) {
+        console.log(`[DedupGuard] ${toolKey} BLOCKED: mesma chamada repetida neste turno`);
+        toolResult = {
+          message: `A ferramenta "${toolKey}" já foi executada agora, com os mesmos dados, nesta mesma resposta. Não repita — siga respondendo ao cliente.`,
+          blocked: true,
+          deduplicated: true,
+        };
+        wasBlocked = true;
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, deduplicated: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
+        continue;
+      }
+      if (isRepeatableCustomTool) executedToolSignaturesThisTurn.add(turnSignature);
 
-      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isEscalateHumanTool && !isSchedulingOrCancelTool) {
+      if (executedToolsThisSession.has(toolKey) && !isReadOnlyTool && !isAddLabelTool && !isEscalateHumanTool && !isRepeatableCustomTool && !isSchedulingOrCancelTool) {
+
 
         // Special case: for escalate_human, even when deduplicated, make sure the
         // configured label is actually present on the WhatsApp chat. The owner may
