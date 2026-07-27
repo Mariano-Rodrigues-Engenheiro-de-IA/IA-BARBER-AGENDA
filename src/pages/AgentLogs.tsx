@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertTriangle, CheckCircle, Clock, ChevronDown, ChevronUp, Search, Phone, Bot, Wrench,
   Maximize2, Globe, MessageSquare, Brain, Send, Ban,
@@ -350,8 +351,57 @@ function LogTimeline({ log, onJson }: { log: AgentLog; onJson: (d: { title: stri
   );
 }
 
+/** Monitor simples: só o essencial — mensagem, ferramentas (args/resultado) e resposta. */
+function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string; data: any }) => void }) {
+  const toolCalls = (Array.isArray(log.tool_calls) ? log.tool_calls : []).filter((tc: any) => tc?.name !== "__debounce_batch__");
+  return (
+    <div className="space-y-4">
+      <div>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Mensagem do cliente</h4>
+        <div className="bg-muted rounded p-3 text-sm whitespace-pre-wrap">{log.user_message}</div>
+      </div>
+
+      {toolCalls.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Ferramentas usadas</h4>
+          <div className="space-y-2">
+            {toolCalls.map((tc: any, i: number) => {
+              const summary = summarizeResult(tc.result);
+              return (
+                <div key={i} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Wrench className="w-3 h-3 text-primary" />
+                    <span className="font-medium text-sm">{prettyToolName(tc.name)}</span>
+                    {tc.blocked && <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/50">BLOQUEADA</Badge>}
+                    <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto" onClick={() => onJson({ title: tc.name, data: tc })}>
+                      <Maximize2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="mt-1 text-xs space-y-1">
+                    <div><span className="text-muted-foreground">Consultou com:</span> <span className="font-mono">{argsPreview(tc.resolvedArgs ?? tc.args)}</span></div>
+                    <div>
+                      <span className="text-muted-foreground">Retorno:</span>{" "}
+                      <span className={summary.tone === "err" ? "text-destructive" : summary.tone === "warn" ? "text-warning" : "text-foreground"}>{summary.text}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Resposta da IA</h4>
+        <div className="bg-primary/5 border border-primary/20 rounded p-3 text-sm whitespace-pre-wrap">{log.ai_response || "—"}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentLogsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"simple" | "advanced">("simple");
   const [filterPhone, setFilterPhone] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "errors" | "blocked">("all");
   const [page, setPage] = useState(0);
@@ -396,8 +446,20 @@ export default function AgentLogsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Monitor do Agente</h1>
-        <p className="text-muted-foreground mt-1">Passo a passo do que a IA fez em cada interação</p>
+        <p className="text-muted-foreground mt-1">
+          {mode === "simple"
+            ? "Visão resumida: mensagem, ferramentas e resposta"
+            : "Visão detalhada: passo a passo com logs de requisições"}
+        </p>
       </div>
+
+      <Tabs value={mode} onValueChange={(v) => setMode(v as any)}>
+        <TabsList>
+          <TabsTrigger value="simple">Monitor simples</TabsTrigger>
+          <TabsTrigger value="advanced">Monitor avançado</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
 
       <div className="flex flex-wrap gap-3">
         <Select value={selectedTenant} onValueChange={(v) => { setSelectedTenant(v); setPage(0); }}>
@@ -498,7 +560,7 @@ export default function AgentLogsPage() {
 
                 {isExpanded && (
                   <CardContent className="space-y-4 pt-0">
-                    {batchMessages.length > 0 && (
+                    {mode === "advanced" && batchMessages.length > 0 && (
                       <div>
                         <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Mensagens recebidas no lote</h4>
                         <div className="space-y-2">
@@ -514,7 +576,9 @@ export default function AgentLogsPage() {
                       </div>
                     )}
 
-                    <LogTimeline log={log} onJson={setJsonDialog} />
+                    {mode === "advanced"
+                      ? <LogTimeline log={log} onJson={setJsonDialog} />
+                      : <LogSimple log={log} onJson={setJsonDialog} />}
 
                     {hasErrors && (
                       <div>
