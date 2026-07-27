@@ -2319,33 +2319,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         if (!part) continue;
 
         let sentMessageId: string | null = null;
-        try {
-          const sendResult = await fetch(`${uazapiUrl}/send/text`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Accept": "application/json",
-              "token": uazapiToken,
-            },
-            body: JSON.stringify({ number: phoneNumber, text: part, delay: 0 }),
-          });
-          const sendData = await sendResult.json().catch(() => ({} as any));
-          console.log(`UAZAPI send part ${i + 1}/${messageParts.length}:`, JSON.stringify(sendData).slice(0, 200));
-          // Extract message_id from UAZAPI response so the fromMe echo dedup works
-          sentMessageId = (sendData?.id || sendData?.messageId || sendData?.key?.id || null) as string | null;
-          if (i === 0) {
-            tFirstSend = Date.now();
-            if (!sendResult.ok) {
-              firstSendError = `UAZAPI status ${sendResult.status}`;
-            }
-          }
-        } catch (e: any) {
-          if (i === 0) {
-            tFirstSend = Date.now();
-            firstSendError = `UAZAPI fetch error: ${e?.message || String(e)}`;
-          }
-          console.error(`UAZAPI send error part ${i + 1}:`, e?.message || e);
+        const send = await uazapiSendTextWithRetry(uazapiUrl, uazapiToken, phoneNumber, part);
+        const sendData = send.data || {};
+        console.log(`UAZAPI send part ${i + 1}/${messageParts.length} (tentativas: ${send.attempts}):`, JSON.stringify(sendData).slice(0, 200));
+        sentMessageId = (sendData?.id || sendData?.messageId || sendData?.key?.id || null) as string | null;
+        if (i === 0) {
+          tFirstSend = Date.now();
+          if (!send.ok) firstSendError = `${send.error} (após ${send.attempts} tentativa(s))`;
         }
+        if (!send.ok) console.error(`UAZAPI send falhou parte ${i + 1}: ${send.error}`);
+
 
         // Persist the part with the real message_id (so the fromMe echo gets deduped)
         try {
