@@ -560,7 +560,7 @@ export default function AgentLogsPage() {
 
                 {isExpanded && (
                   <CardContent className="space-y-4 pt-0">
-                    {batchMessages.length > 0 && (
+                    {mode === "advanced" && batchMessages.length > 0 && (
                       <div>
                         <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Mensagens recebidas no lote</h4>
                         <div className="space-y-2">
@@ -576,7 +576,9 @@ export default function AgentLogsPage() {
                       </div>
                     )}
 
-                    <LogTimeline log={log} onJson={setJsonDialog} />
+                    {mode === "advanced"
+                      ? <LogTimeline log={log} onJson={setJsonDialog} />
+                      : <LogSimple log={log} onJson={setJsonDialog} />}
 
                     {hasErrors && (
                       <div>
