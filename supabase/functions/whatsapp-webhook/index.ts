@@ -1641,7 +1641,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         } catch (e) {
           console.warn("[PAUSED] erro ao salvar mensagem com IA pausada:", e);
         }
-        return new Response(JSON.stringify({ ok: true, ignored: "agent_paused", stored: true }), {
+        return new Response(JSON.stringify({ ok: true, ignored: testModeBlocked ? "test_mode" : "agent_paused", stored: true }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
