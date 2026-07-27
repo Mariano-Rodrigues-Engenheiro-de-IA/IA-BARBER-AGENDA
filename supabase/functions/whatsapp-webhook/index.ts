@@ -12,6 +12,7 @@ import {
   evaluateSuccessfulBooking as evaluateFrizzarBooking,
   extractBookedServiceNames as extractFrizzarBookedServiceNames,
   phantomGuardConfig as frizzarPhantomGuardConfig,
+  bookingGuardsConfig as frizzarBookingGuardsConfig,
 } from "./providers/frizzar/index.ts";
 import {
   buildAppBarberTools,
@@ -19,6 +20,7 @@ import {
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
   phantomGuardConfig as appbarberPhantomGuardConfig,
+  bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
   buildBempTools,
@@ -26,6 +28,7 @@ import {
   evaluateSuccessfulBooking as evaluateBempBooking,
   extractBookedServiceNames as extractBempBookedServiceNames,
   phantomGuardConfig as bempPhantomGuardConfig,
+  bookingGuardsConfig as bempBookingGuardsConfig,
 } from "./providers/bemp/index.ts";
 // PROVIDER ONE BELEZA — módulo isolado (extraído em jul/2026).
 import {
@@ -60,6 +63,7 @@ import {
   evaluateSuccessfulBooking as evaluateOneBelezaBooking,
   extractBookedServiceNames as extractOneBelezaBookedServiceNames,
   phantomGuardConfig as onebelezaPhantomGuardConfig,
+  bookingGuardsConfig as onebelezaBookingGuardsConfig,
   type OneBelezaServiceOption,
   type OneBelezaProfessionalOption,
   type OneBelezaSlotOption,
@@ -74,6 +78,7 @@ import {
   evaluateSuccessfulBooking as evaluateTrinksBooking,
   extractBookedServiceNames as extractTrinksBookedServiceNames,
   phantomGuardConfig as trinksPhantomGuardConfig,
+  bookingGuardsConfig as trinksBookingGuardsConfig,
 } from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3310,6 +3315,37 @@ const PHANTOM_GUARD_CONFIG_BY_PROVIDER: Record<string, PhantomGuardConfig> = {
 function getPhantomGuardConfig(provider: string): PhantomGuardConfig | null {
   const cfg = PHANTOM_GUARD_CONFIG_BY_PROVIDER[provider];
   return cfg && cfg.enabled ? cfg : null;
+}
+
+// ============================================================================
+// 🛡️ MultiBooking / Cancel / Reschedule Guards — CONFIG POR PROVIDER (isolada)
+// Cada API declara em providers/<api>/index.ts → bookingGuardsConfig se cada
+// guard roda e com quais nomes de ferramenta. Hoje só Frizzar e AppBarber estão
+// ligados, cada um com sua própria config; as demais ficam desligadas.
+// ============================================================================
+type BookingGuardsConfig = typeof frizzarBookingGuardsConfig;
+const BOOKING_GUARDS_CONFIG_BY_PROVIDER: Record<string, BookingGuardsConfig> = {
+  frizzar: frizzarBookingGuardsConfig,
+  appbarber: appbarberBookingGuardsConfig,
+  trinks: trinksBookingGuardsConfig,
+  bemp: bempBookingGuardsConfig,
+  onebeleza: onebelezaBookingGuardsConfig,
+};
+const DISABLED_BOOKING_GUARDS: BookingGuardsConfig = {
+  multiBooking: {
+    enabled: false,
+    bookingToolNames: [],
+    primaryBookingToolName: "",
+    useIntentShape: false,
+    skipWhenSingleVisit: false,
+    useAlternativesShortCircuit: false,
+    recoveryToolChoice: "auto",
+  },
+  cancel: { enabled: false, cancelToolNames: [] },
+  reschedule: { enabled: false, cancelToolNames: [], bookingToolNames: [] },
+};
+function getBookingGuardsConfig(provider: string): BookingGuardsConfig {
+  return BOOKING_GUARDS_CONFIG_BY_PROVIDER[provider] || DISABLED_BOOKING_GUARDS;
 }
 
 
