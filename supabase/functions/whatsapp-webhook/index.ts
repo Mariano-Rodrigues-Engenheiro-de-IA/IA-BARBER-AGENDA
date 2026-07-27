@@ -6096,15 +6096,14 @@ async function callAIAgent(
   // que deixa o cliente entender que está tudo criado/confirmado.
   // ============================================================================
   const _bookingAttempts = countBookingCallAttempts(logToolCalls);
-  // ⚠️ ESCOPO: os 5 providers (trinks, appbarber, bemp, onebeleza, frizzar).
-  // A restrição anterior a 3 providers era só reflexo de onde bugs foram
-  // observados; não há particularidade que justifique deixar OneBeleza/Frizzar
-  // fora — o guard só dispara quando NÃO houve tool_call de agendar/criar_agendamento
-  // no turno E não há sucesso recente no ledger da sessão, então não gera
-  // falso positivo em fluxos legítimos desses providers.
-  const _phantomGuardProviders = new Set(["trinks", "appbarber", "bemp", "onebeleza", "frizzar"]);
+  // ⚠️ ESCOPO: definido POR PROVIDER, no módulo de cada API
+  // (providers/<api>/index.ts → phantomGuardConfig). Se um dia o AppBarber
+  // (ou qualquer outro) sair do ar ou precisar de regra própria, basta mexer
+  // no módulo dele — os demais não são afetados.
+  const _phantomCfg = getPhantomGuardConfig(provider);
 
-  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomGuardProviders.has(provider)) {
+  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomCfg) {
+
     const lastAssistantMessage = getLastAssistantMessage(history) || "";
     const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
     const userIsShortConfirmation = isAffirmativeReply(userMessage || "");
