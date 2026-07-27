@@ -4689,6 +4689,11 @@ async function callAIAgent(
   let assistantMessage: any = result.choices?.[0]?.message;
   let rounds = 0;
   const executedToolsThisSession: Set<string> = new Set<string>(sessionState.executedToolNames || []);
+  // Assinaturas (nome + argumentos) executadas NESTE turno — usado para impedir
+  // que a IA dispare a mesma ferramenta idêntica duas vezes na mesma resposta,
+  // sem travar a ferramenta para o resto da conversa.
+  const executedToolSignaturesThisTurn: Set<string> = new Set<string>();
+
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
 
