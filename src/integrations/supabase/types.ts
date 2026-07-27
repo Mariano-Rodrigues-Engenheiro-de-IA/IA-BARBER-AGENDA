@@ -783,6 +783,7 @@ export type Database = {
         Row: {
           address: string | null
           agent_knowledge_base: string | null
+          agent_mode: string
           agent_paused: boolean
           agent_settings: Json | null
           agent_system_prompt: string | null
@@ -811,6 +812,7 @@ export type Database = {
           phone: string | null
           slug: string
           status: Database["public"]["Enums"]["tenant_status"]
+          test_phone_numbers: string[]
           trinks_api_key: string | null
           trinks_establishment_id: string | null
           uazapi_token: string | null
@@ -822,6 +824,7 @@ export type Database = {
         Insert: {
           address?: string | null
           agent_knowledge_base?: string | null
+          agent_mode?: string
           agent_paused?: boolean
           agent_settings?: Json | null
           agent_system_prompt?: string | null
@@ -850,6 +853,7 @@ export type Database = {
           phone?: string | null
           slug: string
           status?: Database["public"]["Enums"]["tenant_status"]
+          test_phone_numbers?: string[]
           trinks_api_key?: string | null
           trinks_establishment_id?: string | null
           uazapi_token?: string | null
@@ -861,6 +865,7 @@ export type Database = {
         Update: {
           address?: string | null
           agent_knowledge_base?: string | null
+          agent_mode?: string
           agent_paused?: boolean
           agent_settings?: Json | null
           agent_system_prompt?: string | null
@@ -889,6 +894,7 @@ export type Database = {
           phone?: string | null
           slug?: string
           status?: Database["public"]["Enums"]["tenant_status"]
+          test_phone_numbers?: string[]
           trinks_api_key?: string | null
           trinks_establishment_id?: string | null
           uazapi_token?: string | null

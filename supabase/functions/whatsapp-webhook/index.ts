@@ -1575,10 +1575,30 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
+      // 🧪 Modo de teste: a IA só responde os números autorizados do tenant.
+      // Em modo de produção (padrão), responde todo mundo.
+      const _agentMode = (tenant as any).agent_mode === "test" ? "test" : "production";
+      const _testNumbers: string[] = Array.isArray((tenant as any).test_phone_numbers)
+        ? (tenant as any).test_phone_numbers
+        : [];
+      const _allowedTestDigits = new Set(
+        _testNumbers.map((n) => String(n ?? "").replace(/\D/g, "")).filter(Boolean),
+      );
+      const _incomingDigits = String(phoneNumber ?? "").replace(/\D/g, "");
+      const _matchesTestNumber = [..._allowedTestDigits].some((d) => {
+        if (!d) return false;
+        return d === _incomingDigits || d.endsWith(_incomingDigits) || _incomingDigits.endsWith(d);
+      });
+      const testModeBlocked = _agentMode === "test" && !_matchesTestNumber;
+      if (testModeBlocked) {
+        console.log(`[TEST-MODE] Tenant ${tenant.name} em modo de teste — ${phoneNumber} não autorizado. Mensagem salva sem resposta.`);
+      }
+
       // 🛑 IA pausada manualmente pelo cliente — NÃO chama a IA, mas SALVA a mensagem
       // para que o atendente humano veja no painel de Conversas e tenha histórico/memória.
-      if (tenant.agent_paused) {
-        console.log(`[PAUSED] Tenant ${tenant.name} está com a IA pausada. Salvando mensagem sem resposta.`);
+      if (tenant.agent_paused || testModeBlocked) {
+        console.log(`[PAUSED] Tenant ${tenant.name} não responderá (pausado=${!!tenant.agent_paused}, modo_teste_bloqueado=${testModeBlocked}). Salvando mensagem sem resposta.`);
+
         try {
           const _msgId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id || null;
           // Dedup por message_id (evita duplicar se o webhook reentregar)
@@ -1621,7 +1641,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         } catch (e) {
           console.warn("[PAUSED] erro ao salvar mensagem com IA pausada:", e);
         }
-        return new Response(JSON.stringify({ ok: true, ignored: "agent_paused", stored: true }), {
+        return new Response(JSON.stringify({ ok: true, ignored: testModeBlocked ? "test_mode" : "agent_paused", stored: true }), {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
