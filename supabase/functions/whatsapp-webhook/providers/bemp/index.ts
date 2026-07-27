@@ -751,3 +751,23 @@ export const phantomGuardConfig = {
     "agendar",
   ],
 };
+
+// ============================================================================
+// 🛡️ BOOKING GUARDS — CONFIG ISOLADA DA BEMP
+// Desligados de propósito: MultiBookingGuard / CancelGuard / RescheduleGuard
+// genéricos geravam mais falso positivo do que correção nesta API. Se um dia
+// forem reativados, será com regras próprias declaradas AQUI.
+// ============================================================================
+export const bookingGuardsConfig = {
+  multiBooking: {
+    enabled: false,
+    bookingToolNames: [] as string[],
+    primaryBookingToolName: "",
+    useIntentShape: false,
+    skipWhenSingleVisit: false,
+    useAlternativesShortCircuit: false,
+    recoveryToolChoice: "auto" as const,
+  },
+  cancel: { enabled: false, cancelToolNames: [] as string[] },
+  reschedule: { enabled: false, cancelToolNames: [] as string[], bookingToolNames: [] as string[] },
+};
