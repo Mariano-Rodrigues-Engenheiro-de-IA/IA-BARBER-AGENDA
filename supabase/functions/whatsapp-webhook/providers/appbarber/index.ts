@@ -556,34 +556,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         console.log(`[AppBarber] listar_horarios_geral data=${args.start_date} svc=${args.service_code} profs=${profs.map((p) => p.professional_code).join(",")}`);
 
-        const collectTimes = (blocks: any[], wantedProf: number): string[] => {
-          const seen = new Set<string>();
-          const times: string[] = [];
-          const filtered = blocks.filter((b: any) => {
-            const prof = firstValue(b?.professional_code, b?.employee_code, b?.professional?.code, b?.employee?.code);
-            return prof == null || Number(prof) === wantedProf;
-          });
-          const walk = (value: any) => {
-            if (!value) return;
-            if (Array.isArray(value)) { value.forEach(walk); return; }
-            if (typeof value !== "object") return;
-            const rawTime = firstValue(value.scheduling_time, value.time, value.start_time, value.hour);
-            if (rawTime) {
-              const str = String(rawTime).trim();
-              const normalized = /^\d{2}:\d{2}$/.test(str) ? `${str}:00` : str.slice(0, 8);
-              if (/^\d{2}:\d{2}:\d{2}$/.test(normalized) && !seen.has(normalized)) {
-                seen.add(normalized);
-                times.push(normalized);
-              }
-            }
-            for (const key of ["avaliable", "available", "schedules", "slots", "times", "items"]) {
-              if (Array.isArray(value[key])) walk(value[key]);
-            }
-          };
-          for (const block of filtered) walk(block);
-          times.sort();
-          return times;
-        };
+        // Mesmo filtro local usado por listar_horarios (sem duplicar lógica).
+        const collectTimes = (blocks: any[], wantedProf: number): string[] =>
+          appBarberCollectTimes(blocks, wantedProf);
+
 
         const consultaUm = async (prof: { professional_code: number; name: string | null }) => {
           try {
