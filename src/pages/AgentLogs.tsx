@@ -351,13 +351,10 @@ function LogTimeline({ log, onJson }: { log: AgentLog; onJson: (d: { title: stri
   );
 }
 
-/** Monitor simples: réplica do monitor original (args/resultado crus + requisições HTTP). */
+/** Monitor simples: mensagem do cliente, ferramentas (argumentos/resultado) e resposta da IA. */
 function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string; data: any }) => void }) {
   const allCalls = Array.isArray(log.tool_calls) ? (log.tool_calls as any[]) : [];
-  const debounceBatch = allCalls.find((tc) => tc?.name === "__debounce_batch__");
-  const batchMessages = Array.isArray(debounceBatch?.args?.messages) ? debounceBatch.args.messages : [];
   const toolCalls = allCalls.filter((tc: any) => tc?.name !== "__debounce_batch__");
-  const traces: any[] = Array.isArray((log as any).http_trace) ? (log as any).http_trace : [];
 
   return (
     <div className="space-y-4">
@@ -365,22 +362,8 @@ function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string
       <div>
         <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Mensagem do cliente</h4>
         <div className="bg-muted rounded-lg p-3 text-sm whitespace-pre-wrap">{log.user_message}</div>
-        {batchMessages.length > 0 && (
-          <div className="mt-3 space-y-2">
-            <h5 className="text-xs font-semibold text-muted-foreground uppercase">Mensagens recebidas no lote</h5>
-            <div className="space-y-2">
-              {batchMessages.map((message: any, index: number) => (
-                <div key={`${message.created_at}-${index}`} className="rounded-lg border border-border bg-background p-3 text-sm">
-                  <div className="text-xs text-muted-foreground mb-1">
-                    {message.created_at ? format(new Date(message.created_at), "dd/MM HH:mm:ss", { locale: ptBR }) : "Sem horário"}
-                  </div>
-                  <div className="whitespace-pre-wrap">{message.content || "—"}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
+
 
       {/* Ferramentas chamadas */}
       {toolCalls.length > 0 && (
