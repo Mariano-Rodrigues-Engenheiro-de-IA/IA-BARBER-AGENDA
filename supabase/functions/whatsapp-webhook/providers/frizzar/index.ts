@@ -1081,3 +1081,22 @@ export function extractBookedServiceNames(tc: any, _sessionState?: any): string[
   }
   return names;
 }
+
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG ISOLADA DO FRIZZAR
+// ============================================================================
+export const phantomGuardConfig = {
+  enabled: true,
+  bookingToolNames: ["agendar"],
+  searchToolNames: ["buscar_agendamentos"],
+  recoveryToolNames: [
+    "buscar_cliente",
+    "cadastrar_cliente",
+    "buscar_agendamentos",
+    "listar_servicos",
+    "listar_profissionais",
+    "listar_horarios",
+    "listar_horarios_geral",
+    "agendar",
+  ],
+};

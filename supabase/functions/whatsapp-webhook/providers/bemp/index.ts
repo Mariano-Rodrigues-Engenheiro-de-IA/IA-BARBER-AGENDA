@@ -732,3 +732,22 @@ export function extractBookedServiceNames(tc: any, _sessionState?: any): string[
   const name = r?.data?.service_name;
   return name ? [String(name)] : [];
 }
+
+// ============================================================================
+// 🛡️ PhantomConfirmationGuard — CONFIG ISOLADA DA BEMP
+// ============================================================================
+export const phantomGuardConfig = {
+  enabled: true,
+  bookingToolNames: ["agendar"],
+  searchToolNames: ["listar_agendamentos"],
+  recoveryToolNames: [
+    "listar_unidades",
+    "listar_servicos",
+    "listar_profissionais",
+    "listar_horarios",
+    "listar_horarios_geral",
+    "consultar_cliente",
+    "listar_agendamentos",
+    "agendar",
+  ],
+};
