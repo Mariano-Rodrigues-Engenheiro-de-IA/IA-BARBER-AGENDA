@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertTriangle, CheckCircle, Clock, ChevronDown, ChevronUp, Search, Phone, Bot, Wrench, Maximize2 } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, ChevronDown, ChevronUp, Search, Phone, Bot, Wrench, Maximize2, Globe } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
@@ -309,6 +309,42 @@ export default function AgentLogsPage() {
                                   </ScrollArea>
                                 </div>
                               </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* HTTP trace — requisições externas (APIs de agenda, UAZAPI, IA) */}
+                    {Array.isArray((log as any).http_trace) && (log as any).http_trace.length > 0 && (
+                      <div>
+                        <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                          <Globe className="w-3 h-3" /> Requisições HTTP ({(log as any).http_trace.length})
+                        </h4>
+                        <div className="space-y-2">
+                          {((log as any).http_trace as any[]).map((h, i) => (
+                            <div key={i} className="border border-border/50 rounded-lg p-2 bg-muted/30">
+                              <div className="flex items-center gap-2 flex-wrap text-xs">
+                                <Badge variant={h.ok ? "outline" : "destructive"} className="font-mono">
+                                  {h.method} {h.status ?? "ERR"}
+                                </Badge>
+                                <span className="font-mono break-all text-muted-foreground">{h.url}</span>
+                                <span className="text-muted-foreground">{h.duration_ms}ms</span>
+                                <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto" onClick={(e) => { e.stopPropagation(); setJsonDialog({ title: `${h.method} ${h.url}`, data: h }); }}>
+                                  <Maximize2 className="h-3 w-3" />
+                                </Button>
+                              </div>
+                              {h.error && <div className="text-xs text-destructive mt-1">{h.error}</div>}
+                              {h.request_body && (
+                                <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-24 overflow-auto">
+                                  ➜ {h.request_body}
+                                </pre>
+                              )}
+                              {h.response_body && (
+                                <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-32 overflow-auto">
+                                  ⬅ {h.response_body}
+                                </pre>
+                              )}
                             </div>
                           ))}
                         </div>

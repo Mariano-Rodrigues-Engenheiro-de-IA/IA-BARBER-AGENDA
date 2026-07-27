@@ -20,6 +20,7 @@ export type Database = {
           created_at: string
           duration_ms: number | null
           errors: Json | null
+          http_trace: Json | null
           id: string
           model_used: string | null
           phone_number: string
@@ -34,6 +35,7 @@ export type Database = {
           created_at?: string
           duration_ms?: number | null
           errors?: Json | null
+          http_trace?: Json | null
           id?: string
           model_used?: string | null
           phone_number: string
@@ -48,6 +50,7 @@ export type Database = {
           created_at?: string
           duration_ms?: number | null
           errors?: Json | null
+          http_trace?: Json | null
           id?: string
           model_used?: string | null
           phone_number?: string
