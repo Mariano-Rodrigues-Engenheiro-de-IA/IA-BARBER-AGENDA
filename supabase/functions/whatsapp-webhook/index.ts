@@ -11,18 +11,21 @@ import {
   buildFrizzarScheduleRecoveryInstruction,
   evaluateSuccessfulBooking as evaluateFrizzarBooking,
   extractBookedServiceNames as extractFrizzarBookedServiceNames,
+  phantomGuardConfig as frizzarPhantomGuardConfig,
 } from "./providers/frizzar/index.ts";
 import {
   buildAppBarberTools,
   executeAppBarberTool,
   evaluateSuccessfulBooking as evaluateAppBarberBooking,
   extractBookedServiceNames as extractAppBarberBookedServiceNames,
+  phantomGuardConfig as appbarberPhantomGuardConfig,
 } from "./providers/appbarber/index.ts";
 import {
   buildBempTools,
   executeBempTool,
   evaluateSuccessfulBooking as evaluateBempBooking,
   extractBookedServiceNames as extractBempBookedServiceNames,
+  phantomGuardConfig as bempPhantomGuardConfig,
 } from "./providers/bemp/index.ts";
 // PROVIDER ONE BELEZA — módulo isolado (extraído em jul/2026).
 import {
@@ -56,6 +59,7 @@ import {
   hydrateOneBelezaSessionStateFromProvider,
   evaluateSuccessfulBooking as evaluateOneBelezaBooking,
   extractBookedServiceNames as extractOneBelezaBookedServiceNames,
+  phantomGuardConfig as onebelezaPhantomGuardConfig,
   type OneBelezaServiceOption,
   type OneBelezaProfessionalOption,
   type OneBelezaSlotOption,
@@ -69,6 +73,7 @@ import {
   maybeHandleDirectCancellationConfirmation,
   evaluateSuccessfulBooking as evaluateTrinksBooking,
   extractBookedServiceNames as extractTrinksBookedServiceNames,
+  phantomGuardConfig as trinksPhantomGuardConfig,
 } from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
