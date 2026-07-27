@@ -440,6 +440,11 @@ export default function TenantFormPage() {
         booking_link: (existing as any).booking_link ?? "",
         uazapi_url: existing.uazapi_url ?? "",
         uazapi_token: existing.uazapi_token ?? "",
+        agent_mode: (existing as any).agent_mode ?? "production",
+        test_phone_numbers: Array.isArray((existing as any).test_phone_numbers)
+          ? (existing as any).test_phone_numbers
+          : [],
+
         agent_system_prompt: existing.agent_system_prompt ?? "",
         celcash_enabled: (existing as any).celcash_enabled ?? false,
         celcash_env: (existing as any).celcash_env ?? "sandbox",
