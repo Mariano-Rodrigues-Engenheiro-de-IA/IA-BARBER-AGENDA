@@ -413,41 +413,8 @@ function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string
         </div>
       )}
 
-      {/* Requisições HTTP */}
-      {traces.length > 0 && (
-        <div>
-          <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1">
-            <Globe className="w-3 h-3" /> Requisições HTTP ({traces.length})
-          </h4>
-          <div className="space-y-2">
-            {traces.map((h, i) => (
-              <div key={i} className="border border-border/50 rounded-lg p-2 bg-muted/30">
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <Badge variant={h.ok ? "outline" : "destructive"} className="font-mono">
-                    {h.method} {h.status ?? "ERR"}
-                  </Badge>
-                  <span className="font-mono break-all text-muted-foreground">{h.url}</span>
-                  <span className="text-muted-foreground">{h.duration_ms}ms</span>
-                  <Button variant="ghost" size="icon" className="h-5 w-5 ml-auto" onClick={(e) => { e.stopPropagation(); onJson({ title: `${h.method} ${h.url}`, data: h }); }}>
-                    <Maximize2 className="h-3 w-3" />
-                  </Button>
-                </div>
-                {h.error && <div className="text-xs text-destructive mt-1">{h.error}</div>}
-                {h.request_body && (
-                  <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-24 overflow-auto">
-                    ➜ {h.request_body}
-                  </pre>
-                )}
-                {h.response_body && (
-                  <pre className="text-[11px] bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-all max-h-32 overflow-auto">
-                    ⬅ {h.response_body}
-                  </pre>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
+
 
       {/* Resposta da IA */}
       <div>
