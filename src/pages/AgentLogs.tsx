@@ -400,6 +400,7 @@ function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string
 
 export default function AgentLogsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [mode, setMode] = useState<"simple" | "advanced">("simple");
   const [filterPhone, setFilterPhone] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "errors" | "blocked">("all");
   const [page, setPage] = useState(0);
