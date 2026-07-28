@@ -1785,11 +1785,32 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
         const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
 
-        // Read live WhatsApp state from payload
-        const waLabelIds = extractWhatsAppLabelIds(payload);
+        // Read live WhatsApp state from payload.
+        // ⚠️ UAZAPI nem sempre envia wa_label no evento "messages". Quando vier vazio,
+        // NÃO podemos assumir que o contato está sem etiquetas (isso apagava a IA OFF
+        // e liberava a IA). Nesse caso consultamos /chat/details ao vivo.
+        let waLabelIds = extractWhatsAppLabelIds(payload);
+        let waLabelsKnown = waLabelIds.length > 0;
+        if (!waLabelsKnown) {
+          try {
+            const uazUrlLbl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+            const uazTokenLbl = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+            if (uazUrlLbl && uazTokenLbl) {
+              const { response: detRes, payload: chatDetails } = await fetchUazChatDetails(uazUrlLbl, uazTokenLbl, phoneNumber);
+              if (detRes.ok) {
+                waLabelIds = extractWhatsAppLabelIds(chatDetails);
+                waLabelsKnown = true;
+                console.log(`[IA OFF Check] Labels via /chat/details: ${JSON.stringify(waLabelIds)}`);
+              }
+            }
+          } catch (e) {
+            console.error("[IA OFF Check] /chat/details failed:", e);
+          }
+        }
         const waHasIaOff = iaOffLabelIds.length > 0 && waLabelIds.some((id: string) => iaOffLabelIds.includes(id));
 
-        console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
+        console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | known: ${waLabelsKnown} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
+
 
         // ----- Bidirectional flag reconciliation (WhatsApp = source of truth) -----
         // Build the desired flag set from WhatsApp, but only for labels configured as type:"flag".
