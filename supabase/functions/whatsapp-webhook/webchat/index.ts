@@ -182,7 +182,12 @@ const HISTORY_LIMIT = 60;
  */
 export async function handleWebChatRequest(
   req: Request,
-  deps: { createServiceClient: () => any; callAIAgent: CallAIAgentFn; corsHeaders: Record<string, string> },
+  deps: {
+    createServiceClient: () => any;
+    callAIAgent: CallAIAgentFn;
+    corsHeaders: Record<string, string>;
+    getHttpTrace?: () => unknown;
+  },
 ): Promise<Response> {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -267,6 +272,37 @@ export async function handleWebChatRequest(
   });
 
   const provider: string = tenant.api_provider || "trinks";
+  const tStart = Date.now();
+
+  // Monitor de IA: o canal web registra em agent_logs igual ao WhatsApp, para que
+  // toda conversa (econômica ou não) apareça no monitor.
+  const logToMonitor = async (opts: {
+    aiResponse: string | null;
+    toolCalls: any[];
+    errors: any[];
+    model?: string | null;
+  }) => {
+    try {
+      await svc.from("agent_logs").insert({
+        tenant_id: tenant.id,
+        phone_number: session.phone_number,
+        user_message: message,
+        ai_response: opts.aiResponse,
+        tool_calls: [
+          { name: "__channel__", args: { channel: "web_chat", token_suffix: token.slice(-6) }, result: { origin: "site" }, blocked: false },
+          ...(opts.toolCalls || []),
+        ],
+        errors: opts.errors || [],
+        model_used: opts.model || "web_chat",
+        duration_ms: Date.now() - tStart,
+        session_blocked: false,
+        http_trace: deps.getHttpTrace ? deps.getHttpTrace() : null,
+      });
+    } catch (e: any) {
+      console.error("[WebChat] falha ao gravar agent_logs:", e?.message || e);
+    }
+  };
+
   let result: Awaited<ReturnType<CallAIAgentFn>>;
   try {
     result = await deps.callAIAgent(
@@ -275,6 +311,11 @@ export async function handleWebChatRequest(
     );
   } catch (e: any) {
     console.error("[WebChat] callAIAgent falhou:", e?.message, e?.stack);
+    await logToMonitor({
+      aiResponse: null,
+      toolCalls: [],
+      errors: [{ level: "error", message: `callAIAgent falhou: ${e?.message || e}` }],
+    });
     return json({
       response: "Tive um probleminha técnico agora. Pode repetir sua última mensagem, por favor?",
       error: "agent_failed",
@@ -288,6 +329,13 @@ export async function handleWebChatRequest(
       role: "assistant", content: responseText, processed: true,
     });
   }
+
+  await logToMonitor({
+    aiResponse: responseText || null,
+    toolCalls: result?.toolCalls || [],
+    errors: result?.errors || [],
+    model: result?.model,
+  });
 
   // Escalonamento pra humano: a IA já executa o escalate_human (etiqueta + aviso à
   // equipe pelo WhatsApp). Aqui só sinalizamos ao site para exibir o aviso visual.
