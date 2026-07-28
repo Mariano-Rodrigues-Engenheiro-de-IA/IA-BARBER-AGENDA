@@ -1,6 +1,34 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 
 const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+
+async function resolveUazChatId(uazapiUrl: string, uazapiToken: string, phoneNumber: string): Promise<string> {
+  const response = await fetch(`${uazapiUrl}/chat/details`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+    body: JSON.stringify({ number: phoneNumber }),
+  });
+  const details = response.ok ? await response.json() : null;
+  const resolved = details?.wa_chatlid || details?.wa_chatid || details?.id;
+  return typeof resolved === "string" && resolved.includes("@")
+    ? resolved
+    : `${phoneNumber.replace(/\D/g, "")}@s.whatsapp.net`;
+}
+
+async function mutateUazChatLabel(
+  uazapiUrl: string,
+  uazapiToken: string,
+  chatId: string,
+  labelId: string,
+  action: "add" | "remove",
+): Promise<Response> {
+  return fetch(`${uazapiUrl}/chat/labels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+    body: JSON.stringify({ chatId, labelId, action }),
+  });
+}
+
 function buildCorsHeaders(origin: string | null) {
   const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
@@ -99,6 +127,7 @@ Deno.serve(async (req) => {
     // ===== FLAG TOGGLE MODE =====
     if (toggleFlag) {
       const flagLabelId = String(toggleFlag);
+      const chatId = await resolveUazChatId(uazapiUrl, uazapiToken, phoneNumber);
 
       const { data: lead } = await supabase
         .from("crm_leads")
@@ -126,15 +155,7 @@ Deno.serve(async (req) => {
         });
       }
 
-      const labelBody = hasFlag
-        ? { number: phoneNumber, remove_labelid: flagLabelId }
-        : { number: phoneNumber, add_labelid: flagLabelId };
-
-      const uazRes = await fetch(`${uazapiUrl}/chat/labels`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify(labelBody),
-      });
+      const uazRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, flagLabelId, hasFlag ? "remove" : "add");
       console.log(`Flag toggle ${hasFlag ? "REMOVE" : "ADD"} ${flagLabelId} for ${phoneNumber}: ${uazRes.status}`);
 
       return new Response(JSON.stringify({ success: true, action: hasFlag ? "removed" : "added", flagLabelId }), {
@@ -165,21 +186,14 @@ Deno.serve(async (req) => {
     }
 
     const fromLabel = lead?.label_id || null;
+    const chatId = await resolveUazChatId(uazapiUrl, uazapiToken, phoneNumber);
 
     if (fromLabel && fromLabel !== toLabelId) {
-      await fetch(`${uazapiUrl}/chat/labels`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number: phoneNumber, remove_labelid: String(fromLabel) }),
-      });
+      await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, String(fromLabel), "remove");
       console.log(`Removed label ${fromLabel} from ${phoneNumber}`);
     }
 
-    const addRes = await fetch(`${uazapiUrl}/chat/labels`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-      body: JSON.stringify({ number: phoneNumber, add_labelid: String(toLabelId) }),
-    });
+    const addRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, String(toLabelId), "add");
     console.log(`Added label ${toLabelId} to ${phoneNumber}, status: ${addRes.status}`);
 
     await supabase
