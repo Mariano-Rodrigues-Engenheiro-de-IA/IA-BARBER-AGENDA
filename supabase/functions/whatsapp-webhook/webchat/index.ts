@@ -182,7 +182,12 @@ const HISTORY_LIMIT = 60;
  */
 export async function handleWebChatRequest(
   req: Request,
-  deps: { createServiceClient: () => any; callAIAgent: CallAIAgentFn; corsHeaders: Record<string, string> },
+  deps: {
+    createServiceClient: () => any;
+    callAIAgent: CallAIAgentFn;
+    corsHeaders: Record<string, string>;
+    getHttpTrace?: () => unknown;
+  },
 ): Promise<Response> {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
