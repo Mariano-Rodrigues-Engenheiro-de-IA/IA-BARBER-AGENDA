@@ -1,0 +1,1 @@
+ALTER TABLE public.web_chat_sessions ADD COLUMN IF NOT EXISTS web_started_at timestamp with time zone;

@@ -955,6 +955,7 @@ export type Database = {
           tenant_id: string
           token: string
           updated_at: string
+          web_started_at: string | null
         }
         Insert: {
           created_at?: string
@@ -966,6 +967,7 @@ export type Database = {
           tenant_id: string
           token: string
           updated_at?: string
+          web_started_at?: string | null
         }
         Update: {
           created_at?: string
@@ -977,6 +979,7 @@ export type Database = {
           tenant_id?: string
           token?: string
           updated_at?: string
+          web_started_at?: string | null
         }
         Relationships: [
           {
