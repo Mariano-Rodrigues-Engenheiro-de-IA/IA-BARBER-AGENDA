@@ -410,6 +410,13 @@ export default function TenantFormPage() {
     uazapi_token: "",
     agent_mode: "production",
     test_phone_numbers: [],
+    economic_mode_enabled: false,
+    chat_site_banner_url: "",
+    chat_site_welcome_message: "",
+    chat_site_brand_color: "",
+    chat_site_theme: "dark",
+    chat_site_invite_message: "",
+
 
     agent_system_prompt: "",
     celcash_enabled: false,
