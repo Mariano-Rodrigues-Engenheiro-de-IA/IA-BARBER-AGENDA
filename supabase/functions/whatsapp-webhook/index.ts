@@ -7695,6 +7695,25 @@ async function postChatLabel(
   return { res, payload };
 }
 
+async function replaceChatLabels(
+  uazapiUrl: string,
+  uazapiToken: string,
+  chatNumber: string,
+  labelIds: string[],
+  logContext: string,
+): Promise<{ res: Response; payload: any }> {
+  const labelBody = { number: chatNumber, labelids: [...new Set(labelIds.map((id) => normalizeWhatsAppLabelId(id) || id))] };
+  console.log(`[${logContext}] Label SET attempt: POST /chat/labels`, JSON.stringify(labelBody));
+  const res = await fetch(`${uazapiUrl}/chat/labels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+    body: JSON.stringify(labelBody),
+  });
+  const payload = await readResponsePayload(res);
+  console.log(`[${logContext}] Label SET result status: ${res.status} body:`, JSON.stringify(payload).slice(0, 300));
+  return { res, payload };
+}
+
 async function ensureChatLabelState(
   uazapiUrl: string,
   uazapiToken: string,
@@ -7706,6 +7725,22 @@ async function ensureChatLabelState(
 ): Promise<EnsureLabelStateResult> {
   const shouldBePresent = desiredState === "present";
   const canonicalLabelId = normalizeWhatsAppLabelId(labelId) || String(labelId);
+
+  const getChatLabelState = async (): Promise<{ reached: boolean; labelIds: string[]; chatIds: string[] } | null> => {
+    try {
+      const { response, payload } = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
+      if (!response.ok) return null;
+      const labelIds = extractWhatsAppLabelIds(payload);
+      const isPresent = labelIds.includes(canonicalLabelId);
+      const chatIds = [payload?.wa_chatlid, payload?.wa_chatid, phoneNumber]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean);
+      return { reached: shouldBePresent ? isPresent : !isPresent, labelIds, chatIds: [...new Set(chatIds)] };
+    } catch (error) {
+      console.warn(`[${logContext}] Could not read current label state:`, error);
+      return null;
+    }
+  };
 
   const desiredStateReached = async (targetLabelId = canonicalLabelId): Promise<boolean> => {
     try {
@@ -7736,6 +7771,35 @@ async function ensureChatLabelState(
   if (!res.ok && await desiredStateReached()) {
     console.log(`[${logContext}] Provider returned ${res.status}, but label ${canonicalLabelId} reached the desired state`);
     return { success: true, changed: true, already: false, status: res.status, details: resPayload };
+  }
+
+  // Current UAZAPI installations can reject the incremental add/remove fields with
+  // a generic 500 even though the documented full-set operation still works. Fall
+  // back to `labelids`, preserving every label read immediately before the write.
+  // Prefer the chat LID returned by /chat/details because newer WhatsApp accounts
+  // may be addressed internally by LID instead of the visible phone number.
+  if (!res.ok) {
+    const state = await getChatLabelState();
+    if (state) {
+      const nextLabelIds = shouldBePresent
+        ? [...new Set([...state.labelIds, canonicalLabelId])]
+        : state.labelIds.filter((id) => id !== canonicalLabelId);
+
+      for (const chatId of state.chatIds) {
+        const replacement = await replaceChatLabels(uazapiUrl, uazapiToken, chatId, nextLabelIds, `${logContext}:set-fallback`);
+        res = replacement.res;
+        resPayload = replacement.payload;
+        if (res.ok || await desiredStateReached()) {
+          return {
+            success: true,
+            changed: true,
+            already: false,
+            status: res.status,
+            details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), fallback: "labelids", chat_id: chatId },
+          };
+        }
+      }
+    }
   }
 
   // ===== AUTO-CURA DE ID DE ETIQUETA =====
