@@ -1121,6 +1121,19 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ===== WEB CHAT (MODO ECONÔMICO) =====
+  // Canal público identificado pelo token da URL do site. Roda a MESMA IA.
+  if (req.headers.get("x-mode") === "webchat") {
+    return await handleWebChatRequest(req, {
+      corsHeaders,
+      createServiceClient: () =>
+        createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!),
+      callAIAgent: callAIAgent as any,
+    });
+  }
+
+
+
   // ===== SIMULATOR MODE =====
   // Painel do cliente envia { mode: "simulator", tenantId, message, history }
   // Roda o mesmo callAIAgent porém:
