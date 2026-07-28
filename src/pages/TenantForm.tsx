@@ -644,7 +644,117 @@ export default function TenantFormPage() {
               <Sparkles className="w-3.5 h-3.5" />
               Follow-ups
             </TabsTrigger>
+            <TabsTrigger value="economic" className="flex items-center gap-1">
+              <Globe className="w-3.5 h-3.5" />
+              Modo Econômico
+            </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="economic" className="space-y-4">
+            <div className="glass-card p-6 space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-primary" />
+                    <h3 className="font-semibold text-foreground">Modo Econômico</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-xl">
+                    Quando ligado, a IA <strong>não responde no WhatsApp</strong>. O cliente recebe um convite
+                    com botão e continua todo o atendimento no site próprio da empresa — mesma IA,
+                    mesmas ferramentas de agendamento. Desligado, nada muda.
+                  </p>
+                </div>
+                <Switch
+                  checked={!!(form as any).economic_mode_enabled}
+                  disabled={!isAdmin}
+                  onCheckedChange={(v) => handleChange("economic_mode_enabled" as any, v as any)}
+                />
+              </div>
+              {!isAdmin && (
+                <p className="text-xs text-muted-foreground">Apenas administradores podem ligar/desligar este modo.</p>
+              )}
+
+              {isEditing && (
+                <div className="rounded-lg border border-border p-4 space-y-1">
+                  <p className="text-xs text-muted-foreground">Endereço do site de chat desta empresa</p>
+                  <p className="text-sm font-mono text-foreground break-all">
+                    {window.location.origin}/c/&lt;token-do-cliente&gt;
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    O token é gerado automaticamente por cliente na primeira mensagem e enviado no convite.
+                  </p>
+                </div>
+              )}
+
+              <div className="space-y-4 border-t border-border pt-5">
+                <h4 className="font-medium text-foreground">Identidade visual do site</h4>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="chat_site_brand_color">Cor da marca (HEX)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="chat_site_brand_color"
+                        value={((form as any).chat_site_brand_color as string) ?? ""}
+                        onChange={(e) => handleChange("chat_site_brand_color" as any, e.target.value as any)}
+                        placeholder="#3B82F6"
+                      />
+                      <input
+                        type="color"
+                        aria-label="Selecionar cor da marca"
+                        className="h-9 w-10 rounded-md border border-border bg-transparent"
+                        value={(((form as any).chat_site_brand_color as string) || "#3B82F6")}
+                        onChange={(e) => handleChange("chat_site_brand_color" as any, e.target.value as any)}
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Tema do site</Label>
+                    <Select
+                      value={((form as any).chat_site_theme as string) ?? "dark"}
+                      onValueChange={(v) => handleChange("chat_site_theme" as any, v as any)}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="dark">Escuro</SelectItem>
+                        <SelectItem value="light">Claro</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chat_site_banner_url">URL do banner/capa</Label>
+                  <Input
+                    id="chat_site_banner_url"
+                    value={((form as any).chat_site_banner_url as string) ?? ""}
+                    onChange={(e) => handleChange("chat_site_banner_url" as any, e.target.value as any)}
+                    placeholder="https://.../capa.jpg"
+                  />
+                  <p className="text-xs text-muted-foreground">O logo usado é o mesmo cadastrado na aba Geral.</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chat_site_welcome_message">Mensagem de boas-vindas (no site)</Label>
+                  <Textarea
+                    id="chat_site_welcome_message"
+                    rows={3}
+                    value={((form as any).chat_site_welcome_message as string) ?? ""}
+                    onChange={(e) => handleChange("chat_site_welcome_message" as any, e.target.value as any)}
+                    placeholder="Bem-vindo! Me diga o serviço e o melhor dia que eu já verifico os horários."
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="chat_site_invite_message">Mensagem do convite (no WhatsApp)</Label>
+                  <Textarea
+                    id="chat_site_invite_message"
+                    rows={3}
+                    value={((form as any).chat_site_invite_message as string) ?? ""}
+                    onChange={(e) => handleChange("chat_site_invite_message" as any, e.target.value as any)}
+                    placeholder="Deixe em branco para usar o texto padrão."
+                  />
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
 
           <TabsContent value="general" className="space-y-4">
             <div className="glass-card p-6 space-y-4">
