@@ -1141,6 +1141,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       createServiceClient: () =>
         createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!),
       callAIAgent: callAIAgent as any,
+      getHttpTrace: () => getHttpTrace(),
     });
   }
 
