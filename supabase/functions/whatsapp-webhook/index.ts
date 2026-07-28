@@ -512,14 +512,27 @@ async function resolveIncomingMedia({
   return { base64: null, mimeType: fallbackMimeType };
 }
 
-const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com", "https://painelzaylo.lovable.app"];
+// O site de chat do modo econômico é público e roda no domínio publicado ou em
+// previews do Lovable — por isso aceitamos também *.lovable.app e localhost em dev.
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    if (u.hostname.endsWith(".lovable.app")) return true;
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+  } catch { /* ignore */ }
+  return false;
+}
 function buildCorsHeaders(origin: string | null) {
-  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowOrigin = origin && isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
+    "Vary": "Origin",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
   };
 }
+
 
 // ===== Business hours helper for follow-up sequences =====
 // If `at` falls outside [start,end] in given tz, push to next start within window.
