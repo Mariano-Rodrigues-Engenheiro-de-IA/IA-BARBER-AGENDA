@@ -7706,17 +7706,26 @@ async function ensureChatLabelState(
   const shouldBePresent = desiredState === "present";
   const canonicalLabelId = normalizeWhatsAppLabelId(labelId) || String(labelId);
 
-  const desiredStateReached = async (): Promise<boolean> => {
+  const desiredStateReached = async (targetLabelId = canonicalLabelId): Promise<boolean> => {
     try {
       const { response, payload } = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
       if (!response.ok) return false;
-      const isPresent = extractWhatsAppLabelIds(payload).includes(canonicalLabelId);
+      const normalizedTargetId = normalizeWhatsAppLabelId(targetLabelId) || targetLabelId;
+      const isPresent = extractWhatsAppLabelIds(payload).includes(normalizedTargetId);
       return shouldBePresent ? isPresent : !isPresent;
     } catch (error) {
       console.warn(`[${logContext}] Could not verify label state after provider error:`, error);
       return false;
     }
   };
+
+  // Avoid calling UAZAPI when the chat is already in the requested state. Besides
+  // being idempotent, this prevents its known 500 response when adding an existing
+  // label (the mutation is unnecessary and must not surface as a tool failure).
+  if (await desiredStateReached()) {
+    console.log(`[${logContext}] Label ${canonicalLabelId} already ${shouldBePresent ? "present" : "absent"}; skipping mutation`);
+    return { success: true, changed: false, already: true };
+  }
 
   // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
   let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, canonicalLabelId, shouldBePresent, logContext);
@@ -7756,7 +7765,7 @@ async function ensureChatLabelState(
       const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, retryLabelId, shouldBePresent, `${logContext}:retry`);
       res = retry.res;
       resPayload = retry.payload;
-      if (res.ok || await desiredStateReached()) {
+      if (res.ok || await desiredStateReached(retryLabelId)) {
         return {
           success: true,
           changed: true,
