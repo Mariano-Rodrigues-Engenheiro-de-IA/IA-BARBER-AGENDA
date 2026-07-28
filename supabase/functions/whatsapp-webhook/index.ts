@@ -571,9 +571,9 @@ const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
 // In-memory cache of UAZAPI label name → id resolution, keyed by uazapi base URL + token.
 // Resets on cold start; refreshed every 5 minutes.
-const _uazLabelsCache = new Map<string, { fetchedAt: number; labels: Array<{ id: string; name: string }> }>();
+const _uazLabelsCache = new Map<string, { fetchedAt: number; labels: Array<{ id: string; rawId: string; name: string }> }>();
 
-async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promise<Array<{ id: string; name: string }>> {
+async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promise<Array<{ id: string; rawId: string; name: string }>> {
   const cacheKey = `${uazapiUrl}::${uazapiToken}`;
   const cached = _uazLabelsCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.labels;
