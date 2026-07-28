@@ -798,8 +798,14 @@ export type Database = {
           celcash_env: string
           celcash_galax_hash: string | null
           celcash_galax_id: string | null
+          chat_site_banner_url: string | null
+          chat_site_brand_color: string | null
+          chat_site_invite_message: string | null
+          chat_site_theme: string
+          chat_site_welcome_message: string | null
           created_at: string
           created_by: string | null
+          economic_mode_enabled: boolean
           email: string | null
           frizzar_base_url: string | null
           frizzar_token: string | null
@@ -839,8 +845,14 @@ export type Database = {
           celcash_env?: string
           celcash_galax_hash?: string | null
           celcash_galax_id?: string | null
+          chat_site_banner_url?: string | null
+          chat_site_brand_color?: string | null
+          chat_site_invite_message?: string | null
+          chat_site_theme?: string
+          chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          economic_mode_enabled?: boolean
           email?: string | null
           frizzar_base_url?: string | null
           frizzar_token?: string | null
@@ -880,8 +892,14 @@ export type Database = {
           celcash_env?: string
           celcash_galax_hash?: string | null
           celcash_galax_id?: string | null
+          chat_site_banner_url?: string | null
+          chat_site_brand_color?: string | null
+          chat_site_invite_message?: string | null
+          chat_site_theme?: string
+          chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          economic_mode_enabled?: boolean
           email?: string | null
           frizzar_base_url?: string | null
           frizzar_token?: string | null
@@ -925,6 +943,50 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      web_chat_sessions: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          invite_sent_at: string | null
+          last_seen_at: string | null
+          phone_number: string
+          tenant_id: string
+          token: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          invite_sent_at?: string | null
+          last_seen_at?: string | null
+          phone_number: string
+          tenant_id: string
+          token: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          invite_sent_at?: string | null
+          last_seen_at?: string | null
+          phone_number?: string
+          tenant_id?: string
+          token?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "web_chat_sessions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
