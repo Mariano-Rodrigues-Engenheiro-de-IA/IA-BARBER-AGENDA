@@ -571,9 +571,9 @@ const digitsOnly = (value: unknown) => String(value ?? "").replace(/\D/g, "");
 
 // In-memory cache of UAZAPI label name → id resolution, keyed by uazapi base URL + token.
 // Resets on cold start; refreshed every 5 minutes.
-const _uazLabelsCache = new Map<string, { fetchedAt: number; labels: Array<{ id: string; name: string }> }>();
+const _uazLabelsCache = new Map<string, { fetchedAt: number; labels: Array<{ id: string; rawId: string; name: string }> }>();
 
-async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promise<Array<{ id: string; name: string }>> {
+async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promise<Array<{ id: string; rawId: string; name: string }>> {
   const cacheKey = `${uazapiUrl}::${uazapiToken}`;
   const cached = _uazLabelsCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < 5 * 60 * 1000) return cached.labels;
@@ -588,9 +588,10 @@ async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promis
       const raw = Array.isArray(data) ? data : (Array.isArray(data?.labels) ? data.labels : (Array.isArray(data?.data) ? data.data : []));
       if (!raw.length) continue;
       const labels = raw.map((l: any) => ({
-        // Some UAZAPI versions return instance-prefixed IDs (e.g. "instance:7"),
-        // but POST /chat/labels accepts only the canonical label ID ("7").
+        // Some UAZAPI versions return instance-prefixed IDs (e.g. "instance:7").
+        // We keep both forms: the canonical ("7") and the raw catalog value.
         id: normalizeWhatsAppLabelId(l.id ?? l.label_id ?? l.labelId ?? l.value) || "",
+        rawId: String(l.id ?? l.label_id ?? l.labelId ?? l.value ?? ""),
         name: String(l.name ?? l.label ?? l.title ?? ""),
       })).filter((l: any) => l.id);
       _uazLabelsCache.set(cacheKey, { fetchedAt: Date.now(), labels });
@@ -7745,39 +7746,52 @@ async function ensureChatLabelState(
     try {
       const liveLabels = await fetchUazapiLabels(uazapiUrl, uazapiToken);
       const idExists = liveLabels.some((l) => String(l.id) === canonicalLabelId);
-      console.log(`[${logContext}] Label ${canonicalLabelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.id}:${l.name}`)).slice(0, 500)}`);
+      console.log(`[${logContext}] Label ${canonicalLabelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.rawId}:${l.name}`)).slice(0, 500)}`);
 
-      let retryLabelId = canonicalLabelId;
-      if (!idExists && labelNameHint) {
-        const wanted = String(labelNameHint).trim().toLowerCase();
-        const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
-        const match = liveLabels.find((l) => norm(l.name) === norm(wanted))
-          || liveLabels.find((l) => norm(l.name).startsWith(norm(wanted)) || norm(wanted).startsWith(norm(l.name)));
-        if (match) {
-          retryLabelId = normalizeWhatsAppLabelId(match.id) || canonicalLabelId;
-          console.log(`[${logContext}] Resolved label id ${retryLabelId} for name "${labelNameHint}"`);
+      const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
+      const byId = liveLabels.find((l) => l.id === canonicalLabelId);
+      const byName = labelNameHint
+        ? (liveLabels.find((l) => norm(l.name) === norm(String(labelNameHint)))
+          || liveLabels.find((l) => norm(l.name).startsWith(norm(String(labelNameHint)))))
+        : undefined;
+
+      // Candidatos de ID: canônico, ID cru do catálogo (algumas versões da UAZAPI
+      // só aceitam o valor prefixado "instancia:29") e o ID resolvido pelo nome.
+      const idCandidates = [
+        canonicalLabelId,
+        byId?.rawId,
+        byName?.id,
+        byName?.rawId,
+      ].filter((v): v is string => !!v && v !== "");
+      const uniqueIds = [...new Set(idCandidates)].filter((v) => v !== canonicalLabelId);
+
+      // Também variamos o formato do número (a UAZAPI aceita jid completo em algumas rotas).
+      const attempts: Array<{ id: string; number: string }> = [
+        { id: canonicalLabelId, number: phoneNumber },
+        ...uniqueIds.map((id) => ({ id, number: phoneNumber })),
+        { id: canonicalLabelId, number: `${digitsOnly(phoneNumber)}@s.whatsapp.net` },
+      ];
+
+      for (const attempt of attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const retry = await postChatLabel(uazapiUrl, uazapiToken, attempt.number, attempt.id, shouldBePresent, `${logContext}:retry`);
+        res = retry.res;
+        resPayload = retry.payload;
+        if (res.ok || await desiredStateReached(attempt.id)) {
+          return {
+            success: true,
+            changed: true,
+            already: false,
+            status: res.status,
+            details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), resolved_label_id: attempt.id },
+          };
         }
-      }
-
-      // One controlled retry also covers transient UAZAPI 500s. Never send the
-      // instance-prefixed catalog value back to /chat/labels.
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, retryLabelId, shouldBePresent, `${logContext}:retry`);
-      res = retry.res;
-      resPayload = retry.payload;
-      if (res.ok || await desiredStateReached(retryLabelId)) {
-        return {
-          success: true,
-          changed: true,
-          already: false,
-          status: res.status,
-          details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), resolved_label_id: retryLabelId },
-        };
       }
     } catch (e) {
       console.error(`[${logContext}] Label self-heal failed:`, e);
     }
   }
+
 
   if (!res.ok) {
     const errorMsg = getCustomToolRequestError(res, resPayload);
