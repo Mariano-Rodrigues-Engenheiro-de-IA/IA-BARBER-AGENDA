@@ -1815,7 +1815,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // ----- Bidirectional flag reconciliation (WhatsApp = source of truth) -----
         // Build the desired flag set from WhatsApp, but only for labels configured as type:"flag".
         // Unknown labels (e.g. funnel labels) are ignored here.
-        if (allConfiguredFlagIds.length > 0) {
+        if (waLabelsKnown && allConfiguredFlagIds.length > 0) {
           const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
@@ -1844,15 +1844,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           }
         }
 
-        // Final decision: WhatsApp state wins.
-        if (waHasIaOff) {
-          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
+        // Final decision: WhatsApp state wins quando conhecemos as etiquetas ao vivo.
+        // Se NÃO conseguimos ler o estado do WhatsApp, o DB manda (fail-safe: pausa).
+        if (waHasIaOff || (!waLabelsKnown && dbHasIaOff)) {
+          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
-        if (dbHasIaOff && !waHasIaOff) {
+        if (waLabelsKnown && dbHasIaOff && !waHasIaOff) {
+
           console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — clearing stale flag and releasing AI`);
           // ⚠️ CRÍTICO: precisa REMOVER a flag do DB, senão o recheck pós-debounce
           // lê o DB, ainda encontra a IA OFF antiga e bloqueia a resposta pra sempre.
