@@ -195,9 +195,9 @@ export default function ClientChatSite() {
           backgroundSize: "18px 18px",
         }}
       >
-        <div className="mx-auto flex w-full max-w-2xl flex-col gap-1.5">
+        <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-1.5">
           {messages.length === 0 && (
-            <div className={`self-start max-w-[85%] rounded-lg rounded-tl-none px-3 py-2 text-[14.5px] leading-relaxed shadow-sm ${inBubble}`}>
+            <div className={`self-start max-w-[85%] break-words rounded-lg rounded-tl-none px-3 py-2 text-[14.5px] leading-relaxed shadow-sm [overflow-wrap:anywhere] ${inBubble}`}>
               {branding?.welcome_message ||
                 `Olá! 👋 Sou o atendimento digital da ${branding?.name ?? "empresa"}. Me diga o que você precisa que eu já te ajudo.`}
             </div>
@@ -206,16 +206,17 @@ export default function ClientChatSite() {
           {messages.map((m, i) => {
             const isUser = m.role === "user";
             return (
-              <div key={i} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`relative max-w-[85%] rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-sm ${
+                  className={`relative max-w-[85%] min-w-0 break-words rounded-lg px-3 py-2 text-[14.5px] leading-relaxed shadow-sm [overflow-wrap:anywhere] ${
                     isUser ? `${outBubble} rounded-tr-none` : `${inBubble} rounded-tl-none`
                   }`}
                 >
                   {isUser ? (
                     <span className="whitespace-pre-wrap">{m.content}</span>
                   ) : (
-                    <div className="[&_a]:underline [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2 [&_p:last-child]:mb-0 [&_strong]:font-semibold">
+                    <div className="[&_a]:break-all [&_a]:underline [&_li]:ml-4 [&_li]:list-disc [&_p]:mb-2 [&_p:last-child]:mb-0 [&_pre]:overflow-x-auto [&_strong]:font-semibold">
+
                       <ReactMarkdown>{m.content}</ReactMarkdown>
                     </div>
                   )}
