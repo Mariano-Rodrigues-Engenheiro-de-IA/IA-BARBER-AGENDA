@@ -74,6 +74,11 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={user ? <Navigate to={home} replace /> : <LoginPage />} />
 
+      {/* Site de chat público (Modo Econômico) — sem login */}
+      <Route path="/c/:token" element={<ClientChatSite />} />
+
+
+
 
       {/* Admin */}
       <Route path="/" element={<AdminRoute><DashboardPage /></AdminRoute>} />
