@@ -1,5 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
+// MODO ECONÔMICO / SITE DE CHAT — módulo isolado (jul/2026).
+import {
+  ensureWebChatSession,
+  sendEconomicModeInvite,
+  buildWebChatUrl,
+  buildInviteText,
+  handleWebChatRequest,
+} from "./webchat/index.ts";
+
 import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 // PROVIDER FRIZZAR — módulo isolado (extraído em jul/2026 pra evitar que
 // mexer em outra API quebre a Frizzar). Regra: nada de Frizzar mora aqui.
