@@ -7674,16 +7674,17 @@ type EnsureLabelStateResult = {
 async function postChatLabel(
   uazapiUrl: string,
   uazapiToken: string,
-  chatId: string,
+  phoneNumber: string,
   labelId: string,
   shouldBePresent: boolean,
   logContext: string,
 ): Promise<{ res: Response; payload: any }> {
-  const labelBody = {
-    chatId,
-    labelId: String(labelId),
-    action: shouldBePresent ? "add" : "remove",
-  };
+  // UAZAPI /chat/labels accepts the phone in `number` plus exactly one
+  // operation field. Do not send chatId/labelId/action: that is a different
+  // contract and the provider rejects it with "Use only one operation".
+  const labelBody = shouldBePresent
+    ? { number: digitsOnly(phoneNumber), add_labelid: String(labelId) }
+    : { number: digitsOnly(phoneNumber), remove_labelid: String(labelId) };
 
   console.log(`[${logContext}] Label ${shouldBePresent ? "ADD" : "REMOVE"} attempt: POST /chat/labels`, JSON.stringify(labelBody));
 
@@ -7746,11 +7747,9 @@ async function ensureChatLabelState(
     return { success: true, changed: false, already: true };
   }
 
-  const initialState = await getChatLabelState();
-  const resolvedChatId = initialState?.chatIds[0] || `${digitsOnly(phoneNumber)}@s.whatsapp.net`;
+  await getChatLabelState();
 
-  // UAZAPI v2 requires the real chat JID/LID and the explicit add/remove action.
-  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, resolvedChatId, canonicalLabelId, shouldBePresent, logContext);
+  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, canonicalLabelId, shouldBePresent, logContext);
 
   // UAZAPI can return 500 after applying the mutation. Verify before retrying so a
   // successful label change is not reported as an error or accidentally repeated.
@@ -7786,23 +7785,20 @@ async function ensureChatLabelState(
       ].filter((v): v is string => !!v && v !== "");
       const uniqueIds = [...new Set(idCandidates)].filter((v) => v !== canonicalLabelId);
 
-      const chatIds = initialState?.chatIds.length ? initialState.chatIds : [resolvedChatId];
-      const attempts = chatIds.flatMap((chatId) =>
-        [canonicalLabelId, ...uniqueIds].map((id) => ({ id, chatId }))
-      );
+      const attempts = [canonicalLabelId, ...uniqueIds];
 
-      for (const attempt of attempts) {
+      for (const attemptId of attempts) {
         await new Promise((resolve) => setTimeout(resolve, 500));
-        const retry = await postChatLabel(uazapiUrl, uazapiToken, attempt.chatId, attempt.id, shouldBePresent, `${logContext}:retry`);
+        const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, attemptId, shouldBePresent, `${logContext}:retry`);
         res = retry.res;
         resPayload = retry.payload;
-        if (res.ok || await desiredStateReached(attempt.id)) {
+        if (res.ok || await desiredStateReached(attemptId)) {
           return {
             success: true,
             changed: true,
             already: false,
             status: res.status,
-            details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), resolved_label_id: attempt.id },
+            details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), resolved_label_id: attemptId },
           };
         }
       }
