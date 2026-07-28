@@ -7987,6 +7987,13 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", "EscalateHuman", config.label_name || toolDef.display_name || toolDef.name);
             if (!labelResult.success) {
               console.error(`[EscalateHuman] Error ensuring label ${labelId}: ${labelResult.error}`, JSON.stringify(labelResult.details ?? null).slice(0, 200));
+              return {
+                success: false,
+                error: labelResult.error || "Atendimento avisado, mas não foi possível aplicar a etiqueta IA OFF.",
+                status: labelResult.status,
+                details: labelResult.details,
+                type: toolType,
+              };
             } else {
               console.log(`[EscalateHuman] Label ${labelId} ensured present (${labelResult.already ? "already present" : "changed"})`);
               // CRM upsert
