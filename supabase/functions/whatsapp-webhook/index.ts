@@ -529,6 +529,8 @@ function isAllowedOrigin(origin: string): boolean {
   try {
     const u = new URL(origin);
     if (u.hostname.endsWith(".lovable.app")) return true;
+    if (u.hostname.endsWith(".lovableproject.com")) return true;
+    if (u.hostname.endsWith(".lovable.dev")) return true;
     if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
   } catch { /* ignore */ }
   return false;
@@ -538,6 +540,7 @@ function buildCorsHeaders(origin: string | null) {
   return {
     "Access-Control-Allow-Origin": allowOrigin,
     "Vary": "Origin",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
   };
 }
