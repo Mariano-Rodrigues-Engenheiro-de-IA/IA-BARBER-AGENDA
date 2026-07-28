@@ -1685,6 +1685,85 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         });
       }
 
+      // ===== 💸 MODO ECONÔMICO =====
+      // Quando ligado, a IA NÃO responde no WhatsApp: o cliente recebe um convite
+      // (botão nativo com fallback texto) para continuar o atendimento no site da
+      // empresa. Se ele já está conversando no site (sessão ativa nos últimos 60min),
+      // apenas guardamos a mensagem, sem reenviar convite (evita spam).
+      if ((tenant as any).economic_mode_enabled === true) {
+        const _msgIdEco = msg.key?.id || msg.id || payload.key?.id || payload.id || null;
+        try {
+          const session = await ensureWebChatSession(supabase, tenant.id, phoneNumber, senderName || null);
+          if (!session) throw new Error("no_session");
+
+          const { data: existingEco } = _msgIdEco
+            ? await supabase.from("chat_messages").select("id").eq("message_id", _msgIdEco).maybeSingle()
+            : { data: null };
+          if (!existingEco) {
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "user",
+              content: messageContent || "[Mensagem recebida]",
+              message_id: _msgIdEco,
+              processed: true,
+            });
+          }
+
+          const lastSeen = session.last_seen_at ? new Date(session.last_seen_at).getTime() : 0;
+          const lastInvite = session.invite_sent_at ? new Date(session.invite_sent_at).getTime() : 0;
+          const now = Date.now();
+          const siteActive = lastSeen > 0 && now - lastSeen < 60 * 60 * 1000;
+          const invitedRecently = lastInvite > 0 && now - lastInvite < 30 * 60 * 1000;
+
+          if (siteActive || invitedRecently) {
+            console.log(`[EconomicMode] ${tenant.name}: convite não reenviado (siteActive=${siteActive}, invitedRecently=${invitedRecently}).`);
+            return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: false, reason: siteActive ? "site_active" : "invited_recently" }), {
+              status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+
+          const uazUrlEco = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
+          const uazTokEco = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
+          const link = buildWebChatUrl(session.token);
+          const sent = await sendEconomicModeInvite({
+            uazapiUrl: uazUrlEco,
+            uazapiToken: uazTokEco,
+            number: phoneNumber,
+            text: buildInviteText(tenant),
+            buttonLabel: "Continuar atendimento",
+            url: link,
+            footerText: tenant.name || undefined,
+          });
+          console.log(`[EconomicMode] convite para ${phoneNumber} via ${sent.via} (ok=${sent.ok}) → ${link}`);
+
+          if (sent.ok) {
+            await supabase.from("web_chat_sessions")
+              .update({ invite_sent_at: new Date().toISOString() })
+              .eq("id", session.id);
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "assistant",
+              content: `${buildInviteText(tenant)}\n\n👉 ${link}`,
+              processed: true,
+            });
+          }
+
+          return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: sent.ok, via: sent.via }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (e: any) {
+          // Fail-safe: se o modo econômico falhar, NÃO caímos no fluxo normal da IA
+          // (isso geraria custo justamente onde o cliente quis economizar).
+          console.error("[EconomicMode] falha ao enviar convite:", e?.message || e);
+          return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: false, error: String(e?.message || e) }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+
       const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
       const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
 
