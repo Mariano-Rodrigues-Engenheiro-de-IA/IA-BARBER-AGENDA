@@ -4997,6 +4997,7 @@ async function callAIAgent(
                 String(labelId),
                 "present",
                 "EscalateHuman:dedup-reapply",
+                matchedCustomTool?.config?.label_name || matchedCustomTool?.display_name || matchedCustomTool?.name,
               );
               console.log(`[DedupGuard] escalate_human dedup → label reapply result: ${JSON.stringify({ ok: reapply.success, already: reapply.already })}`);
             }
@@ -7793,7 +7794,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (labelId) {
           try {
-            const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", "EscalateHuman");
+            const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", "EscalateHuman", config.label_name || toolDef.display_name || toolDef.name);
             if (!labelResult.success) {
               console.error(`[EscalateHuman] Error ensuring label ${labelId}: ${labelResult.error}`, JSON.stringify(labelResult.details ?? null).slice(0, 200));
             } else {
@@ -7813,7 +7814,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (!labelId) return { error: "ID da etiqueta não configurado nesta ferramenta." };
         try {
-          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", `CustomTool:add_label:${labelId}`);
+          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", `CustomTool:add_label:${labelId}`, config.label_name || toolDef.display_name || toolDef.name);
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao adicionar etiqueta.", status: labelResult.status, details: labelResult.details };
           }
@@ -7835,7 +7836,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (!labelId) return { error: "ID da etiqueta não configurado nesta ferramenta." };
         try {
-          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "absent", `CustomTool:remove_label:${labelId}`);
+          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "absent", `CustomTool:remove_label:${labelId}`, config.label_name || toolDef.display_name || toolDef.name);
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao remover etiqueta.", status: labelResult.status, details: labelResult.details };
           }
