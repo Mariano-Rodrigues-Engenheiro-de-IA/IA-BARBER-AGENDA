@@ -27,6 +27,7 @@ import ClientFollowUps from "@/pages/client/FollowUps";
 import ClientCrm from "@/pages/client/Crm";
 import ClientAi from "@/pages/client/Ai";
 import ClientConnection from "@/pages/client/Connection";
+import ClientChatSite from "@/pages/ClientChatSite";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
