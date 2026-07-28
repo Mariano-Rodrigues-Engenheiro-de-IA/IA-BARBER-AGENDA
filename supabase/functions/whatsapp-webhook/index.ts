@@ -588,9 +588,10 @@ async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promis
       const raw = Array.isArray(data) ? data : (Array.isArray(data?.labels) ? data.labels : (Array.isArray(data?.data) ? data.data : []));
       if (!raw.length) continue;
       const labels = raw.map((l: any) => ({
-        // Some UAZAPI versions return instance-prefixed IDs (e.g. "instance:7"),
-        // but POST /chat/labels accepts only the canonical label ID ("7").
+        // Some UAZAPI versions return instance-prefixed IDs (e.g. "instance:7").
+        // We keep both forms: the canonical ("7") and the raw catalog value.
         id: normalizeWhatsAppLabelId(l.id ?? l.label_id ?? l.labelId ?? l.value) || "",
+        rawId: String(l.id ?? l.label_id ?? l.labelId ?? l.value ?? ""),
         name: String(l.name ?? l.label ?? l.title ?? ""),
       })).filter((l: any) => l.id);
       _uazLabelsCache.set(cacheKey, { fetchedAt: Date.now(), labels });
