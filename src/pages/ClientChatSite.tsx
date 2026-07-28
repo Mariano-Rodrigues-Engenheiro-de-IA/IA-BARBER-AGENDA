@@ -25,18 +25,23 @@ function hexToRgb(hex: string): [number, number, number] | null {
 }
 
 async function callWebChat(body: Record<string, unknown>) {
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-mode": "webchat",
-      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify(body),
-  });
-  return { ok: res.ok, data: await res.json().catch(() => ({})) };
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-mode": "webchat",
+        apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return { ok: res.ok, data: await res.json().catch(() => ({} as any)) };
+  } catch {
+    return { ok: false, data: { error: "network_error" } as any };
+  }
 }
+
 
 export default function ClientChatSite() {
   const { token } = useParams<{ token: string }>();
