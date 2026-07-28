@@ -27,6 +27,7 @@ import ClientFollowUps from "@/pages/client/FollowUps";
 import ClientCrm from "@/pages/client/Crm";
 import ClientAi from "@/pages/client/Ai";
 import ClientConnection from "@/pages/client/Connection";
+import ClientChatSite from "@/pages/ClientChatSite";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -72,6 +73,11 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to={home} replace /> : <LoginPage />} />
+
+      {/* Site de chat público (Modo Econômico) — sem login */}
+      <Route path="/c/:token" element={<ClientChatSite />} />
+
+
 
 
       {/* Admin */}

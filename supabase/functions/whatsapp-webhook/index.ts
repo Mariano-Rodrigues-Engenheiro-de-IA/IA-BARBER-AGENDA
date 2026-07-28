@@ -1,5 +1,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
+// MODO ECONÔMICO / SITE DE CHAT — módulo isolado (jul/2026).
+import {
+  ensureWebChatSession,
+  sendEconomicModeInvite,
+  buildWebChatUrl,
+  buildInviteText,
+  handleWebChatRequest,
+} from "./webchat/index.ts";
+
 import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 // PROVIDER FRIZZAR — módulo isolado (extraído em jul/2026 pra evitar que
 // mexer em outra API quebre a Frizzar). Regra: nada de Frizzar mora aqui.
@@ -512,14 +521,27 @@ async function resolveIncomingMedia({
   return { base64: null, mimeType: fallbackMimeType };
 }
 
-const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com", "https://painelzaylo.lovable.app"];
+// O site de chat do modo econômico é público e roda no domínio publicado ou em
+// previews do Lovable — por isso aceitamos também *.lovable.app e localhost em dev.
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    if (u.hostname.endsWith(".lovable.app")) return true;
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1") return true;
+  } catch { /* ignore */ }
+  return false;
+}
 function buildCorsHeaders(origin: string | null) {
-  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowOrigin = origin && isAllowedOrigin(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
     "Access-Control-Allow-Origin": allowOrigin,
+    "Vary": "Origin",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, token, x-mode",
   };
 }
+
 
 // ===== Business hours helper for follow-up sequences =====
 // If `at` falls outside [start,end] in given tz, push to next start within window.
@@ -1108,6 +1130,19 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  // ===== WEB CHAT (MODO ECONÔMICO) =====
+  // Canal público identificado pelo token da URL do site. Roda a MESMA IA.
+  if (req.headers.get("x-mode") === "webchat") {
+    return await handleWebChatRequest(req, {
+      corsHeaders,
+      createServiceClient: () =>
+        createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!),
+      callAIAgent: callAIAgent as any,
+    });
+  }
+
+
+
   // ===== SIMULATOR MODE =====
   // Painel do cliente envia { mode: "simulator", tenantId, message, history }
   // Roda o mesmo callAIAgent porém:
@@ -1658,6 +1693,85 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+
+      // ===== 💸 MODO ECONÔMICO =====
+      // Quando ligado, a IA NÃO responde no WhatsApp: o cliente recebe um convite
+      // (botão nativo com fallback texto) para continuar o atendimento no site da
+      // empresa. Se ele já está conversando no site (sessão ativa nos últimos 60min),
+      // apenas guardamos a mensagem, sem reenviar convite (evita spam).
+      if ((tenant as any).economic_mode_enabled === true) {
+        const _msgIdEco = msg.key?.id || msg.id || payload.key?.id || payload.id || null;
+        try {
+          const session = await ensureWebChatSession(supabase, tenant.id, phoneNumber, senderName || null);
+          if (!session) throw new Error("no_session");
+
+          const { data: existingEco } = _msgIdEco
+            ? await supabase.from("chat_messages").select("id").eq("message_id", _msgIdEco).maybeSingle()
+            : { data: null };
+          if (!existingEco) {
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "user",
+              content: messageContent || "[Mensagem recebida]",
+              message_id: _msgIdEco,
+              processed: true,
+            });
+          }
+
+          const lastSeen = session.last_seen_at ? new Date(session.last_seen_at).getTime() : 0;
+          const lastInvite = session.invite_sent_at ? new Date(session.invite_sent_at).getTime() : 0;
+          const now = Date.now();
+          const siteActive = lastSeen > 0 && now - lastSeen < 60 * 60 * 1000;
+          const invitedRecently = lastInvite > 0 && now - lastInvite < 30 * 60 * 1000;
+
+          if (siteActive || invitedRecently) {
+            console.log(`[EconomicMode] ${tenant.name}: convite não reenviado (siteActive=${siteActive}, invitedRecently=${invitedRecently}).`);
+            return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: false, reason: siteActive ? "site_active" : "invited_recently" }), {
+              status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+
+          const uazUrlEco = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
+          const uazTokEco = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
+          const link = buildWebChatUrl(session.token);
+          const sent = await sendEconomicModeInvite({
+            uazapiUrl: uazUrlEco,
+            uazapiToken: uazTokEco,
+            number: phoneNumber,
+            text: buildInviteText(tenant),
+            buttonLabel: "Continuar atendimento",
+            url: link,
+            footerText: tenant.name || undefined,
+          });
+          console.log(`[EconomicMode] convite para ${phoneNumber} via ${sent.via} (ok=${sent.ok}) → ${link}`);
+
+          if (sent.ok) {
+            await supabase.from("web_chat_sessions")
+              .update({ invite_sent_at: new Date().toISOString() })
+              .eq("id", session.id);
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "assistant",
+              content: `${buildInviteText(tenant)}\n\n👉 ${link}`,
+              processed: true,
+            });
+          }
+
+          return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: sent.ok, via: sent.via }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } catch (e: any) {
+          // Fail-safe: se o modo econômico falhar, NÃO caímos no fluxo normal da IA
+          // (isso geraria custo justamente onde o cliente quis economizar).
+          console.error("[EconomicMode] falha ao enviar convite:", e?.message || e);
+          return new Response(JSON.stringify({ ok: true, economic_mode: true, invited: false, error: String(e?.message || e) }), {
+            status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
 
       const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
       const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
