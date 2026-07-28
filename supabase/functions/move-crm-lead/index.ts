@@ -2,31 +2,28 @@ import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 
 const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
 
-async function resolveUazChatId(uazapiUrl: string, uazapiToken: string, phoneNumber: string): Promise<string> {
-  const response = await fetch(`${uazapiUrl}/chat/details`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-    body: JSON.stringify({ number: phoneNumber }),
-  });
-  const details = response.ok ? await response.json() : null;
-  const resolved = details?.wa_chatlid || details?.wa_chatid || details?.id;
-  return typeof resolved === "string" && resolved.includes("@")
-    ? resolved
-    : `${phoneNumber.replace(/\D/g, "")}@s.whatsapp.net`;
-}
-
 async function mutateUazChatLabel(
   uazapiUrl: string,
   uazapiToken: string,
-  chatId: string,
+  phoneNumber: string,
   labelId: string,
   action: "add" | "remove",
 ): Promise<Response> {
+  const number = phoneNumber.replace(/\D/g, "");
+  const body = action === "add"
+    ? { number, add_labelid: String(labelId) }
+    : { number, remove_labelid: String(labelId) };
   return fetch(`${uazapiUrl}/chat/labels`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-    body: JSON.stringify({ chatId, labelId, action }),
+    body: JSON.stringify(body),
   });
+}
+
+async function requireSuccessfulLabelMutation(response: Response, operation: string): Promise<void> {
+  if (response.ok) return;
+  const details = await response.text();
+  throw new Error(`UAZAPI recusou ${operation} (${response.status}): ${details.slice(0, 300)}`);
 }
 
 function buildCorsHeaders(origin: string | null) {
@@ -60,14 +57,14 @@ Deno.serve(async (req) => {
   );
 
   const token = authHeader.replace("Bearer ", "");
-  const { data: claimsData, error: claimsErr } = await authClient.auth.getClaims(token);
-  if (claimsErr || !claimsData?.claims) {
+  const { data: userData, error: userErr } = await authClient.auth.getUser(token);
+  if (userErr || !userData?.user) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  const userId = claimsData.claims.sub as string;
+  const userId = userData.user.id;
 
   const supabase = createClient(
     supabaseUrl,
@@ -127,7 +124,6 @@ Deno.serve(async (req) => {
     // ===== FLAG TOGGLE MODE =====
     if (toggleFlag) {
       const flagLabelId = String(toggleFlag);
-      const chatId = await resolveUazChatId(uazapiUrl, uazapiToken, phoneNumber);
 
       const { data: lead } = await supabase
         .from("crm_leads")
@@ -142,6 +138,9 @@ Deno.serve(async (req) => {
         ? currentFlags.filter((f: string) => f !== flagLabelId)
         : [...currentFlags, flagLabelId];
 
+      const uazRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, phoneNumber, flagLabelId, hasFlag ? "remove" : "add");
+      await requireSuccessfulLabelMutation(uazRes, `${hasFlag ? "remover" : "adicionar"} etiqueta ${flagLabelId}`);
+
       if (lead) {
         await supabase.from("crm_leads")
           .update({ flag_labels: newFlags, updated_at: new Date().toISOString() })
@@ -155,7 +154,6 @@ Deno.serve(async (req) => {
         });
       }
 
-      const uazRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, flagLabelId, hasFlag ? "remove" : "add");
       console.log(`Flag toggle ${hasFlag ? "REMOVE" : "ADD"} ${flagLabelId} for ${phoneNumber}: ${uazRes.status}`);
 
       return new Response(JSON.stringify({ success: true, action: hasFlag ? "removed" : "added", flagLabelId }), {
@@ -186,14 +184,15 @@ Deno.serve(async (req) => {
     }
 
     const fromLabel = lead?.label_id || null;
-    const chatId = await resolveUazChatId(uazapiUrl, uazapiToken, phoneNumber);
 
     if (fromLabel && fromLabel !== toLabelId) {
-      await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, String(fromLabel), "remove");
+      const removeRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, phoneNumber, String(fromLabel), "remove");
+      await requireSuccessfulLabelMutation(removeRes, `remover etiqueta ${fromLabel}`);
       console.log(`Removed label ${fromLabel} from ${phoneNumber}`);
     }
 
-    const addRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, chatId, String(toLabelId), "add");
+    const addRes = await mutateUazChatLabel(uazapiUrl, uazapiToken, phoneNumber, String(toLabelId), "add");
+    await requireSuccessfulLabelMutation(addRes, `adicionar etiqueta ${toLabelId}`);
     console.log(`Added label ${toLabelId} to ${phoneNumber}, status: ${addRes.status}`);
 
     await supabase
