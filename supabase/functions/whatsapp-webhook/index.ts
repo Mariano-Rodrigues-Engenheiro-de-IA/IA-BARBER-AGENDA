@@ -588,7 +588,9 @@ async function fetchUazapiLabels(uazapiUrl: string, uazapiToken: string): Promis
       const raw = Array.isArray(data) ? data : (Array.isArray(data?.labels) ? data.labels : (Array.isArray(data?.data) ? data.data : []));
       if (!raw.length) continue;
       const labels = raw.map((l: any) => ({
-        id: String(l.id ?? l.label_id ?? l.labelId ?? l.value ?? ""),
+        // Some UAZAPI versions return instance-prefixed IDs (e.g. "instance:7"),
+        // but POST /chat/labels accepts only the canonical label ID ("7").
+        id: normalizeWhatsAppLabelId(l.id ?? l.label_id ?? l.labelId ?? l.value) || "",
         name: String(l.name ?? l.label ?? l.title ?? ""),
       })).filter((l: any) => l.id);
       _uazLabelsCache.set(cacheKey, { fetchedAt: Date.now(), labels });
@@ -7702,9 +7704,29 @@ async function ensureChatLabelState(
   labelNameHint?: string | null,
 ): Promise<EnsureLabelStateResult> {
   const shouldBePresent = desiredState === "present";
+  const canonicalLabelId = normalizeWhatsAppLabelId(labelId) || String(labelId);
+
+  const desiredStateReached = async (): Promise<boolean> => {
+    try {
+      const { response, payload } = await fetchUazChatDetails(uazapiUrl, uazapiToken, phoneNumber);
+      if (!response.ok) return false;
+      const isPresent = extractWhatsAppLabelIds(payload).includes(canonicalLabelId);
+      return shouldBePresent ? isPresent : !isPresent;
+    } catch (error) {
+      console.warn(`[${logContext}] Could not verify label state after provider error:`, error);
+      return false;
+    }
+  };
 
   // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
-  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, labelId, shouldBePresent, logContext);
+  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, canonicalLabelId, shouldBePresent, logContext);
+
+  // UAZAPI can return 500 after applying the mutation. Verify before retrying so a
+  // successful label change is not reported as an error or accidentally repeated.
+  if (!res.ok && await desiredStateReached()) {
+    console.log(`[${logContext}] Provider returned ${res.status}, but label ${canonicalLabelId} reached the desired state`);
+    return { success: true, changed: true, already: false, status: res.status, details: resPayload };
+  }
 
   // ===== AUTO-CURA DE ID DE ETIQUETA =====
   // A UAZAPI devolve 500 "Error adding label to/from chat" quando o label_id salvo no
@@ -7713,23 +7735,35 @@ async function ensureChatLabelState(
   if (!res.ok) {
     try {
       const liveLabels = await fetchUazapiLabels(uazapiUrl, uazapiToken);
-      const idExists = liveLabels.some((l) => String(l.id) === String(labelId));
-      console.log(`[${logContext}] Label ${labelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.id}:${l.name}`)).slice(0, 500)}`);
+      const idExists = liveLabels.some((l) => String(l.id) === canonicalLabelId);
+      console.log(`[${logContext}] Label ${canonicalLabelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.id}:${l.name}`)).slice(0, 500)}`);
 
+      let retryLabelId = canonicalLabelId;
       if (!idExists && labelNameHint) {
         const wanted = String(labelNameHint).trim().toLowerCase();
         const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
         const match = liveLabels.find((l) => norm(l.name) === norm(wanted))
           || liveLabels.find((l) => norm(l.name).startsWith(norm(wanted)) || norm(wanted).startsWith(norm(l.name)));
         if (match) {
-          console.log(`[${logContext}] Retry with resolved label id ${match.id} for name "${labelNameHint}"`);
-          const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, match.id, shouldBePresent, `${logContext}:retry`);
-          res = retry.res;
-          resPayload = retry.payload;
-          if (res.ok) {
-            return { success: true, changed: true, already: false, details: { ...(resPayload || {}), resolved_label_id: match.id } };
-          }
+          retryLabelId = normalizeWhatsAppLabelId(match.id) || canonicalLabelId;
+          console.log(`[${logContext}] Resolved label id ${retryLabelId} for name "${labelNameHint}"`);
         }
+      }
+
+      // One controlled retry also covers transient UAZAPI 500s. Never send the
+      // instance-prefixed catalog value back to /chat/labels.
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, retryLabelId, shouldBePresent, `${logContext}:retry`);
+      res = retry.res;
+      resPayload = retry.payload;
+      if (res.ok || await desiredStateReached()) {
+        return {
+          success: true,
+          changed: true,
+          already: false,
+          status: res.status,
+          details: { ...(resPayload && typeof resPayload === "object" ? resPayload : {}), resolved_label_id: retryLabelId },
+        };
       }
     } catch (e) {
       console.error(`[${logContext}] Label self-heal failed:`, e);
@@ -7747,7 +7781,7 @@ async function ensureChatLabelState(
     };
   }
 
-  console.log(`[${logContext}] Label ${labelId} ${shouldBePresent ? "added" : "removed"} successfully`);
+  console.log(`[${logContext}] Label ${canonicalLabelId} ${shouldBePresent ? "added" : "removed"} successfully`);
   return { success: true, changed: true, already: false, details: resPayload };
 }
 
