@@ -1785,16 +1785,37 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
         const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
 
-        // Read live WhatsApp state from payload
-        const waLabelIds = extractWhatsAppLabelIds(payload);
+        // Read live WhatsApp state from payload.
+        // ⚠️ UAZAPI nem sempre envia wa_label no evento "messages". Quando vier vazio,
+        // NÃO podemos assumir que o contato está sem etiquetas (isso apagava a IA OFF
+        // e liberava a IA). Nesse caso consultamos /chat/details ao vivo.
+        let waLabelIds = extractWhatsAppLabelIds(payload);
+        let waLabelsKnown = waLabelIds.length > 0;
+        if (!waLabelsKnown) {
+          try {
+            const uazUrlLbl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
+            const uazTokenLbl = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
+            if (uazUrlLbl && uazTokenLbl) {
+              const { response: detRes, payload: chatDetails } = await fetchUazChatDetails(uazUrlLbl, uazTokenLbl, phoneNumber);
+              if (detRes.ok) {
+                waLabelIds = extractWhatsAppLabelIds(chatDetails);
+                waLabelsKnown = true;
+                console.log(`[IA OFF Check] Labels via /chat/details: ${JSON.stringify(waLabelIds)}`);
+              }
+            }
+          } catch (e) {
+            console.error("[IA OFF Check] /chat/details failed:", e);
+          }
+        }
         const waHasIaOff = iaOffLabelIds.length > 0 && waLabelIds.some((id: string) => iaOffLabelIds.includes(id));
 
-        console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
+        console.log(`[IA OFF Check] wa_label: ${JSON.stringify(waLabelIds)} | known: ${waLabelsKnown} | iaOffIds: ${JSON.stringify(iaOffLabelIds)} | dbHasIaOff: ${dbHasIaOff} | waHasIaOff: ${waHasIaOff}`);
+
 
         // ----- Bidirectional flag reconciliation (WhatsApp = source of truth) -----
         // Build the desired flag set from WhatsApp, but only for labels configured as type:"flag".
         // Unknown labels (e.g. funnel labels) are ignored here.
-        if (allConfiguredFlagIds.length > 0) {
+        if (waLabelsKnown && allConfiguredFlagIds.length > 0) {
           const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
@@ -1823,15 +1844,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           }
         }
 
-        // Final decision: WhatsApp state wins.
-        if (waHasIaOff) {
-          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name}, skipping AI`);
+        // Final decision: WhatsApp state wins quando conhecemos as etiquetas ao vivo.
+        // Se NÃO conseguimos ler o estado do WhatsApp, o DB manda (fail-safe: pausa).
+        if (waHasIaOff || (!waLabelsKnown && dbHasIaOff)) {
+          console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
 
-        if (dbHasIaOff && !waHasIaOff) {
+        if (waLabelsKnown && dbHasIaOff && !waHasIaOff) {
+
           console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — clearing stale flag and releasing AI`);
           // ⚠️ CRÍTICO: precisa REMOVER a flag do DB, senão o recheck pós-debounce
           // lê o DB, ainda encontra a IA OFF antiga e bloqueia a resposta pra sempre.
@@ -4974,6 +4997,7 @@ async function callAIAgent(
                 String(labelId),
                 "present",
                 "EscalateHuman:dedup-reapply",
+                matchedCustomTool?.config?.label_name || matchedCustomTool?.display_name || matchedCustomTool?.name,
               );
               console.log(`[DedupGuard] escalate_human dedup → label reapply result: ${JSON.stringify({ ok: reapply.success, already: reapply.already })}`);
             }
@@ -7526,17 +7550,14 @@ type EnsureLabelStateResult = {
   details?: any;
 };
 
-async function ensureChatLabelState(
+async function postChatLabel(
   uazapiUrl: string,
   uazapiToken: string,
   phoneNumber: string,
   labelId: string,
-  desiredState: "present" | "absent",
+  shouldBePresent: boolean,
   logContext: string,
-): Promise<EnsureLabelStateResult> {
-  const shouldBePresent = desiredState === "present";
-
-  // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
+): Promise<{ res: Response; payload: any }> {
   const labelBody = shouldBePresent
     ? { number: phoneNumber, add_labelid: String(labelId) }
     : { number: phoneNumber, remove_labelid: String(labelId) };
@@ -7548,8 +7569,54 @@ async function ensureChatLabelState(
     headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
     body: JSON.stringify(labelBody),
   });
-  const resPayload = await readResponsePayload(res);
-  console.log(`[${logContext}] Label result status: ${res.status} body:`, JSON.stringify(resPayload).slice(0, 300));
+  const payload = await readResponsePayload(res);
+  console.log(`[${logContext}] Label result status: ${res.status} body:`, JSON.stringify(payload).slice(0, 300));
+  return { res, payload };
+}
+
+async function ensureChatLabelState(
+  uazapiUrl: string,
+  uazapiToken: string,
+  phoneNumber: string,
+  labelId: string,
+  desiredState: "present" | "absent",
+  logContext: string,
+  labelNameHint?: string | null,
+): Promise<EnsureLabelStateResult> {
+  const shouldBePresent = desiredState === "present";
+
+  // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
+  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, labelId, shouldBePresent, logContext);
+
+  // ===== AUTO-CURA DE ID DE ETIQUETA =====
+  // A UAZAPI devolve 500 "Error adding label to/from chat" quando o label_id salvo no
+  // Kanban não existe mais na conta (etiqueta recriada no WhatsApp → novo ID).
+  // Nesse caso resolvemos o ID atual pelo NOME da etiqueta e tentamos de novo.
+  if (!res.ok) {
+    try {
+      const liveLabels = await fetchUazapiLabels(uazapiUrl, uazapiToken);
+      const idExists = liveLabels.some((l) => String(l.id) === String(labelId));
+      console.log(`[${logContext}] Label ${labelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.id}:${l.name}`)).slice(0, 500)}`);
+
+      if (!idExists && labelNameHint) {
+        const wanted = String(labelNameHint).trim().toLowerCase();
+        const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
+        const match = liveLabels.find((l) => norm(l.name) === norm(wanted))
+          || liveLabels.find((l) => norm(l.name).startsWith(norm(wanted)) || norm(wanted).startsWith(norm(l.name)));
+        if (match) {
+          console.log(`[${logContext}] Retry with resolved label id ${match.id} for name "${labelNameHint}"`);
+          const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, match.id, shouldBePresent, `${logContext}:retry`);
+          res = retry.res;
+          resPayload = retry.payload;
+          if (res.ok) {
+            return { success: true, changed: true, already: false, details: { ...(resPayload || {}), resolved_label_id: match.id } };
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[${logContext}] Label self-heal failed:`, e);
+    }
+  }
 
   if (!res.ok) {
     const errorMsg = getCustomToolRequestError(res, resPayload);
@@ -7565,6 +7632,7 @@ async function ensureChatLabelState(
   console.log(`[${logContext}] Label ${labelId} ${shouldBePresent ? "added" : "removed"} successfully`);
   return { success: true, changed: true, already: false, details: resPayload };
 }
+
 
 function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: string, contentType: string | null): string {
   try {
@@ -7726,7 +7794,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (labelId) {
           try {
-            const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", "EscalateHuman");
+            const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", "EscalateHuman", config.label_name || toolDef.display_name || toolDef.name);
             if (!labelResult.success) {
               console.error(`[EscalateHuman] Error ensuring label ${labelId}: ${labelResult.error}`, JSON.stringify(labelResult.details ?? null).slice(0, 200));
             } else {
@@ -7746,7 +7814,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (!labelId) return { error: "ID da etiqueta não configurado nesta ferramenta." };
         try {
-          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", `CustomTool:add_label:${labelId}`);
+          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "present", `CustomTool:add_label:${labelId}`, config.label_name || toolDef.display_name || toolDef.name);
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao adicionar etiqueta.", status: labelResult.status, details: labelResult.details };
           }
@@ -7768,7 +7836,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const labelId = config.label_id;
         if (!labelId) return { error: "ID da etiqueta não configurado nesta ferramenta." };
         try {
-          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "absent", `CustomTool:remove_label:${labelId}`);
+          const labelResult = await ensureChatLabelState(uazapiUrl, uazapiToken, phoneNumber, String(labelId), "absent", `CustomTool:remove_label:${labelId}`, config.label_name || toolDef.display_name || toolDef.name);
           if (!labelResult.success) {
             return { error: labelResult.error || "Falha ao remover etiqueta.", status: labelResult.status, details: labelResult.details };
           }
