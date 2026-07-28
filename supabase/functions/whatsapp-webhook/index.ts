@@ -7549,17 +7549,14 @@ type EnsureLabelStateResult = {
   details?: any;
 };
 
-async function ensureChatLabelState(
+async function postChatLabel(
   uazapiUrl: string,
   uazapiToken: string,
   phoneNumber: string,
   labelId: string,
-  desiredState: "present" | "absent",
+  shouldBePresent: boolean,
   logContext: string,
-): Promise<EnsureLabelStateResult> {
-  const shouldBePresent = desiredState === "present";
-
-  // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
+): Promise<{ res: Response; payload: any }> {
   const labelBody = shouldBePresent
     ? { number: phoneNumber, add_labelid: String(labelId) }
     : { number: phoneNumber, remove_labelid: String(labelId) };
@@ -7571,8 +7568,54 @@ async function ensureChatLabelState(
     headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
     body: JSON.stringify(labelBody),
   });
-  const resPayload = await readResponsePayload(res);
-  console.log(`[${logContext}] Label result status: ${res.status} body:`, JSON.stringify(resPayload).slice(0, 300));
+  const payload = await readResponsePayload(res);
+  console.log(`[${logContext}] Label result status: ${res.status} body:`, JSON.stringify(payload).slice(0, 300));
+  return { res, payload };
+}
+
+async function ensureChatLabelState(
+  uazapiUrl: string,
+  uazapiToken: string,
+  phoneNumber: string,
+  labelId: string,
+  desiredState: "present" | "absent",
+  logContext: string,
+  labelNameHint?: string | null,
+): Promise<EnsureLabelStateResult> {
+  const shouldBePresent = desiredState === "present";
+
+  // Use /chat/labels (plural) with add_labelid or remove_labelid — NOT the toggle endpoint
+  let { res, payload: resPayload } = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, labelId, shouldBePresent, logContext);
+
+  // ===== AUTO-CURA DE ID DE ETIQUETA =====
+  // A UAZAPI devolve 500 "Error adding label to/from chat" quando o label_id salvo no
+  // Kanban não existe mais na conta (etiqueta recriada no WhatsApp → novo ID).
+  // Nesse caso resolvemos o ID atual pelo NOME da etiqueta e tentamos de novo.
+  if (!res.ok) {
+    try {
+      const liveLabels = await fetchUazapiLabels(uazapiUrl, uazapiToken);
+      const idExists = liveLabels.some((l) => String(l.id) === String(labelId));
+      console.log(`[${logContext}] Label ${labelId} exists on account: ${idExists} | available: ${JSON.stringify(liveLabels.map((l) => `${l.id}:${l.name}`)).slice(0, 500)}`);
+
+      if (!idExists && labelNameHint) {
+        const wanted = String(labelNameHint).trim().toLowerCase();
+        const norm = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase();
+        const match = liveLabels.find((l) => norm(l.name) === norm(wanted))
+          || liveLabels.find((l) => norm(l.name).startsWith(norm(wanted)) || norm(wanted).startsWith(norm(l.name)));
+        if (match) {
+          console.log(`[${logContext}] Retry with resolved label id ${match.id} for name "${labelNameHint}"`);
+          const retry = await postChatLabel(uazapiUrl, uazapiToken, phoneNumber, match.id, shouldBePresent, `${logContext}:retry`);
+          res = retry.res;
+          resPayload = retry.payload;
+          if (res.ok) {
+            return { success: true, changed: true, already: false, details: { ...(resPayload || {}), resolved_label_id: match.id } };
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`[${logContext}] Label self-heal failed:`, e);
+    }
+  }
 
   if (!res.ok) {
     const errorMsg = getCustomToolRequestError(res, resPayload);
@@ -7588,6 +7631,7 @@ async function ensureChatLabelState(
   console.log(`[${logContext}] Label ${labelId} ${shouldBePresent ? "added" : "removed"} successfully`);
   return { success: true, changed: true, already: false, details: resPayload };
 }
+
 
 function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: string, contentType: string | null): string {
   try {
