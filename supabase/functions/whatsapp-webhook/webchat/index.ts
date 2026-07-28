@@ -205,13 +205,20 @@ export async function handleWebChatRequest(
 
   const { data: session } = await svc
     .from("web_chat_sessions")
-    .select("id,tenant_id,phone_number,token,display_name")
+    .select("id,tenant_id,phone_number,token,display_name,web_started_at")
     .eq("token", token)
     .maybeSingle();
   if (!session) return json({ error: "session_not_found" }, 404);
 
   const { data: tenant } = await svc.from("tenants").select("*").eq("id", session.tenant_id).maybeSingle();
   if (!tenant || tenant.status !== "active") return json({ error: "tenant_unavailable" }, 404);
+
+  // A conversa do site começa do zero: nada do histórico anterior do WhatsApp
+  // aparece aqui nem entra no contexto da IA. Marcamos o início no primeiro acesso.
+  let webStartedAt: string = session.web_started_at || new Date().toISOString();
+  if (!session.web_started_at) {
+    await svc.from("web_chat_sessions").update({ web_started_at: webStartedAt }).eq("id", session.id);
+  }
 
   await svc.from("web_chat_sessions").update({ last_seen_at: new Date().toISOString() }).eq("id", session.id);
 
@@ -221,6 +228,7 @@ export async function handleWebChatRequest(
       .select("role,content,created_at")
       .eq("tenant_id", tenant.id)
       .eq("phone_number", session.phone_number)
+      .gte("created_at", webStartedAt)
       .order("created_at", { ascending: false })
       .limit(HISTORY_LIMIT);
     return (data || []).reverse() as { role: string; content: string; created_at?: string }[];
