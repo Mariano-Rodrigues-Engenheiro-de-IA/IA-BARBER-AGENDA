@@ -197,6 +197,23 @@ export default function TenantsPage() {
         )}
       </div>
 
+      <AlertDialog open={!!archiveId} onOpenChange={() => setArchiveId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Arquivar empresa</AlertDialogTitle>
+            <AlertDialogDescription>
+              A empresa sai da lista de empresas, mas nada é apagado — nenhuma configuração, conversa ou integração é alterada.
+              Você pode desarquivar depois em Configurações → Empresas arquivadas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleArchive}>Arquivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
