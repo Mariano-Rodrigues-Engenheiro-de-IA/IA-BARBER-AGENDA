@@ -5,7 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 
 export default function DashboardPage() {
-  const { data: tenants, isLoading } = useTenants();
+  const { data: allTenants, isLoading } = useTenants();
+  const tenants = allTenants?.filter((t) => !(t as any).archived);
 
   const stats = {
     total: tenants?.length ?? 0,
