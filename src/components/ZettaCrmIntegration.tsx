@@ -204,6 +204,33 @@ export function ZettaCrmIntegration({ tenantId }: { tenantId: string }) {
           <p className="text-xs text-muted-foreground">
             As etapas desse funil viram, automaticamente, as ações que a IA pode usar para mover o lead.
           </p>
+
+          {selectedFunnelId && (
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <p className="text-xs font-medium text-foreground mb-2">Etapas deste funil (ações da IA):</p>
+              {(() => {
+                const selected =
+                  (funnels ?? []).find((f) => f.id === selectedFunnelId) ??
+                  (tenant?.crm_zetta_funnel_id === selectedFunnelId
+                    ? { stages: tenant?.crm_zetta_stages ?? [] }
+                    : null);
+                const stages = selected?.stages ?? [];
+                if (stages.length === 0) {
+                  return <p className="text-xs text-muted-foreground">Esse funil ainda não tem nenhuma etapa cadastrada.</p>;
+                }
+                return (
+                  <ul className="space-y-1">
+                    {stages.map((s) => (
+                      <li key={s.id} className="text-xs text-muted-foreground flex items-center gap-1.5">
+                        <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
+                        {s.name}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
