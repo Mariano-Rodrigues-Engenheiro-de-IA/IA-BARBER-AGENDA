@@ -77,15 +77,26 @@ export default function TenantsPage() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar por nome ou e-mail..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome ou e-mail..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {isAdmin && archivedCount > 0 && (
+          <Button variant="outline" asChild>
+            <Link to="/settings">
+              <Archive className="w-4 h-4 mr-2" />
+              {archivedCount} arquivada{archivedCount > 1 ? "s" : ""}
+            </Link>
+          </Button>
+        )}
       </div>
+
 
       <div className="glass-card overflow-hidden">
         {isLoading ? (
