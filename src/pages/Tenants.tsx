@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
+import { useTenants, useDeleteTenant, useArchiveTenant } from "@/hooks/useTenants";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe, Archive } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -21,15 +21,21 @@ import {
 export default function TenantsPage() {
   const { data: tenants, isLoading } = useTenants();
   const deleteTenant = useDeleteTenant();
+  const archiveTenant = useArchiveTenant();
   const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
 
-  const filtered = tenants?.filter(
-    (t) =>
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  const archivedCount = tenants?.filter((t) => (t as any).archived).length ?? 0;
+
+  const filtered = tenants
+    ?.filter((t) => !(t as any).archived)
+    .filter(
+      (t) =>
+        t.name.toLowerCase().includes(search.toLowerCase()) ||
+        t.email?.toLowerCase().includes(search.toLowerCase())
+    );
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -41,6 +47,18 @@ export default function TenantsPage() {
     }
     setDeleteId(null);
   };
+
+  const handleArchive = async () => {
+    if (!archiveId) return;
+    try {
+      await archiveTenant.mutateAsync({ id: archiveId, archived: true });
+      toast.success("Empresa arquivada. Você pode restaurá-la em Configurações.");
+    } catch {
+      toast.error("Erro ao arquivar empresa");
+    }
+    setArchiveId(null);
+  };
+
 
   return (
     <div className="space-y-6">
@@ -59,15 +77,26 @@ export default function TenantsPage() {
         </Button>
       </div>
 
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar por nome ou e-mail..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative max-w-sm flex-1 min-w-[220px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome ou e-mail..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {isAdmin && archivedCount > 0 && (
+          <Button variant="outline" asChild>
+            <Link to="/settings">
+              <Archive className="w-4 h-4 mr-2" />
+              {archivedCount} arquivada{archivedCount > 1 ? "s" : ""}
+            </Link>
+          </Button>
+        )}
       </div>
+
 
       <div className="glass-card overflow-hidden">
         {isLoading ? (
@@ -141,6 +170,16 @@ export default function TenantsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => setArchiveId(tenant.id)}
+                          title="Arquivar"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="hover:text-destructive"
                           onClick={() => setDeleteId(tenant.id)}
                           title="Excluir"
@@ -148,6 +187,7 @@ export default function TenantsPage() {
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
+
                     </td>
                   </tr>
                 ))}
@@ -156,6 +196,23 @@ export default function TenantsPage() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!archiveId} onOpenChange={() => setArchiveId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Arquivar empresa</AlertDialogTitle>
+            <AlertDialogDescription>
+              A empresa sai da lista de empresas, mas nada é apagado — nenhuma configuração, conversa ou integração é alterada.
+              Você pode desarquivar depois em Configurações → Empresas arquivadas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleArchive}>Arquivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
 
       <AlertDialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <AlertDialogContent>

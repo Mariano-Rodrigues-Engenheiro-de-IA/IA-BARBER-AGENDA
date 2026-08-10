@@ -791,6 +791,8 @@ export type Database = {
           appbarber_api_key: string | null
           appbarber_base_url: string | null
           appbarber_establishment_code: string | null
+          archived: boolean
+          archived_at: string | null
           bemp_domain: string | null
           bemp_token: string | null
           booking_link: string | null
@@ -838,6 +840,8 @@ export type Database = {
           appbarber_api_key?: string | null
           appbarber_base_url?: string | null
           appbarber_establishment_code?: string | null
+          archived?: boolean
+          archived_at?: string | null
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null
@@ -885,6 +889,8 @@ export type Database = {
           appbarber_api_key?: string | null
           appbarber_base_url?: string | null
           appbarber_establishment_code?: string | null
+          archived?: boolean
+          archived_at?: string | null
           bemp_domain?: string | null
           bemp_token?: string | null
           booking_link?: string | null

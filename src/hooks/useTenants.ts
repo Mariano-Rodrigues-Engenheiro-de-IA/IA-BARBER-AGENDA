@@ -6,7 +6,7 @@ export type Tenant = Tables<"tenants">;
 export type TenantInsert = TablesInsert<"tenants">;
 export type TenantUpdate = TablesUpdate<"tenants">;
 
-const TENANT_LIST_COLUMNS = "id,name,slug,phone,email,address,status,api_provider,trinks_api_key,trinks_establishment_id,onebeleza_token,onebeleza_celular,booking_link,uazapi_token,uazapi_url,whatsapp_number,visibility,created_by,created_at,updated_at" as const;
+const TENANT_LIST_COLUMNS = "id,name,slug,phone,email,address,status,api_provider,trinks_api_key,trinks_establishment_id,onebeleza_token,onebeleza_celular,booking_link,uazapi_token,uazapi_url,whatsapp_number,visibility,created_by,archived,archived_at,created_at,updated_at" as const;
 
 export function useTenants() {
   return useQuery({
@@ -67,6 +67,20 @@ export function useUpdateTenant() {
         .single();
       if (error) throw error;
       return data;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
+  });
+}
+
+export function useArchiveTenant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
+      const { error } = await supabase
+        .from("tenants")
+        .update({ archived, archived_at: archived ? new Date().toISOString() : null })
+        .eq("id", id);
+      if (error) throw error;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
   });
