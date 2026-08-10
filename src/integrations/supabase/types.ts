@@ -807,6 +807,10 @@ export type Database = {
           chat_site_welcome_message: string | null
           created_at: string
           created_by: string | null
+          crm_zetta_funnel_id: string | null
+          crm_zetta_funnel_name: string | null
+          crm_zetta_stages: Json | null
+          crm_zetta_token: string | null
           economic_mode_enabled: boolean
           email: string | null
           frizzar_base_url: string | null
@@ -856,6 +860,10 @@ export type Database = {
           chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          crm_zetta_funnel_id?: string | null
+          crm_zetta_funnel_name?: string | null
+          crm_zetta_stages?: Json | null
+          crm_zetta_token?: string | null
           economic_mode_enabled?: boolean
           email?: string | null
           frizzar_base_url?: string | null
@@ -905,6 +913,10 @@ export type Database = {
           chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          crm_zetta_funnel_id?: string | null
+          crm_zetta_funnel_name?: string | null
+          crm_zetta_stages?: Json | null
+          crm_zetta_token?: string | null
           economic_mode_enabled?: boolean
           email?: string | null
           frizzar_base_url?: string | null
