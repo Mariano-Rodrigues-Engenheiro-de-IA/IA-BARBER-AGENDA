@@ -29,7 +29,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const counts = {
-    tenants: tenants?.length ?? 0,
+    // Só não-arquivadas — o número no menu não pode contar as
+    // arquivadas, mesmo padrão usado no Dashboard.
+    tenants: tenants?.filter((t) => !(t as any).archived).length ?? 0,
   };
   const visibleNav = navItems.filter((i) => {
     if (!i.module) return true;
