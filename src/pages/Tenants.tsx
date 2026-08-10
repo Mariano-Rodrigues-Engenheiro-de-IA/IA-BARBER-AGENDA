@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useTenants, useDeleteTenant } from "@/hooks/useTenants";
+import { useTenants, useDeleteTenant, useArchiveTenant } from "@/hooks/useTenants";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe } from "lucide-react";
+import { Plus, Search, Trash2, Pencil, Building2, BarChart3, Lock, Globe, Archive } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -21,15 +21,21 @@ import {
 export default function TenantsPage() {
   const { data: tenants, isLoading } = useTenants();
   const deleteTenant = useDeleteTenant();
+  const archiveTenant = useArchiveTenant();
   const { isAdmin } = useAuth();
   const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [archiveId, setArchiveId] = useState<string | null>(null);
 
-  const filtered = tenants?.filter(
-    (t) =>
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.email?.toLowerCase().includes(search.toLowerCase())
-  );
+  const archivedCount = tenants?.filter((t) => (t as any).archived).length ?? 0;
+
+  const filtered = tenants
+    ?.filter((t) => !(t as any).archived)
+    .filter(
+      (t) =>
+        t.name.toLowerCase().includes(search.toLowerCase()) ||
+        t.email?.toLowerCase().includes(search.toLowerCase())
+    );
 
   const handleDelete = async () => {
     if (!deleteId) return;
@@ -41,6 +47,18 @@ export default function TenantsPage() {
     }
     setDeleteId(null);
   };
+
+  const handleArchive = async () => {
+    if (!archiveId) return;
+    try {
+      await archiveTenant.mutateAsync({ id: archiveId, archived: true });
+      toast.success("Empresa arquivada. Você pode restaurá-la em Configurações.");
+    } catch {
+      toast.error("Erro ao arquivar empresa");
+    }
+    setArchiveId(null);
+  };
+
 
   return (
     <div className="space-y-6">
