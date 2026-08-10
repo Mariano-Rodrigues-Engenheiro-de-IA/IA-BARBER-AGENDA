@@ -8924,8 +8924,22 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
     customToolsSection = `\n\n------------------------------------------\n\n## 🔧 FERRAMENTAS CUSTOMIZADAS\n\nVocê tem acesso às seguintes ferramentas extras. Use conforme as instruções:\n\n${toolInstructions}\n\n⚠️ Quando usar uma ferramenta customizada, a mensagem/mídia será enviada DIRETAMENTE ao cliente. Após executar, confirme ao cliente que enviou (ex: "Enviei a localização!" ou "Mandei a chave PIX!"). NÃO repita o conteúdo da ferramenta na mensagem de texto.`;
   }
 
+  // Instrução sobre as ferramentas de mover lead pelo funil do CRM externo
+  // (uma ferramenta por etapa, geradas em buildToolsForProvider). Sem essa
+  // seção explícita, o modelo depende só da description de cada tool para
+  // decidir usar — funciona, mas fica mais confiável com uma instrução
+  // dedicada, no mesmo padrão das ferramentas customizadas acima.
+  const crmStagesForPrompt = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
+  let crmToolsSection = "";
+  if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStagesForPrompt.length > 0) {
+    const stageList = crmStagesForPrompt
+      .map((s: { id: string; name: string }) => `- "${s.name}" (ferramenta: crm_mover_para_${s.id})`)
+      .join("\n");
+    crmToolsSection = `\n\n------------------------------------------\n\n## 📋 FUNIL DE VENDAS (CRM)\n\nEste lead está sendo acompanhado num funil de vendas com as seguintes etapas:\n\n${stageList}\n\nMova o lead para a etapa correta assim que um sinal claro da conversa indicar mudança de estágio (ex: o lead respondeu pela primeira vez, demonstrou interesse, perguntou preço, confirmou, ou desistiu — dependendo do que cada etapa acima representa no seu funil). Mover para uma etapa nova já tira o lead da etapa anterior automaticamente, não é preciso "remover" antes. Não mova a cada mensagem — só quando o estágio realmente mudar.`;
+  }
+
   // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
-  return basePrompt + "\n\n" + customSection + customToolsSection + "\n\n" + providerPrompt;
+  return basePrompt + "\n\n" + customSection + customToolsSection + crmToolsSection + "\n\n" + providerPrompt;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================
