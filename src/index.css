@@ -112,21 +112,22 @@
      tema claro ou escuro que já estiver ativo. */
   .theme-frizzar {
     color-scheme: light;
-    /* Área principal (fora da barra lateral): fundo branco puro, com os
-       blocos/cards em cinza bem claro — cores reais do produto da
-       Frizzar, extraídas do print do painel deles. */
-    --background: 0 0% 100%;
+    /* Área principal (fora da barra lateral): fundo cinza (não mais
+       branco — o Mariano pediu pra bater com a identidade real da
+       Frizzar, cujo fundo é cinza), com os blocos/cards num cinza
+       mais escuro que o fundo, pra se destacarem visualmente. */
+    --background: 0 0% 90%;
     --foreground: 222 30% 16%;
-    --card: 0 0% 94%;
+    --card: 0 0% 80%;
     --card-foreground: 222 30% 16%;
     --popover: 0 0% 100%;
     --popover-foreground: 222 30% 16%;
-    --secondary: 0 0% 94%;
+    --secondary: 0 0% 80%;
     --secondary-foreground: 222 26% 20%;
-    --muted: 0 0% 94%;
-    --muted-foreground: 215 18% 42%;
-    --border: 0 0% 88%;
-    --input: 0 0% 88%;
+    --muted: 0 0% 82%;
+    --muted-foreground: 215 18% 38%;
+    --border: 0 0% 74%;
+    --input: 0 0% 74%;
 
     --primary: 217 56% 65%;
     --primary-foreground: 217 40% 15%;
@@ -147,12 +148,12 @@
     /* Faltavam essas — a tela de Conversas usa cores próprias (não as
        genéricas de --background/--card), por isso continuava escura
        mesmo com o resto do tema já claro. */
-    --wa-chat-bg: 0 0% 96%;
-    --wa-bubble-out: 217 56% 90%;
+    --wa-chat-bg: 0 0% 88%;
+    --wa-bubble-out: 217 56% 88%;
     --wa-bubble-out-fg: 217 40% 15%;
-    --wa-bubble-in: 0 0% 100%;
+    --wa-bubble-in: 0 0% 98%;
     --wa-bubble-in-fg: 222 30% 16%;
-    --wa-panel: 0 0% 94%;
+    --wa-panel: 0 0% 80%;
   }
 }
 
