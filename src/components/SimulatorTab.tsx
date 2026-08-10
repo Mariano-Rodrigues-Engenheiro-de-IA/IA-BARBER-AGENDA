@@ -52,12 +52,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
   return (
     <div className="conversas-panel p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 240px)" }}>
       <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Simulador da IA</h3>
-          <p className="text-xs text-muted-foreground">
-            Converse como se fosse um cliente. Ferramentas que criam/cancelam agendamentos são bloqueadas — nada chega no WhatsApp real.
-          </p>
-        </div>
+        <h3 className="font-semibold">Simulador da IA</h3>
         <Button variant="outline" size="sm" onClick={clear} disabled={loading || messages.length === 0}>
           <Trash2 className="w-4 h-4 mr-2" />Limpar
         </Button>
@@ -109,7 +104,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
           }}
           placeholder="Digite uma mensagem como se fosse o cliente..."
-          className="min-h-[44px] max-h-32 resize-none"
+          className="min-h-[44px] max-h-32 resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
         />
         <Button onClick={send} disabled={loading || !input.trim()}>

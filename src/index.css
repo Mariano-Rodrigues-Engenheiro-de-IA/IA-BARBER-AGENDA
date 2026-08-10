@@ -194,18 +194,20 @@
     @apply border-2 border-neutral-300;
   }
 
-  /* Seletor de abas da tela "Sua IA": fundo cinza-chumbo igual à barra
-     lateral, texto claro — dá a sensação de ser uma extensão do menu,
-     como pedido pelo Mariano. */
+  /* Seletor de abas da tela "Sua IA": branco com borda definida, igual
+     ao padrão dos cards do dashboard — a versão cinza-chumbo (igual à
+     sidebar) ficou pesada demais, o Mariano preferiu manter o mesmo
+     visual "clean" usado no resto do sistema. */
   .theme-frizzar .ia-tabs-list {
-    background-color: hsl(var(--sidebar-background));
+    background-color: hsl(var(--card));
+    border: 2px solid hsl(0 0% 82%);
   }
   .theme-frizzar .ia-tabs-list [data-state="inactive"] {
-    color: hsl(var(--sidebar-foreground) / 0.7);
+    color: hsl(var(--muted-foreground));
   }
   .theme-frizzar .ia-tabs-list [data-state="active"] {
-    background-color: hsl(var(--sidebar-accent));
-    color: hsl(var(--sidebar-foreground));
+    background-color: hsl(0 0% 92%);
+    color: hsl(var(--foreground));
   }
 
   .gradient-text {

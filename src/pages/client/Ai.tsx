@@ -151,7 +151,7 @@ export default function ClientAi() {
   if (!tenant) return <p className="text-muted-foreground">Carregando...</p>;
 
   const tabs = [
-    { v: "ai", label: "IA", show: ai.visible },
+    { v: "ai", label: "Prompt", show: ai.visible },
     { v: "tools", label: "Ferramentas", show: toolsPerm.visible },
     { v: "company", label: "Sua empresa", show: company.visible },
     { v: "integ", label: "Integrações", show: integ.visible },
