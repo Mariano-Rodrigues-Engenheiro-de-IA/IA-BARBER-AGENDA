@@ -197,7 +197,7 @@ export default function ClientAi() {
 
               <Textarea
                 disabled={!ai.editable}
-                className="flex-1 min-h-[500px] resize-none font-mono text-sm disabled:opacity-100 disabled:text-foreground/70"
+                className="flex-1 min-h-[500px] resize-none font-mono text-sm bg-[hsl(210,30%,98%)] disabled:opacity-100 disabled:text-foreground/70"
                 value={form.agent_system_prompt ?? ""}
                 onChange={(e) => setForm({ ...form, agent_system_prompt: e.target.value })}
               />
