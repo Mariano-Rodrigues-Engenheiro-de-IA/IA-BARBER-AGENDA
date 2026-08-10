@@ -72,6 +72,20 @@ export function useUpdateTenant() {
   });
 }
 
+export function useArchiveTenant() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, archived }: { id: string; archived: boolean }) => {
+      const { error } = await supabase
+        .from("tenants")
+        .update({ archived, archived_at: archived ? new Date().toISOString() : null })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["tenants"] }),
+  });
+}
+
 export function useDeleteTenant() {
   const queryClient = useQueryClient();
   return useMutation({
