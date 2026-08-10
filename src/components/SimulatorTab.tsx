@@ -99,7 +99,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
         {/* Campo de digitação flutuando por cima do papel de parede, como
             no WhatsApp real — não fica numa faixa separada fora dele. */}
         <div className="sticky bottom-0 pt-3 flex gap-2 items-center">
-          <div className="flex-1 flex items-center rounded-full bg-background shadow-sm px-4 py-2">
+          <div className="flex-1 flex items-center rounded-full bg-white shadow-sm px-4 py-2">
             <Textarea
               ref={inputRef}
               value={input}
