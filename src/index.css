@@ -111,11 +111,30 @@
      elemento raiz quando tenant.api_provider === "frizzar", em cima do
      tema claro ou escuro que já estiver ativo. */
   .theme-frizzar {
+    color-scheme: light;
+    /* Área principal (fora da barra lateral): fundo branco puro, com os
+       blocos/cards em cinza bem claro — cores reais do produto da
+       Frizzar, extraídas do print do painel deles. */
+    --background: 0 0% 100%;
+    --foreground: 222 30% 16%;
+    --card: 0 0% 94%;
+    --card-foreground: 222 30% 16%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 16%;
+    --secondary: 0 0% 94%;
+    --secondary-foreground: 222 26% 20%;
+    --muted: 0 0% 94%;
+    --muted-foreground: 215 18% 42%;
+    --border: 0 0% 88%;
+    --input: 0 0% 88%;
+
     --primary: 217 56% 65%;
     --primary-foreground: 217 40% 15%;
     --ring: 217 56% 65%;
     --accent: 217 56% 65%;
     --accent-foreground: 217 40% 15%;
+
+    /* Barra lateral continua escura — só a área principal vira clara. */
     --sidebar-background: 202 11% 15%;
     --sidebar-foreground: 0 0% 96%;
     --sidebar-primary: 217 56% 65%;

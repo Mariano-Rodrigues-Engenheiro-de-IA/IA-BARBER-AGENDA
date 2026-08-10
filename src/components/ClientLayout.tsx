@@ -99,14 +99,16 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <img
             src="/frizzar/frizzar-logo-horizontal-white.png"
             alt="Frizzar"
-            className="h-7 w-auto object-contain"
+            className="h-7 w-auto object-contain select-none"
+            draggable={false}
           />
         ) : (
           <div className="flex items-center gap-3">
             <img
               src={tenant?.logo_url || logoZaylo}
               alt="Logo"
-              className="w-10 h-10 rounded-xl object-contain bg-background"
+              className="w-10 h-10 rounded-xl object-contain bg-background select-none"
+              draggable={false}
               onError={(e) => { (e.currentTarget as HTMLImageElement).src = logoZaylo; }}
             />
             <div className="min-w-0">
