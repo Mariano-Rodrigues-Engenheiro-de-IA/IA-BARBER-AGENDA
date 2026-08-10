@@ -30,7 +30,7 @@ function NavRow({ item, onClick }: { item: NavItem; onClick: () => void }) {
     <Link to={item.to} onClick={onClick}
       className={cn(
         "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-        isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground hover:bg-muted",
+        isActive ? "bg-primary/10 text-primary" : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent",
       )}>
       <item.icon className="w-4 h-4" />
       <span className="flex-1">{item.label}</span>
@@ -125,7 +125,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
       <div className="p-4 border-t border-border space-y-3">
         <Button
           variant={tenant?.agent_paused ? "default" : "outline"}
-          size="sm" className="w-full justify-start gap-2" onClick={togglePause}>
+          size="sm"
+          className={cn(
+            "w-full justify-start gap-2",
+            !tenant?.agent_paused && "border-sidebar-border text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+          )}
+          onClick={togglePause}
+        >
           {tenant?.agent_paused ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
           {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
         </Button>
@@ -134,10 +140,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
             <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
           </Avatar>
-          <p className="text-xs text-muted-foreground truncate flex-1">{user?.email}</p>
+          <p className="text-xs text-sidebar-foreground/70 truncate flex-1">{user?.email}</p>
         </div>
         <ThemeToggle />
-        <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-muted-foreground hover:text-destructive" onClick={signOut}>
+        <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-sidebar-foreground/70 hover:text-destructive" onClick={signOut}>
           <LogOut className="w-4 h-4" />Sair
         </Button>
       </div>
