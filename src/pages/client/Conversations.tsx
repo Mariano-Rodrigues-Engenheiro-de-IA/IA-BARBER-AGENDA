@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
-import { Search, MessageCircle, Trash2, Loader2, Bot, BotOff } from "lucide-react";
+import { Search, MessageCircle, Trash2, Loader2, Bot, BotOff, NotebookText } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -96,6 +96,7 @@ export default function ClientConversations() {
     ? new URLSearchParams(window.location.search).get("phone")
     : null;
   const [selected, setSelected] = useState<string | null>(initialPhone);
+  const [showSummary, setShowSummary] = useState(false);
   const [search, setSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -326,7 +327,7 @@ export default function ClientConversations() {
                 placeholder="Pesquisar ou começar nova conversa"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-9 rounded-full bg-muted/40 border-transparent focus-visible:ring-1"
+                className="pl-9 rounded-full bg-background border-transparent focus-visible:ring-1"
               />
             </div>
           </div>
@@ -334,7 +335,7 @@ export default function ClientConversations() {
             {contacts.map((c) => (
               <div
                 key={c.phone}
-                onClick={() => setSelected(c.phone)}
+                onClick={() => { setSelected(c.phone); setShowSummary(false); }}
                 className={`group flex w-full cursor-pointer items-center gap-3 border-b border-border/30 px-3 py-3 text-left transition-colors hover:bg-muted/50 ${
                   selected === c.phone ? "bg-muted" : ""
                 }`}
@@ -426,6 +427,17 @@ export default function ClientConversations() {
                     <><Bot className="w-4 h-4 mr-2" />Pausar IA</>
                   )}
                 </Button>
+                {leadSummary?.ai_summary && (
+                  <Button
+                    variant={showSummary ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setShowSummary((v) => !v)}
+                    className={showSummary ? "" : "text-muted-foreground"}
+                    title="Ver resumo da IA sobre este contato"
+                  >
+                    <NotebookText className="w-4 h-4 mr-2" />Resumo
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -436,7 +448,7 @@ export default function ClientConversations() {
                   Excluir
                 </Button>
               </div>
-              {leadSummary?.ai_summary && (
+              {showSummary && leadSummary?.ai_summary && (
                 <div className="px-4 py-2.5 border-b border-border bg-background/40">
                   <div className="max-w-3xl mx-auto flex gap-2 items-start">
                     <Bot className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary" />

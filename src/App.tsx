@@ -26,6 +26,7 @@ import ClientConversations from "@/pages/client/Conversations";
 import ClientFollowUps from "@/pages/client/FollowUps";
 import ClientCrm from "@/pages/client/Crm";
 import ClientAi from "@/pages/client/Ai";
+import ClientSimulator from "@/pages/client/Simulator";
 import ClientConnection from "@/pages/client/Connection";
 import ClientChatSite from "@/pages/ClientChatSite";
 import NotFound from "@/pages/NotFound";
@@ -101,6 +102,7 @@ function AppRoutes() {
       <Route path="/app/followups" element={<ClientRoute><ClientFollowUps /></ClientRoute>} />
       <Route path="/app/crm" element={<ClientRoute><ClientCrm /></ClientRoute>} />
       <Route path="/app/ai" element={<ClientRoute><ClientAi /></ClientRoute>} />
+      <Route path="/app/simulator" element={<ClientRoute><ClientSimulator /></ClientRoute>} />
       <Route path="/app/connection" element={<ClientRoute><ClientConnection /></ClientRoute>} />
       
 

@@ -15,7 +15,6 @@ import { toast } from "sonner";
 import { Save } from "lucide-react";
 import { CustomToolsTab, type CustomTool } from "@/components/CustomToolsTab";
 import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
-import { SimulatorTab } from "@/components/SimulatorTab";
 
 
 export default function ClientAi() {
@@ -153,7 +152,6 @@ export default function ClientAi() {
 
   const tabs = [
     { v: "ai", label: "IA", show: ai.visible },
-    { v: "simulator", label: "Simulador", show: ai.visible },
     { v: "tools", label: "Ferramentas", show: toolsPerm.visible },
     { v: "company", label: "Sua empresa", show: company.visible },
     { v: "integ", label: "Integrações", show: integ.visible },
@@ -170,7 +168,7 @@ export default function ClientAi() {
       </div>
 
       <Tabs defaultValue={tabs[0]?.v ?? "ai"}>
-        <TabsList>
+        <TabsList className="ia-tabs-list">
           {tabs.map((t) => <TabsTrigger key={t.v} value={t.v}>{t.label}</TabsTrigger>)}
         </TabsList>
 
@@ -209,12 +207,6 @@ export default function ClientAi() {
                 </Button>
               )}
             </div>
-          </TabsContent>
-        )}
-
-        {ai.visible && (
-          <TabsContent value="simulator" className="space-y-4">
-            <SimulatorTab tenantId={tenantId!} />
           </TabsContent>
         )}
 

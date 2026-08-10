@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LayoutDashboard, MessageCircle, Clock, LogOut, Menu, Kanban, Power, PowerOff, Smartphone, Bot } from "lucide-react";
+import { LayoutDashboard, MessageCircle, Clock, LogOut, Menu, Kanban, Power, PowerOff, Smartphone, Bot, TestTube2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import logoZaylo from "@/assets/logo-zaylo.png";
@@ -18,6 +18,7 @@ const NAV: NavItem[] = [
   { to: "/app/followups", icon: Clock, label: "Follow-ups", module: "followups" },
   { to: "/app/crm", icon: Kanban, label: "CRM", module: "crm" },
   { to: "/app/ai", icon: Bot, label: "Sua IA", module: "ai_prompt" },
+  { to: "/app/simulator", icon: TestTube2, label: "Simulador", module: "ai_prompt" },
   { to: "/app/connection", icon: Smartphone, label: "Conexão", module: "connection" },
 ];
 

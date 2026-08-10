@@ -194,6 +194,20 @@
     @apply border-2 border-neutral-300;
   }
 
+  /* Seletor de abas da tela "Sua IA": fundo cinza-chumbo igual à barra
+     lateral, texto claro — dá a sensação de ser uma extensão do menu,
+     como pedido pelo Mariano. */
+  .theme-frizzar .ia-tabs-list {
+    background-color: hsl(var(--sidebar-background));
+  }
+  .theme-frizzar .ia-tabs-list [data-state="inactive"] {
+    color: hsl(var(--sidebar-foreground) / 0.7);
+  }
+  .theme-frizzar .ia-tabs-list [data-state="active"] {
+    background-color: hsl(var(--sidebar-accent));
+    color: hsl(var(--sidebar-foreground));
+  }
+
   .gradient-text {
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }
