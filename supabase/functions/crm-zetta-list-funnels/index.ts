@@ -4,14 +4,18 @@
 // roda do lado do servidor, sem essa restrição.
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 
-const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
 const ZETTA_API_BASE = "https://crm.zayloia.com";
 
 function buildCorsHeaders(origin: string | null) {
-  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  // A segurança real dessa function vem da autenticação (JWT do usuário
+  // logado, verificada abaixo) — o CORS aqui só existe pra permitir a
+  // chamada do navegador, então ecoa a origem real da chamada em vez de
+  // manter uma lista fixa de domínios (que muda: preview da Lovable,
+  // domínio próprio depois, etc.).
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": origin ?? "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    Vary: "Origin",
   };
 }
 
