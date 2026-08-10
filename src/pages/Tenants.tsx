@@ -170,6 +170,16 @@ export default function TenantsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => setArchiveId(tenant.id)}
+                          title="Arquivar"
+                        >
+                          <Archive className="w-4 h-4" />
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="hover:text-destructive"
                           onClick={() => setDeleteId(tenant.id)}
                           title="Excluir"
@@ -177,6 +187,7 @@ export default function TenantsPage() {
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       )}
+
                     </td>
                   </tr>
                 ))}
