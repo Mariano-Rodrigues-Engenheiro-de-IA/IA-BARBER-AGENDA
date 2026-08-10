@@ -58,58 +58,64 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
         </Button>
       </div>
 
-      <div ref={scrollRef} className="wa-chat-area flex-1 overflow-y-auto space-y-3 rounded-md border border-border/40 p-3 bg-[hsl(var(--wa-chat-bg))]">
-        {messages.length === 0 && !loading && (
-          <p className="text-sm text-muted-foreground text-center mt-8">
-            Mande uma mensagem para começar a testar a IA.
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap shadow-sm ${
-              m.role === "user"
-                ? "bg-[hsl(var(--wa-bubble-out))] text-[hsl(var(--wa-bubble-out-fg))]"
-                : "bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))]"
-            }`}>
-              {m.content}
-              {m.toolCalls && m.toolCalls.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
-                  {m.toolCalls.map((tc: any, j: number) => (
-                    <div key={j} className="text-[11px] flex items-center gap-1 opacity-80">
-                      <Wrench className="w-3 h-3" />
-                      <span className="font-mono">{tc.name || tc.tool || "tool"}</span>
-                      {tc.simulated && <span className="text-amber-500">(simulada)</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
+      <div ref={scrollRef} className="wa-chat-area flex-1 overflow-y-auto rounded-md border border-border/40 p-3 bg-[hsl(var(--wa-chat-bg))] flex flex-col">
+        <div className="flex-1 space-y-3">
+          {messages.length === 0 && !loading && (
+            <p className="text-sm text-muted-foreground text-center mt-8">
+              Mande uma mensagem para começar a testar a IA.
+            </p>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm whitespace-pre-wrap shadow-sm ${
+                m.role === "user"
+                  ? "bg-[hsl(var(--wa-bubble-out))] text-[hsl(var(--wa-bubble-out-fg))]"
+                  : "bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))]"
+              }`}>
+                {m.content}
+                {m.toolCalls && m.toolCalls.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+                    {m.toolCalls.map((tc: any, j: number) => (
+                      <div key={j} className="text-[11px] flex items-center gap-1 opacity-80">
+                        <Wrench className="w-3 h-3" />
+                        <span className="font-mono">{tc.name || tc.tool || "tool"}</span>
+                        {tc.simulated && <span className="text-amber-500">(simulada)</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
-        {loading && (
-          <div className="flex justify-start">
-            <div className="bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))] rounded-lg px-3 py-2 text-sm flex items-center gap-2 shadow-sm">
-              <Loader2 className="w-3 h-3 animate-spin" /> pensando...
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <div className="bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))] rounded-lg px-3 py-2 text-sm flex items-center gap-2 shadow-sm">
+                <Loader2 className="w-3 h-3 animate-spin" /> pensando...
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      <div className="flex gap-2 items-end">
-        <Textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
-          placeholder="Digite uma mensagem como se fosse o cliente..."
-          className="min-h-[44px] max-h-32 resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
-          disabled={loading}
-        />
-        <Button onClick={send} disabled={loading || !input.trim()}>
-          <Send className="w-4 h-4" />
-        </Button>
+        {/* Campo de digitação flutuando por cima do papel de parede, como
+            no WhatsApp real — não fica numa faixa separada fora dele. */}
+        <div className="sticky bottom-0 pt-3 flex gap-2 items-end">
+          <div className="flex-1 flex items-end gap-2 rounded-full bg-white shadow-sm px-3 py-1.5">
+            <Textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+              }}
+              placeholder="Digite uma mensagem"
+              className="min-h-[36px] max-h-32 resize-none border-none bg-transparent shadow-none px-0 py-1.5 focus-visible:ring-0 focus-visible:ring-offset-0"
+              disabled={loading}
+            />
+          </div>
+          <Button size="icon" className="rounded-full shrink-0" onClick={send} disabled={loading || !input.trim()}>
+            <Send className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );
