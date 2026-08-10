@@ -62,17 +62,24 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     if (!isFrizzar) return;
     const prevTitle = document.title;
     document.title = tenant?.name ? `${tenant.name} — Frizzar` : "Frizzar";
-    let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
-    const prevHref = link?.href;
-    if (!link) {
-      link = document.createElement("link");
-      link.rel = "icon";
-      document.head.appendChild(link);
-    }
+    const existing = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    const prevHref = existing?.href;
+    const weCreatedIt = !existing;
+    const link = existing ?? document.createElement("link");
+    link.rel = "icon";
+    if (weCreatedIt) document.head.appendChild(link);
     link.href = "/frizzar/frizzar-logo-circle-white.png";
     return () => {
       document.title = prevTitle;
-      if (link && prevHref) link.href = prevHref;
+      // Se não existia nenhum favicon antes de nós criarmos, remove o
+      // elemento inteiro na limpeza — tentar "restaurar" um href que
+      // nunca existiu deixava o ícone da Frizzar preso na aba mesmo
+      // depois de trocar pra uma conta que não é Frizzar.
+      if (weCreatedIt) {
+        link.remove();
+      } else if (prevHref) {
+        link.href = prevHref;
+      }
     };
   }, [isFrizzar, tenant?.name]);
 
