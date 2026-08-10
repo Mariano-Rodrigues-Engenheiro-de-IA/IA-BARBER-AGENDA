@@ -111,19 +111,19 @@
      elemento raiz quando tenant.api_provider === "frizzar", em cima do
      tema claro ou escuro que já estiver ativo. */
   .theme-frizzar {
-    --primary: 324 93% 41%;
-    --primary-foreground: 0 0% 100%;
-    --ring: 324 93% 41%;
-    --accent: 324 93% 41%;
-    --accent-foreground: 0 0% 100%;
+    --primary: 217 56% 65%;
+    --primary-foreground: 217 40% 15%;
+    --ring: 217 56% 65%;
+    --accent: 217 56% 65%;
+    --accent-foreground: 217 40% 15%;
     --sidebar-background: 202 11% 15%;
     --sidebar-foreground: 0 0% 96%;
-    --sidebar-primary: 324 93% 41%;
-    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-primary: 217 56% 65%;
+    --sidebar-primary-foreground: 217 40% 15%;
     --sidebar-accent: 206 10% 27%;
     --sidebar-accent-foreground: 0 0% 96%;
     --sidebar-border: 206 10% 22%;
-    --sidebar-ring: 324 93% 41%;
+    --sidebar-ring: 217 56% 65%;
   }
 }
 
