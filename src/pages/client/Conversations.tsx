@@ -390,7 +390,7 @@ export default function ClientConversations() {
         </div>
 
         {/* Chat panel */}
-        <div className="relative flex min-h-0 flex-col overflow-hidden bg-[hsl(var(--wa-chat-bg))]">
+        <div className="wa-chat-area relative flex min-h-0 flex-col overflow-hidden bg-[hsl(var(--wa-chat-bg))]">
           {!selected && (
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-3">
               <MessageCircle className="w-16 h-16 opacity-30" />

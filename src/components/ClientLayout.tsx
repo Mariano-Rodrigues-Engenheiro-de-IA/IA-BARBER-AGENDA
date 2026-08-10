@@ -142,7 +142,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </Avatar>
           <p className="text-xs text-sidebar-foreground/70 truncate flex-1">{user?.email}</p>
         </div>
-        <ThemeToggle />
+        {!isFrizzar && <ThemeToggle />}
         <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-sidebar-foreground/70 hover:text-destructive" onClick={signOut}>
           <LogOut className="w-4 h-4" />Sair
         </Button>
