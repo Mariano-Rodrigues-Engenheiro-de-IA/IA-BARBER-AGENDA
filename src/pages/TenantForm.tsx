@@ -13,13 +13,14 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban, Sparkles, Globe } from "lucide-react";
+import { ArrowLeft, Save, Eye, EyeOff, Plug, Loader2, CheckCircle2, XCircle, MessageSquare, Wrench, Plus, Pencil, Trash2, Upload, X, Clock, Kanban, Sparkles, Globe, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { SequencesEditor } from "@/components/SequencesEditor";
-import { KanbanBoardsManager } from "@/components/KanbanBoardsManager";
+import { IaOffFlagsManager } from "@/components/IaOffFlagsManager";
+import { ZettaCrmIntegration } from "@/components/ZettaCrmIntegration";
 import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -636,9 +637,13 @@ export default function TenantFormPage() {
               <Wrench className="w-3.5 h-3.5" />
               Ferramentas
             </TabsTrigger>
-            <TabsTrigger value="kanban" className="flex items-center gap-1">
+            <TabsTrigger value="ia_off" className="flex items-center gap-1">
               <Kanban className="w-3.5 h-3.5" />
-              Kanban
+              IA OFF
+            </TabsTrigger>
+            <TabsTrigger value="crm" className="flex items-center gap-1">
+              <Link2 className="w-3.5 h-3.5" />
+              CRM
             </TabsTrigger>
             <TabsTrigger value="sequences" className="flex items-center gap-1">
               <Sparkles className="w-3.5 h-3.5" />
@@ -1358,12 +1363,22 @@ export default function TenantFormPage() {
             <CustomToolsTab tools={customTools} onChange={setCustomTools} tenantId={id} />
           </TabsContent>
 
-          <TabsContent value="kanban" className="space-y-4">
+          <TabsContent value="ia_off" className="space-y-4">
             {id && id !== "new" ? (
-              <KanbanBoardsManager tenantId={id} />
+              <IaOffFlagsManager tenantId={id} />
             ) : (
               <div className="glass-card p-6 text-center text-muted-foreground">
-                Salve o estabelecimento primeiro para configurar os CRMs.
+                Salve o estabelecimento primeiro para configurar as marcações.
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="crm" className="space-y-4">
+            {id && id !== "new" ? (
+              <ZettaCrmIntegration tenantId={id} />
+            ) : (
+              <div className="glass-card p-6 text-center text-muted-foreground">
+                Salve o estabelecimento primeiro para configurar o CRM.
               </div>
             )}
           </TabsContent>

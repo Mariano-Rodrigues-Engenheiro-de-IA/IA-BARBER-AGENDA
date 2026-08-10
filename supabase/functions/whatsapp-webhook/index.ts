@@ -7364,6 +7364,22 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
       providerTools = buildTrinksTools(tenant);
   }
 
+  // Ferramentas do CRM externo: uma por etapa do funil conectado (ver aba
+  // "CRM" da configuração do estabelecimento). Cache de etapas
+  // (crm_zetta_stages) evita consultar a API externa a cada mensagem.
+  const crmStages = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
+  if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStages.length > 0) {
+    const crmTools = crmStages.map((stage: { id: string; name: string }) => ({
+      type: "function",
+      function: {
+        name: `crm_mover_para_${stage.id}`,
+        description: `Move o lead atual para a etapa "${stage.name}" do funil de vendas no CRM. Use quando um sinal claro da conversa indicar que o lead mudou de estágio nessa etapa (ex: chegou, respondeu, demonstrou interesse, confirmou, desistiu — dependendo do que essa etapa representa). Não chame para toda mensagem, só quando o estágio realmente mudou.`,
+        parameters: { type: "object", properties: {}, required: [] },
+      },
+    }));
+    providerTools = [...(providerTools || []), ...crmTools];
+  }
+
   // Universal client-summary tool (all providers)
   providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL];
 
@@ -7488,6 +7504,36 @@ async function executeToolForProvider(
     } catch (e: any) {
       console.error("[atualizar_resumo_cliente] failed:", e?.message);
       return { ok: false, error: e?.message || "Falha ao salvar resumo." };
+    }
+  }
+
+  // ===== CRM externo: crm_mover_para_{stage_id}
+  if (funcName.startsWith("crm_mover_para_")) {
+    const stageId = funcName.slice("crm_mover_para_".length);
+    if (!tenant?.crm_zetta_token || !tenant?.crm_zetta_funnel_id) {
+      return { ok: false, error: "Integração com o CRM não está configurada." };
+    }
+    if (simulator) {
+      return { ok: true, simulated: true, message: `Lead seria movido no CRM (simulado, etapa ${stageId}).` };
+    }
+    if (!phoneNumber) return { ok: false, error: "Telefone do lead indisponível." };
+    try {
+      const res = await fetch("https://crm.zayloia.com/api/public/ai/move-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+        body: JSON.stringify({ phone: phoneNumber, funnel: tenant.crm_zetta_funnel_id, stage: stageId }),
+      });
+      const text = await res.text();
+      let parsed: any;
+      try { parsed = JSON.parse(text); } catch { parsed = { raw: text.slice(0, 300) }; }
+      if (!res.ok || parsed?.ok === false) {
+        console.error(`[crm_mover_para] falhou (${res.status}):`, JSON.stringify(parsed).slice(0, 300));
+        return { ok: false, error: parsed?.error || `Falha ao mover lead (HTTP ${res.status})` };
+      }
+      return { ok: true, action: parsed.action };
+    } catch (e: any) {
+      console.error("[crm_mover_para] erro de rede:", e?.message);
+      return { ok: false, error: e?.message || "Falha de rede ao mover lead no CRM." };
     }
   }
 
