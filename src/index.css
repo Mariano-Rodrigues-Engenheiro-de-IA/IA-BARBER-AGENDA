@@ -104,6 +104,27 @@
     --wa-panel: 210 20% 99%;
     --panel-shadow: 0 20px 42px -28px hsl(220 30% 28% / 0.18);
   }
+
+  /* Tema white-label para clientes da parceria Frizzar — cores extraídas
+     do próprio painel deles (navbar cinza-azulado escuro, sidebar quase
+     preto, destaque magenta). Aplicado via classe .theme-frizzar no
+     elemento raiz quando tenant.api_provider === "frizzar", em cima do
+     tema claro ou escuro que já estiver ativo. */
+  .theme-frizzar {
+    --primary: 324 93% 41%;
+    --primary-foreground: 0 0% 100%;
+    --ring: 324 93% 41%;
+    --accent: 324 93% 41%;
+    --accent-foreground: 0 0% 100%;
+    --sidebar-background: 202 11% 15%;
+    --sidebar-foreground: 0 0% 96%;
+    --sidebar-primary: 324 93% 41%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 206 10% 27%;
+    --sidebar-accent-foreground: 0 0% 96%;
+    --sidebar-border: 206 10% 22%;
+    --sidebar-ring: 324 93% 41%;
+  }
 }
 
 @layer base {

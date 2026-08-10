@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth, useModulePermission, type AppModule } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -47,12 +47,33 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     enabled: !!tenantId,
     queryFn: async () => {
       const { data } = await supabase.from("tenants")
-        .select("id,name,agent_paused,logo_url")
+        .select("id,name,agent_paused,logo_url,api_provider")
         .eq("id", tenantId!).single();
-      return data as { id: string; name: string; agent_paused: boolean; logo_url: string | null } | null;
+      return data as { id: string; name: string; agent_paused: boolean; logo_url: string | null; api_provider: string | null } | null;
     },
   });
 
+  // White-label para clientes da parceria Frizzar — o painel deve parecer
+  // parte do produto deles, não um "parceiro usando a marca deles".
+  const isFrizzar = tenant?.api_provider === "frizzar";
+
+  useEffect(() => {
+    if (!isFrizzar) return;
+    const prevTitle = document.title;
+    document.title = tenant?.name ? `${tenant.name} — Frizzar` : "Frizzar";
+    let link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
+    const prevHref = link?.href;
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      document.head.appendChild(link);
+    }
+    link.href = "/frizzar/frizzar-logo-circle-white.png";
+    return () => {
+      document.title = prevTitle;
+      if (link && prevHref) link.href = prevHref;
+    };
+  }, [isFrizzar, tenant?.name]);
 
   const togglePause = async () => {
     if (!tenant) return;
@@ -74,18 +95,26 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const sidebar = (
     <>
       <div className="p-6 border-b border-border">
-        <div className="flex items-center gap-3">
+        {isFrizzar ? (
           <img
-            src={tenant?.logo_url || logoZaylo}
-            alt="Logo"
-            className="w-10 h-10 rounded-xl object-contain bg-background"
-            onError={(e) => { (e.currentTarget as HTMLImageElement).src = logoZaylo; }}
+            src="/frizzar/frizzar-logo-horizontal-white.png"
+            alt="Frizzar"
+            className="h-7 w-auto object-contain"
           />
-          <div className="min-w-0">
-            <h1 className="font-bold text-foreground text-base leading-tight truncate">{tenant?.name ?? "Sua empresa"}</h1>
-            <p className="text-xs text-muted-foreground">Painel do cliente</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <img
+              src={tenant?.logo_url || logoZaylo}
+              alt="Logo"
+              className="w-10 h-10 rounded-xl object-contain bg-background"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).src = logoZaylo; }}
+            />
+            <div className="min-w-0">
+              <h1 className="font-bold text-foreground text-base leading-tight truncate">{tenant?.name ?? "Sua empresa"}</h1>
+              <p className="text-xs text-muted-foreground">Painel do cliente</p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <nav className="flex-1 p-4 space-y-1">
@@ -114,7 +143,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   );
 
   return (
-    <div className="min-h-screen flex bg-background">
+    <div className={cn("min-h-screen flex bg-background", isFrizzar && "theme-frizzar")}>
       {mobileOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileOpen(false)} />}
       <aside className="hidden lg:flex w-64 border-r border-border flex-col bg-sidebar">{sidebar}</aside>
       <aside className={cn("fixed inset-y-0 left-0 z-50 w-64 border-r border-border flex flex-col bg-sidebar transition-transform duration-200 lg:hidden",
