@@ -128,7 +128,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           size="sm"
           className={cn(
             "w-full justify-start gap-2",
-            !tenant?.agent_paused && "border-sidebar-border text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+            !tenant?.agent_paused && "bg-transparent border-sidebar-border text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
           )}
           onClick={togglePause}
         >

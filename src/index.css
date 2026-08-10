@@ -143,6 +143,16 @@
     --sidebar-accent-foreground: 0 0% 96%;
     --sidebar-border: 206 10% 22%;
     --sidebar-ring: 217 56% 65%;
+
+    /* Faltavam essas — a tela de Conversas usa cores próprias (não as
+       genéricas de --background/--card), por isso continuava escura
+       mesmo com o resto do tema já claro. */
+    --wa-chat-bg: 0 0% 96%;
+    --wa-bubble-out: 217 56% 90%;
+    --wa-bubble-out-fg: 217 40% 15%;
+    --wa-bubble-in: 0 0% 100%;
+    --wa-bubble-in-fg: 222 30% 16%;
+    --wa-panel: 0 0% 94%;
   }
 }
 
