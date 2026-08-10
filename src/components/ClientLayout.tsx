@@ -61,14 +61,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   useEffect(() => {
     if (!isFrizzar) return;
     const prevTitle = document.title;
-    document.title = tenant?.name ? `${tenant.name} — Frizzar` : "Frizzar";
+    document.title = "Frizzar";
     const existing = document.querySelector<HTMLLinkElement>("link[rel='icon']");
     const prevHref = existing?.href;
     const weCreatedIt = !existing;
     const link = existing ?? document.createElement("link");
     link.rel = "icon";
     if (weCreatedIt) document.head.appendChild(link);
-    link.href = "/frizzar/frizzar-logo-circle-white.png";
+    link.href = "/frizzar/frizzar-favicon.png";
     return () => {
       document.title = prevTitle;
       // Se não existia nenhum favicon antes de nós criarmos, remove o
@@ -81,7 +81,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         link.href = prevHref;
       }
     };
-  }, [isFrizzar, tenant?.name]);
+  }, [isFrizzar]);
 
   const togglePause = async () => {
     if (!tenant) return;

@@ -99,7 +99,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
         {/* Campo de digitação flutuando por cima do papel de parede, como
             no WhatsApp real — não fica numa faixa separada fora dele. */}
         <div className="sticky bottom-0 pt-3 flex gap-2 items-center">
-          <div className="flex-1 flex items-center rounded-full bg-white shadow-sm px-4 py-1">
+          <div className="flex-1 flex items-center rounded-full bg-white shadow-sm px-4 py-2">
             <Textarea
               ref={inputRef}
               value={input}
@@ -109,7 +109,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
               }}
               placeholder="Digite uma mensagem"
               rows={1}
-              className="min-h-0 max-h-32 h-auto resize-none border-none bg-transparent shadow-none px-0 py-1.5 leading-tight focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="min-h-0 max-h-32 h-auto resize-none border-none bg-transparent shadow-none px-0 py-1.5 text-[13px] leading-tight focus-visible:ring-0 focus-visible:ring-offset-0"
               disabled={loading}
             />
           </div>
