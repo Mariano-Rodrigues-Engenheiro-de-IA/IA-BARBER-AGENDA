@@ -55,8 +55,18 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Sanitiza o token: espaços/quebras de linha colados do painel fazem o
+    // fetch estourar "Failed to construct 'Request': 'headers' ... ByteString".
+    const safeToken = crm_zetta_token.replace(/[^\x21-\x7E]/g, "");
+    if (!safeToken) {
+      return new Response(JSON.stringify({ error: "Token do CRM inválido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const res = await fetch(`${ZETTA_API_BASE}/api/public/ai/funnels`, {
-      headers: { Authorization: `Bearer ${crm_zetta_token}` },
+      headers: { Authorization: `Bearer ${safeToken}` },
     });
     const text = await res.text();
     let json: any;

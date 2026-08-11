@@ -80,8 +80,16 @@ Deno.serve(async (req) => {
       });
     }
 
+    const safeToken = String(token).replace(/[^\x21-\x7E]/g, "");
+    if (!safeToken) {
+      return new Response(JSON.stringify({ error: "Token do CRM inválido" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const res = await fetch(`${ZETTA_API_BASE}/api/public/ai/funnels`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${safeToken}` },
     });
     const text = await res.text();
     let json: any;
