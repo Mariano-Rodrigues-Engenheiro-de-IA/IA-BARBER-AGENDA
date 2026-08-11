@@ -1,11 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
-const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
+// A seguranca real dessas funcoes vem da autenticacao (JWT + checagem de
+// admin, verificada dentro do handler) - o CORS aqui so existe pra
+// permitir a chamada do navegador, entao ecoa a origem real da chamada em
+// vez de manter uma lista fixa de dominios (que estava causando bloqueio
+// silencioso: o dominio real do painel - preview da Lovable - nunca batia
+// com a lista fixa "zayloia.com").
 function buildCorsHeaders(origin: string | null) {
-  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": origin ?? "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   };

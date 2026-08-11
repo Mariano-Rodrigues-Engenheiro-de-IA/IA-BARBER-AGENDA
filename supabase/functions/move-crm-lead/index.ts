@@ -1,7 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 
-const ALLOWED_ORIGINS = ["https://zayloia.com", "https://www.zayloia.com"];
-
 async function mutateUazChatLabel(
   uazapiUrl: string,
   uazapiToken: string,
@@ -27,9 +25,8 @@ async function requireSuccessfulLabelMutation(response: Response, operation: str
 }
 
 function buildCorsHeaders(origin: string | null) {
-  const allowOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Origin": origin ?? "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   };
 }
