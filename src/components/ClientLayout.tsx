@@ -155,11 +155,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   return (
     // Nota: a classe CSS "theme-frizzar" virou o tema PADRÃO de todo o
     // painel do cliente (fundo cinza-chumbo/azulado, sidebar escura) — não
-    // é mais exclusiva de clientes Frizzar. O nome ficou "desatualizado"
-    // mas manter assim evita reescrever dezenas de seletores em index.css.
-    // A ÚNICA diferença visual entre Frizzar e os demais clientes agora é
-    // a logo (ver acima) — identidade visual unificada para todo mundo.
-    <div className={cn("min-h-screen flex bg-background", "theme-frizzar")}>
+    // é mais exclusiva de clientes Frizzar. "theme-zaylo" é aplicada JUNTO
+    // pra clientes que não são da parceria — sobrescreve só a cor da
+    // sidebar, com o tom próprio da marca Zaylo (extraído do banner do
+    // CRM), já que clientes Frizzar mantêm a cor de sidebar original.
+    <div className={cn("min-h-screen flex bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo")}>
       {mobileOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileOpen(false)} />}
       <aside className="hidden lg:flex w-64 border-r border-border flex-col bg-sidebar">{sidebar}</aside>
       <aside className={cn("fixed inset-y-0 left-0 z-50 w-64 border-r border-border flex flex-col bg-sidebar transition-transform duration-200 lg:hidden",

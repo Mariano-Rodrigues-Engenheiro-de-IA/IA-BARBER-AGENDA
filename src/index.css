@@ -160,6 +160,17 @@
     --wa-panel: 0 0% 100%;
   }
 
+  /* Sidebar com identidade própria da marca Zaylo (clientes que NÃO são da
+     parceria Frizzar) — cor extraída com precisão do banner do CRM (fundo
+     #10151D), pra aproximar visualmente o painel de IA e o CRM. Aplicada
+     junto com .theme-frizzar (que continua dando a base: área principal
+     clara, cards brancos) — só sobrescreve o tom da sidebar. */
+  .theme-frizzar.theme-zaylo {
+    --sidebar-background: 217 29% 9%;
+    --sidebar-accent: 217 24% 16%;
+    --sidebar-border: 217 22% 14%;
+  }
+
   /* Papel de parede do WhatsApp na área de mensagens (Conversas e
      Simulador) — a pedido do Mariano, essa melhoria vale para TODOS os
      clientes, não só os da parceria Frizzar (diferente das cores/marca,
