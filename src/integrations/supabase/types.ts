@@ -731,6 +731,41 @@ export type Database = {
           },
         ]
       }
+      tenant_crm_funnels: {
+        Row: {
+          created_at: string
+          funnel_id: string
+          funnel_name: string
+          id: string
+          stages: Json
+          tenant_id: string
+        }
+        Insert: {
+          created_at?: string
+          funnel_id: string
+          funnel_name: string
+          id?: string
+          stages?: Json
+          tenant_id: string
+        }
+        Update: {
+          created_at?: string
+          funnel_id?: string
+          funnel_name?: string
+          id?: string
+          stages?: Json
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_crm_funnels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenant_permissions: {
         Row: {
           created_at: string
