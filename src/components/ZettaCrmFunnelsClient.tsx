@@ -110,16 +110,10 @@ export function ZettaCrmFunnelsClient({ tenantId }: { tenantId: string }) {
   return (
     <div className="glass-card p-6 space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="font-semibold text-foreground flex items-center gap-2">
-            <ListChecks className="w-5 h-5 text-primary" />
-            Funis conectados
-          </h3>
-          <p className="text-sm text-muted-foreground mt-1">
-            Escolha quantos funis quiser — a IA move o lead pelas etapas de cada um automaticamente, durante a
-            conversa.
-          </p>
-        </div>
+        <h3 className="font-semibold text-foreground flex items-center gap-2">
+          <ListChecks className="w-5 h-5 text-primary" />
+          Funis conectados
+        </h3>
         {!adding && (
           <Button type="button" size="sm" onClick={startAdding}>
             <Plus className="w-4 h-4 mr-2" />Adicionar funil

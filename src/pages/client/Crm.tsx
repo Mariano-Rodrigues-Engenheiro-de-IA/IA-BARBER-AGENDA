@@ -1,15 +1,14 @@
 import { useAuth, useModulePermission } from "@/hooks/useAuth";
-import { Navigate, Link } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { ZettaCrmFunnelsClient } from "@/components/ZettaCrmFunnelsClient";
-import { Sparkles } from "lucide-react";
 
-/** Aba "CRM" do painel do cliente. O kanban interno saiu daqui — o funil de
- * vendas agora é gerenciado no CRM externo. O cliente escolhe quantos
- * funis quiser (ZettaCrmFunnelsClient) — o token de acesso é configurado
- * só pelo admin, o cliente nunca vê nem tem acesso a ele (nem essa
- * checagem abaixo traz o valor, só confirma se existe ou não). */
+/** Aba "CRM" do painel do cliente. O cliente escolhe quantos funis quiser
+ * (ZettaCrmFunnelsClient) — o token de acesso é configurado só pelo admin,
+ * o cliente nunca vê nem tem acesso a ele. Tela mantida bem enxuta, a
+ * pedido do Mariano: sem texto explicativo extra, só a configuração dos
+ * funis. */
 export default function ClientCrm() {
   const { tenantId } = useAuth();
   const { visible } = useModulePermission("crm");
@@ -42,14 +41,7 @@ export default function ClientCrm() {
         <div className="glass-card p-8 text-center text-muted-foreground">Carregando...</div>
       ) : !hasToken ? (
         <div className="glass-card overflow-hidden">
-          {/* TODO: trocar por <img src="..." /> assim que o Mariano mandar a
-              arte — usar o prompt de geração de imagem combinado
-              separadamente. Enquanto isso, mantém um espaço reservado
-              proporcional (16:9), sem nenhum texto de venda aqui: a frase
-              de efeito já vai estar dentro da própria imagem. */}
-          <div className="w-full aspect-video bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
-            <span className="text-xs text-muted-foreground">[ imagem entra aqui ]</span>
-          </div>
+          <img src="/crm/banner-conectar-crm.png" alt="Transforme conversas em vendas" className="w-full h-auto block" />
           <div className="p-6 text-center">
             <a
               href="https://crm.zayloia.com"
@@ -62,25 +54,7 @@ export default function ClientCrm() {
           </div>
         </div>
       ) : tenantId ? (
-        <div className="space-y-4">
-          <ZettaCrmFunnelsClient tenantId={tenantId} />
-
-          <div className="glass-card p-5 flex gap-3 items-start">
-            <Sparkles className="w-5 h-5 text-primary shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-foreground">Falta só uma coisa</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Agora é só instruir a IA, na aba{" "}
-                <Link to="/app/ai" className="text-primary underline underline-offset-2">
-                  Sua IA
-                </Link>
-                , sobre quando mover o lead para cada etapa — por exemplo: "quando o cliente perguntar o preço,
-                mova para a etapa Respondeu". Use sempre o nome da etapa (como aparece nos funis acima), a IA já
-                sabe reconhecer.
-              </p>
-            </div>
-          </div>
-        </div>
+        <ZettaCrmFunnelsClient tenantId={tenantId} />
       ) : null}
     </div>
   );
