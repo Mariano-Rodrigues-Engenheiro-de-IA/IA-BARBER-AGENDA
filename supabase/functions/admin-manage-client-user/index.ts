@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// v2 — forçando redeploy: esta função tinha 18 tentativas com 0% de
+// sucesso, presa numa versão de 15 dias atrás sem a correção de CORS.
 // A seguranca real dessas funcoes vem da autenticacao (JWT + checagem de
 // admin, verificada dentro do handler) - o CORS aqui so existe pra
 // permitir a chamada do navegador, entao ecoa a origem real da chamada em
