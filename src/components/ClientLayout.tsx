@@ -58,22 +58,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const isFrizzar = tenant?.api_provider === "frizzar";
 
   useEffect(() => {
-    if (!isFrizzar) return;
+    const title = isFrizzar ? "Frizzar" : "Zaylo IA";
+    const iconHref = isFrizzar ? "/frizzar/frizzar-favicon.png" : "/brand/zaylo-favicon.png";
     const prevTitle = document.title;
-    document.title = "Frizzar";
+    document.title = title;
     const existing = document.querySelector<HTMLLinkElement>("link[rel='icon']");
     const prevHref = existing?.href;
     const weCreatedIt = !existing;
     const link = existing ?? document.createElement("link");
     link.rel = "icon";
     if (weCreatedIt) document.head.appendChild(link);
-    link.href = "/frizzar/frizzar-favicon.png";
+    link.href = iconHref;
     return () => {
       document.title = prevTitle;
       // Se não existia nenhum favicon antes de nós criarmos, remove o
       // elemento inteiro na limpeza — tentar "restaurar" um href que
-      // nunca existiu deixava o ícone da Frizzar preso na aba mesmo
-      // depois de trocar pra uma conta que não é Frizzar.
+      // nunca existiu deixava o ícone preso na aba mesmo depois de trocar
+      // pra outra conta.
       if (weCreatedIt) {
         link.remove();
       } else if (prevHref) {
