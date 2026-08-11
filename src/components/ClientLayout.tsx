@@ -101,7 +101,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
   const sidebar = (
     <>
-      <div className="p-6 border-b border-border">
+      <div className="pl-7 pr-6 py-6 border-b border-border">
         {isFrizzar ? (
           <img
             src="/frizzar/frizzar-logo-horizontal-white.png"
@@ -110,14 +110,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             draggable={false}
           />
         ) : (
-          <div className="flex items-center justify-center">
-            <img
-              src="/brand/zaylo-ia-logo-white.png"
-              alt="Zaylo IA"
-              className="h-5 w-auto object-contain select-none"
-              draggable={false}
-            />
-          </div>
+          <img
+            src="/brand/zaylo-ia-logo-white.png"
+            alt="Zaylo IA"
+            className="h-5 w-auto object-contain select-none"
+            draggable={false}
+          />
         )}
       </div>
 
