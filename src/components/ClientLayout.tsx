@@ -114,7 +114,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             <img
               src="/brand/zaylo-ia-logo-white.png"
               alt="Zaylo IA"
-              className="h-7 w-auto object-contain select-none"
+              className="h-5 w-auto object-contain select-none"
               draggable={false}
             />
           </div>
