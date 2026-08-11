@@ -1208,6 +1208,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         });
       }
 
+      // Funis do CRM configurados pelo cliente (pode ter vários) — anexado
+      // ao objeto tenant pra não precisar mudar a assinatura das funções
+      // que já recebem "tenant" (buildToolsForProvider, buildSystemPrompt).
+      if (tenant.crm_zetta_token) {
+        const { data: crmFunnels } = await svc
+          .from("tenant_crm_funnels")
+          .select("funnel_id, funnel_name, stages")
+          .eq("tenant_id", tenantId);
+        (tenant as any).crm_funnels = crmFunnels ?? [];
+      }
+
       const provider: string = tenant.api_provider || "trinks";
       const simPhone = `SIM:${userId}`;
       const senderName = userData.user.email?.split("@")[0] || "Simulador";
@@ -7378,31 +7389,37 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
       providerTools = buildTrinksTools(tenant);
   }
 
-  // Ferramentas do CRM externo: uma por etapa do funil conectado (ver aba
-  // "CRM" da configuração do estabelecimento). Cache de etapas
-  // (crm_zetta_stages) evita consultar a API externa a cada mensagem.
-  const crmStages = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
-  if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStages.length > 0) {
+  // Ferramentas do CRM externo: uma por etapa, de CADA funil que o cliente
+  // configurou (pode ter vários — cada um vira uma linha em
+  // tenant_crm_funnels). Cache de etapas evita consultar a API externa a
+  // cada mensagem.
+  const crmFunnels: Array<{ funnel_id: string; funnel_name: string; stages: { id: string; name: string }[] }> =
+    Array.isArray((tenant as any)?.crm_funnels) ? (tenant as any).crm_funnels : [];
+  if (tenant?.crm_zetta_token && crmFunnels.length > 0) {
     const usedSlugs = new Set<string>();
-    const crmTools = crmStages.map((stage: { id: string; name: string }) => {
-      // Nome legível ("mover_para_respondeu") em vez do UUID técnico — mais
-      // fácil pra IA reconhecer e usar corretamente, a pedido do Mariano.
-      let slug = slugifyStageName(stage.name);
-      if (usedSlugs.has(slug)) {
-        let i = 2;
-        while (usedSlugs.has(`${slug}_${i}`)) i++;
-        slug = `${slug}_${i}`;
-      }
-      usedSlugs.add(slug);
-      return {
-        type: "function",
-        function: {
-          name: `crm_mover_para_${slug}`,
-          description: `Move o lead atual para a etapa "${stage.name}" do funil de vendas no CRM. Use quando um sinal claro da conversa indicar que o lead mudou de estágio nessa etapa (ex: chegou, respondeu, demonstrou interesse, confirmou, desistiu — dependendo do que essa etapa representa). Não chame para toda mensagem, só quando o estágio realmente mudou.`,
-          parameters: { type: "object", properties: {}, required: [] },
-        },
-      };
-    });
+    const crmTools = crmFunnels.flatMap((funnel) =>
+      (funnel.stages || []).map((stage: { id: string; name: string }) => {
+        // Nome legível ("mover_para_respondeu") em vez do UUID técnico —
+        // mais fácil pra IA reconhecer e usar corretamente. Se duas etapas
+        // (do mesmo funil ou de funis diferentes) geram o mesmo slug,
+        // desambigua com um sufixo numérico.
+        let slug = slugifyStageName(stage.name);
+        if (usedSlugs.has(slug)) {
+          let i = 2;
+          while (usedSlugs.has(`${slug}_${i}`)) i++;
+          slug = `${slug}_${i}`;
+        }
+        usedSlugs.add(slug);
+        return {
+          type: "function",
+          function: {
+            name: `crm_mover_para_${slug}`,
+            description: `Move o lead atual para a etapa "${stage.name}" do funil "${funnel.funnel_name}" no CRM. Use quando um sinal claro da conversa indicar que o lead mudou de estágio nessa etapa (ex: chegou, respondeu, demonstrou interesse, confirmou, desistiu — dependendo do que essa etapa representa). Não chame para toda mensagem, só quando o estágio realmente mudou.`,
+            parameters: { type: "object", properties: {}, required: [] },
+          },
+        };
+      }),
+    );
     providerTools = [...(providerTools || []), ...crmTools];
   }
 
@@ -7536,23 +7553,37 @@ async function executeToolForProvider(
   // ===== CRM externo: crm_mover_para_{slug_do_nome_da_etapa}
   if (funcName.startsWith("crm_mover_para_")) {
     const slug = funcName.slice("crm_mover_para_".length);
-    if (!tenant?.crm_zetta_token || !tenant?.crm_zetta_funnel_id) {
+    if (!tenant?.crm_zetta_token) {
       return { ok: false, error: "Integração com o CRM não está configurada." };
     }
-    // Resolve o slug de volta para o nome real da etapa (a API do CRM já
-    // aceita nome em texto, não precisa do UUID técnico).
-    const stages = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
-    const stage = stages.find((s: { id: string; name: string }) => slugifyStageName(s.name) === slug);
-    const stageName = stage?.name ?? slug;
+    // Resolve o slug de volta para o funil + nome real da etapa,
+    // procurando em TODOS os funis configurados (o cliente pode ter
+    // vários) — a API do CRM já aceita nome em texto, não precisa do
+    // UUID técnico de nenhum dos dois.
+    const crmFunnelsExec: Array<{ funnel_id: string; funnel_name: string; stages: { id: string; name: string }[] }> =
+      Array.isArray((tenant as any)?.crm_funnels) ? (tenant as any).crm_funnels : [];
+    let matchedFunnelName: string | null = null;
+    let stageName: string | null = null;
+    for (const funnel of crmFunnelsExec) {
+      const found = (funnel.stages || []).find((s: { id: string; name: string }) => slugifyStageName(s.name) === slug);
+      if (found) {
+        matchedFunnelName = funnel.funnel_name;
+        stageName = found.name;
+        break;
+      }
+    }
+    if (!matchedFunnelName || !stageName) {
+      return { ok: false, error: `Etapa "${slug}" não encontrada em nenhum funil configurado.` };
+    }
     if (simulator) {
-      return { ok: true, simulated: true, message: `Lead seria movido no CRM (simulado, etapa "${stageName}").` };
+      return { ok: true, simulated: true, message: `Lead seria movido no CRM (simulado, funil "${matchedFunnelName}", etapa "${stageName}").` };
     }
     if (!phoneNumber) return { ok: false, error: "Telefone do lead indisponível." };
     try {
       const res = await fetch("https://crm.zayloia.com/api/public/ai/move-lead", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
-        body: JSON.stringify({ phone: phoneNumber, funnel: tenant.crm_zetta_funnel_id, stage: stageName }),
+        body: JSON.stringify({ phone: phoneNumber, funnel: matchedFunnelName, stage: stageName }),
       });
       const text = await res.text();
       let parsed: any;
@@ -8960,13 +8991,20 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   // seção explícita, o modelo depende só da description de cada tool para
   // decidir usar — funciona, mas fica mais confiável com uma instrução
   // dedicada, no mesmo padrão das ferramentas customizadas acima.
-  const crmStagesForPrompt = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
+  const crmFunnelsForPrompt: Array<{ funnel_id: string; funnel_name: string; stages: { id: string; name: string }[] }> =
+    Array.isArray((tenant as any)?.crm_funnels) ? (tenant as any).crm_funnels : [];
   let crmToolsSection = "";
-  if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStagesForPrompt.length > 0) {
-    const stageList = crmStagesForPrompt
-      .map((s: { id: string; name: string }) => `- "${s.name}" (ferramenta: crm_mover_para_${slugifyStageName(s.name)})`)
-      .join("\n");
-    crmToolsSection = `\n\n------------------------------------------\n\n## 📋 FUNIL DE VENDAS (CRM)\n\nEste lead está sendo acompanhado num funil de vendas com as seguintes etapas:\n\n${stageList}\n\nMova o lead para a etapa correta assim que um sinal claro da conversa indicar mudança de estágio (ex: o lead respondeu pela primeira vez, demonstrou interesse, perguntou preço, confirmou, ou desistiu — dependendo do que cada etapa acima representa no seu funil). Mover para uma etapa nova já tira o lead da etapa anterior automaticamente, não é preciso "remover" antes. Não mova a cada mensagem — só quando o estágio realmente mudar.`;
+  if (tenant?.crm_zetta_token && crmFunnelsForPrompt.length > 0) {
+    const funnelBlocks = crmFunnelsForPrompt
+      .filter((f) => (f.stages || []).length > 0)
+      .map((f) => {
+        const stageList = (f.stages || [])
+          .map((s: { id: string; name: string }) => `  - "${s.name}" (ferramenta: crm_mover_para_${slugifyStageName(s.name)})`)
+          .join("\n");
+        return `Funil "${f.funnel_name}":\n${stageList}`;
+      })
+      .join("\n\n");
+    crmToolsSection = `\n\n------------------------------------------\n\n## 📋 FUNIS DE VENDAS (CRM)\n\nEste lead está sendo acompanhado no(s) seguinte(s) funil(is), com as respectivas etapas:\n\n${funnelBlocks}\n\nMova o lead para a etapa correta assim que um sinal claro da conversa indicar mudança de estágio (ex: o lead respondeu pela primeira vez, demonstrou interesse, perguntou preço, confirmou, ou desistiu — dependendo do que cada etapa acima representa no seu funil). Mover para uma etapa nova já tira o lead da etapa anterior automaticamente dentro do MESMO funil, não é preciso "remover" antes. Não mova a cada mensagem — só quando o estágio realmente mudar.`;
   }
 
   // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
