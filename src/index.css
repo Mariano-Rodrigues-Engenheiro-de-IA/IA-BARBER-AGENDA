@@ -160,7 +160,11 @@
     --wa-panel: 0 0% 100%;
   }
 
-  .theme-frizzar .wa-chat-area {
+  /* Papel de parede do WhatsApp na área de mensagens (Conversas e
+     Simulador) — a pedido do Mariano, essa melhoria vale para TODOS os
+     clientes, não só os da parceria Frizzar (diferente das cores/marca,
+     que continuam exclusivas do tema Frizzar). */
+  .wa-chat-area {
     background-image: url("/frizzar/whatsapp-chat-bg.png");
     background-repeat: repeat;
     background-size: 420px auto;
@@ -208,6 +212,16 @@
   .theme-frizzar .ia-tabs-list [data-state="active"] {
     background-color: hsl(210 45% 90%);
     color: hsl(var(--foreground));
+  }
+
+  /* Fundo azulado do campo de prompt — só para clientes Frizzar. Antes
+     estava aplicado direto no componente (sem esse escopo), vazando
+     para TODOS os outros clientes: no modo escuro deles, o texto
+     (herdando a cor clara padrão do tema escuro) ficava invisível
+     sobre esse fundo claro. */
+  .theme-frizzar .ia-prompt-textarea {
+    background-color: hsl(210 45% 95%);
+    color: hsl(222 30% 16%);
   }
 
   .gradient-text {
