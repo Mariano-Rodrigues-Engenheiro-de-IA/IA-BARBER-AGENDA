@@ -7339,6 +7339,20 @@ const ATUALIZAR_RESUMO_TOOL = {
   },
 };
 
+/** Transforma o nome de uma etapa (ex: "Já Interessou!") num identificador
+ * válido para nome de função (ex: "ja_interessou") — sem acentos, minúsculo,
+ * só letras/números/underscore. Usado para montar nomes de ferramenta
+ * legíveis em vez de UUIDs técnicos. */
+function slugifyStageName(name: string): string {
+  const slug = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return slug || "etapa";
+}
+
 function buildToolsForProvider(provider: string, tenant: any): any[] | undefined {
   let providerTools: any[] | undefined;
   switch (provider) {
@@ -7369,14 +7383,26 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
   // (crm_zetta_stages) evita consultar a API externa a cada mensagem.
   const crmStages = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
   if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStages.length > 0) {
-    const crmTools = crmStages.map((stage: { id: string; name: string }) => ({
-      type: "function",
-      function: {
-        name: `crm_mover_para_${stage.id}`,
-        description: `Move o lead atual para a etapa "${stage.name}" do funil de vendas no CRM. Use quando um sinal claro da conversa indicar que o lead mudou de estágio nessa etapa (ex: chegou, respondeu, demonstrou interesse, confirmou, desistiu — dependendo do que essa etapa representa). Não chame para toda mensagem, só quando o estágio realmente mudou.`,
-        parameters: { type: "object", properties: {}, required: [] },
-      },
-    }));
+    const usedSlugs = new Set<string>();
+    const crmTools = crmStages.map((stage: { id: string; name: string }) => {
+      // Nome legível ("mover_para_respondeu") em vez do UUID técnico — mais
+      // fácil pra IA reconhecer e usar corretamente, a pedido do Mariano.
+      let slug = slugifyStageName(stage.name);
+      if (usedSlugs.has(slug)) {
+        let i = 2;
+        while (usedSlugs.has(`${slug}_${i}`)) i++;
+        slug = `${slug}_${i}`;
+      }
+      usedSlugs.add(slug);
+      return {
+        type: "function",
+        function: {
+          name: `crm_mover_para_${slug}`,
+          description: `Move o lead atual para a etapa "${stage.name}" do funil de vendas no CRM. Use quando um sinal claro da conversa indicar que o lead mudou de estágio nessa etapa (ex: chegou, respondeu, demonstrou interesse, confirmou, desistiu — dependendo do que essa etapa representa). Não chame para toda mensagem, só quando o estágio realmente mudou.`,
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      };
+    });
     providerTools = [...(providerTools || []), ...crmTools];
   }
 
@@ -7507,21 +7533,26 @@ async function executeToolForProvider(
     }
   }
 
-  // ===== CRM externo: crm_mover_para_{stage_id}
+  // ===== CRM externo: crm_mover_para_{slug_do_nome_da_etapa}
   if (funcName.startsWith("crm_mover_para_")) {
-    const stageId = funcName.slice("crm_mover_para_".length);
+    const slug = funcName.slice("crm_mover_para_".length);
     if (!tenant?.crm_zetta_token || !tenant?.crm_zetta_funnel_id) {
       return { ok: false, error: "Integração com o CRM não está configurada." };
     }
+    // Resolve o slug de volta para o nome real da etapa (a API do CRM já
+    // aceita nome em texto, não precisa do UUID técnico).
+    const stages = Array.isArray(tenant?.crm_zetta_stages) ? tenant.crm_zetta_stages : [];
+    const stage = stages.find((s: { id: string; name: string }) => slugifyStageName(s.name) === slug);
+    const stageName = stage?.name ?? slug;
     if (simulator) {
-      return { ok: true, simulated: true, message: `Lead seria movido no CRM (simulado, etapa ${stageId}).` };
+      return { ok: true, simulated: true, message: `Lead seria movido no CRM (simulado, etapa "${stageName}").` };
     }
     if (!phoneNumber) return { ok: false, error: "Telefone do lead indisponível." };
     try {
       const res = await fetch("https://crm.zayloia.com/api/public/ai/move-lead", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
-        body: JSON.stringify({ phone: phoneNumber, funnel: tenant.crm_zetta_funnel_id, stage: stageId }),
+        body: JSON.stringify({ phone: phoneNumber, funnel: tenant.crm_zetta_funnel_id, stage: stageName }),
       });
       const text = await res.text();
       let parsed: any;
@@ -8933,7 +8964,7 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   let crmToolsSection = "";
   if (tenant?.crm_zetta_token && tenant?.crm_zetta_funnel_id && crmStagesForPrompt.length > 0) {
     const stageList = crmStagesForPrompt
-      .map((s: { id: string; name: string }) => `- "${s.name}" (ferramenta: crm_mover_para_${s.id})`)
+      .map((s: { id: string; name: string }) => `- "${s.name}" (ferramenta: crm_mover_para_${slugifyStageName(s.name)})`)
       .join("\n");
     crmToolsSection = `\n\n------------------------------------------\n\n## 📋 FUNIL DE VENDAS (CRM)\n\nEste lead está sendo acompanhado num funil de vendas com as seguintes etapas:\n\n${stageList}\n\nMova o lead para a etapa correta assim que um sinal claro da conversa indicar mudança de estágio (ex: o lead respondeu pela primeira vez, demonstrou interesse, perguntou preço, confirmou, ou desistiu — dependendo do que cada etapa acima representa no seu funil). Mover para uma etapa nova já tira o lead da etapa anterior automaticamente, não é preciso "remover" antes. Não mova a cada mensagem — só quando o estágio realmente mudar.`;
   }
