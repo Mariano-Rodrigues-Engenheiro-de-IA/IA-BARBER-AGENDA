@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { LayoutDashboard, MessageCircle, Clock, LogOut, Menu, Kanban, Power, PowerOff, Smartphone, Bot, TestTube2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import logoZaylo from "@/assets/logo-zaylo.png";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface NavItem { to: string; icon: any; label: string; module: AppModule }
@@ -111,19 +110,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             draggable={false}
           />
         ) : (
-          <div className="flex items-center gap-3">
-            <img
-              src={tenant?.logo_url || logoZaylo}
-              alt="Logo"
-              className="w-10 h-10 rounded-xl object-contain bg-background select-none"
-              draggable={false}
-              onError={(e) => { (e.currentTarget as HTMLImageElement).src = logoZaylo; }}
-            />
-            <div className="min-w-0">
-              <h1 className="font-bold text-foreground text-base leading-tight truncate">{tenant?.name ?? "Sua empresa"}</h1>
-              <p className="text-xs text-muted-foreground">Painel do cliente</p>
-            </div>
-          </div>
+          <img
+            src="/brand/zaylo-ia-logo.png"
+            alt="Zaylo IA"
+            className="h-7 w-auto object-contain select-none"
+            draggable={false}
+          />
         )}
       </div>
 
