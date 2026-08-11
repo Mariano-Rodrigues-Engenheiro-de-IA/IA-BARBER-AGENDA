@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Send, CalendarCheck, Bot, UserCheck, DollarSign, Receipt, CalendarIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -93,6 +93,7 @@ export default function ClientOverview() {
     queryKey: ["client-ov-msgs", ...queryKeyPart],
     enabled: !!tenantId && !(period === "custom" && !customRange?.from),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const all: any[] = [];
       let from = 0;
@@ -118,6 +119,7 @@ export default function ClientOverview() {
     queryKey: ["client-ov-logs", ...queryKeyPart],
     enabled: !!tenantId && !(period === "custom" && !customRange?.from),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const all: any[] = [];
       let from = 0;
@@ -142,6 +144,7 @@ export default function ClientOverview() {
     queryKey: ["client-ov-fu", ...queryKeyPart],
     enabled: !!tenantId && !(period === "custom" && !customRange?.from),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await supabase.from("follow_ups")
         .select("status, created_at, sent_at, confirmed_at")
@@ -156,6 +159,7 @@ export default function ClientOverview() {
     queryKey: ["client-ov-fu-sent", ...queryKeyPart],
     enabled: !!tenantId && !(period === "custom" && !customRange?.from),
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { count } = await supabase.from("follow_ups")
         .select("id", { count: "exact", head: true })

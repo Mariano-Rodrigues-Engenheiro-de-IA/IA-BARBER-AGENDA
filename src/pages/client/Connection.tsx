@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, keepPreviousData } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, Power, RefreshCw, Smartphone, CheckCircle2, XCircle, QrCode } from "lucide-react";
@@ -35,6 +35,12 @@ export default function ClientConnection() {
     enabled: !!tenantId,
     queryFn: () => call("status"),
     refetchInterval: 5000,
+    // Sem isso, toda vez que o usuário troca de aba e volta (React Query
+    // refaz a consulta automaticamente no foco), os dados somem por um
+    // instante enquanto a nova resposta não chega — e o status cai no
+    // fallback "disconnected" (?? "disconnected" abaixo), fazendo a tela
+    // piscar "reconectando" mesmo com a conexão real estável.
+    placeholderData: keepPreviousData,
   });
 
   const instStatus = statusQ.data?.instance?.status ?? "disconnected";

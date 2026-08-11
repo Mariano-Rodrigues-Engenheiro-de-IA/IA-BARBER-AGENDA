@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Search, MessageCircle, Trash2, Loader2, Bot, BotOff, NotebookText } from "lucide-react";
@@ -142,6 +142,7 @@ export default function ClientConversations() {
       return data ?? [];
     },
     refetchInterval: 15000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: conv } = useQuery({
@@ -167,12 +168,14 @@ export default function ClientConversations() {
       return all;
     },
     refetchInterval: 10000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: leadSummary } = useQuery({
     queryKey: ["client-conv-summary", tenantId, selected],
     enabled: !!tenantId && !!selected,
     refetchInterval: 30000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const { data } = await supabase
         .from("crm_leads")
@@ -223,6 +226,7 @@ export default function ClientConversations() {
       return data ?? [];
     },
     refetchInterval: 20000,
+    placeholderData: keepPreviousData,
   });
   const pausedSet = useMemo(() => {
     const s = new Set<string>();

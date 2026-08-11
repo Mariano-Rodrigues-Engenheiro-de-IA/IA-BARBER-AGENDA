@@ -206,7 +206,7 @@
     color: hsl(var(--muted-foreground));
   }
   .theme-frizzar .ia-tabs-list [data-state="active"] {
-    background-color: hsl(0 0% 92%);
+    background-color: hsl(210 45% 90%);
     color: hsl(var(--foreground));
   }
 
