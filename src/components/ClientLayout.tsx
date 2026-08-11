@@ -110,12 +110,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             draggable={false}
           />
         ) : (
-          <img
-            src="/brand/zaylo-ia-logo.png"
-            alt="Zaylo IA"
-            className="h-7 w-auto object-contain select-none"
-            draggable={false}
-          />
+          <div className="flex items-center justify-center">
+            <img
+              src="/brand/zaylo-ia-logo-white.png"
+              alt="Zaylo IA"
+              className="h-7 w-auto object-contain select-none"
+              draggable={false}
+            />
+          </div>
         )}
       </div>
 
