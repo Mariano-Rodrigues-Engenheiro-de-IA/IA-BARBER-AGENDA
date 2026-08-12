@@ -8,7 +8,7 @@ import { SimulatorTab } from "@/components/SimulatorTab";
  * de mensagens — aplicado dentro do próprio SimulatorTab). */
 export default function ClientSimulator() {
   const { tenantId } = useAuth();
-  const { visible } = useModulePermission("ai_prompt");
+  const { visible } = useModulePermission("simulator");
   if (!visible) return <Navigate to="/app" replace />;
 
   return (
