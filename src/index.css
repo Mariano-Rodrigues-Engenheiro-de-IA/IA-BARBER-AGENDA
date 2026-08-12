@@ -198,6 +198,31 @@
     --panel-shadow: 0 24px 48px -30px hsl(214 60% 3% / 0.6);
   }
 
+  /* Tela de login dos clientes da parceria Frizzar (/login/frizzar) —
+     mesmo cinza quase preto da sidebar Frizzar, com a logo horizontal
+     branca deles. */
+  .theme-frizzar-login {
+    color-scheme: dark;
+    --background: 202 11% 15%;
+    --foreground: 0 0% 96%;
+    --card: 204 10% 19%;
+    --card-foreground: 0 0% 96%;
+    --popover: 204 10% 19%;
+    --popover-foreground: 0 0% 96%;
+    --secondary: 206 10% 27%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 206 10% 24%;
+    --muted-foreground: 210 8% 72%;
+    --border: 206 10% 28%;
+    --input: 206 10% 28%;
+    --primary: 217 56% 65%;
+    --primary-foreground: 217 40% 15%;
+    --ring: 217 56% 65%;
+    --panel-shadow: 0 24px 48px -30px hsl(202 20% 3% / 0.6);
+  }
+
+
+
 
   /* Papel de parede do WhatsApp na área de mensagens (Conversas e
      Simulador) — a pedido do Mariano, essa melhoria vale para TODOS os
