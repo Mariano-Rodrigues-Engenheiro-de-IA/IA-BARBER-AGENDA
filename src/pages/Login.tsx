@@ -4,21 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
+import zayloLogo from "@/assets/zaylo-ia-logo-light.png";
 
 
-/** Aplica a mesma identidade visual unificada usada no resto do sistema
- * (fundo claro, cards brancos, azul de destaque) — antes a tela de login
- * forçava um tema escuro genérico, deixando ela com uma cara diferente do
- * resto do painel. */
+/** Identidade geral (Zaylo): a tela de login usa o mesmo cinza-azulado
+ *  escuro da barra lateral, com a logo branca por cima. */
 function useForceZayloTheme() {
   useEffect(() => {
     const root = document.documentElement;
     const hadLight = root.classList.contains("light");
     const hadDark = root.classList.contains("dark");
     root.classList.remove("light", "dark");
-    root.classList.add("theme-frizzar", "theme-zaylo");
+    root.classList.add("theme-zaylo-login");
     return () => {
-      root.classList.remove("theme-frizzar", "theme-zaylo");
+      root.classList.remove("theme-zaylo-login");
       if (hadLight) root.classList.add("light");
       if (hadDark) root.classList.add("dark");
     };
@@ -49,14 +48,19 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md animate-fade-in">
         <div className="glass-card p-8 space-y-6">
-          <div className="text-center space-y-2">
+          <div className="text-center space-y-3">
             <div className="flex justify-center">
-            <img src="/brand/zaylo-ia-logo.png" alt="Zaylo IA" className="h-12 w-auto object-contain" />
+              <img
+                src={zayloLogo}
+                alt="Zaylo IA"
+                className="h-14 w-auto max-w-[70%] object-contain"
+              />
             </div>
             <p className="text-sm text-muted-foreground">
               Painel de controle da sua IA
             </p>
           </div>
+
 
           <form onSubmit={handleSubmit} className="space-y-4" autoComplete="on" method="post">
             <div className="space-y-2">
