@@ -1105,9 +1105,9 @@ function typingDelayMs(text: string): number {
   return Math.min(6000, Math.max(1200, Math.round(chars * 45)));
 }
 
-// O `delay` do /send/text nem sempre gera presença visível na instância.
-// A forma confiável é chamar /message/presence com presence=composing (ou
-// recording) e só depois enviar a mensagem com delay 0.
+// A presença é iniciada de forma assíncrona pela UAZAPI. Por isso, esta chamada
+// apenas a inicia e dá um curto tempo para propagação; a duração real fica no
+// `delay` nativo do /send/text ou /send/media, que mantém a presença até o envio.
 async function uazapiTypingPresence(
   uazapiUrl: string,
   uazapiToken: string,
@@ -1116,13 +1116,20 @@ async function uazapiTypingPresence(
   presence: "composing" | "recording" = "composing",
 ): Promise<void> {
   try {
-    await fetch(`${uazapiUrl}/message/presence`, {
+    const response = await fetch(`${uazapiUrl}/message/presence`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
       body: JSON.stringify({ number, presence, delay: ms }),
-    }).catch(() => null);
-  } catch (_) { /* presença é cosmética: nunca bloquear o envio */ }
-  await new Promise((r) => setTimeout(r, ms));
+    });
+    if (!response.ok) {
+      const details = await response.text().catch(() => "");
+      console.warn(`[UAZAPI Presence] ${presence} falhou: status=${response.status} body=${details.slice(0, 300)}`);
+    }
+  } catch (error: any) {
+    console.warn(`[UAZAPI Presence] ${presence} falhou: ${error?.message || String(error)}`);
+  }
+  // /message/presence responde antes de publicar o estado no WhatsApp.
+  await new Promise((resolve) => setTimeout(resolve, 350));
 }
 
 async function uazapiSendTextWithRetry(
@@ -1142,7 +1149,7 @@ async function uazapiSendTextWithRetry(
       const res = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay: 0, readchat: true }),
+        body: JSON.stringify({ number, text, delay: attempt === 1 ? delay : 0, readchat: true }),
       });
       const data = await res.json().catch(() => ({} as any));
       lastStatus = res.status;
@@ -8018,11 +8025,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
       case "send_link": {
         const text = toolType === "send_link" ? (config.url || "") : (config.text || "");
         if (!text) return { error: "Texto/URL não configurado nesta ferramenta." };
-        await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(text));
+        const delay = typingDelayMs(text);
+        await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
         const res = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text, delay: 0, readchat: true }),
+          body: JSON.stringify({ number: phoneNumber, text, delay, readchat: true }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
@@ -8044,11 +8052,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         if (!silentMode) {
           const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
           try {
-            await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(clientText));
+            const delay = typingDelayMs(clientText);
+            await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
             const clientRes = await fetch(`${uazapiUrl}/send/text`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 0, readchat: true }),
+              body: JSON.stringify({ number: phoneNumber, text: clientText, delay, readchat: true }),
             });
             const clientData = await readResponsePayload(clientRes);
             const clientMsgId = extractSentMessageId(clientData);
@@ -8209,7 +8218,10 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
 
         if (config.caption) sendPayload.caption = config.caption;
         // Áudio: presença "gravando áudio..." antes do envio.
-        if (toolType === "send_audio") await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
+        if (toolType === "send_audio") {
+          sendPayload.delay = 3500;
+          await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
+        }
 
         const res = await fetch(`${uazapiUrl}/send/media`, {
           method: "POST",
@@ -8305,11 +8317,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           switch (itemType) {
             case "text": {
               if (!itemConfig.text) { results.push({ type: "text", skipped: true }); continue; }
-              await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(itemConfig.text));
+              const delay = typingDelayMs(itemConfig.text);
+              await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
               res = await fetch(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay: 0, readchat: true }),
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay, readchat: true }),
               });
               break;
             }
@@ -8321,7 +8334,10 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               const mediaType = itemType === "audio" ? "ptt" : itemType === "video" ? "video" : itemType === "image" ? "image" : "document";
               sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: 0 };
               if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
-              if (itemType === "audio") await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
+              if (itemType === "audio") {
+                sendPayload.delay = 3500;
+                await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
+              }
               res = await fetch(`${uazapiUrl}/send/media`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
