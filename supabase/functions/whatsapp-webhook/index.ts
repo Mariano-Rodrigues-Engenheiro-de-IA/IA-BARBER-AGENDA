@@ -8293,7 +8293,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             case "document": {
               if (!itemConfig.url) { results.push({ type: itemType, skipped: true }); continue; }
               const mediaType = itemType === "audio" ? "ptt" : itemType === "video" ? "video" : itemType === "image" ? "image" : "document";
-              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: itemType === "audio" ? 3500 : 1500 };
+              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: itemType === "audio" ? 3500 : 0 };
               if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
               res = await fetch(`${uazapiUrl}/send/media`, {
                 method: "POST",
