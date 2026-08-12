@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LayoutDashboard, MessageCircle, Clock, LogOut, Menu, Kanban, Power, PowerOff, Smartphone, Bot, TestTube2 } from "lucide-react";
+import { LayoutDashboard, MessageCircle, LogOut, Menu, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -14,11 +14,13 @@ interface NavItem { to: string; icon: any; label: string; module: AppModule }
 const NAV: NavItem[] = [
   { to: "/app", icon: LayoutDashboard, label: "Visão Geral", module: "overview" },
   { to: "/app/conversations", icon: MessageCircle, label: "Conversas", module: "conversations" },
-  { to: "/app/followups", icon: Clock, label: "Follow-ups", module: "followups" },
-  { to: "/app/crm", icon: Kanban, label: "CRM", module: "crm" },
-  { to: "/app/ai", icon: Bot, label: "Sua IA", module: "ai_prompt" },
-  { to: "/app/simulator", icon: TestTube2, label: "Simulador", module: "ai_prompt" },
-  { to: "/app/connection", icon: Smartphone, label: "Conexão", module: "connection" },
+  { to: "/app/ai", icon: Bot, label: "Prompt", module: "ai_prompt" },
+  { to: "/app/tools", icon: Wrench, label: "Ferramentas da IA", module: "tools" },
+  { to: "/app/knowledge", icon: BookOpen, label: "Base de conhecimento", module: "ai_knowledge" },
+  { to: "/app/integrations", icon: Plug, label: "Integrações", module: "integrations" },
+  { to: "/app/company", icon: Building2, label: "Dados da empresa", module: "company_data" },
+  { to: "/app/simulator", icon: TestTube2, label: "Simulador", module: "simulator" },
+  { to: "/app/connection", icon: Smartphone, label: "Conexão WhatsApp", module: "connection" },
 ];
 
 function NavRow({ item, onClick }: { item: NavItem; onClick: () => void }) {

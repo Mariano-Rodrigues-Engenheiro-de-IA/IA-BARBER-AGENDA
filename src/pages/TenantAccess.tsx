@@ -14,16 +14,16 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { AppModule, ModuleVisibility } from "@/hooks/useAuth";
 
+// Mesma ordem da navegação do painel do cliente.
 const MODULES: { key: AppModule; label: string }[] = [
   { key: "overview", label: "Visão Geral" },
   { key: "conversations", label: "Conversas" },
-  { key: "followups", label: "Follow-ups" },
-  { key: "crm", label: "CRM" },
-  { key: "ai_prompt", label: "Prompt da IA" },
-  { key: "ai_knowledge", label: "Base de conhecimento" },
+  { key: "ai_prompt", label: "Prompt" },
   { key: "tools", label: "Ferramentas da IA" },
-  { key: "integrations", label: "Integrações (tokens)" },
+  { key: "ai_knowledge", label: "Base de conhecimento" },
+  { key: "integrations", label: "Integrações" },
   { key: "company_data", label: "Dados da empresa" },
+  { key: "simulator", label: "Simulador" },
   { key: "connection", label: "Conexão WhatsApp" },
 ];
 

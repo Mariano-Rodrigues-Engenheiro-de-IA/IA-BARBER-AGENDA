@@ -5,9 +5,9 @@ import type { Session, User } from "@supabase/supabase-js";
 export type Role = "admin" | "staff" | "client" | null;
 export type ModuleVisibility = "hidden" | "read_only" | "editable";
 export type AppModule =
-  | "overview" | "conversations" | "followups" | "crm"
+  | "overview" | "conversations"
   | "ai_prompt" | "ai_knowledge" | "integrations" | "company_data"
-  | "connection" | "tools";
+  | "connection" | "tools" | "simulator";
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 

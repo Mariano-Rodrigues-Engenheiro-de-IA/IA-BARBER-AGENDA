@@ -23,8 +23,10 @@ import PromptsPage from "@/pages/Prompts";
 import StaffPage from "@/pages/Staff";
 import ClientOverview from "@/pages/client/Overview";
 import ClientConversations from "@/pages/client/Conversations";
-import ClientFollowUps from "@/pages/client/FollowUps";
-import ClientCrm from "@/pages/client/Crm";
+import ClientTools from "@/pages/client/Tools";
+import ClientKnowledge from "@/pages/client/Knowledge";
+import ClientIntegrations from "@/pages/client/Integrations";
+import ClientCompany from "@/pages/client/Company";
 import ClientAi from "@/pages/client/Ai";
 import ClientSimulator from "@/pages/client/Simulator";
 import ClientConnection from "@/pages/client/Connection";
@@ -101,8 +103,13 @@ function AppRoutes() {
       {/* Client */}
       <Route path="/app" element={<ClientRoute><ClientOverview /></ClientRoute>} />
       <Route path="/app/conversations" element={<ClientRoute><ClientConversations /></ClientRoute>} />
-      <Route path="/app/followups" element={<ClientRoute><ClientFollowUps /></ClientRoute>} />
-      <Route path="/app/crm" element={<ClientRoute><ClientCrm /></ClientRoute>} />
+      <Route path="/app/followups" element={<Navigate to="/app" replace />} />
+      <Route path="/app/crm" element={<Navigate to="/app" replace />} />
+      <Route path="/app/ai" element={<ClientRoute><ClientAi /></ClientRoute>} />
+      <Route path="/app/tools" element={<ClientRoute><ClientTools /></ClientRoute>} />
+      <Route path="/app/knowledge" element={<ClientRoute><ClientKnowledge /></ClientRoute>} />
+      <Route path="/app/integrations" element={<ClientRoute><ClientIntegrations /></ClientRoute>} />
+      <Route path="/app/company" element={<ClientRoute><ClientCompany /></ClientRoute>} />
       <Route path="/app/ai" element={<ClientRoute><ClientAi /></ClientRoute>} />
       <Route path="/app/simulator" element={<ClientRoute><ClientSimulator /></ClientRoute>} />
       <Route path="/app/connection" element={<ClientRoute><ClientConnection /></ClientRoute>} />

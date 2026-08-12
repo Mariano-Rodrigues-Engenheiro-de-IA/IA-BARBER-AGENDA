@@ -2,23 +2,23 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send, CalendarCheck, Bot, UserCheck, DollarSign, Receipt, CalendarIcon } from "lucide-react";
+import { CalendarCheck, Bot, UserCheck, CalendarIcon, CalendarX2, CalendarClock } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+import {
+  getBookingId, getBookingValue, buildServicePriceMap,
+  countCancellations, countReschedules, buildCancelRescheduleDaily,
+} from "@/lib/booking";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 
-const fmtBRL = (n: number) =>
-  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  PieChart, Pie, Cell, Legend,
 } from "recharts";
 
 function StatCard({ icon: Icon, label, value, color = "text-primary" }: any) {
@@ -140,36 +140,8 @@ export default function ClientOverview() {
     },
   });
 
-  const { data: followUps } = useQuery({
-    queryKey: ["client-ov-fu", ...queryKeyPart],
-    enabled: !!tenantId && !(period === "custom" && !customRange?.from),
-    refetchInterval: 30000,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const { data } = await supabase.from("follow_ups")
-        .select("status, created_at, sent_at, confirmed_at")
-        .eq("tenant_id", tenantId!)
-        .gte("created_at", since)
-        .lte("created_at", until);
-      return data ?? [];
-    },
-  });
 
-  const { data: followUpsSent } = useQuery({
-    queryKey: ["client-ov-fu-sent", ...queryKeyPart],
-    enabled: !!tenantId && !(period === "custom" && !customRange?.from),
-    refetchInterval: 30000,
-    placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const { count } = await supabase.from("follow_ups")
-        .select("id", { count: "exact", head: true })
-        .eq("tenant_id", tenantId!)
-        .not("sent_at", "is", null)
-        .gte("sent_at", since)
-        .lte("sent_at", until);
-      return count ?? 0;
-    },
-  });
+
 
   const isSuccessfulBooking = getBookingId;
   const priceMap = useMemo(() => buildServicePriceMap(agentLogs ?? []), [agentLogs]);
@@ -245,28 +217,22 @@ export default function ClientOverview() {
       .map(([phone, count]) => ({ phone, mensagens: count }));
   }, [messages]);
 
-  const fuStatus = useMemo(() => {
-    const counts: Record<string, number> = {};
-    (followUps ?? []).forEach((f: any) => { counts[f.status] = (counts[f.status] || 0) + 1; });
-    const colors: Record<string, string> = {
-      pending: "hsl(var(--primary))",
-      sent: "hsl(45 95% 55%)",
-      confirmed: "hsl(160 70% 45%)",
-      cancelled: "hsl(0 70% 55%)",
-      expired: "hsl(0 0% 50%)",
-    };
-    const labels: Record<string, string> = {
-      pending: "Pendente", sent: "Enviado", confirmed: "Confirmado",
-      cancelled: "Cancelado", expired: "Expirado",
-    };
-    return Object.entries(counts).map(([k, v]) => ({ name: labels[k] || k, value: v, fill: colors[k] || "hsl(var(--muted-foreground))" }));
-  }, [followUps]);
+  // Cancelamentos / remarcações executados pela IA no período (deduplicados
+  // por agendamento, ignorando chamadas bloqueadas ou com erro).
+  const cancellations = useMemo(() => countCancellations(agentLogs ?? []), [agentLogs]);
+  const reschedules = useMemo(() => countReschedules(agentLogs ?? []), [agentLogs]);
+  const cancelRescheduleDaily = useMemo(
+    () => buildCancelRescheduleDaily(agentLogs ?? [], bucketDates),
+    [agentLogs, bucketDates],
+  );
 
   const chartConfig: ChartConfig = {
     cliente: { label: "Cliente", color: "hsl(var(--primary))" },
     ia: { label: "IA", color: "hsl(160 70% 45%)" },
     agendamentos: { label: "Agendamentos", color: "hsl(160 70% 45%)" },
     faturamento: { label: "Faturamento (R$)", color: "hsl(45 95% 55%)" },
+    cancelamentos: { label: "Cancelamentos", color: "hsl(0 70% 55%)" },
+    remarcacoes: { label: "Remarcações", color: "hsl(45 95% 55%)" },
     mensagens: { label: "Mensagens", color: "hsl(var(--primary))" },
     valor: { label: "Total", color: "hsl(var(--primary))" },
   };
@@ -281,7 +247,7 @@ export default function ClientOverview() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Visão Geral</h1>
+          <h1 className="text-2xl font-bold text-foreground">Desempenho da IA</h1>
           <p className="text-muted-foreground">Análises do período selecionado</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -329,11 +295,10 @@ export default function ClientOverview() {
       )}
 
       {/* Top cards (período) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <StatCard icon={DollarSign} label={`Faturamento (${periodLabel})`} value={fmtBRL(aiStats.revenue)} color="text-emerald-400" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <StatCard icon={CalendarCheck} label={`Agendamentos (${periodLabel})`} value={aiStats.bookings} color="text-accent" />
-        <StatCard icon={Receipt} label={`Ticket médio (${periodLabel})`} value={aiStats.bookings > 0 ? fmtBRL(aiStats.revenue / aiStats.bookings) : fmtBRL(0)} color="text-emerald-400" />
-        <StatCard icon={Send} label={`Follow-ups enviados (${periodLabel})`} value={followUpsSent ?? "—"} />
+        <StatCard icon={CalendarX2} label={`Cancelamentos (${periodLabel})`} value={cancellations} color="text-destructive" />
+        <StatCard icon={CalendarClock} label={`Remarcações (${periodLabel})`} value={reschedules} color="text-warning" />
         <StatCard icon={Bot} label={`Respostas da IA (${periodLabel})`} value={aiStats.aiMessages} color="text-primary" />
         <StatCard icon={UserCheck} label={`Clientes atendidos (${periodLabel})`} value={aiStats.uniqueClients} color="text-warning" />
       </div>
@@ -367,21 +332,6 @@ export default function ClientOverview() {
           </ChartContainer>
         </div>
 
-        <div className="glass-card p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-foreground">Faturamento por dia</h3>
-            <span className="text-xs text-muted-foreground">Total: {fmtBRL(aiStats.revenue)}</span>
-          </div>
-          <ChartContainer config={chartConfig} className="h-[260px] w-full">
-            <BarChart data={toolDaily}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
-              <XAxis dataKey="date" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
-              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} tickFormatter={(v) => `R$${v}`} />
-              <ChartTooltip content={<ChartTooltipContent formatter={(v: any) => fmtBRL(Number(v))} />} />
-              <Bar dataKey="faturamento" fill="hsl(45 95% 55%)" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ChartContainer>
-        </div>
 
         <div className="glass-card p-5 space-y-3">
           <h3 className="font-semibold text-foreground">Top 5 clientes mais ativos</h3>
@@ -401,20 +351,17 @@ export default function ClientOverview() {
         </div>
 
         <div className="glass-card p-5 space-y-3">
-          <h3 className="font-semibold text-foreground">Status dos follow-ups</h3>
-          {fuStatus.length === 0 ? (
-            <div className="h-[260px] flex items-center justify-center text-muted-foreground text-sm">Sem dados</div>
-          ) : (
-            <ChartContainer config={chartConfig} className="h-[260px] w-full">
-              <PieChart>
-                <Pie data={fuStatus} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={90} paddingAngle={2}>
-                  {fuStatus.map((s, i) => <Cell key={i} fill={s.fill} />)}
-                </Pie>
-                <Legend wrapperStyle={{ fontSize: 12 }} />
-                <ChartTooltip content={<ChartTooltipContent />} />
-              </PieChart>
-            </ChartContainer>
-          )}
+          <h3 className="font-semibold text-foreground">Cancelamentos e remarcações por dia</h3>
+          <ChartContainer config={chartConfig} className="h-[260px] w-full">
+            <BarChart data={cancelRescheduleDaily}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border/40" />
+              <XAxis dataKey="date" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} />
+              <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} allowDecimals={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar dataKey="cancelamentos" fill="hsl(0 70% 55%)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="remarcacoes" fill="hsl(45 95% 55%)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ChartContainer>
         </div>
       </div>
     </div>
