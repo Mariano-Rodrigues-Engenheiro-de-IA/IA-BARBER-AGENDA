@@ -1408,10 +1408,20 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           .from("tenants")
           .select("id, name, whatsapp_number, uazapi_url, uazapi_token")
           .eq("status", "active");
-        const tenantForReset = (activeTenantsReset || []).find((t: any) => {
-          if (!t.whatsapp_number) return false;
-          return ownerDigitsReset ? exactDigitsMatch(ownerDigitsReset, t.whatsapp_number) : false;
-        }) || (activeTenantsReset || [])[0];
+        // ATENÇÃO: NUNCA usar um fallback tipo "primeira barbearia da lista"
+        // aqui — se não conseguirmos confirmar com certeza qual barbearia
+        // mandou o ❌, o correto é NÃO resetar nada. O fallback antigo
+        // (`|| lista[0]`) causava um bug grave: quando a identificação
+        // falhava (ex: barbearia recém-criada sem whatsapp_number salvo
+        // ainda, ou dados do payload vazios), o sistema resetava a
+        // memória e mandava "Memória limpa!" para uma barbearia
+        // COMPLETAMENTE ALEATÓRIA — vazamento real entre clientes
+        // diferentes, relatado pelo Mariano.
+        const tenantForReset = ownerDigitsReset
+          ? (activeTenantsReset || []).find((t: any) =>
+              t.whatsapp_number ? exactDigitsMatch(ownerDigitsReset, t.whatsapp_number) : false,
+            )
+          : undefined;
 
         if (tenantForReset) {
           await supabase
@@ -1449,7 +1459,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
             }
           }
         } else {
-          console.warn(`[MemoryReset EARLY] no tenant resolved for phone=${phoneNumber} ownerDigits=${ownerDigitsReset}`);
+          console.warn(`[MemoryReset EARLY] Reset IGNORADO (intencional) — não foi possível identificar com certeza qual barbearia mandou o ❌ (ownerDigits="${ownerDigitsReset}"), phone=${phoneNumber}. Isso evita apagar/vazar dados de um cliente errado.`);
         }
         return new Response(JSON.stringify({ status: "memory_reset" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
