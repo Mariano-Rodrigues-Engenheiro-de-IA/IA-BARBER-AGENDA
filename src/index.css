@@ -161,15 +161,43 @@
   }
 
   /* Sidebar com identidade própria da marca Zaylo (clientes que NÃO são da
-     parceria Frizzar) — cor extraída com precisão do banner do CRM (fundo
-     #10151D), pra aproximar visualmente o painel de IA e o CRM. Aplicada
+     parceria Frizzar) — atualizada para o cinza-azulado escuro da referência
+     do Mariano (#0F1622), mais escuro e com azul mais bonito. Aplicada
      junto com .theme-frizzar (que continua dando a base: área principal
      clara, cards brancos) — só sobrescreve o tom da sidebar. */
   .theme-frizzar.theme-zaylo {
-    --sidebar-background: 217 25% 22%;
-    --sidebar-accent: 217 22% 30%;
-    --sidebar-border: 217 20% 27%;
+    --sidebar-background: 214 39% 10%;
+    --sidebar-foreground: 210 30% 96%;
+    --sidebar-accent: 214 30% 18%;
+    --sidebar-accent-foreground: 210 30% 96%;
+    --sidebar-border: 214 28% 16%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-ring: 217 91% 60%;
   }
+
+  /* Tela de login da identidade geral (Zaylo): mesmo fundo escuro da
+     sidebar, com card levemente mais claro e a logo branca por cima. */
+  .theme-zaylo-login {
+    color-scheme: dark;
+    --background: 214 39% 10%;
+    --foreground: 210 30% 96%;
+    --card: 214 32% 14%;
+    --card-foreground: 210 30% 96%;
+    --popover: 214 32% 14%;
+    --popover-foreground: 210 30% 96%;
+    --secondary: 214 28% 18%;
+    --secondary-foreground: 210 30% 96%;
+    --muted: 214 28% 18%;
+    --muted-foreground: 213 18% 68%;
+    --border: 214 26% 22%;
+    --input: 214 26% 22%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --ring: 217 91% 60%;
+    --panel-shadow: 0 24px 48px -30px hsl(214 60% 3% / 0.6);
+  }
+
 
   /* Papel de parede do WhatsApp na área de mensagens (Conversas e
      Simulador) — a pedido do Mariano, essa melhoria vale para TODOS os
