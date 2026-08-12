@@ -8204,10 +8204,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           number: phoneNumber,
           type: mediaType,
           file: mediaUrl,
-          delay: toolType === "send_audio" ? 3500 : 0,
+          delay: 0,
         };
 
         if (config.caption) sendPayload.caption = config.caption;
+        // Áudio: presença "gravando áudio..." antes do envio.
+        if (toolType === "send_audio") await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
 
         const res = await fetch(`${uazapiUrl}/send/media`, {
           method: "POST",
@@ -8317,8 +8319,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             case "document": {
               if (!itemConfig.url) { results.push({ type: itemType, skipped: true }); continue; }
               const mediaType = itemType === "audio" ? "ptt" : itemType === "video" ? "video" : itemType === "image" ? "image" : "document";
-              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: itemType === "audio" ? 3500 : 0 };
+              sendPayload = { number: phoneNumber, type: mediaType, file: itemConfig.url, delay: 0 };
               if (itemConfig.caption) sendPayload.caption = itemConfig.caption;
+              if (itemType === "audio") await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
               res = await fetch(`${uazapiUrl}/send/media`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
