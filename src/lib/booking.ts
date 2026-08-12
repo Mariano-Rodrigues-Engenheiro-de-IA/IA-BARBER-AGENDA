@@ -173,3 +173,89 @@ export function sumBookingRevenue(
   });
   return { total, withPrice, withoutPrice };
 }
+
+// ---------------------------------------------------------------------------
+// Cancelamentos e remarcações
+//
+// Nomes de ferramenta por provedor:
+//  - cancelamento: "cancelar_agendamento" (Trinks, Frizzar, Bemp, AppBarber)
+//                  "desmarcar_agendamento" (OneBeleza)
+//  - remarcação:   "editar_agendamento" (Trinks) / "reagendar" (OneBeleza)
+// ---------------------------------------------------------------------------
+
+const CANCEL_TOOL_NAMES = new Set(["cancelar_agendamento", "desmarcar_agendamento"]);
+const RESCHEDULE_TOOL_NAMES = new Set(["editar_agendamento", "reagendar"]);
+
+function isSuccessfulCall(tc: any): boolean {
+  if (!tc || tc.blocked) return false;
+  const r = tc.result;
+  if (r == null) return false;
+  if (typeof r === "object") {
+    if (r.error) return false;
+    if (r.deduplicated) return false;
+    if (r.success === false) return false;
+    if (Array.isArray(r.Errors) && r.Errors.length > 0) return false;
+  }
+  return true;
+}
+
+/** Chave estável de deduplicação para cancelamento/remarcação. */
+function actionKey(tc: any, kind: string): string {
+  const a = tc?.args ?? {};
+  const id =
+    a.agendamentoId ?? a.agendamento_id ?? a.appointment_id ?? a.appointmentId ??
+    a.id ?? a.reservaId ?? a.codigo ?? null;
+  return id != null ? `${kind}:${String(id)}` : `${kind}:${JSON.stringify(a)}`;
+}
+
+function collectActionIds(
+  logs: Array<{ tool_calls: any }> | null | undefined,
+  names: Set<string>,
+  kind: string,
+): Set<string> {
+  const ids = new Set<string>();
+  (logs ?? []).forEach((l) => {
+    const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
+    tools.forEach((tc: any) => {
+      if (!tc || !names.has(tc.name)) return;
+      if (!isSuccessfulCall(tc)) return;
+      ids.add(actionKey(tc, kind));
+    });
+  });
+  return ids;
+}
+
+export function countCancellations(logs: Array<{ tool_calls: any }> | null | undefined): number {
+  return collectActionIds(logs, CANCEL_TOOL_NAMES, "cancel").size;
+}
+
+export function countReschedules(logs: Array<{ tool_calls: any }> | null | undefined): number {
+  return collectActionIds(logs, RESCHEDULE_TOOL_NAMES, "resched").size;
+}
+
+/** Série diária de cancelamentos e remarcações, deduplicada globalmente. */
+export function buildCancelRescheduleDaily(
+  logs: Array<{ tool_calls: any; created_at: string }> | null | undefined,
+  bucketDates: string[],
+): Array<{ date: string; cancelamentos: number; remarcacoes: number }> {
+  const map: Record<string, { date: string; cancelamentos: number; remarcacoes: number }> = {};
+  bucketDates.forEach((d) => { map[d] = { date: d.slice(5), cancelamentos: 0, remarcacoes: 0 }; });
+  const seen = new Set<string>();
+  (logs ?? []).forEach((l) => {
+    const k = l.created_at?.slice(0, 10);
+    if (!k || !map[k]) return;
+    const tools = Array.isArray(l.tool_calls) ? l.tool_calls : [];
+    tools.forEach((tc: any) => {
+      if (!tc || !isSuccessfulCall(tc)) return;
+      const isCancel = CANCEL_TOOL_NAMES.has(tc.name);
+      const isResched = RESCHEDULE_TOOL_NAMES.has(tc.name);
+      if (!isCancel && !isResched) return;
+      const key = actionKey(tc, isCancel ? "cancel" : "resched");
+      if (seen.has(key)) return;
+      seen.add(key);
+      if (isCancel) map[k].cancelamentos++;
+      else map[k].remarcacoes++;
+    });
+  });
+  return Object.values(map);
+}
