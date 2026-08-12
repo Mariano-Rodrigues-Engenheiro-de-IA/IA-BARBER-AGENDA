@@ -48,7 +48,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <>
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">
-          <img src={logoZaylo} alt="IA Barber Pro" className="w-12 h-12 rounded-xl object-contain" />
+          <img src={logoZaylo} alt="IA Barber Pro" width={96} height={96} fetchPriority="high" decoding="sync" loading="eager" className="w-12 h-12 rounded-xl object-contain" />
           <div>
             <h1 className="font-bold text-foreground text-lg leading-tight">IA Barber Pro</h1>
             <p className="text-xs text-muted-foreground">{roleLabel}</p>
@@ -140,7 +140,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
-          <img src={logoZaylo} alt="IA Barber Pro" className="w-7 h-7 rounded-lg object-contain" />
+          <img src={logoZaylo} alt="IA Barber Pro" width={96} height={96} fetchPriority="high" decoding="sync" loading="eager" className="w-7 h-7 rounded-lg object-contain" />
           <span className="font-semibold text-foreground">IA Barber Pro</span>
         </div>
         <div className="p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">
