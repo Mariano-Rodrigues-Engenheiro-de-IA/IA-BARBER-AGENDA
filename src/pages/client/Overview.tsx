@@ -2,23 +2,23 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { Send, CalendarCheck, Bot, UserCheck, DollarSign, Receipt, CalendarIcon } from "lucide-react";
+import { CalendarCheck, Bot, UserCheck, CalendarIcon, CalendarX2, CalendarClock } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Button } from "@/components/ui/button";
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
-import { getBookingId, getBookingValue, buildServicePriceMap } from "@/lib/booking";
+import {
+  getBookingId, getBookingValue, buildServicePriceMap,
+  countCancellations, countReschedules, buildCancelRescheduleDaily,
+} from "@/lib/booking";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import type { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 
-const fmtBRL = (n: number) =>
-  n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  PieChart, Pie, Cell, Legend,
 } from "recharts";
 
 function StatCard({ icon: Icon, label, value, color = "text-primary" }: any) {
