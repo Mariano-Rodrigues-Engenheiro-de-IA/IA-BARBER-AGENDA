@@ -8175,12 +8175,15 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         if (!mediaUrl) return { error: "URL da mídia não configurada." };
         const mediaType = toolType === "send_audio" ? "ptt" : toolType === "send_image" ? "image" : toolType === "send_video" ? "video" : "document";
 
+        // Presença: só áudio mostra "gravando áudio..." (delay). Imagem/vídeo/documento
+        // vão sem delay — não faz sentido "digitando" nem "gravando" pra mídia.
         const sendPayload: any = {
           number: phoneNumber,
           type: mediaType,
           file: mediaUrl,
-          delay: toolType === "send_audio" ? 3500 : 1500,
+          delay: toolType === "send_audio" ? 3500 : 0,
         };
+
         if (config.caption) sendPayload.caption = config.caption;
 
         const res = await fetch(`${uazapiUrl}/send/media`, {
