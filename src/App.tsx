@@ -74,6 +74,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={user ? <Navigate to={home} replace /> : <LoginPage />} />
+      {/* Login white-label da parceria Frizzar — mesmo fluxo de auth, só identidade diferente */}
+      <Route path="/login/frizzar" element={user ? <Navigate to={home} replace /> : <LoginPage brand="frizzar" />} />
 
       {/* Site de chat público (Modo Econômico) — sem login */}
       <Route path="/c/:token" element={<ClientChatSite />} />

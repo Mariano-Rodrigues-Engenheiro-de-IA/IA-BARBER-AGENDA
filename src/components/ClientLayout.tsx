@@ -107,6 +107,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <img
             src="/frizzar/frizzar-logo-horizontal-white.png"
             alt="Frizzar"
+            width={867}
+            height={178}
+            fetchPriority="high"
+            decoding="sync"
+            loading="eager"
             className="h-7 w-auto object-contain select-none"
             draggable={false}
           />
@@ -114,6 +119,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <img
             src="/brand/zaylo-ia-logo-white.png"
             alt="Zaylo IA"
+            width={942}
+            height={130}
+            fetchPriority="high"
+            decoding="sync"
+            loading="eager"
             className="h-5 w-auto object-contain select-none"
             draggable={false}
           />
