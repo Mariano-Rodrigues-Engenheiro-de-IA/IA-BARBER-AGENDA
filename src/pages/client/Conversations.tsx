@@ -55,15 +55,50 @@ function Avatar({ phone, size = 48, image }: { phone: string; size?: number; ima
   );
 }
 
-// Hook: fetch profile image for a single phone via edge function, cached
+// Hook: fetch profile image for a single phone via edge function, cached.
+// O cache também é persistido em localStorage (24h) para que, ao reabrir o
+// painel, as fotos apareçam na hora em vez de disparar uma chamada por
+// contato de novo — era a principal causa de lentidão em Conversas.
+const PIC_CACHE_KEY = "wa-pic-cache-v1";
+const PIC_TTL = 24 * 60 * 60 * 1000;
+
+type PicEntry = { img: string | null; at: number };
+
+function readPicCache(): Record<string, PicEntry> {
+  try {
+    const raw = localStorage.getItem(PIC_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, PicEntry>) : {};
+  } catch {
+    return {};
+  }
+}
+
 const imageCache = new Map<string, string | null>();
+(() => {
+  const now = Date.now();
+  Object.entries(readPicCache()).forEach(([phone, e]) => {
+    if (e && now - e.at < PIC_TTL) imageCache.set(phone, e.img);
+  });
+})();
+
+function writePicCache(phone: string, img: string | null) {
+  try {
+    const all = readPicCache();
+    all[phone] = { img, at: Date.now() };
+    localStorage.setItem(PIC_CACHE_KEY, JSON.stringify(all));
+  } catch {
+    /* storage cheio/indisponível — cache em memória já basta */
+  }
+}
+
 function useProfileImage(phone: string | null) {
   const { tenantId } = useAuth();
   const { data } = useQuery({
     queryKey: ["wa-pic", tenantId, phone],
-    enabled: !!tenantId && !!phone,
-    staleTime: 30 * 60 * 1000,
-    gcTime: 60 * 60 * 1000,
+    enabled: !!tenantId && !!phone && !imageCache.has(phone ?? ""),
+    staleTime: PIC_TTL,
+    gcTime: PIC_TTL,
+    initialData: phone && imageCache.has(phone) ? (imageCache.get(phone) ?? null) : undefined,
     queryFn: async () => {
       if (!phone) return null;
       if (imageCache.has(phone)) return imageCache.get(phone) ?? null;
@@ -72,15 +107,18 @@ function useProfileImage(phone: string | null) {
       });
       if (error) {
         imageCache.set(phone, null);
+        writePicCache(phone, null);
         return null;
       }
       const img = (data as any)?.image ?? null;
       imageCache.set(phone, img);
+      writePicCache(phone, img);
       return img;
     },
   });
-  return data ?? null;
+  return data ?? (phone ? imageCache.get(phone) ?? null : null);
 }
+
 
 function ContactAvatar({ phone, size }: { phone: string; size?: number }) {
   const img = useProfileImage(phone);
@@ -142,6 +180,8 @@ export default function ClientConversations() {
       return data ?? [];
     },
     refetchInterval: 15000,
+    // Volta instantâneo ao navegar entre abas em vez de recarregar do zero.
+    staleTime: 10000,
     placeholderData: keepPreviousData,
   });
 
@@ -149,27 +189,24 @@ export default function ClientConversations() {
     queryKey: ["client-conv", tenantId, selected],
     enabled: !!tenantId && !!selected,
     queryFn: async () => {
-      const all: any[] = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from("chat_messages")
-          .select("id,role,content,created_at")
-          .eq("tenant_id", tenantId!)
-          .eq("phone_number", selected!)
-          .order("created_at", { ascending: true })
-          .range(from, from + pageSize - 1);
-        if (error) break;
-        all.push(...(data ?? []));
-        if (!data || data.length < pageSize) break;
-        from += pageSize;
-      }
-      return all;
+      // Antes buscávamos o histórico TODO em páginas de 1000 (várias
+      // requisições sequenciais por conversa). Agora trazemos apenas as
+      // últimas mensagens numa única requisição — é o que a tela exibe.
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("id,role,content,created_at")
+        .eq("tenant_id", tenantId!)
+        .eq("phone_number", selected!)
+        .order("created_at", { ascending: false })
+        .limit(400);
+      if (error) return [];
+      return (data ?? []).slice().reverse();
     },
     refetchInterval: 10000,
+    staleTime: 5000,
     placeholderData: keepPreviousData,
   });
+
 
   const { data: leadSummary } = useQuery({
     queryKey: ["client-conv-summary", tenantId, selected],

@@ -41,7 +41,7 @@ export default function ClientCrm() {
         <div className="glass-card p-8 text-center text-muted-foreground">Carregando...</div>
       ) : !hasToken ? (
         <div className="glass-card overflow-hidden">
-          <img src="/crm/banner-conectar-crm.jpg" alt="Transforme conversas em vendas" className="w-full h-auto block" />
+          <img src="/crm/banner-conectar-crm.jpg" alt="Transforme conversas em vendas" fetchPriority="high" decoding="async" loading="eager" className="w-full h-auto block" />
           <div className="p-6 text-center">
             <a
               href="https://crm.zayloia.com"
