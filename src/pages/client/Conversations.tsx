@@ -180,6 +180,8 @@ export default function ClientConversations() {
       return data ?? [];
     },
     refetchInterval: 15000,
+    // Volta instantâneo ao navegar entre abas em vez de recarregar do zero.
+    staleTime: 10000,
     placeholderData: keepPreviousData,
   });
 
@@ -187,27 +189,24 @@ export default function ClientConversations() {
     queryKey: ["client-conv", tenantId, selected],
     enabled: !!tenantId && !!selected,
     queryFn: async () => {
-      const all: any[] = [];
-      let from = 0;
-      const pageSize = 1000;
-      while (true) {
-        const { data, error } = await supabase
-          .from("chat_messages")
-          .select("id,role,content,created_at")
-          .eq("tenant_id", tenantId!)
-          .eq("phone_number", selected!)
-          .order("created_at", { ascending: true })
-          .range(from, from + pageSize - 1);
-        if (error) break;
-        all.push(...(data ?? []));
-        if (!data || data.length < pageSize) break;
-        from += pageSize;
-      }
-      return all;
+      // Antes buscávamos o histórico TODO em páginas de 1000 (várias
+      // requisições sequenciais por conversa). Agora trazemos apenas as
+      // últimas mensagens numa única requisição — é o que a tela exibe.
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select("id,role,content,created_at")
+        .eq("tenant_id", tenantId!)
+        .eq("phone_number", selected!)
+        .order("created_at", { ascending: false })
+        .limit(400);
+      if (error) return [];
+      return (data ?? []).slice().reverse();
     },
     refetchInterval: 10000,
+    staleTime: 5000,
     placeholderData: keepPreviousData,
   });
+
 
   const { data: leadSummary } = useQuery({
     queryKey: ["client-conv-summary", tenantId, selected],

@@ -45,6 +45,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const { data: tenant, refetch } = useQuery({
     queryKey: ["client-tenant", tenantId],
     enabled: !!tenantId,
+    // Dado quase estático — evita refetch a cada navegação (a logo/tema
+    // já vêm do cache, sem "piscar").
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase.from("tenants")
         .select("id,name,agent_paused,logo_url,api_provider")
