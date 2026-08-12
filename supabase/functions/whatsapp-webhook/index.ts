@@ -1105,6 +1105,26 @@ function typingDelayMs(text: string): number {
   return Math.min(6000, Math.max(1200, Math.round(chars * 45)));
 }
 
+// O `delay` do /send/text nem sempre gera presença visível na instância.
+// A forma confiável é chamar /message/presence com presence=composing (ou
+// recording) e só depois enviar a mensagem com delay 0.
+async function uazapiTypingPresence(
+  uazapiUrl: string,
+  uazapiToken: string,
+  number: string,
+  ms: number,
+  presence: "composing" | "recording" = "composing",
+): Promise<void> {
+  try {
+    await fetch(`${uazapiUrl}/message/presence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+      body: JSON.stringify({ number, presence, delay: ms }),
+    }).catch(() => null);
+  } catch (_) { /* presença é cosmética: nunca bloquear o envio */ }
+  await new Promise((r) => setTimeout(r, ms));
+}
+
 async function uazapiSendTextWithRetry(
   uazapiUrl: string,
   uazapiToken: string,
@@ -1118,10 +1138,11 @@ async function uazapiSendTextWithRetry(
   const delay = typingDelayMs(text);
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
+      if (attempt === 1) await uazapiTypingPresence(uazapiUrl, uazapiToken, number, delay);
       const res = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay, readchat: true }),
+        body: JSON.stringify({ number, text, delay: 0, readchat: true }),
       });
       const data = await res.json().catch(() => ({} as any));
       lastStatus = res.status;
