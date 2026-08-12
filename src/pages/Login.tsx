@@ -4,25 +4,29 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import logoZaylo from "@/assets/logo-zaylo.png";
 
-function useForceDarkOnLogin() {
+
+/** Aplica a mesma identidade visual unificada usada no resto do sistema
+ * (fundo claro, cards brancos, azul de destaque) — antes a tela de login
+ * forçava um tema escuro genérico, deixando ela com uma cara diferente do
+ * resto do painel. */
+function useForceZayloTheme() {
   useEffect(() => {
     const root = document.documentElement;
     const hadLight = root.classList.contains("light");
-    root.classList.remove("light");
-    root.classList.add("dark");
+    const hadDark = root.classList.contains("dark");
+    root.classList.remove("light", "dark");
+    root.classList.add("theme-frizzar", "theme-zaylo");
     return () => {
-      if (hadLight) {
-        root.classList.remove("dark");
-        root.classList.add("light");
-      }
+      root.classList.remove("theme-frizzar", "theme-zaylo");
+      if (hadLight) root.classList.add("light");
+      if (hadDark) root.classList.add("dark");
     };
   }, []);
 }
 
 export default function LoginPage() {
-  useForceDarkOnLogin();
+  useForceZayloTheme();
   const { signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,9 +51,8 @@ export default function LoginPage() {
         <div className="glass-card p-8 space-y-6">
           <div className="text-center space-y-2">
             <div className="flex justify-center">
-            <img src={logoZaylo} alt="IA Barber Pro" className="w-20 h-20 rounded-2xl object-contain" />
+            <img src="/brand/zaylo-ia-logo.png" alt="Zaylo IA" className="h-12 w-auto object-contain" />
             </div>
-            <h1 className="text-2xl font-bold text-foreground">IA Barber Pro</h1>
             <p className="text-sm text-muted-foreground">
               Painel de controle da sua IA
             </p>
