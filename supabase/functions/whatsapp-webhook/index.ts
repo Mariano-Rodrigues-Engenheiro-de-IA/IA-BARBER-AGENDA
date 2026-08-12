@@ -8018,10 +8018,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
       case "send_link": {
         const text = toolType === "send_link" ? (config.url || "") : (config.text || "");
         if (!text) return { error: "Texto/URL não configurado nesta ferramenta." };
+        await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(text));
         const res = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text, delay: typingDelayMs(text), readchat: true }),
+          body: JSON.stringify({ number: phoneNumber, text, delay: 0, readchat: true }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
@@ -8043,10 +8044,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         if (!silentMode) {
           const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
           try {
+            await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(clientText));
             const clientRes = await fetch(`${uazapiUrl}/send/text`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ number: phoneNumber, text: clientText, delay: typingDelayMs(clientText), readchat: true }),
+              body: JSON.stringify({ number: phoneNumber, text: clientText, delay: 0, readchat: true }),
             });
             const clientData = await readResponsePayload(clientRes);
             const clientMsgId = extractSentMessageId(clientData);
@@ -8301,10 +8303,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           switch (itemType) {
             case "text": {
               if (!itemConfig.text) { results.push({ type: "text", skipped: true }); continue; }
+              await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, typingDelayMs(itemConfig.text));
               res = await fetch(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay: typingDelayMs(itemConfig.text), readchat: true }),
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay: 0, readchat: true }),
               });
               break;
             }
