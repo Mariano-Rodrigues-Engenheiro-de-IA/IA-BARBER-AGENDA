@@ -68,6 +68,9 @@ export default function FollowUpsDashboard() {
       if (error) throw error;
       return data as FollowUp[];
     },
+    // Evita recarregar tudo do zero ao trocar de aba/filtro.
+    staleTime: 30000,
+    placeholderData: keepPreviousData,
   });
 
   const { data: tenants } = useQuery({
@@ -77,6 +80,7 @@ export default function FollowUpsDashboard() {
       if (error) throw error;
       return data as Tenant[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: sequences } = useQuery({
@@ -86,6 +90,7 @@ export default function FollowUpsDashboard() {
       if (error) throw error;
       return data as Sequence[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 
   const tenantMap = useMemo(() => Object.fromEntries((tenants || []).map((t) => [t.id, t.name])), [tenants]);
