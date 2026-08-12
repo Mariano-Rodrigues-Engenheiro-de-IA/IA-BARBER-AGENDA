@@ -1095,6 +1095,16 @@ function getHttpTrace(): HttpTraceEntry[] {
 // 503/502/504/429 da UAZAPI são falhas transitórias DO LADO DELES (gateway/instância
 // momentaneamente indisponível). Sem retry, a IA responde no sistema mas o cliente
 // não recebe nada no WhatsApp. 3 tentativas com backoff curto resolvem o caso comum.
+
+// "digitando..." no WhatsApp: a UAZAPI mostra a presença de digitação durante o
+// `delay` do /send/text (e "gravando áudio" durante o delay do /send/media type=ptt).
+// Com delay 0 a mensagem simplesmente aparecia do nada. Aqui o tempo é proporcional
+// ao tamanho do texto, com piso e teto pra não parecer robótico nem demorar demais.
+function typingDelayMs(text: string): number {
+  const chars = (text || "").length;
+  return Math.min(6000, Math.max(1200, Math.round(chars * 45)));
+}
+
 async function uazapiSendTextWithRetry(
   uazapiUrl: string,
   uazapiToken: string,
@@ -1105,12 +1115,13 @@ async function uazapiSendTextWithRetry(
   const transient = new Set([408, 429, 500, 502, 503, 504]);
   let lastStatus: number | null = null;
   let lastError: string | null = null;
+  const delay = typingDelayMs(text);
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const res = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay: 0 }),
+        body: JSON.stringify({ number, text, delay, readchat: true }),
       });
       const data = await res.json().catch(() => ({} as any));
       lastStatus = res.status;
