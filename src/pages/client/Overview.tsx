@@ -299,8 +299,8 @@ export default function ClientOverview() {
         <StatCard icon={CalendarCheck} label={`Agendamentos (${periodLabel})`} value={aiStats.bookings} color="text-accent" />
         <StatCard icon={CalendarX2} label={`Cancelamentos (${periodLabel})`} value={cancellations} color="text-destructive" />
         <StatCard icon={CalendarClock} label={`Remarcações (${periodLabel})`} value={reschedules} color="text-warning" />
-        <StatCard icon={Bot} label={`Respostas da IA (${periodLabel})`} value={aiStats.aiMessages} color="text-primary" />
-        <StatCard icon={UserCheck} label={`Clientes atendidos (${periodLabel})`} value={aiStats.uniqueClients} color="text-warning" />
+        <StatCard icon={Bot} label={`Respostas (${periodLabel})`} value={aiStats.aiMessages} color="text-primary" />
+        <StatCard icon={UserCheck} label={`Atendimentos (${periodLabel})`} value={aiStats.uniqueClients} color="text-warning" />
       </div>
 
       {/* Charts grid */}
