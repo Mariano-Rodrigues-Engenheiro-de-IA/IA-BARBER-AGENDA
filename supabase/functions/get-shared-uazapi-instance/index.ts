@@ -1,3 +1,7 @@
+// v2 — forçando deploy: essa function existe no repositório há um tempo,
+// mas nunca apareceu ativa na lista de Edge Functions do Supabase (o CRM
+// recebe 404 "function not found" ao chamar) — nunca foi implantada de
+// verdade.
 // Ponte entre projetos: permite que o CRM-BARBER consulte, ANTES de criar
 // uma instância UAZAPI nova, se esse número de telefone já tem uma
 // instância ativa aqui na IA — evitando ter duas sessões WhatsApp Web
