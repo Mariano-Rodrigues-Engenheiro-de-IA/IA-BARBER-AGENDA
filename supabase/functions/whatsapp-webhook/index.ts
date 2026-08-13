@@ -5126,7 +5126,7 @@ async function callAIAgent(
       // from running twice in the same session.
       // cadastrar_cliente is allowed to repeat — backend returns "already registered"
       // when duplicate, so it's safe to call as many times as needed in the conversation.
-        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente" || toolKey === "atualizar_resumo_cliente";
+        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente" || toolKey === "atualizar_resumo_cliente" || toolKey === "calcular";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
@@ -7399,6 +7399,60 @@ const ATUALIZAR_RESUMO_TOOL = {
   },
 };
 
+/** Ferramenta universal de calculadora — modelos de linguagem "calculam de
+ * cabeça" gerando texto, o que frequentemente erra em contas com várias
+ * casas decimais ou vários passos (ex: orçamentos com quantidade × preço
+ * unitário + acabamento + margem). Forçar a IA a usar essa ferramenta pra
+ * QUALQUER cálculo numérico garante que a conta é feita em código de
+ * verdade (JS), nunca "adivinhada" — resolve o problema relatado pelo
+ * Mariano (erros de cálculo no fluxo antigo do n8n, especificamente para
+ * orçamentos da gráfica que ele vai adicionar). */
+const CALCULADORA_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "calcular",
+    description:
+      "Calcula o resultado EXATO de uma expressão matemática. Use SEMPRE que precisar fazer qualquer conta com mais de um passo, valores decimais, ou multiplicação/divisão — NUNCA calcule de cabeça, mesmo que pareça simples. Essencial para orçamentos (quantidade × preço unitário, somar acabamentos, aplicar desconto/margem, etc.) e qualquer outro cálculo numérico da conversa.",
+    parameters: {
+      type: "object",
+      properties: {
+        expressao: {
+          type: "string",
+          description:
+            "Expressão matemática em notação padrão, só números e operadores + - * / ( ). Ex: '150 * 0.35 + 45.90 * 2'. Escreva a conta completa numa expressão só, não peça pra calcular em etapas separadas.",
+        },
+      },
+      required: ["expressao"],
+    },
+  },
+};
+
+/** Avalia uma expressão aritmética com segurança (só dígitos, operadores
+ * básicos e parênteses — sem eval genérico, sem acesso a nada do ambiente).
+ * Rejeita qualquer caractere fora desse conjunto antes mesmo de tentar
+ * calcular. */
+function safeCalculate(expressao: string): { ok: true; resultado: number } | { ok: false; error: string } {
+  const cleaned = String(expressao || "").trim();
+  if (!cleaned) return { ok: false, error: "Expressão vazia." };
+  if (!/^[0-9+\-*/().,\s]+$/.test(cleaned)) {
+    return { ok: false, error: "Expressão contém caracteres não permitidos — use só números e + - * / ( )." };
+  }
+  const normalized = cleaned.replace(/,/g, ".");
+  try {
+    // new Function com entrada já validada pelo regex acima (só dígitos,
+    // operadores e parênteses) — não é eval genérico, não executa nada
+    // além de aritmética.
+    // eslint-disable-next-line no-new-func
+    const result = new Function(`"use strict"; return (${normalized});`)();
+    if (typeof result !== "number" || !Number.isFinite(result)) {
+      return { ok: false, error: "A expressão não resultou em um número válido." };
+    }
+    return { ok: true, resultado: Math.round(result * 100) / 100 };
+  } catch {
+    return { ok: false, error: "Não consegui interpretar essa expressão — confira a sintaxe." };
+  }
+}
+
 /** Transforma o nome de uma etapa (ex: "Já Interessou!") num identificador
  * válido para nome de função (ex: "ja_interessou") — sem acentos, minúsculo,
  * só letras/números/underscore. Usado para montar nomes de ferramenta
@@ -7473,7 +7527,7 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
   }
 
   // Universal client-summary tool (all providers)
-  providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL];
+  providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL, CALCULADORA_TOOL];
 
   // Inject custom tools from tenant.agent_settings
   const customTools = getEnabledCustomTools(tenant);
@@ -7544,6 +7598,18 @@ async function executeToolForProvider(
         message: `Ação simulada — no WhatsApp real, "${funcName}" seria executada de verdade.`,
       };
     }
+  }
+
+  // ===== Universal tool: calcular
+  // Sem efeito colateral (não mexe em banco/CRM), então funciona igual no
+  // simulador e em produção — sempre executa de verdade, a exatidão da
+  // conta é o ponto inteiro dessa ferramenta.
+  if (funcName === "calcular") {
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    const expressao = String(toolArgs?.expressao ?? "");
+    const calc = safeCalculate(expressao);
+    if (!calc.ok) return { ok: false, error: calc.error };
+    return { ok: true, resultado: calc.resultado };
   }
 
   // ===== Universal tool: atualizar_resumo_cliente
