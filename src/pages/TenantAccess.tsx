@@ -46,6 +46,7 @@ export default function TenantAccessPage() {
   const [copied, setCopied] = useState(false);
   const [pwUser, setPwUser] = useState<TenantUserRow | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [savingPw, setSavingPw] = useState(false);
   const [deleteUser, setDeleteUser] = useState<TenantUserRow | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -108,19 +109,43 @@ export default function TenantAccessPage() {
 
   const handleSetPassword = async () => {
     if (!pwUser) return;
-    if (!newPassword || newPassword.length < 6) return toast.error("Senha deve ter pelo menos 6 caracteres");
+    setPasswordError("");
+    if (!newPassword || newPassword.length < 12) {
+      setPasswordError("Use pelo menos 12 caracteres, combinando letras, números e símbolos.");
+      return;
+    }
     setSavingPw(true);
     try {
       const { data, error } = await supabase.functions.invoke("admin-manage-client-user", {
         body: { action: "set_password", tenant_id: id, user_id: pwUser.user_id, password: newPassword },
       });
-      if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      if (error) {
+        let message = "Não foi possível atualizar a senha.";
+        const context = "context" in error ? error.context : null;
+        if (context instanceof Response) {
+          const payload: unknown = await context.clone().json().catch(() => null);
+          if (
+            typeof payload === "object" && payload !== null &&
+            "error" in payload && typeof payload.error === "string"
+          ) {
+            message = payload.error;
+          }
+        }
+        setPasswordError(message);
+        return;
+      }
+      if (
+        typeof data === "object" && data !== null &&
+        "error" in data && typeof data.error === "string"
+      ) {
+        setPasswordError(data.error);
+        return;
+      }
       toast.success("Senha atualizada");
       setPwUser(null);
       setNewPassword("");
-    } catch (e: any) {
-      toast.error(e.message ?? String(e));
+    } catch {
+      setPasswordError("Não foi possível atualizar a senha. Tente novamente.");
     } finally {
       setSavingPw(false);
     }
@@ -178,7 +203,7 @@ export default function TenantAccessPage() {
                   <div className="text-xs text-muted-foreground">Vinculado em {new Date(u.created_at).toLocaleDateString()}</div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => { setPwUser(u); setNewPassword(""); }}>
+                  <Button variant="outline" size="sm" onClick={() => { setPwUser(u); setNewPassword(""); setPasswordError(""); }}>
                     <KeyRound className="w-3.5 h-3.5 mr-1" />Definir senha
                   </Button>
                   <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => setDeleteUser(u)}>
@@ -252,7 +277,7 @@ export default function TenantAccessPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!pwUser} onOpenChange={(o) => !o && setPwUser(null)}>
+      <Dialog open={!!pwUser} onOpenChange={(o) => { if (!o) { setPwUser(null); setPasswordError(""); } }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Definir nova senha</DialogTitle>
@@ -260,7 +285,17 @@ export default function TenantAccessPage() {
           </DialogHeader>
           <div className="space-y-3">
             <Label>Nova senha</Label>
-            <Input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Mínimo 6 caracteres" />
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(e) => { setNewPassword(e.target.value); setPasswordError(""); }}
+              placeholder="Mínimo 12 caracteres"
+              aria-invalid={!!passwordError}
+              aria-describedby="password-guidance"
+            />
+            <p id="password-guidance" className={`text-xs ${passwordError ? "text-destructive" : "text-muted-foreground"}`}>
+              {passwordError || "Use uma senha única com letras, números e símbolos."}
+            </p>
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setPwUser(null)}>Cancelar</Button>
