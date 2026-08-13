@@ -30,13 +30,12 @@ Deno.serve(async (req) => {
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
-    // Verifica que o caller é admin
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: userData, error: userErr } = await userClient.auth.getUser();
+    // Verifica que o caller é admin — valida o JWT com o cliente de servico
+    // (nao depende de SUPABASE_ANON_KEY, ausente no runtime das Edge Functions).
+    const token = authHeader.replace(/^Bearer\s+/i, "");
+    const authClient = createClient(SUPABASE_URL, SERVICE_KEY);
+    const { data: userData, error: userErr } = await authClient.auth.getUser(token);
     if (userErr || !userData.user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
