@@ -47,8 +47,18 @@ export function ZettaCrmFunnelsClient({ tenantId }: { tenantId: string }) {
       const { data, error } = await supabase.functions.invoke("crm-zetta-list-funnels-for-tenant", {
         body: { tenant_id: tenantId },
       });
-      if (error) throw error;
+      if (error) {
+        // Erros 4xx vêm com o motivo real no corpo da resposta — sem ler isso,
+        // o usuário só vê "Edge function returned 400".
+        let msg = error.message;
+        try {
+          const body = await (error as any)?.context?.json?.();
+          if (body?.error) msg = body.error;
+        } catch { /* mantém msg padrão */ }
+        throw new Error(msg);
+      }
       if (data?.error) throw new Error(data.error);
+
       const already = new Set((configured ?? []).map((f) => f.funnel_id));
       const list = ((data?.funnels ?? []) as ZettaFunnel[]).filter((f) => !already.has(f.id));
       setAvailableFunnels(list);
