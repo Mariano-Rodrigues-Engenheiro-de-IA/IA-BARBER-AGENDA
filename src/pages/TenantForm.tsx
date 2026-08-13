@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { SequencesEditor } from "@/components/SequencesEditor";
 import { IaOffFlagsManager } from "@/components/IaOffFlagsManager";
 import { ZettaCrmTokenAdmin } from "@/components/ZettaCrmTokenAdmin";
+import { ZettaCrmFunnelsClient } from "@/components/ZettaCrmFunnelsClient";
 import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -1375,7 +1376,10 @@ export default function TenantFormPage() {
 
           <TabsContent value="crm" className="space-y-4">
             {id && id !== "new" ? (
-              <ZettaCrmTokenAdmin tenantId={id} />
+              <>
+                <ZettaCrmTokenAdmin tenantId={id} />
+                <ZettaCrmFunnelsClient tenantId={id} />
+              </>
             ) : (
               <div className="glass-card p-6 text-center text-muted-foreground">
                 Salve o estabelecimento primeiro para configurar o CRM.
