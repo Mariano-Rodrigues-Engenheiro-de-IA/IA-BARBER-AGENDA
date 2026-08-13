@@ -1,10 +1,27 @@
 // Ponte entre projetos: permite que o CRM-BARBER consulte, ANTES de criar
-// uma instância UAZAPI nova, se esse cliente (casado pelo e-mail do dono —
-// já conhecido automaticamente, sem precisar perguntar nada ao usuário) já
-// tem uma instância ativa aqui na IA — evitando ter duas sessões WhatsApp
-// Web diferentes brigando pelo mesmo número. Protegida por uma chave
-// secreta compartilhada — nunca pública.
+// uma instância UAZAPI nova, se esse número de telefone já tem uma
+// instância ativa aqui na IA — evitando ter duas sessões WhatsApp Web
+// diferentes brigando pelo mesmo número. Telefone é mais confiável que
+// e-mail como critério de casamento: o usuário pode digitar um e-mail
+// diferente/errado em cada sistema, mas o número que efetivamente conecta
+// no WhatsApp é um dado técnico, sem essa ambiguidade. Protegida por uma
+// chave secreta compartilhada — nunca pública.
 import { createClient } from "npm:@supabase/supabase-js@2";
+
+function digitsOnly(s: string): string {
+  return (s || "").replace(/\D/g, "");
+}
+
+/** Compara os últimos 10-11 dígitos (ignora código de país e eventuais
+ * diferenças no 9º dígito) — tolerante a formatos diferentes entre os dois
+ * sistemas (um pode salvar com "55" na frente, outro não). */
+function phonesMatch(a: string, b: string): boolean {
+  const da = digitsOnly(a);
+  const db = digitsOnly(b);
+  if (!da || !db) return false;
+  const tailLen = 10;
+  return da.slice(-tailLen) === db.slice(-tailLen);
+}
 
 Deno.serve(async (req) => {
   const corsHeaders = {
@@ -22,23 +39,22 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { email } = await req.json();
-    const emailNorm = (email || "").trim().toLowerCase();
-    if (!emailNorm) {
-      return new Response(JSON.stringify({ error: "email ausente" }), {
+    const { phone } = await req.json();
+    const phoneDigits = digitsOnly(phone || "");
+    if (!phoneDigits) {
+      return new Response(JSON.stringify({ error: "phone ausente" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: match } = await supa
+    const { data: tenants } = await supa
       .from("tenants")
-      .select("id, email, uazapi_token")
-      .not("uazapi_token", "is", null)
-      .ilike("email", emailNorm)
-      .maybeSingle();
+      .select("id, whatsapp_number, uazapi_token")
+      .not("uazapi_token", "is", null);
 
+    const match = (tenants ?? []).find((t: any) => phonesMatch(t.whatsapp_number || "", phoneDigits));
     if (!match) {
       return new Response(JSON.stringify({ found: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
