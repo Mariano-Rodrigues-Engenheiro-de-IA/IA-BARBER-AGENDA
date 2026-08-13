@@ -29,19 +29,31 @@ Deno.serve(async (req) => {
     if (!authHeader) return json({ error: "Missing Authorization" }, 401);
 
 
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!SUPABASE_URL || !ANON_KEY || !SERVICE_KEY) {
+      return json({ error: "Configuração de autenticação indisponível" }, 500);
+    }
 
-    // Valida o JWT usando o cliente de servico (nao depende de SUPABASE_ANON_KEY,
-    // que nao esta garantido no runtime das Edge Functions).
+    // Valida o JWT do caller com o cliente público e mantém o cliente
+    // administrativo separado, evitando substituir sua identidade privilegiada.
     const token = authHeader.replace(/^Bearer\s+/i, "");
-    const authClient = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: userData, error: userErr } = await authClient.auth.getUser(token);
-    if (userErr || !userData?.user) return json({ error: "Unauthorized" }, 401);
+    const authClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: claimsData, error: claimsErr } = await authClient.auth.getClaims(token);
+    const callerId = claimsData?.claims?.sub;
+    if (claimsErr || typeof callerId !== "string") {
+      return json({ error: "Sessão inválida ou expirada" }, 401);
+    }
 
-    const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     const { data: isAdmin } = await admin.rpc("has_role", {
-      _user_id: userData.user.id, _role: "admin",
+      _user_id: callerId, _role: "admin",
     });
     if (!isAdmin) return json({ error: "Apenas administradores" }, 403);
 
@@ -70,7 +82,7 @@ Deno.serve(async (req) => {
       const { error: delErr } = await admin.auth.admin.deleteUser(user_id);
       if (delErr) return json({ error: delErr.message }, 400);
       await admin.from("audit_logs").insert({
-        tenant_id, user_id: userData.user.id, actor_role: "admin",
+        tenant_id, user_id: callerId, actor_role: "admin",
         action: "delete_client_user", entity: "auth.users", entity_id: user_id,
       });
       return json({ ok: true });
@@ -89,7 +101,7 @@ Deno.serve(async (req) => {
         return json({ error: msg }, 400);
       }
       await admin.from("audit_logs").insert({
-        tenant_id: tenant_id ?? null, user_id: userData.user.id, actor_role: "admin",
+        tenant_id: tenant_id ?? null, user_id: callerId, actor_role: "admin",
         action: "set_client_user_password", entity: "auth.users", entity_id: user_id,
       });
       return json({ ok: true });

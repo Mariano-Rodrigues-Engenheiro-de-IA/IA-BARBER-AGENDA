@@ -28,23 +28,35 @@ Deno.serve(async (req) => {
       });
     }
 
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+    const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!SUPABASE_URL || !ANON_KEY || !SERVICE_KEY) {
+      return new Response(JSON.stringify({ error: "Configuração de autenticação indisponível" }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // Verifica que o caller é admin — valida o JWT com o cliente de servico
-    // (nao depende de SUPABASE_ANON_KEY, ausente no runtime das Edge Functions).
+    // Valida o JWT do caller com o cliente público e mantém o cliente
+    // administrativo separado, evitando substituir sua identidade privilegiada.
     const token = authHeader.replace(/^Bearer\s+/i, "");
-    const authClient = createClient(SUPABASE_URL, SERVICE_KEY);
-    const { data: userData, error: userErr } = await authClient.auth.getUser(token);
-    if (userErr || !userData.user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+    const authClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: claimsData, error: claimsErr } = await authClient.auth.getClaims(token);
+    const callerId = claimsData?.claims?.sub;
+    if (claimsErr || typeof callerId !== "string") {
+      return new Response(JSON.stringify({ error: "Sessão inválida ou expirada" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+    const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     const { data: isAdmin } = await admin.rpc("has_role", {
-      _user_id: userData.user.id, _role: "admin",
+      _user_id: callerId, _role: "admin",
     });
     if (!isAdmin) {
       return new Response(JSON.stringify({ error: "Apenas administradores" }), {
@@ -115,7 +127,7 @@ Deno.serve(async (req) => {
     await admin.from("tenant_permissions").upsert(modules, { onConflict: "tenant_id,module" });
 
     await admin.from("audit_logs").insert({
-      tenant_id, user_id: userData.user.id, actor_role: "admin",
+      tenant_id, user_id: callerId, actor_role: "admin",
       action: "create_client_user", entity: "auth.users", entity_id: userId,
       after: { email },
     });
