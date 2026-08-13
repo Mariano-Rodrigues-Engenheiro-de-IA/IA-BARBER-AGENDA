@@ -1,13 +1,10 @@
 // Ponte entre projetos: permite que o CRM-BARBER consulte, ANTES de criar
-// uma instância UAZAPI nova, se esse número de telefone já tem uma
-// instância ativa aqui na IA — evitando ter duas sessões WhatsApp Web
-// diferentes brigando pelo mesmo número (o que estava derrubando uma das
-// duas). Protegida por uma chave secreta compartilhada — nunca pública.
+// uma instância UAZAPI nova, se esse cliente (casado pelo e-mail do dono —
+// já conhecido automaticamente, sem precisar perguntar nada ao usuário) já
+// tem uma instância ativa aqui na IA — evitando ter duas sessões WhatsApp
+// Web diferentes brigando pelo mesmo número. Protegida por uma chave
+// secreta compartilhada — nunca pública.
 import { createClient } from "npm:@supabase/supabase-js@2";
-
-function digitsOnly(s: string): string {
-  return (s || "").replace(/\D/g, "");
-}
 
 Deno.serve(async (req) => {
   const corsHeaders = {
@@ -25,22 +22,23 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { phone } = await req.json();
-    const phoneDigits = digitsOnly(phone || "");
-    if (!phoneDigits) {
-      return new Response(JSON.stringify({ error: "phone ausente" }), {
+    const { email } = await req.json();
+    const emailNorm = (email || "").trim().toLowerCase();
+    if (!emailNorm) {
+      return new Response(JSON.stringify({ error: "email ausente" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const supa = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    const { data: tenants } = await supa
+    const { data: match } = await supa
       .from("tenants")
-      .select("id, whatsapp_number, uazapi_token")
-      .not("uazapi_token", "is", null);
+      .select("id, email, uazapi_token")
+      .not("uazapi_token", "is", null)
+      .ilike("email", emailNorm)
+      .maybeSingle();
 
-    const match = (tenants ?? []).find((t: any) => digitsOnly(t.whatsapp_number || "") === phoneDigits);
     if (!match) {
       return new Response(JSON.stringify({ found: false }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
