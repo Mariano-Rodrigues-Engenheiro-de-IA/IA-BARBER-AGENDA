@@ -7662,6 +7662,27 @@ async function executeToolForProvider(
     } catch (e: any) {
       console.error("[atualizar_resumo_cliente] failed:", e?.message);
       return { ok: false, error: e?.message || "Falha ao salvar resumo." };
+    } finally {
+      // Sincroniza o mesmo resumo com o CRM externo (Zaylo), em card
+      // separado da anotação manual do vendedor de lá — mesmo padrão já
+      // usado em crm_mover_para_ (Bearer token do tenant). Só tenta se o
+      // CRM estiver configurado; nunca bloqueia nem falha a resposta
+      // principal por causa disso (é um "melhor esforço", a fonte de
+      // verdade do resumo continua sendo aqui).
+      if (tenant?.crm_zetta_token && phoneNumber) {
+        try {
+          const crmRes = await fetch("https://crm.zayloia.com/api/public/ai/update-summary", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+            body: JSON.stringify({ phone: phoneNumber, summary: resumo }),
+          });
+          if (!crmRes.ok) {
+            console.warn(`[atualizar_resumo_cliente] sync com CRM falhou (${crmRes.status})`);
+          }
+        } catch (syncErr) {
+          console.warn("[atualizar_resumo_cliente] erro de rede sincronizando com CRM:", syncErr instanceof Error ? syncErr.message : syncErr);
+        }
+      }
     }
   }
 
