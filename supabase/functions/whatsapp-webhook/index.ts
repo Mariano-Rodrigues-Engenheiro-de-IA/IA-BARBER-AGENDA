@@ -1365,11 +1365,24 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const phoneMatch = extractPhoneNumber(payload, msg);
       const phoneNumber = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
 
-      const fromMe = payload.fromMe === true ||
-        msg.fromMe === true ||
-        msg.key?.fromMe === true ||
-        (payload.sender && payload.owner && payload.sender === payload.owner);
+      // ⚠️ A UAZAPI às vezes entrega o eco da nossa própria mensagem SEM o campo
+      // fromMe no lugar esperado (visto em produção: fromMe=undefined com o texto
+      // que a IA acabou de enviar). Por isso olhamos todos os lugares possíveis e
+      // aceitamos também a string "true".
+      const truthyFlag = (v: unknown) => v === true || v === "true";
+      const fromMe = truthyFlag(payload.fromMe) ||
+        truthyFlag(msg.fromMe) ||
+        truthyFlag(msg.key?.fromMe) ||
+        truthyFlag(payload.message?.fromMe) ||
+        truthyFlag(payload.data?.fromMe) ||
+        truthyFlag(payload.data?.key?.fromMe) ||
+        truthyFlag(payload.messages?.[0]?.fromMe) ||
+        truthyFlag(payload.chat?.lastMessage_fromMe) ||
+        (payload.sender && payload.owner && payload.sender === payload.owner) ||
+        (!!digitsOnly(payload.sender || "") && !!digitsOnly(payload.chat?.owner || payload.owner || "") &&
+          digitsOnly(payload.sender || "") === digitsOnly(payload.chat?.owner || payload.owner || ""));
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
+
 
       console.log(
         "Parsed - remoteJid:", remoteJid,
