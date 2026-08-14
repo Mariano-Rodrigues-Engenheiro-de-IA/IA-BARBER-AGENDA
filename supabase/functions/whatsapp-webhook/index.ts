@@ -1690,6 +1690,35 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
+      // 🔒 ANTI-ECO (fail-closed): mesmo sem fromMe, se o texto recebido for
+      // idêntico a algo que a própria IA enviou nos últimos 3 minutos NESTE tenant
+      // (qualquer chat — o eco às vezes chega num @lid diferente do número real),
+      // é o eco da nossa mensagem. Responder isso fazia a IA conversar sozinha.
+      if (messageContent && messageContent.trim().length > 8) {
+        const echoNorm = messageContent.trim().replace(/\s+/g, " ").toLowerCase();
+        const threeMinAgo = new Date(Date.now() - 180_000).toISOString();
+        const { data: recentOwnMsgs } = await supabase
+          .from("chat_messages")
+          .select("content")
+          .eq("tenant_id", tenant.id)
+          .eq("role", "assistant")
+          .gte("created_at", threeMinAgo)
+          .order("created_at", { ascending: false })
+          .limit(60);
+        const isSelfEcho = (recentOwnMsgs || []).some((m: any) => {
+          const stored = String(m.content || "").trim().replace(/\s+/g, " ").toLowerCase()
+            .replace(/^\[atendente humano\]:\s*/i, "");
+          return stored.length > 8 && (stored === echoNorm || stored.includes(echoNorm));
+        });
+        if (isSelfEcho) {
+          console.warn(`[AntiEco] Mensagem ignorada: eco da própria IA (tenant=${tenant.id}, phone=${phoneNumber}) -> "${messageContent.slice(0, 80)}"`);
+          return new Response(JSON.stringify({ status: "skipped_self_echo" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+
       // 🧪 Modo de teste: a IA só responde os números autorizados do tenant.
       // Em modo de produção (padrão), responde todo mundo.
       const _agentMode = (tenant as any).agent_mode === "test" ? "test" : "production";
