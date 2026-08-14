@@ -1365,11 +1365,24 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const phoneMatch = extractPhoneNumber(payload, msg);
       const phoneNumber = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
 
-      const fromMe = payload.fromMe === true ||
-        msg.fromMe === true ||
-        msg.key?.fromMe === true ||
-        (payload.sender && payload.owner && payload.sender === payload.owner);
+      // ⚠️ A UAZAPI às vezes entrega o eco da nossa própria mensagem SEM o campo
+      // fromMe no lugar esperado (visto em produção: fromMe=undefined com o texto
+      // que a IA acabou de enviar). Por isso olhamos todos os lugares possíveis e
+      // aceitamos também a string "true".
+      const truthyFlag = (v: unknown) => v === true || v === "true";
+      const fromMe = truthyFlag(payload.fromMe) ||
+        truthyFlag(msg.fromMe) ||
+        truthyFlag(msg.key?.fromMe) ||
+        truthyFlag(payload.message?.fromMe) ||
+        truthyFlag(payload.data?.fromMe) ||
+        truthyFlag(payload.data?.key?.fromMe) ||
+        truthyFlag(payload.messages?.[0]?.fromMe) ||
+        truthyFlag(payload.chat?.lastMessage_fromMe) ||
+        (payload.sender && payload.owner && payload.sender === payload.owner) ||
+        (!!digitsOnly(payload.sender || "") && !!digitsOnly(payload.chat?.owner || payload.owner || "") &&
+          digitsOnly(payload.sender || "") === digitsOnly(payload.chat?.owner || payload.owner || ""));
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
+
 
       console.log(
         "Parsed - remoteJid:", remoteJid,
@@ -1676,6 +1689,35 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
+
+      // 🔒 ANTI-ECO (fail-closed): mesmo sem fromMe, se o texto recebido for
+      // idêntico a algo que a própria IA enviou nos últimos 3 minutos NESTE tenant
+      // (qualquer chat — o eco às vezes chega num @lid diferente do número real),
+      // é o eco da nossa mensagem. Responder isso fazia a IA conversar sozinha.
+      if (messageContent && messageContent.trim().length > 8) {
+        const echoNorm = messageContent.trim().replace(/\s+/g, " ").toLowerCase();
+        const threeMinAgo = new Date(Date.now() - 180_000).toISOString();
+        const { data: recentOwnMsgs } = await supabase
+          .from("chat_messages")
+          .select("content")
+          .eq("tenant_id", tenant.id)
+          .eq("role", "assistant")
+          .gte("created_at", threeMinAgo)
+          .order("created_at", { ascending: false })
+          .limit(60);
+        const isSelfEcho = (recentOwnMsgs || []).some((m: any) => {
+          const stored = String(m.content || "").trim().replace(/\s+/g, " ").toLowerCase()
+            .replace(/^\[atendente humano\]:\s*/i, "");
+          return stored.length > 8 && (stored === echoNorm || stored.includes(echoNorm));
+        });
+        if (isSelfEcho) {
+          console.warn(`[AntiEco] Mensagem ignorada: eco da própria IA (tenant=${tenant.id}, phone=${phoneNumber}) -> "${messageContent.slice(0, 80)}"`);
+          return new Response(JSON.stringify({ status: "skipped_self_echo" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
 
       // 🧪 Modo de teste: a IA só responde os números autorizados do tenant.
       // Em modo de produção (padrão), responde todo mundo.
