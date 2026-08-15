@@ -4401,6 +4401,26 @@ async function callAIAgent(
   simulatorMode?: boolean,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+
+  // Funis do CRM externo (tenant_crm_funnels) — necessários para gerar as
+  // ferramentas crm_mover_para_* e a seção do prompt. Carregado aqui porque
+  // este é o único ponto comum a TODOS os canais (WhatsApp, chat do site e
+  // simulador); antes só o simulador anexava, então no WhatsApp real a IA
+  // ficava sem nenhuma ferramenta de CRM.
+  if (tenant?.crm_zetta_token && !Array.isArray((tenant as any).crm_funnels)) {
+    try {
+      const { data: crmFunnels } = await supabase
+        .from("tenant_crm_funnels")
+        .select("funnel_id, funnel_name, stages")
+        .eq("tenant_id", tenant.id);
+      (tenant as any).crm_funnels = crmFunnels ?? [];
+      console.log(`[CRM] Funis carregados para ${tenant.id}: ${((crmFunnels ?? []) as any[]).length}`);
+    } catch (e: any) {
+      console.warn("[CRM] falha ao carregar funis:", e?.message || e);
+      (tenant as any).crm_funnels = [];
+    }
+  }
+
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: LogEntry[] = [];
   let sessionBlocked = false;
