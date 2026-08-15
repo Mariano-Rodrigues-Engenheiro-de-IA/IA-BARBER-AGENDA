@@ -7810,13 +7810,27 @@ async function executeToolForProvider(
       Array.isArray((tenant as any)?.crm_funnels) ? (tenant as any).crm_funnels : [];
     let matchedFunnelName: string | null = null;
     let stageName: string | null = null;
+    // Reproduz a MESMA desambiguação usada na geração das ferramentas
+    // (buildToolsForProvider): quando dois funis têm etapas de mesmo nome, a
+    // segunda vira "<slug>_2". Sem isso, a IA chamaria uma ferramenta que
+    // existe e o executor diria "etapa não encontrada".
+    const usedSlugsExec = new Set<string>();
     for (const funnel of crmFunnelsExec) {
-      const found = (funnel.stages || []).find((s: { id: string; name: string }) => slugifyStageName(s.name) === slug);
-      if (found) {
-        matchedFunnelName = funnel.funnel_name;
-        stageName = found.name;
-        break;
+      for (const s of funnel.stages || []) {
+        let candidate = slugifyStageName(s.name);
+        if (usedSlugsExec.has(candidate)) {
+          let i = 2;
+          while (usedSlugsExec.has(`${candidate}_${i}`)) i++;
+          candidate = `${candidate}_${i}`;
+        }
+        usedSlugsExec.add(candidate);
+        if (candidate === slug) {
+          matchedFunnelName = funnel.funnel_name;
+          stageName = s.name;
+          break;
+        }
       }
+      if (stageName) break;
     }
     if (!matchedFunnelName || !stageName) {
       return { ok: false, error: `Etapa "${slug}" não encontrada em nenhum funil configurado.` };
