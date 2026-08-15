@@ -4512,6 +4512,22 @@ async function callAIAgent(
         } as any);
     }
 
+    // Espelha no CRM externo — mesmo comportamento da tool explícita
+    // atualizar_resumo_cliente, para que TODO update de resumo (automático
+    // ou pedido pela IA) chegue no CRM. Best-effort: nunca falha a resposta.
+    if (tenant?.crm_zetta_token) {
+      try {
+        const crmRes = await fetch("https://crm.zayloia.com/api/public/ai/update-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+          body: JSON.stringify({ phone: phoneNumber, summary: cleaned }),
+        });
+        if (!crmRes.ok) console.warn(`[SummaryAuto] sync com CRM falhou (${crmRes.status})`);
+      } catch (e) {
+        console.warn("[SummaryAuto] erro de rede sincronizando com CRM:", e instanceof Error ? e.message : e);
+      }
+    }
+
     return true;
   };
 
