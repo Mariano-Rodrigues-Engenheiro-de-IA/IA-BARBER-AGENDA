@@ -2672,7 +2672,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const logErrors: LogEntry[] = [...(agentResult?.errors || [])];
       if (firstSendError) logErrors.push({ message: firstSendError, level: "error" });
 
-      await supabase.from("agent_logs").insert({
+      await insertAgentLogResilient(supabase, {
         tenant_id: tenant.id,
         phone_number: phoneNumber,
         user_message: combinedContent,
@@ -2703,10 +2703,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         model_used: agentResult?.model || "direct_handler",
         duration_ms: totalResponseMs,
         session_blocked: agentResult?.sessionBlocked || false,
-        http_trace: getHttpTrace(),
-      }).then(({ error }) => {
-        if (error) console.error("Failed to log agent execution:", error.message);
+        http_trace: getHttpTraceCapped(),
       });
+
 
       return new Response(JSON.stringify({ status: "ok", parts: messageParts.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
