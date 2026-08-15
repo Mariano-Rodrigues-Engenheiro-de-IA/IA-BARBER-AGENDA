@@ -4401,6 +4401,26 @@ async function callAIAgent(
   simulatorMode?: boolean,
 ): Promise<AgentResult> {
   const startTime = Date.now();
+
+  // Funis do CRM externo (tenant_crm_funnels) — necessários para gerar as
+  // ferramentas crm_mover_para_* e a seção do prompt. Carregado aqui porque
+  // este é o único ponto comum a TODOS os canais (WhatsApp, chat do site e
+  // simulador); antes só o simulador anexava, então no WhatsApp real a IA
+  // ficava sem nenhuma ferramenta de CRM.
+  if (tenant?.crm_zetta_token && !Array.isArray((tenant as any).crm_funnels)) {
+    try {
+      const { data: crmFunnels } = await supabase
+        .from("tenant_crm_funnels")
+        .select("funnel_id, funnel_name, stages")
+        .eq("tenant_id", tenant.id);
+      (tenant as any).crm_funnels = crmFunnels ?? [];
+      console.log(`[CRM] Funis carregados para ${tenant.id}: ${((crmFunnels ?? []) as any[]).length}`);
+    } catch (e: any) {
+      console.warn("[CRM] falha ao carregar funis:", e?.message || e);
+      (tenant as any).crm_funnels = [];
+    }
+  }
+
   const logToolCalls: AgentResult["toolCalls"] = [];
   const logErrors: LogEntry[] = [];
   let sessionBlocked = false;
@@ -4490,6 +4510,22 @@ async function callAIAgent(
           ai_summary: cleaned,
           ai_summary_updated_at: new Date().toISOString(),
         } as any);
+    }
+
+    // Espelha no CRM externo — mesmo comportamento da tool explícita
+    // atualizar_resumo_cliente, para que TODO update de resumo (automático
+    // ou pedido pela IA) chegue no CRM. Best-effort: nunca falha a resposta.
+    if (tenant?.crm_zetta_token) {
+      try {
+        const crmRes = await fetch("https://crm.zayloia.com/api/public/ai/update-summary", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+          body: JSON.stringify({ phone: phoneNumber, summary: cleaned }),
+        });
+        if (!crmRes.ok) console.warn(`[SummaryAuto] sync com CRM falhou (${crmRes.status})`);
+      } catch (e) {
+        console.warn("[SummaryAuto] erro de rede sincronizando com CRM:", e instanceof Error ? e.message : e);
+      }
     }
 
     return true;
@@ -7774,13 +7810,27 @@ async function executeToolForProvider(
       Array.isArray((tenant as any)?.crm_funnels) ? (tenant as any).crm_funnels : [];
     let matchedFunnelName: string | null = null;
     let stageName: string | null = null;
+    // Reproduz a MESMA desambiguação usada na geração das ferramentas
+    // (buildToolsForProvider): quando dois funis têm etapas de mesmo nome, a
+    // segunda vira "<slug>_2". Sem isso, a IA chamaria uma ferramenta que
+    // existe e o executor diria "etapa não encontrada".
+    const usedSlugsExec = new Set<string>();
     for (const funnel of crmFunnelsExec) {
-      const found = (funnel.stages || []).find((s: { id: string; name: string }) => slugifyStageName(s.name) === slug);
-      if (found) {
-        matchedFunnelName = funnel.funnel_name;
-        stageName = found.name;
-        break;
+      for (const s of funnel.stages || []) {
+        let candidate = slugifyStageName(s.name);
+        if (usedSlugsExec.has(candidate)) {
+          let i = 2;
+          while (usedSlugsExec.has(`${candidate}_${i}`)) i++;
+          candidate = `${candidate}_${i}`;
+        }
+        usedSlugsExec.add(candidate);
+        if (candidate === slug) {
+          matchedFunnelName = funnel.funnel_name;
+          stageName = s.name;
+          break;
+        }
       }
+      if (stageName) break;
     }
     if (!matchedFunnelName || !stageName) {
       return { ok: false, error: `Etapa "${slug}" não encontrada em nenhum funil configurado.` };
