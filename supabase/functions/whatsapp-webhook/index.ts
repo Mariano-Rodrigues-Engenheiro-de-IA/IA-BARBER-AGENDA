@@ -1091,6 +1091,39 @@ function getHttpTrace(): HttpTraceEntry[] {
   return httpTraceStore.getStore() || [];
 }
 
+// Limite defensivo: http_trace muito grande já fez o INSERT em agent_logs falhar
+// (payload gigante / statement timeout), fazendo a conversa "desaparecer" do monitor.
+const MAX_TRACE_ENTRIES = 120;
+function getHttpTraceCapped(): HttpTraceEntry[] {
+  const trace = getHttpTrace();
+  if (trace.length <= MAX_TRACE_ENTRIES) return trace;
+  return trace.slice(trace.length - MAX_TRACE_ENTRIES);
+}
+
+// Gravação do log NUNCA pode ser silenciosa: se falhar com o payload completo,
+// tenta versões progressivamente menores para garantir o registro da conversa.
+async function insertAgentLogResilient(supabase: any, row: Record<string, unknown>) {
+  const attempts: Array<Record<string, unknown>> = [
+    row,
+    { ...row, http_trace: null },
+    { ...row, http_trace: null, tool_calls: null },
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const { error } = await supabase.from("agent_logs").insert(attempts[i]);
+      if (!error) {
+        if (i > 0) console.warn(`[AgentLog] gravado em modo reduzido (tentativa ${i + 1}): payload completo falhou`);
+        return;
+      }
+      console.error(`[AgentLog] insert falhou (tentativa ${i + 1}): ${error.message}`);
+    } catch (e: any) {
+      console.error(`[AgentLog] insert exception (tentativa ${i + 1}):`, e?.message || e);
+    }
+  }
+  console.error("[AgentLog] NÃO foi possível registrar a execução no monitor");
+}
+
+
 // ===================== UAZAPI SEND COM RETRY =====================
 // 503/502/504/429 da UAZAPI são falhas transitórias DO LADO DELES (gateway/instância
 // momentaneamente indisponível). Sem retry, a IA responde no sistema mas o cliente
@@ -2639,7 +2672,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const logErrors: LogEntry[] = [...(agentResult?.errors || [])];
       if (firstSendError) logErrors.push({ message: firstSendError, level: "error" });
 
-      await supabase.from("agent_logs").insert({
+      await insertAgentLogResilient(supabase, {
         tenant_id: tenant.id,
         phone_number: phoneNumber,
         user_message: combinedContent,
@@ -2670,10 +2703,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         model_used: agentResult?.model || "direct_handler",
         duration_ms: totalResponseMs,
         session_blocked: agentResult?.sessionBlocked || false,
-        http_trace: getHttpTrace(),
-      }).then(({ error }) => {
-        if (error) console.error("Failed to log agent execution:", error.message);
+        http_trace: getHttpTraceCapped(),
       });
+
 
       return new Response(JSON.stringify({ status: "ok", parts: messageParts.length }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
