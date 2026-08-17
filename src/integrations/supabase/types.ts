@@ -842,6 +842,7 @@ export type Database = {
           chat_site_welcome_message: string | null
           created_at: string
           created_by: string | null
+          crm_barbershop_id: string | null
           crm_zetta_funnel_id: string | null
           crm_zetta_funnel_name: string | null
           crm_zetta_stages: Json | null
@@ -895,6 +896,7 @@ export type Database = {
           chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          crm_barbershop_id?: string | null
           crm_zetta_funnel_id?: string | null
           crm_zetta_funnel_name?: string | null
           crm_zetta_stages?: Json | null
@@ -948,6 +950,7 @@ export type Database = {
           chat_site_welcome_message?: string | null
           created_at?: string
           created_by?: string | null
+          crm_barbershop_id?: string | null
           crm_zetta_funnel_id?: string | null
           crm_zetta_funnel_name?: string | null
           crm_zetta_stages?: Json | null
