@@ -44,13 +44,16 @@ Deno.serve(async (req) => {
     }
 
     const bridgeSecret = Deno.env.get("CRM_BRIDGE_SHARED_SECRET");
-    const crmUrl = Deno.env.get("CRM_NOTIFY_AI_ACCESS_URL"); // ex: https://crm.zayloia.com/api/public/ai/set-access
-    if (!bridgeSecret || !crmUrl) {
-      return new Response(JSON.stringify({ error: "Ponte com o CRM não configurada (faltam variáveis de ambiente)." }), {
+    // Rota pública do próprio CRM (não é Edge Function). O segredo é a única
+    // credencial aceita por ela, e nunca trafega para o navegador.
+    const crmUrl = Deno.env.get("CRM_NOTIFY_AI_ACCESS_URL") ?? "https://crm.zayloia.com/api/public/ai/set-access";
+    if (!bridgeSecret) {
+      return new Response(JSON.stringify({ error: "Ponte com o CRM não configurada (falta CRM_BRIDGE_SHARED_SECRET)." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
 
     const crmRes = await fetch(crmUrl, {
       method: "POST",
