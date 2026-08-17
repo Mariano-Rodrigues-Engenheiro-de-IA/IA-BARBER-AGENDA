@@ -6,10 +6,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 Deno.serve(async (req) => {
   const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, content-type",
+    "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
   };
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
 
   try {
     // Exige usuário autenticado do próprio painel (admin) — não usa a
@@ -41,13 +44,16 @@ Deno.serve(async (req) => {
     }
 
     const bridgeSecret = Deno.env.get("CRM_BRIDGE_SHARED_SECRET");
-    const crmUrl = Deno.env.get("CRM_NOTIFY_AI_ACCESS_URL"); // ex: https://crm.zayloia.com/api/public/ai/set-access
-    if (!bridgeSecret || !crmUrl) {
-      return new Response(JSON.stringify({ error: "Ponte com o CRM não configurada (faltam variáveis de ambiente)." }), {
+    // Rota pública do próprio CRM (não é Edge Function). O segredo é a única
+    // credencial aceita por ela, e nunca trafega para o navegador.
+    const crmUrl = Deno.env.get("CRM_NOTIFY_AI_ACCESS_URL") ?? "https://crm.zayloia.com/api/public/ai/set-access";
+    if (!bridgeSecret) {
+      return new Response(JSON.stringify({ error: "Ponte com o CRM não configurada (falta CRM_BRIDGE_SHARED_SECRET)." }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
 
     const crmRes = await fetch(crmUrl, {
       method: "POST",
