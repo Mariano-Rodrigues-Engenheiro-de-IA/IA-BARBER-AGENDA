@@ -22,6 +22,7 @@ import { SequencesEditor } from "@/components/SequencesEditor";
 import { IaOffFlagsManager } from "@/components/IaOffFlagsManager";
 import { ZettaCrmTokenAdmin } from "@/components/ZettaCrmTokenAdmin";
 import { ZettaCrmFunnelsClient } from "@/components/ZettaCrmFunnelsClient";
+import { AgenteIaAccessAdmin } from "@/components/AgenteIaAccessAdmin";
 import { PromptVersionsDialog, type PromptVersion } from "@/components/PromptVersionsDialog";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -1379,6 +1380,7 @@ export default function TenantFormPage() {
               <>
                 <ZettaCrmTokenAdmin tenantId={id} />
                 <ZettaCrmFunnelsClient tenantId={id} />
+                <AgenteIaAccessAdmin tenantId={id} />
               </>
             ) : (
               <div className="glass-card p-6 text-center text-muted-foreground">
