@@ -6,10 +6,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 Deno.serve(async (req) => {
   const corsHeaders = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "authorization, content-type",
+    "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
   };
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
 
   try {
     // Exige usuário autenticado do próprio painel (admin) — não usa a
