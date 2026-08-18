@@ -326,3 +326,23 @@
     background-clip: padding-box;
   }
 }
+
+/* Painel do cliente — textura sutil de fundo (pontos/circuito, opacidade
+   bem baixa) e barra fina animada no topo, dando uma sensação de
+   "painel de controle de IA" sem pesar a página (tudo CSS, sem imagem). */
+.ai-panel-bg {
+  background-image: radial-gradient(hsl(var(--sidebar-primary) / 0.14) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.ai-topbar-glow {
+  height: 3px;
+  background: linear-gradient(90deg, hsl(217 91% 60%), hsl(190 90% 55%), hsl(217 91% 60%));
+  background-size: 200% 100%;
+  animation: ai-topbar-glow-move 6s linear infinite;
+}
+
+@keyframes ai-topbar-glow-move {
+  0% { background-position: 0% 0%; }
+  100% { background-position: 200% 0%; }
+}

@@ -5,8 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { LayoutDashboard, MessageCircle, LogOut, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2, ChevronDown } from "lucide-react";
+import { LayoutDashboard, MessageCircle, LogOut, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { postLogoutRedirect, cameFromCrm } from "@/lib/crm-origin";
@@ -126,7 +125,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     // clientes que não são da parceria — sobrescreve só a cor de destaque,
     // com o tom próprio da marca Zaylo, já que clientes Frizzar mantêm a
     // cor original.
-    <div className={cn("min-h-screen bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo")}>
+    <div className={cn("min-h-screen bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo", !isFrizzar && "ai-panel-bg")}>
+      {!isFrizzar && <div className="ai-topbar-glow" />}
       <header className="sticky top-0 z-40 border-b border-border bg-sidebar">
         <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-8">
           {isFrizzar ? (
@@ -143,24 +143,24 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             />
           ) : (
             <img
-              src="/brand/zaylo-ia-logo-white.png"
+              src="/brand/zaylo-icon.png"
               alt="Zaylo IA"
-              width={942}
-              height={130}
+              width={128}
+              height={128}
               fetchPriority="high"
               decoding="sync"
               loading="eager"
-              className="h-5 w-auto shrink-0 object-contain select-none"
+              className="h-9 w-9 shrink-0 object-contain select-none"
               draggable={false}
             />
           )}
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-3">
             <Button
               variant="outline"
               size="sm"
               className={cn(
-                "hidden gap-2 border-sidebar-border sm:flex",
+                "gap-2 border-sidebar-border",
                 tenant?.agent_paused
                   ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
                   : "bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
@@ -168,33 +168,27 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
               onClick={togglePause}
             >
               {tenant?.agent_paused ? <Power className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
-              {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
+              <span className="hidden sm:inline">{tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}</span>
             </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-sidebar-accent">
-                  <Avatar className="h-7 w-7">
-                    {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
-                    <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
-                  </Avatar>
-                  <ChevronDown className="hidden h-3.5 w-3.5 text-sidebar-foreground/60 sm:block" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <div className="px-2 py-1.5 text-xs text-muted-foreground truncate">{user?.email}</div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="sm:hidden" onClick={togglePause}>
-                  {tenant?.agent_paused ? <Power className="mr-2 h-4 w-4" /> : <PowerOff className="mr-2 h-4 w-4" />}
-                  {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
-                </DropdownMenuItem>
-                {!cameFromCrm() && (
-                  <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
-                    <LogOut className="mr-2 h-4 w-4" /> Sair
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {/* Só a logo do negócio do cliente, sem menu — pedido do
+                Mariano pra ficar mais limpo/integrado. Quem acessa direto
+                (não via link mágico do CRM) ainda tem um jeito simples de
+                sair; quem veio do CRM não precisa disso. */}
+            <Avatar className="h-8 w-8 shrink-0">
+              {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
+              <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
+            </Avatar>
+
+            {!cameFromCrm() && (
+              <button
+                onClick={handleSignOut}
+                title="Sair"
+                className="rounded-lg p-1.5 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
 
