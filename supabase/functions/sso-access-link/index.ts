@@ -71,10 +71,15 @@ Deno.serve(async (req) => {
     }
 
     const appUrl = Deno.env.get("APP_PUBLIC_URL") || "https://zayloia.com";
+    // ?from=crm sinaliza pro front-end que esse acesso veio do CRM Zaylo —
+    // usado pra decidir pra onde mandar o usuário quando ele clicar em
+    // "Sair" (de volta pro CRM, não pra tela de login própria, que
+    // confundiria já que ele nunca teve senha nessa conta).
+    const redirectUrl = `${appUrl}${appUrl.includes("?") ? "&" : "?"}from=crm`;
     const { data: linkData, error: linkErr } = await supa.auth.admin.generateLink({
       type: "magiclink",
       email: userData.user.email,
-      options: { redirectTo: appUrl },
+      options: { redirectTo: redirectUrl },
     });
     if (linkErr || !linkData?.properties?.action_link) {
       return new Response(JSON.stringify({ error: "link_generation_failed", message: linkErr?.message ?? "Falha ao gerar link" }), {
