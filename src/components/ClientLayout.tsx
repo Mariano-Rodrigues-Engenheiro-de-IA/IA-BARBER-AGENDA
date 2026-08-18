@@ -5,9 +5,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LayoutDashboard, MessageCircle, LogOut, Menu, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { LayoutDashboard, MessageCircle, LogOut, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { postLogoutRedirect } from "@/lib/crm-origin";
 
 
 interface NavItem { to: string; icon: any; label: string; module: AppModule }
@@ -23,26 +25,29 @@ const NAV: NavItem[] = [
   { to: "/app/connection", icon: Smartphone, label: "Conexão WhatsApp", module: "connection" },
 ];
 
-function NavRow({ item, onClick }: { item: NavItem; onClick: () => void }) {
+function TopNavItem({ item }: { item: NavItem }) {
   const location = useLocation();
   const { visible } = useModulePermission(item.module);
   if (!visible) return null;
   const isActive = location.pathname === item.to;
   return (
-    <Link to={item.to} onClick={onClick}
+    <Link
+      to={item.to}
       className={cn(
-        "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-        isActive ? "bg-primary/10 text-primary" : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent",
-      )}>
-      <item.icon className="w-4 h-4" />
-      <span className="flex-1">{item.label}</span>
+        "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors",
+        isActive
+          ? "border-primary text-primary"
+          : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+      )}
+    >
+      <item.icon className="h-4 w-4" />
+      {item.label}
     </Link>
   );
 }
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const { signOut, user, tenantId } = useAuth();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
   const { data: tenant, refetch } = useQuery({
     queryKey: ["client-tenant", tenantId],
@@ -103,88 +108,98 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     refetch();
   };
 
+  async function handleSignOut() {
+    // Se o cliente chegou aqui pelo link mágico do CRM, ele nunca teve
+    // senha nessa conta — mandar pra tela de login própria confundiria.
+    // Nesse caso, volta pro CRM em vez disso.
+    const redirect = postLogoutRedirect();
+    await signOut();
+    if (redirect) window.location.href = redirect;
+  }
+
   const initials = user?.email?.slice(0, 2).toUpperCase() ?? "??";
-
-  const sidebar = (
-    <>
-      <div className="pl-7 pr-6 py-6 border-b border-border">
-        {isFrizzar ? (
-          <img
-            src="/frizzar/frizzar-logo-horizontal-white.png"
-            alt="Frizzar"
-            width={867}
-            height={178}
-            fetchPriority="high"
-            decoding="sync"
-            loading="eager"
-            className="h-7 w-auto object-contain select-none"
-            draggable={false}
-          />
-        ) : (
-          <img
-            src="/brand/zaylo-ia-logo-white.png"
-            alt="Zaylo IA"
-            width={942}
-            height={130}
-            fetchPriority="high"
-            decoding="sync"
-            loading="eager"
-            className="h-5 w-auto object-contain select-none"
-            draggable={false}
-          />
-        )}
-      </div>
-
-      <nav className="flex-1 p-4 space-y-1">
-        {NAV.map((i) => <NavRow key={i.to} item={i} onClick={() => setMobileOpen(false)} />)}
-      </nav>
-      <div className="p-4 border-t border-border space-y-3">
-        <Button
-          variant={tenant?.agent_paused ? "default" : "outline"}
-          size="sm"
-          className={cn(
-            "w-full justify-start gap-2",
-            !tenant?.agent_paused && "bg-transparent border-sidebar-border text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
-          )}
-          onClick={togglePause}
-        >
-          {tenant?.agent_paused ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
-          {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
-        </Button>
-        <div className="flex items-center gap-3 px-1 py-1">
-          <Avatar className="h-8 w-8">
-            {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
-            <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
-          </Avatar>
-          <p className="text-xs text-sidebar-foreground/70 truncate flex-1">{user?.email}</p>
-        </div>
-
-        <Button variant="ghost" size="sm" className="w-full justify-start gap-2 text-sidebar-foreground/70 hover:text-destructive" onClick={signOut}>
-          <LogOut className="w-4 h-4" />Sair
-        </Button>
-      </div>
-    </>
-  );
 
   return (
     // Nota: a classe CSS "theme-frizzar" virou o tema PADRÃO de todo o
-    // painel do cliente (fundo cinza-chumbo/azulado, sidebar escura) — não
-    // é mais exclusiva de clientes Frizzar. "theme-zaylo" é aplicada JUNTO
-    // pra clientes que não são da parceria — sobrescreve só a cor da
-    // sidebar, com o tom próprio da marca Zaylo (extraído do banner do
-    // CRM), já que clientes Frizzar mantêm a cor de sidebar original.
-    <div className={cn("min-h-screen flex bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo")}>
-      {mobileOpen && <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileOpen(false)} />}
-      <aside className="hidden lg:flex w-64 border-r border-border flex-col bg-sidebar">{sidebar}</aside>
-      <aside className={cn("fixed inset-y-0 left-0 z-50 w-64 border-r border-border flex flex-col bg-sidebar transition-transform duration-200 lg:hidden",
-        mobileOpen ? "translate-x-0" : "-translate-x-full")}>{sidebar}</aside>
-      <main className="flex-1 overflow-auto">
-        <div className="lg:hidden flex items-center gap-3 p-4 border-b border-border">
-          <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)}><Menu className="w-5 h-5" /></Button>
-          <span className="font-semibold text-foreground truncate">{tenant?.name}</span>
+    // painel do cliente (fundo cinza-chumbo/azulado) — não é mais
+    // exclusiva de clientes Frizzar. "theme-zaylo" é aplicada JUNTO pra
+    // clientes que não são da parceria — sobrescreve só a cor de destaque,
+    // com o tom próprio da marca Zaylo, já que clientes Frizzar mantêm a
+    // cor original.
+    <div className={cn("min-h-screen bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo")}>
+      <header className="sticky top-0 z-40 border-b border-border bg-sidebar">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-8">
+          {isFrizzar ? (
+            <img
+              src="/frizzar/frizzar-logo-horizontal-white.png"
+              alt="Frizzar"
+              width={867}
+              height={178}
+              fetchPriority="high"
+              decoding="sync"
+              loading="eager"
+              className="h-6 w-auto shrink-0 object-contain select-none"
+              draggable={false}
+            />
+          ) : (
+            <img
+              src="/brand/zaylo-ia-logo-white.png"
+              alt="Zaylo IA"
+              width={942}
+              height={130}
+              fetchPriority="high"
+              decoding="sync"
+              loading="eager"
+              className="h-5 w-auto shrink-0 object-contain select-none"
+              draggable={false}
+            />
+          )}
+
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <Button
+              variant={tenant?.agent_paused ? "default" : "outline"}
+              size="sm"
+              className={cn(
+                "hidden gap-2 sm:flex",
+                !tenant?.agent_paused && "border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+              )}
+              onClick={togglePause}
+            >
+              {tenant?.agent_paused ? <Power className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
+              {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
+            </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-sidebar-accent">
+                  <Avatar className="h-7 w-7">
+                    {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
+                    <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
+                  </Avatar>
+                  <ChevronDown className="hidden h-3.5 w-3.5 text-sidebar-foreground/60 sm:block" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <div className="px-2 py-1.5 text-xs text-muted-foreground truncate">{user?.email}</div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="sm:hidden" onClick={togglePause}>
+                  {tenant?.agent_paused ? <Power className="mr-2 h-4 w-4" /> : <PowerOff className="mr-2 h-4 w-4" />}
+                  {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
+                  <LogOut className="mr-2 h-4 w-4" /> Sair
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-        <div className="p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">{children}</div>
-      </main>
+
+        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 sm:px-8">
+          {NAV.map((i) => <TopNavItem key={i.to} item={i} />)}
+        </nav>
+      </header>
+
+      <main className="mx-auto max-w-6xl p-4 sm:p-8 animate-fade-in">{children}</main>
     </div>
   );
 }
