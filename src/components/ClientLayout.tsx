@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { LayoutDashboard, MessageCircle, LogOut, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench, BookOpen, Plug, Building2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { postLogoutRedirect } from "@/lib/crm-origin";
+import { postLogoutRedirect, cameFromCrm } from "@/lib/crm-origin";
 
 
 interface NavItem { to: string; icon: any; label: string; module: AppModule }
@@ -36,8 +36,8 @@ function TopNavItem({ item }: { item: NavItem }) {
       className={cn(
         "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors",
         isActive
-          ? "border-primary text-primary"
-          : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+          ? "border-sidebar-primary text-sidebar-foreground"
+          : "border-transparent text-sidebar-foreground/60 hover:border-sidebar-border hover:text-sidebar-foreground",
       )}
     >
       <item.icon className="h-4 w-4" />
@@ -157,11 +157,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <Button
-              variant={tenant?.agent_paused ? "default" : "outline"}
+              variant="outline"
               size="sm"
               className={cn(
-                "hidden gap-2 sm:flex",
-                !tenant?.agent_paused && "border-sidebar-border bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                "hidden gap-2 border-sidebar-border sm:flex",
+                tenant?.agent_paused
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                  : "bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
               )}
               onClick={togglePause}
             >
@@ -186,9 +188,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
                   {tenant?.agent_paused ? <Power className="mr-2 h-4 w-4" /> : <PowerOff className="mr-2 h-4 w-4" />}
                   {tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
-                  <LogOut className="mr-2 h-4 w-4" /> Sair
-                </DropdownMenuItem>
+                {!cameFromCrm() && (
+                  <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive">
+                    <LogOut className="mr-2 h-4 w-4" /> Sair
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
