@@ -36,7 +36,7 @@ function TopNavItem({ item }: { item: NavItem }) {
         "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors",
         isActive
           ? "border-sidebar-primary text-sidebar-foreground"
-          : "border-transparent text-sidebar-foreground/60 hover:border-sidebar-border hover:text-sidebar-foreground",
+          : "border-transparent text-sidebar-foreground hover:border-sidebar-primary/50 hover:text-sidebar-primary",
       )}
     >
       <item.icon className="h-4 w-4" />
@@ -145,12 +145,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             <img
               src="/brand/zaylo-icon.png"
               alt="Zaylo IA"
-              width={128}
-              height={128}
+              width={95}
+              height={61}
               fetchPriority="high"
               decoding="sync"
               loading="eager"
-              className="h-9 w-9 shrink-0 object-contain select-none"
+              className="h-8 w-auto shrink-0 object-contain select-none"
               draggable={false}
             />
           )}
