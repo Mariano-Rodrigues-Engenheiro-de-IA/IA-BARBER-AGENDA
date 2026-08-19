@@ -827,50 +827,35 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // AppBarber armazena telefone SEM DDI 55 (formato: 61983012868).
         // Enviar "5561983012868" cria cadastro duplicado. Sempre local (DDD+9+numero).
         const customerPhoneLocal = appBarberLocalPhone(phoneDigits);
-        const clientPhoneParam = customerPhoneLocal || phoneDigits;
 
-        // 🆕 Busca o cliente ANTES de decidir se cadastra — evita criar
-        // registro duplicado toda vez que um cliente recorrente agenda de
-        // novo. Endpoint de busca confirmado na doc oficial do AppBarber:
-        // GET /v1/establishment/clients?establishment_code=X&cellphone=Y
-        // (cellphone: só dígitos, com DDD, sem DDI — mesmo formato que já
-        // usamos aqui). Se não encontrar ninguém, cadastra pelo POST.
-        //
-        // Causa raiz original (caso Gabriel/9Cinco): POST /v1/appointments
+        // 🆕 Cadastra o cliente explicitamente ANTES de criar o agendamento.
+        // Causa raiz encontrada (caso Gabriel/9Cinco): POST /v1/appointments
         // manda customer_phone/customer_name soltos, mas isso não cria um
         // registro de cliente "de verdade" na base do AppBarber — então
         // depois, quando o cliente volta e a IA tenta achar o agendamento
         // via /v1/invoice/search (que busca pela FICHA do cliente, não
         // pelos campos soltos do agendamento), a busca não encontra nada,
-        // mesmo com telefone certo.
+        // mesmo com telefone certo. Endpoint correto (confirmado na doc
+        // oficial do AppBarber): POST /v1/establishment/clients.
+        // Se o cliente já existir, a API deve devolver 422 (regra de
+        // negócio) — tratamos como não-fatal e seguimos pro agendamento
+        // normalmente, sem bloquear o fluxo principal por causa disso.
         try {
-          const searchUrl = buildUrl("/v1/establishment/clients", { cellphone: clientPhoneParam });
-          const searchRes = await fetch(searchUrl, { method: "GET", headers });
-          const searchText = await searchRes.text();
-          console.log(`[AppBarber] GET /v1/establishment/clients?cellphone=${clientPhoneParam} (${searchRes.status}):`, searchText.slice(0, 400));
-          let searchParsed: any = null;
-          try { searchParsed = JSON.parse(searchText); } catch { /* keep null */ }
-          const existingClients = Array.isArray(searchParsed?.data) ? searchParsed.data : [];
-
-          if (existingClients.length > 0) {
-            console.log(`[AppBarber] Cliente já cadastrado (person_code=${existingClients[0]?.person_code}) — não cadastra de novo.`);
-          } else {
-            const clientBody = {
-              establishment: estCode,
-              person_name: customerName,
-              person_cellphone: clientPhoneParam,
-              person_dial_code: "+55",
-            };
-            const clientRes = await fetch(`${baseUrl}/v1/establishment/clients`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify(clientBody),
-            });
-            const clientText = await clientRes.text();
-            console.log(`[AppBarber] POST /v1/establishment/clients (${clientRes.status}):`, clientText.slice(0, 400));
-          }
+          const clientBody = {
+            establishment: estCode,
+            person_name: customerName,
+            person_cellphone: customerPhoneLocal || phoneDigits,
+            person_dial_code: "+55",
+          };
+          const clientRes = await fetch(`${baseUrl}/v1/establishment/clients`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(clientBody),
+          });
+          const clientText = await clientRes.text();
+          console.log(`[AppBarber] POST /v1/establishment/clients (${clientRes.status}):`, clientText.slice(0, 400));
         } catch (clientErr) {
-          console.warn(`[AppBarber] Falha ao buscar/cadastrar cliente antes do agendamento (seguindo mesmo assim): ${clientErr}`);
+          console.warn(`[AppBarber] Falha ao cadastrar cliente antes do agendamento (seguindo mesmo assim): ${clientErr}`);
         }
 
         // Schema real do AppBarber (validado via erro 400):
