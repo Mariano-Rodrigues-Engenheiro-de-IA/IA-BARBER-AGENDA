@@ -243,7 +243,7 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_agendamentos",
-        description: "Lista comandas/agendamentos do cliente. Use ANTES de cancelar para obter invoice_code ou invoice_item_code. Primeiro consulta /v1/invoice/search por telefone; histórico é só fallback.",
+        description: "Lista os agendamentos/comandas DESTE cliente. Use ANTES de cancelar para obter invoice_code ou invoice_item_code. Consulta comandas abertas (/v1/invoice/search) E a agenda (/v1/appointments/history) filtrada no servidor pelo telefone da conversa — agendamentos futuros só aparecem via agenda.",
         parameters: {
           type: "object",
           properties: {
