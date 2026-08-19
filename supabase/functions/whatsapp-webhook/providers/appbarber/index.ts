@@ -342,15 +342,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   };
 
   const appBarberPhoneVariants = (raw: string): string[] => {
-    // A doc/comentário original dizia que o AppBarber só aceita telefone
-    // local (sem DDI 55), e sempre com o 9º dígito — mas isso não bateu na
-    // prática (caso Gabriel/9Cinco, 18/08): mesmo com o telefone cadastrado
-    // no AppBarber sendo IDÊNTICO ao formato buscado (44999462664, local,
-    // com 9), a busca não encontrou o cliente. Sem acesso à documentação
-    // técnica oficial pra confirmar o formato exato que a API espera,
-    // passamos a tentar TODAS as combinações plausíveis — com e sem DDI 55,
-    // com e sem o 9º dígito — nessa ordem (local com 9 primeiro, que é o
-    // formato mais comum, depois as demais).
+    // CONFIRMADO pelo Mariano: o AppBarber usa telefone LOCAL, sem DDI 55.
+    // Ainda não está confirmado se o cadastro tem ou não o 9º dígito em
+    // todos os casos (caso Gabriel/9Cinco mostrou uma inconsistência), então
+    // seguimos tentando as duas formas locais — com e sem o 9 — nessa ordem.
     const full = normalizePhoneDigits(raw);
     if (!full) return [];
     const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
@@ -371,12 +366,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
       localWithout9 = local;
     }
 
-    const variants = [
-      localWith9, // local, com 9 — formato mais comum de cadastro
-      localWithout9, // local, sem 9
-      `55${localWith9}`, // com DDI 55, com 9
-      `55${localWithout9}`, // com DDI 55, sem 9
-    ];
+    const variants = [localWith9, localWithout9];
     // Remove duplicatas mantendo a ordem (ex.: quando with9 === without9 no formato inesperado).
     return Array.from(new Set(variants.filter(Boolean)));
   };
