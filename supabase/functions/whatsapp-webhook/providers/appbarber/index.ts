@@ -943,12 +943,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             continue;
           }
           const data = extractAppBarberInvoiceList(invoiceResult);
-          invoiceSearchDiagnostics.push({
-            customer_phone: customerPhone,
-            count: data.length,
-            top_level_keys: invoiceResult && typeof invoiceResult === "object" ? Object.keys(invoiceResult).slice(0, 8) : [],
-            data_keys: invoiceResult?.data && typeof invoiceResult.data === "object" && !Array.isArray(invoiceResult.data) ? Object.keys(invoiceResult.data).slice(0, 8) : [],
-          });
+          invoiceSearchDiagnostics.push({ customer_phone: customerPhone, count: data.length });
           invoiceItems.push(...data);
         }
 
@@ -957,70 +952,134 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           return [String(invoiceCode), invoice];
         })).values());
 
-        const openInvoices = dedupedInvoiceItems.filter((it: any) => {
-          const status = String(firstValue(it?.invoice_status, it?.status, it?.status_description, it?.invoiceStatus, ""))
-            .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
-          const closed = /CANCEL|REALIZ|CONCL|FINALIZ|FECHAD|CLOSED/.test(status);
-          return !closed;
-        });
-        if (openInvoices.length > 0) {
-          const appointments = openInvoices.flatMap((invoice: any) => {
-            const items = extractAppBarberInvoiceItems(invoice);
-            const invoiceObservation = firstValue(
-              invoice.scheduling_observation,
-              invoice.observation,
-              invoice.notes,
-              invoice.description,
-              invoice.customer_observation,
-            );
-            const observationPhone = extractPhonesFromText(invoiceObservation)[0];
-            return items.map((item: any) => ({
-              source: "invoice_search",
-              invoice_code: firstValue(invoice.invoice_code, invoice.invoice_id, invoice.invoiceCode, invoice.comanda_code, invoice.command_code, invoice.code, invoice.id),
-              invoice_item_code: firstValue(item?.invoice_item_code, item?.invoiceItemCode, item?.item_code, item?.code, item?.id, null),
-              client_name: firstValue(invoice.client_name, invoice.customer_name, invoice.name),
-              client_phone: firstValue(invoice.client_phone, invoice.customer_phone, invoice.phone, observationPhone),
-              service_description: firstValue(item?.item_description, item?.service_description, item?.description, item?.name, invoice.service_description, invoice.description, "Comanda AppBarber"),
-              employee_name: firstValue(invoice.employee_name, invoice.professional_name, invoice.barber_name, item?.employee_name, null),
-              scheduling_start: firstValue(invoice.scheduling_start, invoice.start_date, invoice.appointment_date, invoice.invoice_date, invoice.created_at),
-              scheduling_status: firstValue(invoice.invoice_status, invoice.status, invoice.status_description, invoice.invoiceStatus),
-              service_value: firstValue(item?.item_value, item?.service_value, item?.value, invoice.total_value, invoice.value),
-              scheduling_observation: invoiceObservation,
-              items: extractAppBarberInvoiceItems(invoice).filter(Boolean).map((entry: any) => ({
-                invoice_item_code: firstValue(entry?.invoice_item_code, entry?.invoiceItemCode, entry?.item_code, entry?.code, entry?.id),
-                item_description: firstValue(entry?.item_description, entry?.service_description, entry?.description, entry?.name),
-                item_quantity: firstValue(entry?.item_quantity, entry?.quantity),
-                item_value: firstValue(entry?.item_value, entry?.service_value, entry?.value),
-                item_type: firstValue(entry?.item_type, entry?.type),
-              })),
-            }));
-          });
-          console.log(`[AppBarber] listar_agendamentos via invoice/search: tried=${JSON.stringify(triedInvoicePhones)}, found=${appointments.length}`);
-          return {
+        const isClosedStatus = (raw: any) => {
+          const status = String(raw || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+          return /CANCEL|REALIZ|CONCL|FINALIZ|FECHAD|CLOSED/.test(status);
+        };
+
+        const openInvoices = dedupedInvoiceItems.filter((it: any) =>
+          !isClosedStatus(firstValue(it?.invoice_status, it?.status, it?.status_description, it?.invoiceStatus, ""))
+        );
+
+        const invoiceAppointments = openInvoices.flatMap((invoice: any) => {
+          const items = extractAppBarberInvoiceItems(invoice);
+          const invoiceObservation = firstValue(
+            invoice.scheduling_observation,
+            invoice.observation,
+            invoice.notes,
+            invoice.description,
+            invoice.customer_observation,
+          );
+          const observationPhone = extractPhonesFromText(invoiceObservation)[0];
+          return items.map((item: any) => ({
             source: "invoice_search",
-            period: { start_date: startDate, end_date: endDate, status_type: statusType },
-            customer_phone: phoneDigits || null,
-            searched_customer_phones: triedInvoicePhones,
-            invoice_search_diagnostics: invoiceSearchDiagnostics,
-            appointments,
-            total: appointments.length,
-          };
+            invoice_code: firstValue(invoice.invoice_code, invoice.invoice_id, invoice.invoiceCode, invoice.comanda_code, invoice.command_code, invoice.code, invoice.id),
+            invoice_item_code: firstValue(item?.invoice_item_code, item?.invoiceItemCode, item?.item_code, item?.code, item?.id, null),
+            client_name: firstValue(invoice.client_name, invoice.customer_name, invoice.name),
+            client_phone: firstValue(invoice.client_phone, invoice.customer_phone, invoice.phone, observationPhone),
+            service_description: firstValue(item?.item_description, item?.service_description, item?.description, item?.name, invoice.service_description, invoice.description, "Comanda AppBarber"),
+            employee_name: firstValue(invoice.employee_name, invoice.professional_name, invoice.barber_name, item?.employee_name, null),
+            scheduling_start: firstValue(invoice.scheduling_start, invoice.start_date, invoice.appointment_date, invoice.invoice_date, invoice.created_at),
+            scheduling_status: firstValue(invoice.invoice_status, invoice.status, invoice.status_description, invoice.invoiceStatus),
+            service_value: firstValue(item?.item_value, item?.service_value, item?.value, invoice.total_value, invoice.value),
+            scheduling_observation: invoiceObservation,
+            items: extractAppBarberInvoiceItems(invoice).filter(Boolean).map((entry: any) => ({
+              invoice_item_code: firstValue(entry?.invoice_item_code, entry?.invoiceItemCode, entry?.item_code, entry?.code, entry?.id),
+              item_description: firstValue(entry?.item_description, entry?.service_description, entry?.description, entry?.name),
+              item_quantity: firstValue(entry?.item_quantity, entry?.quantity),
+              item_value: firstValue(entry?.item_value, entry?.service_value, entry?.value),
+              item_type: firstValue(entry?.item_type, entry?.type),
+            })),
+          }));
+        });
+
+        // ===== AGENDA (/v1/appointments/history) — filtrada NO SERVIDOR pelo telefone =====
+        // Por que é obrigatório: /v1/invoice/search só devolve COMANDA ABERTA (cliente
+        // já no salão). Agendamento futuro tem status "Agendado" e NUNCA aparece lá —
+        // validado em produção (agendamento de 20/08 criado pela IA: invoice/search=[]
+        // e history=1 linha). Sem isso, listar_agendamentos nunca acha nada.
+        //
+        // Privacidade: a resposta bruta do endpoint traz a agenda inteira, então o
+        // filtro por telefone acontece AQUI e só as linhas do cliente da conversa
+        // vão para a IA (nunca fazemos dump global).
+        //
+        // Detalhe crítico da API: end_date é EXCLUSIVO — start_date == end_date
+        // devolve 0 linhas. Sempre garantimos end_date > start_date.
+        const historyStart = startDate;
+        let historyEnd = endDate;
+        if (historyEnd <= historyStart) {
+          historyEnd = fmt(new Date(new Date(`${historyStart}T00:00:00Z`).getTime() + 24 * 60 * 60 * 1000));
+        }
+        const historyDiagnostics: any[] = [];
+        const historyRowsForClient: any[] = [];
+        // status_type 1 = Agendado, 2 = Realizado/Confirmado. Cancelado (3) fica fora.
+        for (const historyStatus of [1, 2]) {
+          const historyResult = await callGet("/v1/appointments/history", {
+            start_date: historyStart,
+            end_date: historyEnd,
+            status_type: historyStatus,
+          });
+          if (historyResult?.error) {
+            historyDiagnostics.push({ status_type: historyStatus, error: historyResult.error, status: historyResult.status });
+            continue;
+          }
+          const rows = Array.isArray(historyResult?.data) ? historyResult.data : extractAppBarberInvoiceList(historyResult);
+          // Agendamento criado pela IA fica como "Sem Cadastro" com client_phone null:
+          // o AppBarber move o telefone para scheduling_observation ("Cel 61999998888.").
+          // Por isso comparamos também a observação.
+          const mine = rows.filter((row: any) =>
+            phoneVariants.some((variant) => phoneCoreMatches(variant, row?.client_phone, row?.scheduling_observation, row?.client_name)) &&
+            !isClosedStatus(row?.scheduling_status)
+          );
+          historyDiagnostics.push({ status_type: historyStatus, total_rows: rows.length, matched: mine.length });
+          historyRowsForClient.push(...mine);
         }
 
-        // ⚠️ Fallback /v1/appointments/history REMOVIDO intencionalmente.
-        // Esse endpoint devolve a agenda inteira do estabelecimento (todos os clientes)
-        // e a equipe técnica do AppBarber sinalizou isso como "acesso a arquivos restritos".
-        // Se /v1/invoice/search não acha pelo telefone, devolvemos vazio — sem dump global.
-        console.log(`[AppBarber] listar_agendamentos: invoice/search não retornou comandas abertas para ${JSON.stringify(triedInvoicePhones)} — NÃO consultando /appointments/history (acesso restrito).`);
+        const historyAppointments = historyRowsForClient.map((row: any) => ({
+          source: "appointments_history",
+          invoice_code: firstValue(row?.invoice_code, row?.invoice_id, row?.code),
+          invoice_item_code: null,
+          scheduling_code: firstValue(row?.scheduling_code, null),
+          client_name: firstValue(row?.client_name, null),
+          client_phone: firstValue(row?.client_phone, extractPhonesFromText(row?.scheduling_observation)[0], null),
+          service_description: firstValue(row?.service_description, row?.description, "Agendamento AppBarber"),
+          employee_name: firstValue(row?.employee_name, row?.professional_name, null),
+          scheduling_start: firstValue(row?.scheduling_start, row?.start_date, null),
+          scheduling_status: firstValue(row?.scheduling_status, row?.status, "Agendado"),
+          service_value: firstValue(row?.service_value, row?.value, null),
+          scheduling_observation: firstValue(row?.scheduling_observation, null),
+        }));
+
+        // Merge sem duplicar: comanda aberta tem prioridade (traz invoice_item_code).
+        const seenInvoiceCodes = new Set(
+          invoiceAppointments.map((a: any) => String(a.invoice_code ?? "")).filter(Boolean)
+        );
+        const appointments = [
+          ...invoiceAppointments,
+          ...historyAppointments.filter((a: any) => {
+            const code = String(a.invoice_code ?? "");
+            if (code && seenInvoiceCodes.has(code)) return false;
+            if (code) seenInvoiceCodes.add(code);
+            return true;
+          }),
+        ];
+
+        console.log(`[AppBarber] listar_agendamentos: tried=${JSON.stringify(triedInvoicePhones)}, comandas_abertas=${invoiceAppointments.length}, agenda=${historyAppointments.length}, total=${appointments.length}, periodo=${historyStart}→${historyEnd}`);
+
         return {
-          source: "invoice_search",
-          period: { start_date: startDate, end_date: endDate, status_type: statusType },
+          source: appointments.length === 0
+            ? "invoice_search+appointments_history"
+            : (invoiceAppointments.length > 0 ? "invoice_search+appointments_history" : "appointments_history"),
+          period: { start_date: historyStart, end_date: historyEnd, status_type: statusType },
           customer_phone: phoneDigits || null,
           searched_customer_phones: triedInvoicePhones,
           invoice_search_diagnostics: invoiceSearchDiagnostics,
-          appointments: [],
-          total: 0,
-          note: "Nenhuma comanda ativa encontrada para este telefone no AppBarber. Confirme com o cliente o número usado no cadastro da barbearia.",
+          history_diagnostics: historyDiagnostics,
+          appointments,
+          total: appointments.length,
+          ...(appointments.length === 0
+            ? { note: "Nenhum agendamento ativo encontrado para este telefone no AppBarber no período consultado. Confirme com o cliente o número usado no cadastro da barbearia ou a data do agendamento." }
+            : {}),
         };
       }
 
