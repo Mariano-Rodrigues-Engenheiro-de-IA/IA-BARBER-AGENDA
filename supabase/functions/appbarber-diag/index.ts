@@ -78,10 +78,11 @@ Deno.serve(async (req) => {
         continue;
       }
       const filterPhone = String((r.query as any)?._filter_phone || "");
+      const filterName = String((r.query as any)?._filter_name || "").toLowerCase();
       const params = new URLSearchParams();
       params.set("establishment_code", estCode);
       for (const [k, v] of Object.entries(r.query || {})) {
-        if (k === "_filter_phone") continue;
+        if (k === "_filter_phone" || k === "_filter_name") continue;
         if (v === undefined || v === null || v === "") continue;
         params.set(k, String(v));
       }
@@ -92,7 +93,13 @@ Deno.serve(async (req) => {
           headers: { "X-API-Key": apiKey, Accept: "application/json" },
         });
         const text = await res.text();
-        if (filterPhone) {
+        if (filterName) {
+          let parsed: any = null;
+          try { parsed = JSON.parse(text); } catch { /* noop */ }
+          const rows: any[] = Array.isArray(parsed?.data) ? parsed.data : [];
+          const matches = rows.filter((row) => JSON.stringify(row).toLowerCase().includes(filterName));
+          out.push({ path, query: r.query || {}, status: res.status, total_rows: rows.length, matches });
+        } else if (filterPhone) {
           const core = filterPhone.replace(/\D/g, "").slice(-8);
           let parsed: any = null;
           try { parsed = JSON.parse(text); } catch { /* noop */ }
