@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { tenant_id, requests } = body as {
       tenant_id?: string;
-      requests?: Array<{ path: string; query?: Record<string, string | number> }>;
+      requests?: Array<{ path: string; query?: Record<string, string | number>; method?: string; payload?: Record<string, unknown> }>;
     };
     if (!tenant_id || !Array.isArray(requests) || requests.length === 0) {
       return json({ error: "tenant_id e requests[] são obrigatórios" }, 400);
@@ -87,10 +87,20 @@ Deno.serve(async (req) => {
         params.set(k, String(v));
       }
       const url = `${baseUrl}${path}?${params.toString()}`;
+      const method = String(r.method || "GET").toUpperCase();
+      if (!["GET", "POST", "DELETE"].includes(method)) {
+        out.push({ path, error: "método não permitido" });
+        continue;
+      }
       try {
         const res = await fetch(url, {
-          method: "GET",
-          headers: { "X-API-Key": apiKey, Accept: "application/json" },
+          method,
+          headers: {
+            "X-API-Key": apiKey,
+            Accept: "application/json",
+            ...(method === "GET" ? {} : { "Content-Type": "application/json" }),
+          },
+          ...(method === "GET" ? {} : { body: JSON.stringify(r.payload ?? {}) }),
         });
         const text = await res.text();
         if (filterName) {
