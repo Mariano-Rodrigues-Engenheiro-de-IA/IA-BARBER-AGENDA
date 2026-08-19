@@ -559,7 +559,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
               name: firstValue(p?.name, p?.professional_name, p?.employee_name) ?? null,
             }))
-            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+            .filter((p: any) => Number.isFinite(p.professional_code) && p.professional_code > 0);
         } else {
           const listRes = await callGet("/v1/professional-list", {});
           if (listRes?.error) return listRes;
@@ -569,7 +569,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               professional_code: Number(firstValue(p?.professional_code, p?.employee_code, p?.code, p?.id)),
               name: firstValue(p?.professional_name, p?.employee_name, p?.employee_nickname, p?.name) ?? null,
             }))
-            .filter((p) => Number.isFinite(p.professional_code) && p.professional_code > 0);
+            .filter((p: any) => Number.isFinite(p.professional_code) && p.professional_code > 0);
         }
 
         if (profs.length === 0) {
