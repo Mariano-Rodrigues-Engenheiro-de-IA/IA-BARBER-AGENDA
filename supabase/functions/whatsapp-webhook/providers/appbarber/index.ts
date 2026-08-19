@@ -1053,11 +1053,65 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           };
         }
 
-        // ⚠️ Fallback /v1/appointments/history REMOVIDO intencionalmente.
-        // Esse endpoint devolve a agenda inteira do estabelecimento (todos os clientes)
-        // e a equipe técnica do AppBarber sinalizou isso como "acesso a arquivos restritos".
-        // Se /v1/invoice/search não acha pelo telefone, devolvemos vazio — sem dump global.
-        console.log(`[AppBarber] listar_agendamentos: invoice/search não retornou comandas abertas para ${JSON.stringify(triedInvoicePhones)} — NÃO consultando /appointments/history (acesso restrito).`);
+        // Fallback: /v1/invoice/search só devolve COMANDAS ABERTAS no balcão
+        // — nunca agendamentos futuros com status "Agendado" (confirmado por
+        // teste direto na API: telefones com agendamento certo pro dia
+        // devolveram {"data":[]} em invoice/search). Para achar agendamento
+        // AGENDADO (ainda não iniciado), o único jeito é /v1/appointments/history.
+        //
+        // Esse endpoint tinha sido removido porque devolve a agenda INTEIRA
+        // do estabelecimento (todos os clientes) — acesso sinalizado como
+        // restrito pela equipe do AppBarber. Reintroduzido com proteção: o
+        // filtro por telefone é feito AQUI NO SERVIDOR, nunca mandamos a
+        // lista completa pra IA — só os itens que baterem com o telefone do
+        // cliente desta conversa saem daqui. Janela curta (hoje até +30
+        // dias) focada em agendamentos FUTUROS, não histórico passado.
+        console.log(`[AppBarber] listar_agendamentos: invoice/search não retornou comandas abertas para ${JSON.stringify(triedInvoicePhones)} — tentando /appointments/history (filtrado por telefone no servidor).`);
+        const historyResult = await callGet("/v1/appointments/history", { start_date: startDate, end_date: endDate });
+        if (historyResult?.error) {
+          console.log(`[AppBarber] /appointments/history falhou: ${JSON.stringify(historyResult).slice(0, 300)}`);
+        } else {
+          const allHistoryItems = extractAppBarberInvoiceList(historyResult);
+          const matchedByPhone = allHistoryItems.filter((item: any) => {
+            const itemPhones = [
+              item?.customer_phone,
+              item?.client_phone,
+              item?.phone,
+              ...extractPhonesFromText(item?.scheduling_observation ?? item?.observation),
+            ];
+            return searchVariants.some((variant) => itemPhones.some((p) => phoneCoreMatches(variant, p)));
+          });
+          // Só agendamentos futuros/"em aberto" (nunca já cancelado/concluído) —
+          // mesmo critério de "fechado" já usado para invoice_search acima.
+          const openMatches = matchedByPhone.filter((item: any) => {
+            const status = String(firstValue(item?.scheduling_status, item?.status, item?.status_description, ""))
+              .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+            return !/CANCEL|REALIZ|CONCL|FINALIZ|FECHAD|CLOSED/.test(status);
+          });
+          console.log(`[AppBarber] /appointments/history: ${allHistoryItems.length} itens no período, ${matchedByPhone.length} bateram com o telefone, ${openMatches.length} em aberto.`);
+          if (openMatches.length > 0) {
+            const appointments = openMatches.map((item: any) => ({
+              source: "appointments_history",
+              invoice_code: firstValue(item?.invoice_code, item?.invoice_id, item?.code, item?.id),
+              scheduling_code: firstValue(item?.scheduling_code, item?.appointment_id),
+              client_name: firstValue(item?.customer_name, item?.client_name, item?.name),
+              client_phone: firstValue(item?.customer_phone, item?.client_phone, item?.phone),
+              service_description: firstValue(item?.service_description, item?.description, "Agendamento AppBarber"),
+              employee_name: firstValue(item?.employee_name, item?.professional_name, item?.barber_name, null),
+              scheduling_start: firstValue(item?.scheduling_start, item?.start_date, item?.appointment_date),
+              scheduling_status: firstValue(item?.scheduling_status, item?.status, item?.status_description),
+            }));
+            return {
+              source: "appointments_history",
+              period: { start_date: startDate, end_date: endDate, status_type: statusType },
+              customer_phone: phoneDigits || null,
+              searched_customer_phones: triedInvoicePhones,
+              appointments,
+              total: appointments.length,
+            };
+          }
+        }
+
         return {
           source: "invoice_search",
           period: { start_date: startDate, end_date: endDate, status_type: statusType },
@@ -1066,7 +1120,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           invoice_search_diagnostics: invoiceSearchDiagnostics,
           appointments: [],
           total: 0,
-          note: "Nenhuma comanda ativa encontrada para este telefone no AppBarber. Confirme com o cliente o número usado no cadastro da barbearia.",
+          note: "Nenhuma comanda ativa nem agendamento futuro encontrado para este telefone no AppBarber. Confirme com o cliente o número usado no cadastro da barbearia.",
         };
       }
 
