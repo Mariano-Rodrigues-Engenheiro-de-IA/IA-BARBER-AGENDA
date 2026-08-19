@@ -345,20 +345,29 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero).
     // Enviar com "55" na frente não encontra o cadastro. Buscar sempre em formato local.
     //
-    // Mas nem todo cadastro do AppBarber tem o 9º dígito — clientes cadastrados
-    // manualmente pela equipe da barbearia (ou há mais tempo) às vezes ficam
-    // salvos como DDD+8dígitos (formato antigo, sem o 9 extra). Se buscarmos
-    // só com o 9, a API simplesmente não encontra o cliente — mesmo o telefone
-    // sendo visualmente "o mesmo" ao conferir manualmente. Por isso tentamos
-    // as DUAS variantes (com e sem o 9), nessa ordem.
-    const local = appBarberLocalPhone(raw);
-    if (!local) return [];
-    const variants = [local];
-    // DDD (2) + 9 + 8 dígitos = 11 → variante sem o 9: DDD + 8 dígitos = 10.
-    if (local.length === 11 && local[2] === "9") {
-      variants.push(local.slice(0, 2) + local.slice(3));
+    // Bug real encontrado (caso Gabriel/9Cinco, 18/08): o número do cliente no
+    // WhatsApp já vinha com só 8 dígitos locais (ex.: 4499462664, 10 dígitos
+    // com DDD) — não é um "9 faltando por erro de cadastro", é o número
+    // verdadeiro dele. appBarberLocalPhone() SEMPRE força adicionar um "9"
+    // quando vê 10 dígitos, e essa era a ÚNICA variante buscada — então se o
+    // cadastro no AppBarber usa o número original (sem o 9 inventado), a
+    // busca nunca encontra, mesmo o telefone sendo "o mesmo" visualmente.
+    //
+    // Corrigido para tentar as DUAS formas sempre que o número local tiver
+    // 10 dígitos: o original (sem mexer) e a variante com o 9 adicionado —
+    // sem perder nenhuma das duas, ao contrário de antes.
+    const full = normalizePhoneDigits(raw);
+    if (!full) return [];
+    const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
+    if (local.length === 10) {
+      const with9 = `${local.slice(0, 2)}9${local.slice(2)}`;
+      return [local, with9];
     }
-    return variants;
+    if (local.length === 11 && local[2] === "9") {
+      const without9 = local.slice(0, 2) + local.slice(3);
+      return [local, without9];
+    }
+    return local ? [local] : [];
   };
 
   const extractAppBarberInvoiceList = (payload: any): any[] => {
