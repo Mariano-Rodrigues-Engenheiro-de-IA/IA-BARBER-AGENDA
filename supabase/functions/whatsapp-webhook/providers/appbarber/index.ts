@@ -342,32 +342,43 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   };
 
   const appBarberPhoneVariants = (raw: string): string[] => {
-    // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero).
-    // Enviar com "55" na frente não encontra o cadastro. Buscar sempre em formato local.
-    //
-    // Bug real encontrado (caso Gabriel/9Cinco, 18/08): o número do cliente no
-    // WhatsApp já vinha com só 8 dígitos locais (ex.: 4499462664, 10 dígitos
-    // com DDD) — não é um "9 faltando por erro de cadastro", é o número
-    // verdadeiro dele. appBarberLocalPhone() SEMPRE força adicionar um "9"
-    // quando vê 10 dígitos, e essa era a ÚNICA variante buscada — então se o
-    // cadastro no AppBarber usa o número original (sem o 9 inventado), a
-    // busca nunca encontra, mesmo o telefone sendo "o mesmo" visualmente.
-    //
-    // Corrigido para tentar as DUAS formas sempre que o número local tiver
-    // 10 dígitos: o original (sem mexer) e a variante com o 9 adicionado —
-    // sem perder nenhuma das duas, ao contrário de antes.
+    // A doc/comentário original dizia que o AppBarber só aceita telefone
+    // local (sem DDI 55), e sempre com o 9º dígito — mas isso não bateu na
+    // prática (caso Gabriel/9Cinco, 18/08): mesmo com o telefone cadastrado
+    // no AppBarber sendo IDÊNTICO ao formato buscado (44999462664, local,
+    // com 9), a busca não encontrou o cliente. Sem acesso à documentação
+    // técnica oficial pra confirmar o formato exato que a API espera,
+    // passamos a tentar TODAS as combinações plausíveis — com e sem DDI 55,
+    // com e sem o 9º dígito — nessa ordem (local com 9 primeiro, que é o
+    // formato mais comum, depois as demais).
     const full = normalizePhoneDigits(raw);
     if (!full) return [];
     const local = full.startsWith("55") && (full.length === 12 || full.length === 13) ? full.slice(2) : full;
-    if (local.length === 10) {
-      const with9 = `${local.slice(0, 2)}9${local.slice(2)}`;
-      return [local, with9];
-    }
+
+    // Garante as duas formas locais (com e sem o 9), a partir de qualquer
+    // tamanho de entrada (10 ou 11 dígitos).
+    let localWith9: string;
+    let localWithout9: string;
     if (local.length === 11 && local[2] === "9") {
-      const without9 = local.slice(0, 2) + local.slice(3);
-      return [local, without9];
+      localWith9 = local;
+      localWithout9 = local.slice(0, 2) + local.slice(3);
+    } else if (local.length === 10) {
+      localWithout9 = local;
+      localWith9 = `${local.slice(0, 2)}9${local.slice(2)}`;
+    } else {
+      // Formato inesperado (nem 10 nem 11 dígitos) — usa como veio, sem tentar completar.
+      localWith9 = local;
+      localWithout9 = local;
     }
-    return local ? [local] : [];
+
+    const variants = [
+      localWith9, // local, com 9 — formato mais comum de cadastro
+      localWithout9, // local, sem 9
+      `55${localWith9}`, // com DDI 55, com 9
+      `55${localWithout9}`, // com DDI 55, sem 9
+    ];
+    // Remove duplicatas mantendo a ordem (ex.: quando with9 === without9 no formato inesperado).
+    return Array.from(new Set(variants.filter(Boolean)));
   };
 
   const extractAppBarberInvoiceList = (payload: any): any[] => {
