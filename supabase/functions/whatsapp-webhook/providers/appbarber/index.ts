@@ -344,9 +344,21 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   const appBarberPhoneVariants = (raw: string): string[] => {
     // AppBarber cadastra clientes SEM o DDI 55 (padrão do app: DDD+9+numero).
     // Enviar com "55" na frente não encontra o cadastro. Buscar sempre em formato local.
-    // A API deve receber somente o padrão atual: DDD + 9 + 8 dígitos.
+    //
+    // Mas nem todo cadastro do AppBarber tem o 9º dígito — clientes cadastrados
+    // manualmente pela equipe da barbearia (ou há mais tempo) às vezes ficam
+    // salvos como DDD+8dígitos (formato antigo, sem o 9 extra). Se buscarmos
+    // só com o 9, a API simplesmente não encontra o cliente — mesmo o telefone
+    // sendo visualmente "o mesmo" ao conferir manualmente. Por isso tentamos
+    // as DUAS variantes (com e sem o 9), nessa ordem.
     const local = appBarberLocalPhone(raw);
-    return local ? [local] : [];
+    if (!local) return [];
+    const variants = [local];
+    // DDD (2) + 9 + 8 dígitos = 11 → variante sem o 9: DDD + 8 dígitos = 10.
+    if (local.length === 11 && local[2] === "9") {
+      variants.push(local.slice(0, 2) + local.slice(3));
+    }
+    return variants;
   };
 
   const extractAppBarberInvoiceList = (payload: any): any[] => {
