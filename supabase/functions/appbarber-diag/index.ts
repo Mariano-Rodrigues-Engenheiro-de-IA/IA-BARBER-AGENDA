@@ -77,9 +77,11 @@ Deno.serve(async (req) => {
         out.push({ path, error: "path fora da whitelist" });
         continue;
       }
+      const filterPhone = String((r.query as any)?._filter_phone || "");
       const params = new URLSearchParams();
       params.set("establishment_code", estCode);
       for (const [k, v] of Object.entries(r.query || {})) {
+        if (k === "_filter_phone") continue;
         if (v === undefined || v === null || v === "") continue;
         params.set(k, String(v));
       }
@@ -90,12 +92,16 @@ Deno.serve(async (req) => {
           headers: { "X-API-Key": apiKey, Accept: "application/json" },
         });
         const text = await res.text();
-        out.push({
-          path,
-          query: r.query || {},
-          status: res.status,
-          body: text.slice(0, 4000),
-        });
+        if (filterPhone) {
+          const core = filterPhone.replace(/\D/g, "").slice(-8);
+          let parsed: any = null;
+          try { parsed = JSON.parse(text); } catch { /* noop */ }
+          const rows: any[] = Array.isArray(parsed?.data) ? parsed.data : [];
+          const matches = rows.filter((row) => String(row?.client_phone || "").replace(/\D/g, "").slice(-8) === core);
+          out.push({ path, query: r.query || {}, status: res.status, total_rows: rows.length, filter_core: core, matches });
+        } else {
+          out.push({ path, query: r.query || {}, status: res.status, body: text.slice(0, 4000) });
+        }
       } catch (e: any) {
         out.push({ path, query: r.query || {}, error: e?.message || String(e) });
       }
