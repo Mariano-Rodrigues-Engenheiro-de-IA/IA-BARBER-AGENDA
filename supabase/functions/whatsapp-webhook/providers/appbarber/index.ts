@@ -827,37 +827,6 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // AppBarber armazena telefone SEM DDI 55 (formato: 61983012868).
         // Enviar "5561983012868" cria cadastro duplicado. Sempre local (DDD+9+numero).
         const customerPhoneLocal = appBarberLocalPhone(phoneDigits);
-
-        // 🆕 Cadastra o cliente explicitamente ANTES de criar o agendamento.
-        // Causa raiz encontrada (caso Gabriel/9Cinco): POST /v1/appointments
-        // manda customer_phone/customer_name soltos, mas isso não cria um
-        // registro de cliente "de verdade" na base do AppBarber — então
-        // depois, quando o cliente volta e a IA tenta achar o agendamento
-        // via /v1/invoice/search (que busca pela FICHA do cliente, não
-        // pelos campos soltos do agendamento), a busca não encontra nada,
-        // mesmo com telefone certo. Endpoint correto (confirmado na doc
-        // oficial do AppBarber): POST /v1/establishment/clients.
-        // Se o cliente já existir, a API deve devolver 422 (regra de
-        // negócio) — tratamos como não-fatal e seguimos pro agendamento
-        // normalmente, sem bloquear o fluxo principal por causa disso.
-        try {
-          const clientBody = {
-            establishment: estCode,
-            person_name: customerName,
-            person_cellphone: customerPhoneLocal || phoneDigits,
-            person_dial_code: "+55",
-          };
-          const clientRes = await fetch(`${baseUrl}/v1/establishment/clients`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify(clientBody),
-          });
-          const clientText = await clientRes.text();
-          console.log(`[AppBarber] POST /v1/establishment/clients (${clientRes.status}):`, clientText.slice(0, 400));
-        } catch (clientErr) {
-          console.warn(`[AppBarber] Falha ao cadastrar cliente antes do agendamento (seguindo mesmo assim): ${clientErr}`);
-        }
-
         // Schema real do AppBarber (validado via erro 400):
         // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
         // professionals: [{ professional_code }] | services: [{ service_code, duration }]
