@@ -6947,6 +6947,29 @@ async function callAIAgent(
       }
     }
 
+    // 🚨 AJUSTE (ago/2026, auditoria de 45 dias de logs):
+    // quando JÁ existe agendamento criado no turno, o loop de recuperação multi
+    // só teve resultado no Frizzar (16 recuperações concluídas). No AppBarber,
+    // 7/7 tentativas terminaram em `recovery_exhausted_no_human` — ou seja, o
+    // cliente tinha o agendamento certo criado e recebia "tive um probleminha
+    // com os outros N serviços, vou acionar a equipe" (caso 554484265186).
+    // Nos providers sem histórico de recuperação bem-sucedida, prometidos passa
+    // a ser clampado ao número de execuções: o guard segue protegendo o caso
+    // criados=0 (confirmação fantasma), mas para de sequestrar turnos que
+    // deram certo. Se um provider passar a precisar disso, basta ligar a flag
+    // no módulo dele.
+    if (
+      !_mbCfg.allowMultiRecoveryAfterSuccess &&
+      bookedExecutionCount >= 1 &&
+      prometidos > bookedExecutionCount
+    ) {
+      console.warn(
+        `[MultiBookingGuard] clamp por provider (${provider}): prometidos=${prometidos} → ${bookedExecutionCount} (recuperação multi pós-sucesso desligada nesta API)`,
+      );
+      prometidos = bookedExecutionCount;
+    }
+
+
     console.log(
       `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} executions=${bookedExecutionCount} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,
     );
