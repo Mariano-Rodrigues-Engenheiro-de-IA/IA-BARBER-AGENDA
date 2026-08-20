@@ -172,7 +172,7 @@ export default function ClientConnection() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          {!connected && (
+          {!connected && !checking && (
             <Button onClick={() => connectMut.mutate(undefined)} disabled={connectMut.isPending}>
               {connectMut.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <QrCode className="w-4 h-4 mr-2" />}
               Gerar QR code
@@ -206,7 +206,7 @@ export default function ClientConnection() {
         </div>
       )}
 
-      {!connected && !qrSrc && !connecting && (
+      {!connected && !qrSrc && !connecting && !checking && (
         <div className="glass-card p-6 text-sm text-muted-foreground">
           Clique em "Gerar QR code" para iniciar a conexão do WhatsApp à sua IA.
         </div>
