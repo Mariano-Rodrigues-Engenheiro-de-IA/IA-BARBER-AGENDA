@@ -136,7 +136,12 @@ export default function ClientConnection() {
           <div className="flex-1">
             <p className="text-sm text-muted-foreground">Status atual</p>
             <div className="flex items-center gap-2 mt-0.5">
-              {connected ? (
+              {checking ? (
+                <>
+                  <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+                  <span className="font-semibold text-muted-foreground">Verificando status...</span>
+                </>
+              ) : connected ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   <span className="font-semibold text-foreground">Conectado</span>
@@ -152,6 +157,7 @@ export default function ClientConnection() {
                   <span className="font-semibold text-foreground">Desconectado</span>
                 </>
               )}
+
             </div>
             {statusQ.data?.instance?.profileName && (
               <p className="text-xs text-muted-foreground mt-1">
