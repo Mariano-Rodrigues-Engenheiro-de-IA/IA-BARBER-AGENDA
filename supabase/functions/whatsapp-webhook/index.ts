@@ -3764,6 +3764,8 @@ type BookingGuardsConfig = {
     primaryBookingToolName: string;
     useIntentShape: boolean;
     skipWhenSingleVisit: boolean;
+    /** Roda o loop de recuperação multi quando JÁ houve agendamento criado no turno. */
+    allowMultiRecoveryAfterSuccess: boolean;
     useAlternativesShortCircuit: boolean;
     recoveryToolChoice: "required" | "auto";
   };
@@ -3784,6 +3786,7 @@ const DISABLED_BOOKING_GUARDS: BookingGuardsConfig = {
     primaryBookingToolName: "",
     useIntentShape: false,
     skipWhenSingleVisit: false,
+    allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
     recoveryToolChoice: "auto",
   },
@@ -4339,15 +4342,24 @@ async function classifyPendingBookings(params: {
       console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
       capped = 1;
     }
-    const heuristicOverrideAllowed = heuristic > capped && hasHighConfidenceHeuristicOverride(messages);
-    const total = heuristicOverrideAllowed ? heuristic : capped;
-    if (heuristic > capped && !heuristicOverrideAllowed) {
-      console.warn(`[MultiBookingGuard] heuristic ignored: llm=${capped} heur=${heuristic} sem sinal determinístico de multi-agendamento.`);
+    // 🚨 AJUSTE (ago/2026, baseado em auditoria de 45 dias de logs do guard):
+    // o override heurístico sobre o classificador causou 11 falsos positivos
+    // (`llm=1 heur=N heur_used`), sempre com o mesmo estrago: agendamento único
+    // criado com sucesso e o cliente recebendo "tive um probleminha com os
+    // outros N serviços, vou acionar a equipe". Caso real 554484265186 (19/08):
+    // llm=1 heur=4 → prometidos=4, criados=1, recovery esgotada.
+    // Nenhum caso de recuperação bem-sucedida veio de override heurístico.
+    // Decisão: quando o classificador LLM responde, a palavra final é dele.
+    // A heurística segue valendo só no caminho de fallback (classificador falhou).
+    const total = capped;
+    if (heuristic > capped) {
+      console.warn(`[MultiBookingGuard] heuristic ignored (policy: llm wins): llm=${capped} heur=${heuristic}`);
     }
+
     return {
       total,
       source: "llm",
-      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? ` heur_${heuristicOverrideAllowed ? "used" : "ignored"}` : ""}`,
+      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? " heur_ignored" : ""}`,
       intentShape,
     };
   } catch (e) {
@@ -6934,6 +6946,29 @@ async function callAIAgent(
         prometidos = bookedExecutionCount;
       }
     }
+
+    // 🚨 AJUSTE (ago/2026, auditoria de 45 dias de logs):
+    // quando JÁ existe agendamento criado no turno, o loop de recuperação multi
+    // só teve resultado no Frizzar (16 recuperações concluídas). No AppBarber,
+    // 7/7 tentativas terminaram em `recovery_exhausted_no_human` — ou seja, o
+    // cliente tinha o agendamento certo criado e recebia "tive um probleminha
+    // com os outros N serviços, vou acionar a equipe" (caso 554484265186).
+    // Nos providers sem histórico de recuperação bem-sucedida, prometidos passa
+    // a ser clampado ao número de execuções: o guard segue protegendo o caso
+    // criados=0 (confirmação fantasma), mas para de sequestrar turnos que
+    // deram certo. Se um provider passar a precisar disso, basta ligar a flag
+    // no módulo dele.
+    if (
+      !_mbCfg.allowMultiRecoveryAfterSuccess &&
+      bookedExecutionCount >= 1 &&
+      prometidos > bookedExecutionCount
+    ) {
+      console.warn(
+        `[MultiBookingGuard] clamp por provider (${provider}): prometidos=${prometidos} → ${bookedExecutionCount} (recuperação multi pós-sucesso desligada nesta API)`,
+      );
+      prometidos = bookedExecutionCount;
+    }
+
 
     console.log(
       `[MultiBookingGuard] attempts=${_bookingAttempts} criados=${criados} executions=${bookedExecutionCount} prometidos=${prometidos} (src=${cls.source}) provider=${provider} reasoning="${cls.reasoning || ""}"`,

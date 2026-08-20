@@ -1116,6 +1116,7 @@ export const bookingGuardsConfig = {
     // prometidos <= 1 → não sequestra falha simples de disponibilidade.
     skipWhenSingleVisit: true,
     // `agendar` devolve alternativas estruturadas; nesse caso responde em texto.
+    allowMultiRecoveryAfterSuccess: true,
     useAlternativesShortCircuit: true,
     // Recovery em texto não corrige nada nesta API.
     recoveryToolChoice: "required" as const,

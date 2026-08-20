@@ -1400,6 +1400,7 @@ export const bookingGuardsConfig = {
     // execução já resolve, não precisa do classificador de forma de intenção.
     useIntentShape: false,
     skipWhenSingleVisit: false,
+    allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
     recoveryToolChoice: "auto" as const,
   },
