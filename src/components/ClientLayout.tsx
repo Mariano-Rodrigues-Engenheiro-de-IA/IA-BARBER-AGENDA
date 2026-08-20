@@ -137,7 +137,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     <div className={cn("min-h-screen bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo", !isFrizzar && "ai-panel-bg")}>
       {!isFrizzar && <div className="ai-topbar-glow" />}
       <header className="sticky top-0 z-40 border-b border-border bg-sidebar">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-8">
+        <div className="mx-auto flex max-w-[1560px] items-center gap-4 px-4 py-3 sm:px-8">
           {isFrizzar ? (
             <img
               src="/frizzar/frizzar-logo-horizontal-white.png"
@@ -201,13 +201,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </div>
         </div>
 
-        <nav className="mx-auto flex max-w-6xl flex-wrap items-stretch gap-x-0.5 px-4 sm:px-8">
+        <nav className="mx-auto flex max-w-[1560px] flex-nowrap items-stretch gap-x-0.5 overflow-x-auto nav-scroll px-4 sm:px-8">
           {NAV.map((i) => <TopNavItem key={i.to} item={i} />)}
         </nav>
 
       </header>
 
-      <main className="mx-auto max-w-6xl p-4 sm:p-8 animate-fade-in">{children}</main>
+      <main className="mx-auto max-w-[1560px] p-4 sm:p-8 animate-fade-in">{children}</main>
     </div>
   );
 }
