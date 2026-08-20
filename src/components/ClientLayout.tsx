@@ -30,20 +30,27 @@ function TopNavItem({ item }: { item: NavItem }) {
   if (!visible) return null;
   const isActive = location.pathname === item.to;
   return (
-    <Link
-      to={item.to}
-      className={cn(
-        "flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm font-medium transition-colors",
-        isActive
-          ? "border-sidebar-primary text-sidebar-foreground"
-          : "border-transparent text-sidebar-foreground hover:border-sidebar-primary/50 hover:text-sidebar-primary",
-      )}
-    >
-      <item.icon className="h-4 w-4" />
-      {item.label}
-    </Link>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          to={item.to}
+          aria-label={item.label}
+          className={cn(
+            "flex min-w-0 shrink items-center justify-center gap-2 whitespace-nowrap border-b-2 px-2 py-3 text-[13px] font-medium transition-colors lg:px-3 lg:text-sm",
+            isActive
+              ? "border-sidebar-primary text-sidebar-foreground"
+              : "border-transparent text-sidebar-foreground hover:border-sidebar-primary/50 hover:text-sidebar-primary",
+          )}
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          <span className="hidden truncate lg:inline">{item.label}</span>
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="lg:hidden">{item.label}</TooltipContent>
+    </Tooltip>
   );
 }
+
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const { signOut, user, tenantId } = useAuth();
