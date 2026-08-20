@@ -39,13 +39,14 @@ function TopNavItem({ item }: { item: NavItem }) {
           className={cn(
             "flex min-w-0 shrink items-center justify-center gap-2 whitespace-nowrap border-b-2 px-2 py-3 text-[13px] font-medium transition-colors lg:px-3 lg:text-sm",
             isActive
-              ? "border-sidebar-primary text-sidebar-foreground"
+              ? "border-sidebar-primary text-sidebar-primary"
               : "border-transparent text-sidebar-foreground hover:border-sidebar-primary/50 hover:text-sidebar-primary",
           )}
         >
-          <item.icon className="h-4 w-4 shrink-0" />
+          <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-sidebar-primary")} />
           <span className="hidden truncate lg:inline">{item.label}</span>
         </Link>
+
       </TooltipTrigger>
       <TooltipContent side="bottom" className="lg:hidden">{item.label}</TooltipContent>
     </Tooltip>
