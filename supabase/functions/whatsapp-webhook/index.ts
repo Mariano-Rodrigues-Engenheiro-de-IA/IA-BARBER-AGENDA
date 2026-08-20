@@ -1182,7 +1182,7 @@ async function uazapiSendTextWithRetry(
       const res = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay: attempt === 1 ? delay : 0, readchat: true }),
+        body: JSON.stringify({ number, text, delay: attempt === 1 ? delay : 0, readchat: false }),
       });
       const data = await res.json().catch(() => ({} as any));
       lastStatus = res.status;
@@ -8251,7 +8251,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const res = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-          body: JSON.stringify({ number: phoneNumber, text, delay, readchat: true }),
+          body: JSON.stringify({ number: phoneNumber, text, delay, readchat: false }),
         });
         const data = await readResponsePayload(res);
         console.log(`[CustomTool] send_text result:`, JSON.stringify(data).slice(0, 200));
@@ -8278,7 +8278,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             const clientRes = await fetch(`${uazapiUrl}/send/text`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ number: phoneNumber, text: clientText, delay, readchat: true }),
+              body: JSON.stringify({ number: phoneNumber, text: clientText, delay, readchat: false }),
             });
             const clientData = await readResponsePayload(clientRes);
             const clientMsgId = extractSentMessageId(clientData);
@@ -8543,7 +8543,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               res = await fetch(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay, readchat: true }),
+                body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay, readchat: false }),
               });
               break;
             }
