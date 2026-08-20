@@ -200,9 +200,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </div>
         </div>
 
-        <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 sm:px-8">
+        <nav className="mx-auto flex max-w-6xl flex-wrap items-stretch gap-x-0.5 px-4 sm:px-8">
           {NAV.map((i) => <TopNavItem key={i.to} item={i} />)}
         </nav>
+
       </header>
 
       <main className="mx-auto max-w-6xl p-4 sm:p-8 animate-fade-in">{children}</main>
