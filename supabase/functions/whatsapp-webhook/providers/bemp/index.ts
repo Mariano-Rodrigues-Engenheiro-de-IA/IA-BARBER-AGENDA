@@ -765,6 +765,7 @@ export const bookingGuardsConfig = {
     primaryBookingToolName: "",
     useIntentShape: false,
     skipWhenSingleVisit: false,
+    allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
     recoveryToolChoice: "auto" as const,
   },

@@ -3764,6 +3764,8 @@ type BookingGuardsConfig = {
     primaryBookingToolName: string;
     useIntentShape: boolean;
     skipWhenSingleVisit: boolean;
+    /** Roda o loop de recuperação multi quando JÁ houve agendamento criado no turno. */
+    allowMultiRecoveryAfterSuccess: boolean;
     useAlternativesShortCircuit: boolean;
     recoveryToolChoice: "required" | "auto";
   };
@@ -3784,6 +3786,7 @@ const DISABLED_BOOKING_GUARDS: BookingGuardsConfig = {
     primaryBookingToolName: "",
     useIntentShape: false,
     skipWhenSingleVisit: false,
+    allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
     recoveryToolChoice: "auto",
   },
