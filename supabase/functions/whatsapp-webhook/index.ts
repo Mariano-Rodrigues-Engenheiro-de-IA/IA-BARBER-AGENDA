@@ -4356,7 +4356,7 @@ async function classifyPendingBookings(params: {
     return {
       total,
       source: "llm",
-      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? ` heur_${heuristicOverrideAllowed ? "used" : "ignored"}` : ""}`,
+      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? " heur_ignored" : ""}`,
       intentShape,
     };
   } catch (e) {
