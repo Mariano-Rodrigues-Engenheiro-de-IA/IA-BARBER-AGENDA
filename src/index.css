@@ -279,6 +279,18 @@
 
 
 @layer utilities {
+  /* Rolagem horizontal das abas do painel do cliente — azul da marca. */
+  .nav-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--sidebar-primary) / 0.85) transparent;
+  }
+  .nav-scroll::-webkit-scrollbar { height: 8px; }
+  .nav-scroll::-webkit-scrollbar-track { background: transparent; }
+  .nav-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--sidebar-primary) / 0.85);
+    border-radius: 9999px;
+  }
+
   .glass-card {
     @apply bg-card/90 backdrop-blur-xl border border-border/70 rounded-xl;
     box-shadow: var(--panel-shadow);
