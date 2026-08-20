@@ -165,19 +165,19 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
           <div className="ml-auto flex shrink-0 items-center gap-3">
             <Button
-              variant="outline"
               size="sm"
               className={cn(
-                "gap-2 border-sidebar-border",
+                "gap-2 border border-sidebar-primary/60 shadow-sm",
                 tenant?.agent_paused
                   ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                  : "bg-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+                  : "bg-sidebar-primary/15 text-sidebar-primary hover:bg-sidebar-primary/25",
               )}
               onClick={togglePause}
             >
               {tenant?.agent_paused ? <Power className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
               <span className="hidden sm:inline">{tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}</span>
             </Button>
+
 
             {/* Só a logo do negócio do cliente, sem menu — pedido do
                 Mariano pra ficar mais limpo/integrado. Quem acessa direto
