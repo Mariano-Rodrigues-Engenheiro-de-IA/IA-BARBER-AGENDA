@@ -243,7 +243,40 @@
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }
+
+  /* Barra de rolagem principal da página em azul da marca — a padrão
+     esbranquiçada/transparente não tinha contraste com o painel. */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.85) transparent;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary) / 0.85);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  html::-webkit-scrollbar-thumb:hover,
+  body::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+    background-clip: padding-box;
+  }
 }
+
 
 @layer utilities {
   .glass-card {
@@ -302,7 +335,7 @@
 
   .subtle-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
+    scrollbar-color: hsl(var(--primary) / 0.8) transparent;
   }
 
   .subtle-scrollbar::-webkit-scrollbar {
@@ -315,16 +348,17 @@
   }
 
   .subtle-scrollbar::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
+    background: hsl(var(--primary) / 0.8);
     border-radius: 9999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
 
   .subtle-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground));
+    background: hsl(var(--primary));
     background-clip: padding-box;
   }
+
 }
 
 /* Painel do cliente — textura sutil de fundo (pontos/circuito, opacidade
