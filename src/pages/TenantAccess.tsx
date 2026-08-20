@@ -15,17 +15,17 @@ import {
 import type { AppModule, ModuleVisibility } from "@/hooks/useAuth";
 
 // Mesma ordem da navegação do painel do cliente.
+// Base de conhecimento, Integrações e Dados da empresa não entram aqui:
+// nunca são expostos pro usuário final, então não têm permissão configurável.
 const MODULES: { key: AppModule; label: string }[] = [
   { key: "overview", label: "Visão Geral" },
   { key: "conversations", label: "Conversas" },
   { key: "ai_prompt", label: "Prompt" },
   { key: "tools", label: "Ferramentas da IA" },
-  { key: "ai_knowledge", label: "Base de conhecimento" },
-  { key: "integrations", label: "Integrações" },
-  { key: "company_data", label: "Dados da empresa" },
   { key: "simulator", label: "Simulador" },
   { key: "connection", label: "Conexão WhatsApp" },
 ];
+
 
 const VISIBILITIES: { v: ModuleVisibility; label: string; color: string }[] = [
   { v: "hidden", label: "Oculto", color: "bg-destructive/10 text-destructive" },
