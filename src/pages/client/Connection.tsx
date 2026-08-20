@@ -30,6 +30,17 @@ export default function ClientConnection() {
   const [qr, setQr] = useState<string | null>(null);
   const [pairCode, setPairCode] = useState<string | null>(null);
 
+  // Último status conhecido guardado localmente: ao entrar na aba, mostramos
+  // esse valor imediatamente em vez de cair no fallback "Desconectado"
+  // enquanto a primeira consulta está em voo (o cliente pensava que a IA
+  // tinha caído).
+  const cacheKey = tenantId ? `wa-last-status:${tenantId}` : null;
+  const [lastKnown, setLastKnown] = useState<"connected" | "connecting" | "disconnected" | null>(() => {
+    if (!tenantId) return null;
+    const v = localStorage.getItem(`wa-last-status:${tenantId}`);
+    return v === "connected" || v === "connecting" || v === "disconnected" ? v : null;
+  });
+
   const statusQ = useQuery<StatusResp>({
     queryKey: ["wa-status", tenantId],
     enabled: !!tenantId,
@@ -43,9 +54,26 @@ export default function ClientConnection() {
     placeholderData: keepPreviousData,
   });
 
-  const instStatus = statusQ.data?.instance?.status ?? "disconnected";
-  const connected = instStatus === "connected" || statusQ.data?.status?.connected === true;
-  const connecting = instStatus === "connecting";
+  const hasData = !!statusQ.data;
+  const rawStatus = statusQ.data?.instance?.status;
+  const resolved: "connected" | "connecting" | "disconnected" | null = hasData
+    ? rawStatus === "connected" || statusQ.data?.status?.connected === true
+      ? "connected"
+      : rawStatus === "connecting"
+        ? "connecting"
+        : "disconnected"
+    : lastKnown;
+
+  useEffect(() => {
+    if (!hasData || !cacheKey || !resolved) return;
+    localStorage.setItem(cacheKey, resolved);
+    setLastKnown(resolved);
+  }, [hasData, resolved, cacheKey]);
+
+  const connected = resolved === "connected";
+  const connecting = resolved === "connecting";
+  const checking = !hasData && !lastKnown;
+
 
   // when connected, clear QR
   useEffect(() => {
