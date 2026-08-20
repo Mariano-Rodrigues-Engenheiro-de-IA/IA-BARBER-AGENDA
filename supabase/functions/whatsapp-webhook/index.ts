@@ -4339,11 +4339,20 @@ async function classifyPendingBookings(params: {
       console.warn(`[MultiBookingGuard] classifier clamped ${capped}→1 for single-attempt non-affirmative turn.`);
       capped = 1;
     }
-    const heuristicOverrideAllowed = heuristic > capped && hasHighConfidenceHeuristicOverride(messages);
-    const total = heuristicOverrideAllowed ? heuristic : capped;
-    if (heuristic > capped && !heuristicOverrideAllowed) {
-      console.warn(`[MultiBookingGuard] heuristic ignored: llm=${capped} heur=${heuristic} sem sinal determinístico de multi-agendamento.`);
+    // 🚨 AJUSTE (ago/2026, baseado em auditoria de 45 dias de logs do guard):
+    // o override heurístico sobre o classificador causou 11 falsos positivos
+    // (`llm=1 heur=N heur_used`), sempre com o mesmo estrago: agendamento único
+    // criado com sucesso e o cliente recebendo "tive um probleminha com os
+    // outros N serviços, vou acionar a equipe". Caso real 554484265186 (19/08):
+    // llm=1 heur=4 → prometidos=4, criados=1, recovery esgotada.
+    // Nenhum caso de recuperação bem-sucedida veio de override heurístico.
+    // Decisão: quando o classificador LLM responde, a palavra final é dele.
+    // A heurística segue valendo só no caminho de fallback (classificador falhou).
+    const total = capped;
+    if (heuristic > capped) {
+      console.warn(`[MultiBookingGuard] heuristic ignored (policy: llm wins): llm=${capped} heur=${heuristic}`);
     }
+
     return {
       total,
       source: "llm",
