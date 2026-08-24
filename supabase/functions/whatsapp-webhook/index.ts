@@ -7557,14 +7557,14 @@ const CALCULADORA_TOOL = {
   function: {
     name: "calcular",
     description:
-      "Calcula o resultado EXATO de uma expressão matemática. Use SEMPRE que precisar fazer qualquer conta com mais de um passo, valores decimais, ou multiplicação/divisão — NUNCA calcule de cabeça, mesmo que pareça simples. Essencial para orçamentos (quantidade × preço unitário, somar acabamentos, aplicar desconto/margem, etc.) e qualquer outro cálculo numérico da conversa.",
+      "Calcula o resultado EXATO de uma ou mais expressões matemáticas. Use SEMPRE que precisar fazer qualquer conta com mais de um passo, valores decimais, ou multiplicação/divisão — NUNCA calcule de cabeça, mesmo que pareça simples. Essencial para orçamentos (quantidade × preço unitário, somar acabamentos, aplicar desconto/margem, etc.) e qualquer outro cálculo numérico da conversa.",
     parameters: {
       type: "object",
       properties: {
         expressao: {
           type: "string",
           description:
-            "Expressão matemática em notação padrão, só números e operadores + - * / ( ). Ex: '150 * 0.35 + 45.90 * 2'. Escreva a conta completa numa expressão só, não peça pra calcular em etapas separadas.",
+            "Uma ou mais expressões matemáticas em notação padrão, só números e operadores + - * / ( ). Ex de uma conta: '150 * 0.35 + 45.90 * 2'. Se precisar calcular VÁRIAS coisas diferentes na mesma chamada (ex: dois produtos separados de um mesmo orçamento), separe cada expressão com ponto e vírgula (;) — ex: '0.08 * 80; 25 * (0.14 * 0.09) * 50'. Cada uma é calculada e devolvida separadamente, na mesma ordem.",
         },
       },
       required: ["expressao"],
@@ -7572,11 +7572,11 @@ const CALCULADORA_TOOL = {
   },
 };
 
-/** Avalia uma expressão aritmética com segurança (só dígitos, operadores
+/** Avalia UMA expressão aritmética com segurança (só dígitos, operadores
  * básicos e parênteses — sem eval genérico, sem acesso a nada do ambiente).
  * Rejeita qualquer caractere fora desse conjunto antes mesmo de tentar
  * calcular. */
-function safeCalculate(expressao: string): { ok: true; resultado: number } | { ok: false; error: string } {
+function safeCalculateOne(expressao: string): { ok: true; resultado: number } | { ok: false; error: string } {
   const cleaned = String(expressao || "").trim();
   if (!cleaned) return { ok: false, error: "Expressão vazia." };
   if (!/^[0-9+\-*/().,\s]+$/.test(cleaned)) {
@@ -7596,6 +7596,42 @@ function safeCalculate(expressao: string): { ok: true; resultado: number } | { o
   } catch {
     return { ok: false, error: "Não consegui interpretar essa expressão — confira a sintaxe." };
   }
+}
+
+/** Ponto de entrada real da ferramenta — aceita uma ou várias expressões
+ * separadas por ponto e vírgula (;), calculando cada uma isoladamente com
+ * safeCalculateOne(). Existe porque, na prática, a IA frequentemente
+ * precisa calcular MAIS DE UMA COISA na mesma resposta (ex: dois produtos
+ * de um orçamento combinado) e tentava juntar tudo numa "expressão" só
+ * usando ; como separador — que antes não era um caractere permitido,
+ * então a chamada inteira falhava (erro real relatado pelo Mariano, caso
+ * Gráfica Gavi: "0.08 * 80; 25 * (0.14 * 0.09) * 50"). Em vez de só
+ * proibir isso via instrução no prompt (a IA nem sempre segue à risca),
+ * o suporte a múltiplas expressões foi construído diretamente na
+ * ferramenta — mais robusto que depender do modelo lembrar da regra. */
+function safeCalculate(
+  expressao: string,
+): { ok: true; resultado: number } | { ok: true; resultados: number[] } | { ok: false; error: string } {
+  const partes = String(expressao || "")
+    .split(";")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+
+  if (partes.length === 0) return { ok: false, error: "Expressão vazia." };
+
+  if (partes.length === 1) {
+    return safeCalculateOne(partes[0]);
+  }
+
+  const resultados: number[] = [];
+  for (const parte of partes) {
+    const calc = safeCalculateOne(parte);
+    if (!calc.ok) {
+      return { ok: false, error: `Erro na expressão "${parte}": ${calc.error}` };
+    }
+    resultados.push(calc.resultado);
+  }
+  return { ok: true, resultados };
 }
 
 /** Transforma o nome de uma etapa (ex: "Já Interessou!") num identificador
@@ -7754,6 +7790,7 @@ async function executeToolForProvider(
     const expressao = String(toolArgs?.expressao ?? "");
     const calc = safeCalculate(expressao);
     if (!calc.ok) return { ok: false, error: calc.error };
+    if ("resultados" in calc) return { ok: true, resultados: calc.resultados };
     return { ok: true, resultado: calc.resultado };
   }
 
