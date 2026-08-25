@@ -7707,6 +7707,75 @@ function buildToolsForProvider(provider: string, tenant: any): any[] | undefined
     providerTools = [...(providerTools || []), ...crmTools];
   }
 
+  // Ferramentas de catálogo de produtos (Gráfica Gavi e qualquer outro
+  // tenant que cadastrar produtos no CRM): busca por palavra-chave, ficha
+  // técnica completa e cálculo determinístico de preço — nunca a IA
+  // decidindo a lógica de busca ou aplicando fórmula de cabeça. Mesmo
+  // padrão condicional já usado pras ferramentas de funil do CRM (linha
+  // acima): só aparecem pro modelo quando o tenant tem crm_zetta_token
+  // configurado, senão nem oferece a opção.
+  if (tenant?.crm_zetta_token) {
+    const productTools = [
+      {
+        type: "function",
+        function: {
+          name: "buscar_produto",
+          description:
+            "Busca no catálogo de produtos da empresa qual produto bate com o que o cliente está pedindo. Use ANTES de tentar responder ou calcular qualquer coisa sobre um produto — nunca tente identificar ou orçar de memória. Devolve até 3 candidatos com score de confiança. Se confianca_suficiente vier falso, ou ambiguo vier verdadeiro, NÃO escolha sozinha entre os candidatos — pergunte ao cliente qual deles é, usando os nomes retornados.",
+          parameters: {
+            type: "object",
+            properties: {
+              texto_pedido: {
+                type: "string",
+                description: "O texto do pedido do cliente (pode incluir contexto recente da conversa) descrevendo o que ele quer.",
+              },
+            },
+            required: ["texto_pedido"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "detalhar_produto",
+          description:
+            "Traz a ficha técnica completa de UM produto já identificado por buscar_produto (tabela de preços ou fórmula de cálculo, pedido mínimo, variáveis obrigatórias a coletar do cliente, link do catálogo se existir, e regras especiais). Use só depois de já saber qual produto é — nunca peça a ficha de vários candidatos de uma vez.",
+          parameters: {
+            type: "object",
+            properties: {
+              id_produto: { type: "string", description: "id_produto retornado por buscar_produto." },
+            },
+            required: ["id_produto"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "calcular_produto",
+          description:
+            "Calcula o valor final de um produto de forma determinística, já validado contra pedido mínimo, adicionais condicionais e regras especiais (ex: solda em lona grande). Use depois de já ter coletado do cliente todas as variaveis_obrigatorias retornadas por detalhar_produto. NUNCA aplique a fórmula ou tabela de cabeça — sempre por esta ferramenta.",
+          parameters: {
+            type: "object",
+            properties: {
+              id_produto: { type: "string", description: "id_produto já identificado." },
+              quantidade: { type: "number", description: "Quantidade pedida, quando aplicável." },
+              variacao: { type: "string", description: "Variação dentro da faixa de preço (ex: 4x0, 4x1, 4x4), quando aplicável." },
+              largura_m: { type: "number", description: "Largura em metros, para produtos calculados por área." },
+              altura_m: { type: "number", description: "Altura em metros, para produtos calculados por área." },
+              variaveis: {
+                type: "object",
+                description: "Outras variáveis coletadas do cliente usadas em regras condicionais do produto (ex: { \"acabamento\": \"madeira\" }).",
+              },
+            },
+            required: ["id_produto"],
+          },
+        },
+      },
+    ];
+    providerTools = [...(providerTools || []), ...productTools];
+  }
+
   // Universal client-summary tool (all providers)
   providerTools = [...(providerTools || []), ATUALIZAR_RESUMO_TOOL, CALCULADORA_TOOL];
 
@@ -7792,6 +7861,73 @@ async function executeToolForProvider(
     if (!calc.ok) return { ok: false, error: calc.error };
     if ("resultados" in calc) return { ok: true, resultados: calc.resultados };
     return { ok: true, resultado: calc.resultado };
+  }
+
+  // ===== Ferramentas de catálogo de produtos (Gráfica Gavi e demais
+  // tenants com produtos cadastrados no CRM). Nunca travam o atendimento
+  // em caso de falha técnica — devolvem { ok: false, error } e o prompt já
+  // instrui a IA a seguir a coleta normal e escalar para humano nesse
+  // caso, sem expor o erro ao cliente.
+  if (funcName === "buscar_produto") {
+    if (!tenant?.crm_zetta_token) return { ok: false, error: "Catálogo de produtos não configurado para este tenant." };
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    try {
+      const res = await fetch("https://crm.zayloia.com/api/public/ai/products/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+        body: JSON.stringify({ texto_pedido: String(toolArgs?.texto_pedido ?? "") }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao buscar produto (HTTP ${res.status})` };
+      return json;
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
+  if (funcName === "detalhar_produto") {
+    if (!tenant?.crm_zetta_token) return { ok: false, error: "Catálogo de produtos não configurado para este tenant." };
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    const idProduto = String(toolArgs?.id_produto ?? "").trim();
+    if (!idProduto) return { ok: false, error: "id_produto ausente." };
+    try {
+      // Mesmo endpoint usado pelo painel visual do CRM (Configurações →
+      // Produtos) — não é um endpoint separado, reaproveita a ficha
+      // completa que já existe lá, filtrada pelo mesmo token do tenant.
+      const res = await fetch(`https://crm.zayloia.com/api/public/extension/products/${encodeURIComponent(idProduto)}`, {
+        headers: { Authorization: `Bearer ${tenant.crm_zetta_token}` },
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao detalhar produto (HTTP ${res.status})` };
+      return json;
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
+  if (funcName === "calcular_produto") {
+    if (!tenant?.crm_zetta_token) return { ok: false, error: "Catálogo de produtos não configurado para este tenant." };
+    let toolArgs: any = {}; try { toolArgs = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+    const idProduto = String(toolArgs?.id_produto ?? "").trim();
+    if (!idProduto) return { ok: false, error: "id_produto ausente." };
+    try {
+      const res = await fetch(`https://crm.zayloia.com/api/public/ai/products/${encodeURIComponent(idProduto)}/calcular`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tenant.crm_zetta_token}` },
+        body: JSON.stringify({
+          quantidade: toolArgs?.quantidade,
+          variacao: toolArgs?.variacao,
+          largura_m: toolArgs?.largura_m,
+          altura_m: toolArgs?.altura_m,
+          variaveis: toolArgs?.variaveis,
+        }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao calcular produto (HTTP ${res.status})` };
+      return json;
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
   }
 
   // ===== Universal tool: atualizar_resumo_cliente
