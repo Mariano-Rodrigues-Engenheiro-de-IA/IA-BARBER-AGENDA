@@ -5252,7 +5252,15 @@ async function callAIAgent(
       // from running twice in the same session.
       // cadastrar_cliente is allowed to repeat — backend returns "already registered"
       // when duplicate, so it's safe to call as many times as needed in the conversation.
-        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolKey) || toolKey === "cadastrar_cliente" || toolKey === "atualizar_resumo_cliente" || toolKey === "calcular";
+        // Bug real (Grafica Gavi, 25/08): detalhar_produto e calcular_produto
+        // ficavam bloqueados depois da primeira chamada, mesmo sendo consultas
+        // puras sem efeito colateral (o cliente pode legitimamente pedir pra
+        // recalcular com outra medida, ou a IA precisar detalhar o mesmo
+        // produto de novo mais tarde na conversa). O regex de prefixos so
+        // cobria buscar_/listar_/consultar_/verificar_/get_/list_/obter_, e a
+        // excecao nomeada so cobria "calcular" exato (a ferramenta generica de
+        // aritmetica), nao "calcular_produto" (que tem sufixo, nao prefixo).
+        const isReadOnlyTool = /^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_|detalhar_)/i.test(toolKey) || toolKey === "cadastrar_cliente" || toolKey === "atualizar_resumo_cliente" || toolKey === "calcular" || toolKey === "calcular_produto";
       // Scheduling and cancel/edit tools may legitimately repeat (different services or
       // multiple appointments). They have their own per-service / per-id dedup logic below.
       const isSchedulingOrCancelTool = [
