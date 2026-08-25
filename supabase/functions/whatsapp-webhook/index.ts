@@ -3325,8 +3325,15 @@ function isMutatingToolName(toolName: string, tenant?: any): { mutating: boolean
   if (MUTATING_TOOL_CATEGORIES[toolName]) {
     return { mutating: true, category: MUTATING_TOOL_CATEGORIES[toolName] };
   }
-  // Read-only prefixes are never mutating
-  if (/^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_)/i.test(toolName)) {
+  // Read-only prefixes are never mutating. `detalhar_` incluído pelo mesmo
+  // motivo do DedupGuard (bug Gráfica Gavi, 25/08): detalhar_produto é
+  // consulta pura e não pode ser deduplicada pelo ActionLedger.
+  if (/^(buscar_|listar_|consultar_|verificar_|get_|list_|obter_|detalhar_)/i.test(toolName)) {
+    return { mutating: false, category: "lookup" };
+  }
+  // Calculadoras são consultas determinísticas sem efeito colateral — mesma
+  // exceção nomeada que o DedupGuard já fazia para "calcular"/"calcular_produto".
+  if (toolName === "calcular" || toolName === "calcular_produto") {
     return { mutating: false, category: "lookup" };
   }
   // Check custom tool type
