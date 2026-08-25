@@ -5005,6 +5005,10 @@ async function callAIAgent(
 
   const initialBodyStr = JSON.stringify(requestBody);
   console.log(`AI request (initial): ${messages.length} msgs, body size: ${initialBodyStr.length} chars`);
+  // Lista nominal das tools enviadas — essencial pra confirmar em produção
+  // que tools condicionais (CRM, produtos, custom) estão chegando ao modelo.
+  const sentToolNames = (requestBody.tools || []).map((t: any) => t?.function?.name).filter(Boolean);
+  console.log(`AI tools sent (${sentToolNames.length}): ${sentToolNames.join(", ")}`);
   let response = await fetchAIWithRetry(initialBodyStr, "initial");
   if (!response.ok) {
     const errText = await response.text();
