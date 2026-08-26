@@ -2992,6 +2992,18 @@ interface AgentSessionState {
   criarAgendamentoSuccessId: number | null;
   scheduledSlotSignatures: string[];
   validAgendasIds: number[];
+  // Trava o produto do catálogo (Gráfica Gavi e tenants similares) já
+  // identificado com confiança nesta conversa, para o item em andamento.
+  // Bug real recorrente: mesmo com regras explícitas no prompt pedindo
+  // pra não buscar de novo, a IA às vezes buscava buscar_produto de novo
+  // no meio da coleta de dados de um produto já identificado (ex: depois
+  // de responder "quantidade: 3"), e a busca nova voltava ambígua com
+  // outros candidatos, descartando todo o progresso já feito (largura,
+  // altura, ilhós já coletados). Guardar aqui e reforçar o resultado no
+  // código, não só no texto do prompt, resolve isso na raiz: se o
+  // produto já travado aparecer de novo entre os candidatos de uma busca
+  // nova, ele já vence sem ambiguidade nenhuma.
+  produtoAtivoCatalogo: { idProduto: string; nomeProduto: string; fechado: boolean } | null;
   oneBelezaServiceOptions: OneBelezaServiceOption[];
   allowedServiceIds: number[];
   oneBelezaProfessionalOptions: OneBelezaProfessionalOption[];
@@ -3119,6 +3131,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     selectedProfessionalId: null,
     selectedDate: null,
     executedToolNames: [],
+    produtoAtivoCatalogo: null,
     explicitClientName: null,
     awaitingNameForRegistration: false,
     recentCompletedActions: [],
@@ -3167,6 +3180,16 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
       selectedProfessionalId: s.selectedProfessionalId ?? null,
       selectedDate: s.selectedDate ?? null,
       executedToolNames: Array.isArray(s.executedToolNames) ? s.executedToolNames.filter((name: unknown) => typeof name === "string") : [],
+      produtoAtivoCatalogo:
+        s.produtoAtivoCatalogo &&
+        typeof s.produtoAtivoCatalogo === "object" &&
+        typeof s.produtoAtivoCatalogo.idProduto === "string"
+          ? {
+              idProduto: s.produtoAtivoCatalogo.idProduto,
+              nomeProduto: typeof s.produtoAtivoCatalogo.nomeProduto === "string" ? s.produtoAtivoCatalogo.nomeProduto : "",
+              fechado: Boolean(s.produtoAtivoCatalogo.fechado),
+            }
+          : null,
       explicitClientName: isUsableClientName(s.explicitClientName) ? sanitizeClientName(s.explicitClientName) : null,
       awaitingNameForRegistration: Boolean(s.awaitingNameForRegistration),
       recentCompletedActions: Array.isArray(s.recentCompletedActions)
@@ -3245,6 +3268,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
       bempProfessionalOptions: state.bempProfessionalOptions,
       bempSlotOptions: state.bempSlotOptions,
       executedToolNames: state.executedToolNames,
+      produtoAtivoCatalogo: state.produtoAtivoCatalogo,
       selectedSalonId: state.selectedSalonId,
       selectedServiceId: state.selectedServiceId,
       selectedProfessionalId: state.selectedProfessionalId,
@@ -8024,6 +8048,35 @@ async function executeToolForProvider(
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao buscar produto (HTTP ${res.status})` };
+
+      const sessionState = opts?.sessionState;
+      const ativo = sessionState?.produtoAtivoCatalogo;
+
+      // Reforço no código, não só no prompt: se já existe um produto
+      // travado nesta conversa (identificado com confiança, roteiro ainda
+      // em andamento) e ele reaparece entre os candidatos desta nova
+      // busca, ele vence sem ambiguidade nenhuma — não interessa o que
+      // mais veio na lista. Isso resolve o padrão real observado: a IA
+      // buscava de novo no meio da coleta de dados (ex: depois de
+      // responder "quantidade: 3"), e a busca nova voltava ambígua com
+      // outros candidatos, descartando o progresso já feito.
+      if (ativo && !ativo.fechado && Array.isArray(json.resultados)) {
+        const jaConfirmado = json.resultados.find((r: any) => r?.id_produto === ativo.idProduto);
+        if (jaConfirmado) {
+          return { ...json, ambiguo: false, confianca_suficiente: true, resultados: [jaConfirmado] };
+        }
+      }
+
+      // Primeira identificação bem sucedida (sem ambiguidade) nesta
+      // conversa: trava o produto pra proteger o roteiro em andamento.
+      if (sessionState && json.confianca_suficiente === true && !json.ambiguo && Array.isArray(json.resultados) && json.resultados[0]?.id_produto) {
+        sessionState.produtoAtivoCatalogo = {
+          idProduto: json.resultados[0].id_produto,
+          nomeProduto: json.resultados[0].nome_produto || "",
+          fechado: false,
+        };
+      }
+
       return json;
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
@@ -8069,6 +8122,16 @@ async function executeToolForProvider(
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao calcular produto (HTTP ${res.status})` };
+
+      // Cálculo bem sucedido para o produto travado: fecha o item, para
+      // que um próximo buscar_produto (pedido com múltiplos itens, ou
+      // conversa recomeçando com outro produto) funcione normalmente,
+      // sem ficar travado no item que já foi concluído.
+      const sessionState = opts?.sessionState;
+      if (sessionState?.produtoAtivoCatalogo?.idProduto === idProduto) {
+        sessionState.produtoAtivoCatalogo.fechado = true;
+      }
+
       return json;
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
