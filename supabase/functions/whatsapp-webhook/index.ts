@@ -1102,7 +1102,33 @@ function getHttpTraceCapped(): HttpTraceEntry[] {
 
 // Gravação do log NUNCA pode ser silenciosa: se falhar com o payload completo,
 // tenta versões progressivamente menores para garantir o registro da conversa.
-async function insertAgentLogResilient(supabase: any, row: Record<string, unknown>) {
+// Postgres/PostgREST rejeitam \u0000 e surrogates órfãos ("unsupported Unicode
+// escape sequence") — visto em produção: conversas legítimas desapareciam do
+// monitor mesmo com a função tendo rodado certinho. Limpamos recursivamente.
+function sanitizePgText(value: string): string {
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/\\u0000/gi, "")
+    // surrogate solto (sem par) → remove
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
+    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1");
+}
+
+function sanitizePgValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizePgText(value);
+  if (Array.isArray(value)) return value.map(sanitizePgValue);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[sanitizePgText(k)] = sanitizePgValue(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+async function insertAgentLogResilient(supabase: any, rawRow: Record<string, unknown>) {
+  const row = sanitizePgValue(rawRow) as Record<string, unknown>;
   const attempts: Array<Record<string, unknown>> = [
     row,
     { ...row, http_trace: null },
