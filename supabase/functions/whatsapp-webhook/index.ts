@@ -2388,7 +2388,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
         // Log the failure so it shows up in agent_logs / dashboards
         try {
-          await supabase.from("agent_logs").insert({
+          await insertAgentLogResilient(supabase, {
             tenant_id: tenant.id,
             phone_number: phoneNumber,
             user_message: combinedContent,
