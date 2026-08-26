@@ -5054,6 +5054,17 @@ async function callAIAgent(
         : "O cliente enviou uma imagem. Analise o que aparece nela e responda de forma útil e objetiva.";
     }
 
+    if (mediaMimeType === "application/pdf") {
+      // Não extraímos o conteúdo do PDF (a arte em si costuma ser um
+      // design vetorial, não texto pra "ler") — mas informar o formato
+      // explicitamente evita que a IA pergunte "é PDF ou imagem?" depois
+      // de já ter recebido a resposta, o que acontecia antes (o arquivo
+      // chegava como "mídia" genérica, sem informação de formato nenhuma).
+      return cleanedText
+        ? `O cliente enviou um arquivo em formato PDF, com esta mensagem complementar: "${cleanedText}". Confirme o recebimento do PDF e siga o fluxo normalmente — não pergunte se o formato é PDF, você já sabe que é.`
+        : "O cliente enviou um arquivo em formato PDF. Confirme o recebimento e siga o fluxo normalmente — não pergunte se o formato é PDF, você já sabe que é.";
+    }
+
     return cleanedText || userMessage || "O cliente enviou uma mídia.";
   };
 
