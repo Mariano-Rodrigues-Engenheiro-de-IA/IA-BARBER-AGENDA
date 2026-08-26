@@ -8097,6 +8097,25 @@ async function executeToolForProvider(
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Falha ao detalhar produto (HTTP ${res.status})` };
+
+      // Trava o produto ativo AQUI, não só em buscar_produto: quando uma
+      // busca ambígua é resolvida pelo cliente escolhendo um candidato
+      // pelo nome, a regra "TRAVE A ESCOLHA DEPOIS DE RESOLVIDA" manda
+      // reaproveitar o id_produto já conhecido, sem chamar buscar_produto
+      // de novo — ou seja, esse caminho NUNCA passava pelo ponto de trava
+      // anterior, deixando o item sem proteção nenhuma pra próxima busca
+      // que a IA disparasse por engano no meio do roteiro. detalhar_produto
+      // é chamado sempre, nos dois caminhos (confiança direta ou
+      // ambiguidade resolvida), então é o ponto certo pra travar.
+      const sessionState = opts?.sessionState;
+      if (sessionState) {
+        sessionState.produtoAtivoCatalogo = {
+          idProduto,
+          nomeProduto: json?.product?.nome_produto || "",
+          fechado: false,
+        };
+      }
+
       return json;
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) };
