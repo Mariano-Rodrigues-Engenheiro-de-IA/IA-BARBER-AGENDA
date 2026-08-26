@@ -1102,7 +1102,33 @@ function getHttpTraceCapped(): HttpTraceEntry[] {
 
 // Gravação do log NUNCA pode ser silenciosa: se falhar com o payload completo,
 // tenta versões progressivamente menores para garantir o registro da conversa.
-async function insertAgentLogResilient(supabase: any, row: Record<string, unknown>) {
+// Postgres/PostgREST rejeitam \u0000 e surrogates órfãos ("unsupported Unicode
+// escape sequence") — visto em produção: conversas legítimas desapareciam do
+// monitor mesmo com a função tendo rodado certinho. Limpamos recursivamente.
+function sanitizePgText(value: string): string {
+  return value
+    .replace(/\u0000/g, "")
+    .replace(/\\u0000/gi, "")
+    // surrogate solto (sem par) → remove
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "")
+    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "$1");
+}
+
+function sanitizePgValue(value: unknown): unknown {
+  if (typeof value === "string") return sanitizePgText(value);
+  if (Array.isArray(value)) return value.map(sanitizePgValue);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[sanitizePgText(k)] = sanitizePgValue(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+async function insertAgentLogResilient(supabase: any, rawRow: Record<string, unknown>) {
+  const row = sanitizePgValue(rawRow) as Record<string, unknown>;
   const attempts: Array<Record<string, unknown>> = [
     row,
     { ...row, http_trace: null },
@@ -2362,7 +2388,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
         // Log the failure so it shows up in agent_logs / dashboards
         try {
-          await supabase.from("agent_logs").insert({
+          await insertAgentLogResilient(supabase, {
             tenant_id: tenant.id,
             phone_number: phoneNumber,
             user_message: combinedContent,
@@ -2846,7 +2872,96 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
   }
 };
 
-Deno.serve((req) => httpTraceStore.run([], () => handleWebhookRequest(req)));
+// ===================== ENTRYPOINT =====================
+// CAUSA RAIZ da "falha silenciosa": a UAZAPI fecha a conexão do webhook quando o
+// processamento passa da paciência dela (debounce 10s + rounds de IA + delays de
+// digitação). Quando o cliente desconecta, o Edge Runtime mata o worker no meio
+// (Shutdown reason=EarlyDrop) e a IA para de responder SEM erro nenhum no log.
+//
+// Correção: responder 200 imediatamente e processar em background via
+// EdgeRuntime.waitUntil — o envio ao cliente é uma chamada separada à API da
+// UAZAPI, então não depende da resposta HTTP deste webhook.
+//
+// O segredo do webhook continua sendo validado ANTES (fail-closed): requisição
+// forjada recebe 401 e nunca chega a ser processada em background.
+function webhookSecretOk(req: Request): boolean {
+  const webhookSecret = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
+  if (!webhookSecret) return true; // mesmo comportamento do handler (loga aviso lá)
+  const url = new URL(req.url);
+  const provided =
+    url.searchParams.get("token") ||
+    req.headers.get("x-webhook-token") ||
+    req.headers.get("x-uazapi-token") ||
+    "";
+  const a = new TextEncoder().encode(provided);
+  const b = new TextEncoder().encode(webhookSecret);
+  const len = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < len; i++) diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  return diff === 0;
+}
+
+async function serveWebhookInBackground(req: Request): Promise<Response> {
+  const corsHeaders = buildCorsHeaders(req.headers.get("origin"));
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  if (!webhookSecretOk(req)) {
+    console.warn("Webhook rejected: invalid or missing secret");
+    return json({ error: "Unauthorized" }, 401);
+  }
+
+  // O body precisa ser lido AGORA: depois de responder, o stream original morre.
+  let bodyText = "";
+  try {
+    bodyText = await req.text();
+  } catch (e: any) {
+    console.error("Webhook: falha lendo body:", e?.message || e);
+    return json({ error: "invalid body" }, 400);
+  }
+
+  const replay = new Request(req.url, {
+    method: req.method,
+    headers: req.headers,
+    body: bodyText,
+  });
+
+  const work = (async () => {
+    const started = Date.now();
+    try {
+      const res = await httpTraceStore.run([], () => handleWebhookRequest(replay));
+      if (!res.ok) {
+        console.error(`[Background] webhook terminou com status ${res.status} em ${Date.now() - started}ms`);
+      } else {
+        console.log(`[Background] webhook concluído em ${Date.now() - started}ms`);
+      }
+    } catch (e: any) {
+      console.error(`[Background] webhook falhou em ${Date.now() - started}ms:`, e?.message || e, e?.stack);
+    }
+  })();
+
+  const waitUntil = (globalThis as any).EdgeRuntime?.waitUntil;
+  if (typeof waitUntil === "function") {
+    waitUntil.call((globalThis as any).EdgeRuntime, work);
+  } else {
+    // Runtime sem waitUntil (ex: deno run local): mantém o comportamento antigo.
+    await work;
+  }
+
+  return json({ status: "accepted" });
+}
+
+Deno.serve((req) => {
+  const mode = req.headers.get("x-mode");
+  // Webchat e simulador PRECISAM da resposta no corpo HTTP — não podem ir pra background.
+  if (req.method === "OPTIONS" || mode === "webchat" || mode === "simulator") {
+    return httpTraceStore.run([], () => handleWebhookRequest(req));
+  }
+  return serveWebhookInBackground(req);
+});
 
 // ===================== AUTO-REGISTER CLIENT =====================
 
