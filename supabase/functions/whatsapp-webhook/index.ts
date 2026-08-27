@@ -7452,28 +7452,6 @@ async function callAIAgent(
   // ============================================================================
 
   // ============================================================================
-  // 🛡️ PRODUCT PRICE GUARD — impede a IA de informar um valor em R$ de produto
-  // do catálogo (Gráfica Gavi e demais tenants com crm_zetta_token) quando
-  // calcular_produto NÃO foi chamado com sucesso nesta rodada. Bug real
-  // observado em teste: a IA reconheceu um produto (cavalete) só pela
-  // descrição do cliente, sem nunca chamar buscar_produto/detalhar_produto/
-  // calcular_produto, e seguiu o atendimento como se tivesse dado real —
-  // isso quebra a garantia central do sistema (nunca informar preço sem
-  // ferramenta confirmando). Mesmo padrão de guard já usado para agendamento
-  // (mismatch texto↔execução), aplicado aqui para preço de produto.
-  // ============================================================================
-  if (tenant?.crm_zetta_token && finalResponse && /R\$\s?\d/.test(finalResponse)) {
-    const calculouComSucesso = (logToolCalls || []).some(
-      (tc: any) => tc?.name === "calcular_produto" && tc?.result?.ok === true,
-    );
-    if (!calculouComSucesso) {
-      console.warn(`[ProductPriceGuard] Resposta contém valor em R$ sem calcular_produto bem sucedido nesta rodada. Bloqueando valor não confirmado.`);
-      finalResponse = "Entendo sua necessidade! Vou acionar nossa equipe agora para que alguém te passe o orçamento exato e as opções disponíveis.";
-      guardOverrideResponse = true;
-    }
-  }
-
-  // ============================================================================
   // 🛡️ CANCEL GUARD — impede a IA de afirmar "cancelei" quando a ferramenta de
   // cancelamento falhou nesta rodada. Cobre `cancelar_agendamento` (Trinks,
   // Frizzar, Bemp, AppBarber) E `desmarcar_agendamento` (OneBeleza) — sem o
