@@ -84,13 +84,20 @@ export function classifyAppBarberFailure(
       recoverable: true,
       reason: "future_appointments_limit",
       // AUDIÊNCIA: cliente. Pode sair literalmente no WhatsApp.
+      // ⚠️ Este texto passa por IMPLICIT_CONFIRMATION_RE e IMPLIED_FINALIZATION_RE
+      // no index.ts. Evitar "marcado", "confirmado" e a sequência
+      // "horário reservado" — qualquer um faz um guard tratar a mensagem como
+      // confirmação falsa e trocá-la por um fallback de erro. Ver o teste de
+      // invariante em src/test/appbarber-failure.test.ts.
       clientMessage:
-        "Vi aqui que você já tem um horário marcado com a gente. Quer que eu remarque esse horário para a nova data?",
+        "Vi aqui que você já tem um agendamento ativo com a gente. "
+        + "Quer que eu troque para esse novo horário, ou prefere manter o atual?",
       // AUDIÊNCIA: modelo. Nunca chega ao cliente.
       recoveryDirective:
         "O cliente já tem um agendamento futuro ativo e a API não permite um segundo. " +
-        "Chame listar_agendamentos para localizar o agendamento atual, confirme com o cliente que ele quer trocar esse horário " +
-        "e só então chame cancelar_agendamento seguido de criar_agendamento. Não tente criar outro horário direto.",
+        "Chame listar_agendamentos para localizar o agendamento atual e pergunte ao cliente se ele quer TROCAR " +
+        "(cancelar o atual e criar o novo) ou MANTER o que já existe. Só depois da resposta dele, se for trocar, " +
+        "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto.",
     };
   }
   if (status === 422) return { retryable: true, reason: "conflict_422" };

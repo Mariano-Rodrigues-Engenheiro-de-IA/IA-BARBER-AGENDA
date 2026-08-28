@@ -789,11 +789,11 @@ Ferramentas (nomes exatos):
 - NUNCA invente service_code, professional_code/employee_code ou horários. Tudo vem das tools.
 - NUNCA cite horário sem antes ter chamado **listar_horarios_geral** (ou **listar_horarios**) nessa interação.
 - Se a agenda vier vazia, ofereça outra data — NÃO escale humano por isso.
-- Telefone do cliente: use SEMPRE o número do WhatsApp dele (com DDI 55, só dígitos).
+- Telefone do cliente: use o número do WhatsApp dele em formato LOCAL, SEM o DDI 55, só dígitos (ex: "61999998888"). O AppBarber cadastra sem DDI; enviar com "55" cria cliente duplicado.
 - Datas: **YYYY-MM-DD** (Brasília). Horas: **HH:MM** 24h. Duração: sempre envie \`service_duration_minutes\` vindo de \`service_interval\`.
 - Em caso de 422 "Choque de Horário" em criar_agendamento, refaça **listar_horarios_geral** para o mesmo dia e ofereça outro horário/profissional. NÃO escale humano.
 - Se a tool devolver \`registered_combo_required\`, chame **listar_horarios_geral** usando o \`service_code\` do combo indicado e depois **criar_agendamento** com UM único \`service_code\`. NÃO tente criar com \`services[]\` separados.
-- Se a tool devolver \`future_appointments_limit\`, NÃO tente outro horário direto; localize o agendamento futuro com **listar_agendamentos** e só remarque após cancelar o antigo.
+- Se a tool devolver \`future_appointments_limit\`, NÃO tente outro horário direto e NÃO escale humano. Localize o agendamento futuro com **listar_agendamentos** e pergunte ao cliente se ele quer TROCAR (cancelar o atual e criar o novo) ou MANTER o que já existe. Só remarque depois da resposta dele.
 - A ferramenta grava telefone/nome também em \`scheduling_observation\` para permitir encontrar comandas que entram como "Sem Cadastro".
 `;
 }

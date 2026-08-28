@@ -129,3 +129,48 @@ describe("invariante: clientMessage nunca vaza vocabulário interno", () => {
     expect(r.clientMessage).not.toMatch(/Não tente criar outro horário direto/i);
   });
 });
+
+describe("invariante: clientMessage não pode disparar os guards de confirmação", () => {
+  /**
+   * Espelhos das regexes de whatsapp-webhook/index.ts (IMPLICIT_CONFIRMATION_RE
+   * em ~:3869 e IMPLIED_FINALIZATION_RE em ~:6870). Não dá pra importar o index
+   * aqui porque ele é um módulo Deno; se as regexes de lá mudarem, atualizar
+   * estas cópias junto.
+   *
+   * Por que isso importa: um `clientMessage` que casa com uma delas é tratado
+   * como confirmação falsa da IA e substituído por um fallback de erro. Foi o
+   * que aconteceu em 28/08 — o texto dizia "você já tem um horário marcado",
+   * `marcado` casou, e o cliente recebeu "tive um probleminha... vou acionar a
+   * equipe" sem que nenhuma escalação tivesse acontecido.
+   */
+  const IMPLICIT_CONFIRMATION_RE =
+    /\b(confirm|agendei|marquei|marcado|pronto|feito|t[aá]\s+marcado|t[aá]\s+combinado|show|beleza|te\s+espero|te\s+aguard|at[eé]\s+l[aá]|nos\s+vemos)\b/i;
+
+  const IMPLIED_FINALIZATION_RE =
+    /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
+
+  const casos: Array<[string, number, string]> = [
+    ["future_appointments_limit", 422, "O limite de agendamentos futuros foi excedido"],
+    ["establishment_inactive", 400, "Estabelecimento inativo"],
+  ];
+
+  it.each(casos)("%s não casa com IMPLICIT_CONFIRMATION_RE", (_n, status, msg) => {
+    const { clientMessage } = classifyAppBarberFailure(status, undefined, err(msg));
+    if (clientMessage) expect(clientMessage).not.toMatch(IMPLICIT_CONFIRMATION_RE);
+  });
+
+  it.each(casos)("%s não casa com IMPLIED_FINALIZATION_RE", (_n, status, msg) => {
+    const { clientMessage } = classifyAppBarberFailure(status, undefined, err(msg));
+    if (clientMessage) expect(clientMessage).not.toMatch(IMPLIED_FINALIZATION_RE);
+  });
+
+  it("a mensagem oferece TROCAR ou MANTER, como o prompt V33 especifica", () => {
+    const { clientMessage } = classifyAppBarberFailure(
+      422, undefined, err("O limite de agendamentos futuros foi excedido"),
+    );
+    // Ortografia PT: o "c" vira "qu" antes de e/i — "troque", não "troce".
+    // Mesmo cuidado vale para remarcar/remarque.
+    expect(clientMessage).toMatch(/troc|troq/i);
+    expect(clientMessage).toMatch(/manter/i);
+  });
+});

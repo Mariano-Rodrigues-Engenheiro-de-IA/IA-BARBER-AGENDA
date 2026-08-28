@@ -5314,6 +5314,54 @@ async function callAIAgent(
             continue;
           }
         }
+
+        // 🛡️ Pré-condições de argumento das ferramentas de horário/agendamento.
+        // Dois erros reais observados nos logs de 28/08, ambos gastando uma
+        // chamada de rede para receber erro ou lista vazia:
+        //   • listar_horarios com professional_code null → 'são obrigatórios'
+        //   • listar_horarios com start_date 2026-08-26, dois dias no passado
+        {
+          const dateTools = new Set(["listar_horarios", "listar_horarios_geral", "criar_agendamento"]);
+          const toolName = toolCall.function.name;
+          let precondError: string | null = null;
+
+          if (toolName === "listar_horarios") {
+            const prof = parsedArgs?.professional_code;
+            if (prof === null || prof === undefined || prof === "" || Number(prof) <= 0) {
+              precondError =
+                "listar_horarios exige professional_code de um profissional real. "
+                + "Se o cliente ainda não escolheu profissional, chame listar_horarios_geral. "
+                + "Se já escolheu, use o professional_code que veio de listar_profissionais ou listar_horarios_geral.";
+            }
+          }
+
+          if (!precondError && dateTools.has(toolName)) {
+            const startDate = typeof parsedArgs?.start_date === "string" ? parsedArgs.start_date.trim() : "";
+            if (/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+              // Datas ISO comparam corretamente como string.
+              const hoje = getBrasiliaDate().todayDate;
+              if (startDate < hoje) {
+                precondError =
+                  `start_date "${startDate}" está no passado (hoje é ${hoje} no horário de Brasília). `
+                  + "Recalcule a data a partir de hoje antes de chamar de novo.";
+              }
+            }
+          }
+
+          if (precondError) {
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              name: toolName,
+              content: JSON.stringify({ error: precondError, blocked: true, reason: "invalid_tool_arguments" }),
+            });
+            logErrors.push({
+              message: `[ArgGuard/appbarber] ${toolName} bloqueado antes da chamada — ${precondError}`,
+              level: "warning",
+            });
+            continue;
+          }
+        }
       }
 
       if (toolCall.function.name === "cadastrar_cliente") {
@@ -7266,7 +7314,14 @@ async function callAIAgent(
       const definitiveFailure = (logToolCalls || []).find((tc: any) => {
         if (!tc || !_mbBookingNames.has(tc.name)) return false;
         const r = tc.result;
-        return r && typeof r === "object" && r.retryable === false;
+        if (!r || typeof r !== "object" || r.retryable !== false) return false;
+        // `retryable:false` só quer dizer "não repita a MESMA chamada". Quando o
+        // provider também marca `recoverable:true`, existe caminho de saída e o
+        // BookingGuard já injetou a diretiva — a IA agiu (ex.: AppBarber
+        // future_appointments_limit, em que ela chama listar_agendamentos e
+        // pergunta ao cliente). Sobrescrever a resposta dela aqui apagaria esse
+        // trabalho e entregaria um texto genérico de falha ao cliente.
+        return r.recoverable !== true;
       });
       if (definitiveFailure) {
         const r: any = definitiveFailure.result;
@@ -7506,6 +7561,13 @@ async function callAIAgent(
       prometidos <= MAX_AUTO_BOOKINGS &&
       postGuardCount.count < prometidos &&
       finalResponse &&
+      // 🚫 NÃO auditar texto que um guard determinístico acabou de escrever.
+      // Regressão real (28/08, 9Cinco): o clientMessage do provider dizia
+      // "você já tem um horário marcado", `marcado` casa com a regex abaixo, e
+      // esta camada trocou a mensagem correta do guard por um fallback que
+      // prometia acionar a equipe — sendo que nenhuma escalação havia ocorrido.
+      // Alucinação é do modelo; texto de guard, por definição, não é.
+      !guardOverrideResponse &&
       IMPLICIT_CONFIRMATION_RE.test(finalResponse)
     ) {
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Bloqueando confirmação falsa.`);
