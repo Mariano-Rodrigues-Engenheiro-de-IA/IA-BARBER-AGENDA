@@ -84,10 +84,12 @@ describe("future_appointments_limit — regressão do vazamento de 25/08", () =>
     expect(r.recoveryDirective).toMatch(/cancelar_agendamento/);
   });
 
-  it("a mensagem do cliente oferece a remarcação em vez de só recusar", () => {
+  it("a mensagem do cliente oferece trocar ou manter em vez de só recusar", () => {
     const r = classifyAppBarberFailure(422, undefined, err(variants[0]));
-    // "remarque" (subjuntivo) tem 'qu', não 'c' — cobrir as duas grafias.
-    expect(r.clientMessage).toMatch(/remarc|remarq/i);
+    // Desde 28/08 o texto oferece TROCAR ou MANTER (prompt V33); a palavra
+    // "remarcar" foi removida porque casava com as regexes dos guards.
+    expect(r.clientMessage).toMatch(/troc|troq/i);
+    expect(r.clientMessage).toMatch(/manter/i);
   });
 });
 
