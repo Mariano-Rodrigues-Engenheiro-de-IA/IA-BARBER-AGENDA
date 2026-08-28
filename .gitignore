@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Ferramentas de IA locais
+.claude/
+
+# Documentação interna por cliente (diário de projeto, KI, prompts, relatórios).
+# Fica junto do código por conveniência, mas NÃO vai para o repositório: contém
+# dados de negócio e os prompts completos, que não têm por que ser publicados.
+Projeto */

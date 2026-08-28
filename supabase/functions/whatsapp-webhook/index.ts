@@ -5192,7 +5192,12 @@ async function callAIAgent(
   // que a IA dispare a mesma ferramenta idêntica duas vezes na mesma resposta,
   // sem travar a ferramenta para o resto da conversa.
   const executedToolSignaturesThisTurn: Set<string> = new Set<string>();
-
+  // 🛡️ AppBarber — anti "nome de contexto antigo" (casos V28-Jellson, V29-Felipe,
+  // 25/08-Ansysar). Padrão observado: criar_agendamento com customer_name vazio →
+  // erro → a IA repesca um nome de OUTRA conversa e tenta de novo no MESMO turno,
+  // sem nunca perguntar nada ao cliente. Uma vez bloqueado por nome no turno, só
+  // aceita nome corroborado (dito nesta conversa) até o cliente responder de novo.
+  let appbarberNameBlockedThisTurn = false;
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
 
@@ -5248,6 +5253,66 @@ async function callAIAgent(
         if (changed) {
           correctionReason = "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
           toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
+        }
+
+        // 🛡️ GUARD DE ENTRADA DO NOME (criar_agendamento).
+        // Roda aqui, e não dentro do provider, por dois motivos:
+        //   1. o provider só checa o nome depois de resolveAppBarberServiceDuration,
+        //      que já pode ter gasto um GET /v1/services à toa;
+        //   2. só aqui existe acesso a `sessionState.explicitClientName` e a
+        //      `userMessage` — o que permite a segunda trava abaixo.
+        // Trava 1: nome vazio/genérico → pergunta ao cliente (NUNCA escala humano).
+        // Trava 2: depois de um bloqueio neste mesmo turno, só aceita nome
+        //          corroborado nesta conversa. Mata o padrão real V28/V29/25-08:
+        //          nome vazio → erro → a IA repesca nome de OUTRA conversa e
+        //          reenvia no mesmo turno, sem nunca ter perguntado nada.
+        if (toolCall.function.name === "criar_agendamento") {
+          // Comparação insensível a acento/caixa sem mexer em regex de combining
+          // chars: localeCompare com sensitivity "base" trata "Joao"=="João".
+          const tokensOf = (value: unknown): string[] =>
+            String(value ?? "").split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+          const sameWord = (a: string, b: string): boolean =>
+            !!a && !!b && a.localeCompare(b, "pt-BR", { sensitivity: "base" }) === 0;
+
+          const rawName = typeof parsedArgs?.customer_name === "string" ? parsedArgs.customer_name.trim() : "";
+          const genericName = /^(cliente|client|customer|whatsapp|wpp|zap|teste|test|sem\s*nome|-+|\.+|n\/?a)$/i;
+          const nameMissing = !rawName || rawName.length < 3
+            || genericName.test(rawName) || !/[a-zA-ZÀ-ú]/.test(rawName);
+
+          // "Corroborado" = o primeiro nome bate com o nome confirmado nesta
+          // conversa, ou aparece na mensagem que o cliente acabou de mandar.
+          // Deliberadamente NÃO exige nome completo: "Gabriel" é resposta legítima
+          // e exigir sobrenome criaria atrito no atendimento.
+          const nameToken = tokensOf(rawName)[0] || "";
+          const confirmedToken = tokensOf(sanitizeClientName(sessionState.explicitClientName || ""))[0] || "";
+          const corroborated = !!nameToken
+            && (sameWord(nameToken, confirmedToken)
+              || tokensOf(userMessage).some((t) => sameWord(t, nameToken)));
+
+          if (nameMissing || (appbarberNameBlockedThisTurn && !corroborated)) {
+            const reason = nameMissing ? "customer_name vazio ou genérico" : "nome sem origem nesta conversa";
+            appbarberNameBlockedThisTurn = true;
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              name: toolCall.function.name,
+              content: JSON.stringify({
+                error: "NOME_DO_CLIENTE_NAO_CONFIRMADO",
+                blocked: true,
+                reason: "invalid_customer_name",
+                message:
+                  "O agendamento NÃO foi criado porque o nome do cliente não está confirmado nesta conversa "
+                  + `(${reason}). Pergunte o nome ao cliente AGORA, de forma natural, e aguarde a resposta dele. `
+                  + "NÃO escale humano por causa disso. NÃO invente um nome. NÃO reaproveite nome de conversa "
+                  + "anterior. NÃO chame criar_agendamento de novo antes do cliente responder.",
+              }),
+            });
+            logErrors.push({
+              message: `[NameGuard/appbarber] criar_agendamento bloqueado — ${reason} (nome="${rawName || "vazio"}")`,
+              level: "warning",
+            });
+            continue;
+          }
         }
       }
 
@@ -6686,20 +6751,37 @@ async function callAIAgent(
           }
           // Conflitos recuperáveis (ex.: AppBarber 422 — choque de horário). NÃO escalar.
           if (r?.recoverable === true) {
-            const recoveryMsg = [
-              "⚠️ Conflito de horário ao tentar agendar (não é falha de sistema).",
-              `Motivo: ${r?.error || "horário indisponível"}.`,
-              r?.hint
-                ? `Ação OBRIGATÓRIA: siga este hint técnico da ferramenta: ${r.hint}`
-                : "Ação OBRIGATÓRIA: chame listar_horarios novamente para o serviço/profissional/data corretos e ofereça ao cliente os horários realmente livres.",
-              "NÃO escale humano. NÃO diga que houve erro/problema. NÃO confirme o agendamento.",
-              "Fale de forma natural: o horário escolhido acabou de ficar indisponível e ofereça as alternativas que vierem da próxima consulta.",
-            ].join(" ");
+            // Quando o provider manda uma diretiva própria, a falha NÃO é choque de
+            // horário e o preâmbulo genérico abaixo descreveria o problema errado
+            // (ex.: AppBarber future_appointments_limit, cuja saída é remarcar, não
+            // oferecer outro horário). Campo opcional: quem não setar mantém o
+            // comportamento histórico.
+            const recoveryMsg = (typeof r?.recoveryDirective === "string" && r.recoveryDirective.trim())
+              ? [
+                "⚠️ A ferramenta de agendamento foi bloqueada por uma REGRA DE NEGÓCIO (não é falha de sistema).",
+                `Ação OBRIGATÓRIA: ${r.recoveryDirective.trim()}`,
+                "NÃO escale humano. NÃO confirme o agendamento.",
+                "Este texto é interno: NÃO o repasse ao cliente, fale com suas próprias palavras.",
+              ].join(" ")
+              : [
+                "⚠️ Conflito de horário ao tentar agendar (não é falha de sistema).",
+                `Motivo: ${r?.error || "horário indisponível"}.`,
+                r?.hint
+                  ? `Ação OBRIGATÓRIA: siga este hint técnico da ferramenta: ${r.hint}`
+                  : "Ação OBRIGATÓRIA: chame listar_horarios novamente para o serviço/profissional/data corretos e ofereça ao cliente os horários realmente livres.",
+                "NÃO escale humano. NÃO diga que houve erro/problema. NÃO confirme o agendamento.",
+                "Fale de forma natural: o horário escolhido acabou de ficar indisponível e ofereça as alternativas que vierem da próxima consulta.",
+              ].join(" ");
             const lastToolMessage = messages[messages.length - 1] as any;
             if (lastToolMessage?.role === "tool" && lastToolMessage.tool_call_id === toolCall.id) {
               lastToolMessage.content = JSON.stringify({ ...r, instrucao: recoveryMsg });
             }
-            logErrors.push({ message: `[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`, level: "warning" });
+            logErrors.push({
+              message: r?.recoveryDirective
+                ? `[BookingGuard] ${toolCall.function.name} business-rule block (${r?.failureReason || "sem reason"}) — injected provider directive, no escalation`
+                : `[BookingGuard] ${toolCall.function.name} recoverable conflict — injected retry directive`,
+              level: "warning",
+            });
             continue;
           }
           const escalateTool = (getEnabledCustomTools(tenant) || []).find(

@@ -14,21 +14,37 @@ function toPositiveInteger(value: unknown): number | null {
   return i > 0 ? i : null;
 }
 
-// Classificação genérica de falha da AppBarber em 2 eixos: retryable + clientMessage.
-// Mesmo padrão já validado na Bemp (jul/2026, caso de pendência de pagamento):
+// Classificação genérica de falha da AppBarber. Mesmo padrão já validado na Bemp
+// (jul/2026, caso de pendência de pagamento), com 4 eixos INDEPENDENTES:
 //   - retryable=false  → MultiBookingGuard NÃO roda recovery (definitivo).
 //     Se vier `clientMessage`, o guard usa essa mensagem determinística em vez
 //     de deixar a IA improvisar confirmação falsa.
 //   - retryable=true   → guard pode rodar recovery normal (default).
-// Hoje a AppBarber não tem um cenário de erro de negócio definitivo mapeado
-// como "assinatura vencida" da Bemp, então a lista abaixo é conservadora e
-// serve principalmente como estrutura pronta pra receber casos reais assim
-// que aparecerem — mesmo caminho evolutivo que a Bemp teve.
-function classifyAppBarberFailure(
+//   - recoverable      → controla o BookingGuard do index.ts, NÃO o MultiBookingGuard.
+//     true = existe caminho de saída, a IA resolve sozinha; false = escalar humano.
+//     Quando omitido, cai em `retryable` (comportamento histórico).
+//   - clientMessage vs recoveryDirective → DUAS AUDIÊNCIAS, nunca misturar:
+//     `clientMessage` pode ser enviado LITERALMENTE ao cliente pelo MultiBookingGuard
+//     (index.ts:7200), então tem que ser texto de WhatsApp — sem nome de API, sem
+//     procedimento interno, sem imperativo dirigido ao agente.
+//     `recoveryDirective` é instrução para a IA e NUNCA chega ao cliente.
+//     ⚠️ Regressão real (25/08, 9Cinco): o texto de `future_appointments_limit` estava
+//     escrito como diretiva de agente dentro de `clientMessage` e vazou ao cliente em
+//     3 mensagens de WhatsApp. Ver bemp/index.ts:635-636 para o padrão correto.
+// Exportada para teste unitário (ver src/test/appbarber-failure.test.ts).
+// É função pura: sem rede, sem Deno, sem estado — dá pra travar cada caso real
+// do Relatório de Bugs como teste de regressão.
+export function classifyAppBarberFailure(
   status: number,
   rawText: string | undefined,
   parsed: any,
-): { retryable: boolean; clientMessage?: string; reason: string } {
+): {
+  retryable: boolean;
+  recoverable?: boolean;
+  clientMessage?: string;
+  recoveryDirective?: string;
+  reason: string;
+} {
   const msg = String(parsed?.message || parsed?.error || rawText || "").toLowerCase();
 
   // 1) Auth / config quebrada — não adianta a IA insistir, é problema do tenant.
@@ -60,10 +76,21 @@ function classifyAppBarberFailure(
   //    normal de recovery/oferta de novos slots correr.
   if (/limite de agendamentos futuros.*excedido|agendamentos futuros foi excedido/i.test(msg)) {
     return {
+      // Não adianta repetir o MESMO agendamento — o limite vai bater de novo.
       retryable: false,
+      // Mas NÃO é falha de sistema: existe caminho de saída (remarcar). Sem este
+      // recoverable=true o BookingGuard (index.ts:6705) injeta "chame escalate_human",
+      // gerando escalação falsa para a equipe a cada ocorrência.
+      recoverable: true,
       reason: "future_appointments_limit",
+      // AUDIÊNCIA: cliente. Pode sair literalmente no WhatsApp.
       clientMessage:
-        "Não consegui criar outro agendamento porque já existe um agendamento futuro ativo para esse cliente no AppBarber. Se a intenção for remarcar, primeiro é obrigatório localizar e cancelar o agendamento antigo; depois criar o novo. Não tente criar outro horário direto.",
+        "Vi aqui que você já tem um horário marcado com a gente. Quer que eu remarque esse horário para a nova data?",
+      // AUDIÊNCIA: modelo. Nunca chega ao cliente.
+      recoveryDirective:
+        "O cliente já tem um agendamento futuro ativo e a API não permite um segundo. " +
+        "Chame listar_agendamentos para localizar o agendamento atual, confirme com o cliente que ele quer trocar esse horário " +
+        "e só então chame cancelar_agendamento seguido de criar_agendamento. Não tente criar outro horário direto.",
     };
   }
   if (status === 422) return { retryable: true, reason: "conflict_422" };
@@ -821,6 +848,15 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             error: `customer_name inválido ("${rawName || "vazio"}"). Pergunte o nome REAL do cliente antes de agendar — não use "Cliente" nem palavras genéricas. Se o cliente já se identificou nesta conversa, use aquele nome.`,
             blocked: true,
             reason: "invalid_customer_name",
+            // ⚠️ Sem recoverable=true o BookingGuard (index.ts) injeta "chame
+            // escalate_human" — exatamente o que o prompt proíbe para nome vazio.
+            // Foi essa contradição código×prompt que produziu os casos V28-Jellson,
+            // V29-Felipe e 25/08-Ansysar: a IA obedeceu a diretiva do código.
+            recoverable: true,
+            recoveryDirective:
+              "O nome do cliente está vazio ou é genérico e a ferramenta foi bloqueada antes de chamar a API. " +
+              "Pergunte o nome ao cliente NESTA resposta, com naturalidade. " +
+              "Não invente nome, não reaproveite nome de conversa antiga e não chame criar_agendamento de novo até o cliente responder.",
           };
         }
         const customerName = rawName;
@@ -866,11 +902,17 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             return {
               error: `Horário indisponível ou conflito de regra de negócio: ${baseErr}`,
               status: 422,
-              recoverable: failure.retryable,
+              // recoverable é eixo próprio: só cai em `retryable` quando o
+              // classificador não opina (ver classifyAppBarberFailure).
+              recoverable: failure.recoverable ?? failure.retryable,
               retryable: failure.retryable,
               ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+              ...(failure.recoveryDirective ? { recoveryDirective: failure.recoveryDirective } : {}),
               failureReason: failure.reason,
-              hint: "Chame listar_horarios novamente para o mesmo serviço/profissional e ofereça outro horário ao cliente. NÃO escale humano.",
+              // Quando o classificador mandou uma diretiva específica, ela vale mais que
+              // o hint genérico de choque de horário — que descreveria a falha errada.
+              hint: failure.recoveryDirective
+                ?? "Chame listar_horarios novamente para o mesmo serviço/profissional e ofereça outro horário ao cliente. NÃO escale humano.",
               details: parsed?.data ?? parsed?.details,
             };
           }
@@ -887,7 +929,11 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             error: baseErr,
             status: res.status,
             retryable: failure.retryable,
+            ...(failure.recoverable !== undefined ? { recoverable: failure.recoverable } : {}),
             ...(failure.clientMessage ? { clientMessage: failure.clientMessage } : {}),
+            ...(failure.recoveryDirective
+              ? { recoveryDirective: failure.recoveryDirective, hint: failure.recoveryDirective }
+              : {}),
             failureReason: failure.reason,
             details: parsed?.data ?? parsed?.details,
           };
