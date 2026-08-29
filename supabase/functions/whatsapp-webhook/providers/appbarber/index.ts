@@ -781,6 +781,17 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
                 error: `Sem confirmação prévia de disponibilidade para service_code=${primaryServiceCode}, professional_code=${pc} em ${wantedDate} ${wantedTime}. Chame listar_horarios ANTES de criar_agendamento.`,
                 blocked: true,
                 reason: "no_availability_check",
+                // Sem recoverable=true o BookingGuard injeta "chame escalate_human"
+                // e a IA escala — foi o que aconteceu em 28/08, quando o cliente
+                // mudou a data ("próximo sábado, não esse") e a IA tentou criar
+                // sem revalidar. O caminho de saída é óbvio e está no hint abaixo:
+                // basta consultar a agenda da data nova. Não é caso de humano.
+                recoverable: true,
+                recoveryDirective:
+                  "Você tentou agendar um horário que não foi verificado na agenda. "
+                  + "Chame listar_horarios com o service_code, o professional_code e a start_date corretos, "
+                  + "e ofereça ao cliente apenas horários que aparecerem em available_times. "
+                  + "Se a data mudou durante a conversa, é obrigatório consultar a agenda da data NOVA antes de agendar.",
                 hint: "Chame listar_horarios (ou listar_horarios_geral) com service_code, professional_code e start_date. Só ofereça horários que aparecerem em available_times.",
               };
             }

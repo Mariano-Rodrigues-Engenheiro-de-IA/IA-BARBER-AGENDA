@@ -7293,7 +7293,30 @@ async function callAIAgent(
       });
     };
 
-    if (_mbCfg.skipWhenSingleVisit && prometidos <= 1) {
+    // 🚦 Toda tentativa de agendar do turno falhou por REGRA DE NEGÓCIO
+    // RECUPERÁVEL (recoverable:true)? Então o BookingGuard já injetou a diretiva
+    // do provider e a IA respondeu seguindo ela — tipicamente fazendo uma
+    // PERGUNTA ao cliente ("quer trocar o horário atual ou manter?").
+    // Não existe nada para recuperar aqui: rodar o loop faz a IA devolver 3
+    // rodadas sem tool_calls (ela quer resposta do cliente, não ferramenta) e
+    // cair em `recovery_exhausted_no_human`, entregando "tive um probleminha...
+    // vou acionar a equipe" — sem que equipe nenhuma tenha sido acionada.
+    // Regressão real de 28/08 (9Cinco, future_appointments_limit).
+    // Não seta guardOverrideResponse: a Camada 3 continua valendo e ainda pega
+    // uma eventual confirmação falsa no texto da IA.
+    const _mbAttemptResults = (logToolCalls || [])
+      .filter((tc: any) => tc && _mbBookingNames.has(tc.name))
+      .map((tc: any) => tc?.result);
+    const _allRecoverableBusinessRule = _mbAttemptResults.length > 0
+      && _mbAttemptResults.every((r: any) =>
+        r && typeof r === "object" && r.ok !== true && r.recoverable === true);
+
+    if (_allRecoverableBusinessRule) {
+      console.log(
+        `[MultiBookingGuard] todas as ${_mbAttemptResults.length} tentativa(s) falharam por regra de negócio recuperável — devolvendo o turno para a resposta da IA, sem recovery.`,
+      );
+      guardLog("recoverable_business_rule_deferred");
+    } else if (_mbCfg.skipWhenSingleVisit && prometidos <= 1) {
       // Não sequestra falhas de disponibilidade de uma visita simples. O
       // BookingGuard/provider já devolve as alternativas corretas; este guard
       // existe exclusivamente para garantir múltiplas visitas.
