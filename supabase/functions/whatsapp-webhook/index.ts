@@ -951,7 +951,13 @@ const extractExplicitClientName = (userMessage: unknown, previousAssistantMessag
   if (!rawMessage) return null;
 
   const normalizedAssistant = normalizeUserFacingText(previousAssistantMessage);
-  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) (?:o )?(?:seu )?nome|me passa (?:o )?(?:seu )?nome|me diga (?:o )?(?:seu )?nome|pode me (?:passar|dizer) (?:o )?(?:seu )?nome|seu nome (?:e )?sobrenome|nome e sobrenome)/.test(normalizedAssistant);
+  // ⚠️ Manter em sincronia com as frases que a Carol REALMENTE usa. A lista
+  // original cobria "passar/dizer" mas não "enviar/mandar/informar" — e
+  // "pode me enviar seu nome completo" é a frase padrão dela, então
+  // explicitClientName ficava sempre null nesse fluxo (achado de 29/08).
+  // "nome completo" entra como gatilho isolado: qualquer frase que peça isso
+  // está, por definição, pedindo o nome.
+  const assistantAskedForName = /(como voce gosta de ser chamado|como posso te chamar|qual (?:e|é) (?:o )?(?:seu )?nome|me (?:passa|passe|diga|diz|envia|envie|manda|mande|informa|informe) (?:o )?(?:seu )?nome|pode me (?:passar|dizer|enviar|mandar|informar) (?:o )?(?:seu )?nome|seu nome (?:e )?sobrenome|nome e sobrenome|nome completo)/.test(normalizedAssistant);
   const introMatch = rawMessage.match(/(?:meu nome(?: completo)?(?: é| e)?|me chamo|pode me chamar de|sou o|sou a)\s+(.+)/i);
 
   // Sem gatilho explícito: não tente extrair nome (evita pegar transcrição de áudio aleatória).
