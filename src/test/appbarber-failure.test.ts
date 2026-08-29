@@ -176,3 +176,68 @@ describe("invariante: clientMessage não pode disparar os guards de confirmaçã
     expect(clientMessage).toMatch(/manter/i);
   });
 });
+
+/**
+ * Os dois blocos abaixo espelham regexes que vivem em
+ * whatsapp-webhook/index.ts. Não dá para importar o index aqui (módulo Deno),
+ * então as cópias precisam ser atualizadas junto quando as originais mudarem.
+ * O valor deles é travar os CASOS REAIS do Relatório de Bugs como regressão.
+ */
+
+describe("PhantomCancelGuard — alegação de cancelamento sem ferramenta", () => {
+  const CANCEL_CLAIM_RE = /\b(?:cancelad[oa]s?|desmarcad[oa]s?|remarcad[oa]s?|cancelei|desmarquei|remarquei|cancelamos|desmarcamos|remarcamos)\b/i;
+  const NEGATED_RE = /\bn[ãa]o\s+(?:foi\s+|est[áa]\s+|consegui\s+)?(?:cancelad|desmarcad|remarcad|cancel|desmarc|remarc)/i;
+
+  const detecta = (texto: string): string | undefined =>
+    texto.split(/(?<=[.!?])\s+/)
+      .find((s) => !s.trim().endsWith("?") && CANCEL_CLAIM_RE.test(s) && !NEGATED_RE.test(s));
+
+  it.each([
+    ["V25 — caso Weslei (556191070244)", "Cancelado! Qualquer coisa é só chamar ☺️"],
+    ["V29 — caso Gabriel Oliveira", "Pode deixar, já está remarcado para hoje às 18h30."],
+    ["V27 — caso 5", "Seu horário foi desmarcado com sucesso."],
+    ["primeira pessoa", "Pronto, cancelei seu horário."],
+  ])("detecta: %s", (_nome, texto) => {
+    expect(detecta(texto)).toBeTruthy();
+  });
+
+  it.each([
+    ["oferta no subjuntivo", "Quer que eu cancele esse e marque a barba na segunda às 15h?"],
+    ["oferta no infinitivo", "Posso cancelar o do sábado e marcar sua barba na segunda, ou prefere manter?"],
+    ["negação", "Seu agendamento não foi cancelado, continua valendo."],
+    ["negação de falha", "Não consegui cancelar agora, vou verificar."],
+    ["confirmação de agendamento", "Agendei seu corte de cabelo com o Pedro para o próximo sábado às 9h."],
+  ])("não dispara em: %s", (_nome, texto) => {
+    expect(detecta(texto)).toBeUndefined();
+  });
+});
+
+describe("isLeakedReasoningResponse — vazamento de raciocínio", () => {
+  const STRONG_ENGLISH_LEAK_RE = /\b(?:yet|cannot|unable|awaiting|proceed|user\s+input|next\s+(?:user|message|step|input)|i\s+(?:will|can|should|need|must)|let\s+me\s+(?:check|know|proceed|see)|need\s+(?:to|more|the|next)|waiting\s+for)\b/i;
+
+  it("pega o texto exato que vazou em 25/08", () => {
+    // Híbrido PT+EN: os acentos marcavam hasPortugueseSignal e curto-circuitavam
+    // a checagem de inglês, e "yet" nem estava na lista de palavras.
+    expect(STRONG_ENGLISH_LEAK_RE.test("Não posso respondê-lo yet.")).toBe(true);
+  });
+
+  it.each([
+    "Need next user input",
+    "Let me check the availability first",
+    "I will proceed with the booking",
+    "Waiting for user response",
+    "Vou proceed com o agendamento",
+  ])("pega: %s", (texto) => {
+    expect(STRONG_ENGLISH_LEAK_RE.test(texto)).toBe(true);
+  });
+
+  it.each([
+    "Boa noite! Sou a Carol, assistente da 9Cinco. Para qual serviço vamos agendar?",
+    "Cabelo com o Leonardo, sexta às 16h. Pra confirmar, me manda seu nome completo? ☺️",
+    "Você já tem um agendamento ativo. Quer que eu troque para esse novo horário, ou prefere manter o atual?",
+    "Infelizmente nosso sistema permite só 1 agendamento ativo por cliente.",
+    "Pronto, cancelei seu horário. Qualquer coisa é só chamar ☺️",
+  ])("não bloqueia mensagem legítima: %s", (texto) => {
+    expect(STRONG_ENGLISH_LEAK_RE.test(texto)).toBe(false);
+  });
+});

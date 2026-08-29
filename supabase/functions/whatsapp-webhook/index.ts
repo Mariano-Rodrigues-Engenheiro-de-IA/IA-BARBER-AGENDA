@@ -3890,6 +3890,21 @@ type PhantomGuardConfig = {
   bookingToolNames: string[];
   searchToolNames: string[];
   recoveryToolNames: string[];
+  /**
+   * Ferramentas de cancelamento do provider. Quando presente, liga a detecção
+   * de CANCELAMENTO/REMARCAÇÃO FANTASMA — a IA dizendo "cancelado"/"remarcado"
+   * sem ter chamado nenhuma delas. O CancelGuard existente não cobre isso:
+   * ele só dispara quando a ferramenta FOI chamada e falhou. Os casos V25
+   * (Weslei) e V27 do Relatório de Bugs — "Cancelado! Qualquer coisa é só
+   * chamar" sem chamar nada — não eram pegos por guard nenhum.
+   */
+  cancelToolNames?: string[];
+  /**
+   * Modo observação: o guard detecta e registra em agent_logs, mas NÃO altera
+   * a resposta. Serve para medir a taxa real de disparo antes de confiar no
+   * bloqueio — recomendação de rollout da Spec Técnica. Comece com `true`.
+   */
+  shadow?: boolean;
 };
 const PHANTOM_GUARD_CONFIG_BY_PROVIDER: Record<string, PhantomGuardConfig> = {
   trinks: trinksPhantomGuardConfig,
@@ -4887,11 +4902,24 @@ async function callAIAgent(
       const metaWords = /\b(duplicad|repetid|aguardand|mesma|continua|sem\s+(resposta|altera|novidad|mudan)|j[aá]\s+enviad|nenhuma?)\b/;
       if (metaWords.test(inner)) return true;
     }
-    // Short responses without Portuguese signals that look like English are very likely leaks
-    if (t.length < 120) {
+    // 🚨 Marcador FORTE de inglês: expressões que praticamente não aparecem numa
+    // mensagem legítima de WhatsApp em PT-BR. Uma só já denuncia vazamento,
+    // mesmo com o resto da frase em português.
+    // Regressão real (25/08, 9Cinco): "Não posso respondê-lo yet." chegou ao
+    // cliente. O acento de "Não"/"respondê" marcava hasPortugueseSignal, o que
+    // curto-circuitava a checagem de inglês logo abaixo; e "yet" nem constava na
+    // lista. É o híbrido de uma tradução parcial do scratchpad do modelo.
+    const STRONG_ENGLISH_LEAK_RE = /\b(?:yet|cannot|unable|awaiting|proceed|user\s+input|next\s+(?:user|message|step|input)|i\s+(?:will|can|should|need|must)|let\s+me\s+(?:check|know|proceed|see)|need\s+(?:to|more|the|next)|waiting\s+for)\b/i;
+    if (STRONG_ENGLISH_LEAK_RE.test(t)) return true;
+
+    // Resposta em inglês sem nenhum sinal de português.
+    // ⚠️ O teto de 120 caracteres que existia aqui foi removido: ele deixava
+    // passar intacto qualquer vazamento mais longo. O guarda continua sendo o
+    // `!hasPortugueseSignal` — uma mensagem real em PT sempre bate nessa lista.
+    {
       const hasPortugueseSignal = /[áàâãéêíóôõúüç]|\b(você|voce|olá|ola|obrigad|tudo bem|posso|quero|queria|gostaria|certo|claro|sim|não|nao|bom dia|boa tarde|boa noite|valeu|legal|beleza|agendar|horário|horario|marcar|atendiment|serviço|servico|preço|preco|profissional|barbeiro|salão|salao|gráfica|grafica|cliente|amanhã|amanha|hoje|próxim|proxim|fazem|fazemos|temos|fica|pode|posso|aqui|sim|nao|tem|sao|são|é|ja|já|sem|por favor|favor|nome|completo|cadastro|cadastrar|nascimento|email|e-mail|fechou|qualquer|coisa|chama|tamo|junto|valeu|obrigado|obrigada|tranquilo|tranquila|combinado|perfeito|ótimo|otimo|show|massa|firmeza|abraço|abraco|até|ate|tchau|oi|opa|eai|e ai|aí|ai|pra|pro|me passa|me manda|me diz|me fala|me envia|me chama|me avisa|me confirma)\b/i.test(t);
       // Require at least 2 distinct English content words to avoid false positives on words shared with PT (e.g. "me")
-      const englishMatches = t.match(/\b(the|and|will|need|user|input|next|please|let|check|continue|wait|proceed|thank|hello|message|reply|response|now)\b/gi) || [];
+      const englishMatches = t.match(/\b(the|and|will|need|user|input|next|please|let|check|continue|wait|proceed|thank|hello|message|reply|response|now|answer|anything|something|about|should|would|could|currently|sorry)\b/gi) || [];
       const distinctEnglish = new Set(englishMatches.map((w) => w.toLowerCase()));
       const looksEnglish = distinctEnglish.size >= 2;
       if (!hasPortugueseSignal && looksEnglish) return true;
@@ -7164,6 +7192,72 @@ async function callAIAgent(
   }
 
   // ============================================================================
+  // 🛡️ PHANTOM CANCEL/RESCHEDULE GUARD — cancelamento fantasma
+  //
+  // Cobre um buraco entre dois guards existentes:
+  //  - o PhantomConfirmationGuard acima trata só agendamento NOVO; a regex dele
+  //    EXCLUI de propósito qualquer frase com "cancel" (CANCEL_CONTEXT_RE);
+  //  - o CancelGuard mais abaixo só dispara quando a ferramenta FOI chamada e
+  //    falhou — se a IA não chamou nada, ele nem roda.
+  // Resultado: "Cancelado! Qualquer coisa é só chamar ☺️" sem nenhuma chamada
+  // não era pego por guard nenhum. Casos V25 (Weslei, 556191070244) e V27 do
+  // Relatório de Bugs; e "já está remarcado para hoje às 18h30" no V29.
+  //
+  // Começa em SHADOW: detecta, registra em agent_logs e deixa a mensagem passar.
+  // Bloquear cancelamento legítimo por engano seria pior que o bug.
+  // ============================================================================
+  if (finalResponse && _phantomCfg?.cancelToolNames?.length) {
+    const CANCEL_CLAIM_RE = /\b(?:cancelad[oa]s?|desmarcad[oa]s?|remarcad[oa]s?|cancelei|desmarquei|remarquei|cancelamos|desmarcamos|remarcamos)\b/i;
+    // Negação não é alegação: "não foi cancelado" fala do contrário.
+    const NEGATED_RE = /\bn[ãa]o\s+(?:foi\s+|est[áa]\s+|consegui\s+)?(?:cancelad|desmarcad|remarcad|cancel|desmarc|remarc)/i;
+
+    // Só frases afirmativas. "Quer que eu cancele?" e "Posso cancelar?" são
+    // ofertas — subjuntivo e infinitivo não casam com a regex acima.
+    const claimSentence = String(finalResponse)
+      .split(/(?<=[.!?])\s+/)
+      .find((s) => !s.trim().endsWith("?") && CANCEL_CLAIM_RE.test(s) && !NEGATED_RE.test(s));
+
+    if (claimSentence) {
+      const cancelNames = new Set(_phantomCfg.cancelToolNames);
+      const cancelSucceededThisTurn = (logToolCalls || []).some((tc: any) => {
+        if (!tc || !cancelNames.has(tc.name)) return false;
+        const r = tc.result;
+        return r && typeof r === "object" && r.ok === true && !r.error;
+      });
+      // 2ª fonte de legitimidade: cancelamento concluído numa rodada anterior
+      // desta conversa (ledger de ações, TTL de 30 min).
+      const cancelInLedger = ((sessionState.recentCompletedActions || []) as any[])
+        .some((a) => a && a.category === "booking_cancel" && a.status === "success");
+
+      if (!cancelSucceededThisTurn && !cancelInLedger) {
+        const isShadow = _phantomCfg.shadow !== false;
+        const trecho = claimSentence.trim().slice(0, 160);
+        console.warn(`[PhantomCancelGuard]${isShadow ? " SHADOW" : ""} alegação de cancelamento sem ferramenta: "${trecho}"`);
+        logErrors.push({
+          message: `[PhantomCancelGuard]${isShadow ? " SHADOW (não bloqueou):" : ""} resposta alega cancelamento/remarcação sem chamada bem-sucedida de ${_phantomCfg.cancelToolNames.join("/")}. Trecho: "${trecho}"`,
+          level: "warning",
+        });
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_cancel_guard",
+            provider,
+            acao: isShadow ? "detected_shadow_no_block" : "blocked_no_cancel_tool",
+            claim: trecho,
+            cancel_succeeded_this_turn: cancelSucceededThisTurn,
+            cancel_in_ledger: cancelInLedger,
+          },
+        });
+        if (!isShadow) {
+          finalResponse = "Deixa eu confirmar esse cancelamento aqui rapidinho e já te retorno.";
+          guardOverrideResponse = true;
+        }
+      }
+    }
+  }
+
+  // ============================================================================
   // 🛡️ MULTI-BOOKING GUARD — 1 GUARDA POR API (personalizado)
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
@@ -7190,7 +7284,12 @@ async function callAIAgent(
     // concluído no turno anterior; ao pedir um NOVO, o classificador contou 2
     // e o guard entrou em recovery loop pedindo IA "completar" o que já existia).
     const priorTurnBookings: string[] = ((sessionState.recentCompletedActions || []) as any[])
-      .filter((a) => a && a.category === "booking_create" && a.status === "success" && typeof a.summary === "string")
+      // "booking" é a categoria que MUTATING_TOOL_CATEGORIES realmente grava para
+      // agendar/criar_agendamento. O filtro comparava com "booking_create", que
+      // não existe em lugar nenhum — era código morto desde sempre, e por isso o
+      // classificador nunca recebia as reservas de rodadas anteriores que este
+      // bloco existe justamente para informar.
+      .filter((a) => a && a.category === "booking" && a.status === "success" && typeof a.summary === "string")
       .map((a) => String(a.summary))
       .slice(-6);
     const cls = await classifyPendingBookings({

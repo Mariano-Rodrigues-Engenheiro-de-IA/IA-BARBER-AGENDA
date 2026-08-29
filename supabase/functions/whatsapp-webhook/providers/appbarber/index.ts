@@ -1436,6 +1436,15 @@ export const phantomGuardConfig = {
   enabled: true,
   bookingToolNames: ["criar_agendamento"],
   searchToolNames: ["listar_agendamentos"],
+  // Liga a detecção de cancelamento/remarcação fantasma (ver PhantomGuardConfig
+  // no index.ts). Só o AppBarber por enquanto — os outros providers seguem sem
+  // o campo e portanto sem a checagem.
+  cancelToolNames: ["cancelar_agendamento"],
+  // 👁️ MODO OBSERVAÇÃO: detecta e registra em agent_logs, mas NÃO altera a
+  // resposta. Manter assim por 1-2 semanas para medir a taxa de disparo antes
+  // de ligar o bloqueio de verdade — bloquear cancelamento legítimo por engano
+  // seria pior que o bug que estamos caçando.
+  shadow: true,
   // Ferramentas que a IA pode legitimamente precisar chamar na reinjeção para
   // completar o fluxo (ex: nunca listou horários antes de prometer). Se ela
   // chamar qualquer uma delas, o turno é considerado recuperado e a IA responde
