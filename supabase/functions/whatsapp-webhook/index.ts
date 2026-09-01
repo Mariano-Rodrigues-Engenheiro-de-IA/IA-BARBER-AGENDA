@@ -7416,6 +7416,22 @@ async function callAIAgent(
       && _mbAttemptResults.every((r: any) =>
         r && typeof r === "object" && r.ok !== true && r.recoverable === true);
 
+    // Quando a regra de negócio é recuperável, o provider normalmente já
+    // devolve um clientMessage pronto (ex: "você já tem um agendamento
+    // ativo... quer trocar ou manter?"). Guarda esse texto pra usar como
+    // fallback prioritário na Camada 3 mais abaixo, em vez do
+    // buildPartialBookingFallback genérico ("vou acionar a equipe") —
+    // que nunca pergunta o que o provider já sabia ser a pergunta certa.
+    // Bug real observado (9Cinco/AppBarber, future_appointments_limit):
+    // a IA achou o agendamento existente do cliente via listar_agendamentos,
+    // mas a resposta final foi só "vou acionar a equipe", sem nunca
+    // perguntar trocar ou manter — mesmo com a pergunta certa disponível.
+    const _recoverableClientMessage = _allRecoverableBusinessRule
+      ? _mbAttemptResults
+          .map((r: any) => (typeof r?.clientMessage === "string" ? r.clientMessage.trim() : null))
+          .find((m: string | null) => !!m)
+      : null;
+
     if (_allRecoverableBusinessRule) {
       console.log(
         `[MultiBookingGuard] todas as ${_mbAttemptResults.length} tentativa(s) falharam por regra de negócio recuperável — devolvendo o turno para a resposta da IA, sem recovery.`,
@@ -7700,7 +7716,13 @@ async function callAIAgent(
     ) {
       console.warn(`[MultiBookingGuard] Camada 3: texto sugere confirmação total mas criados<prometidos. Bloqueando confirmação falsa.`);
       logErrors.push({ message: `Mismatch texto↔execução detectado — confirmação falsa bloqueada.`, level: "warning" });
-      finalResponse = buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
+      // Prioriza a pergunta que o provider já sabia ser a certa (ex: "quer
+      // trocar ou manter o agendamento atual?") sobre o fallback genérico
+      // de "vou acionar a equipe" — evita escalar quando a IA já tinha em
+      // mãos tudo que precisava pra resolver com uma pergunta direta ao
+      // cliente. Ver comentário em _recoverableClientMessage acima.
+      finalResponse = _recoverableClientMessage
+        || buildPartialBookingFallback(postGuardCount.count, prometidos, postGuardCount.breakdown);
       guardOverrideResponse = true;
     }
 
