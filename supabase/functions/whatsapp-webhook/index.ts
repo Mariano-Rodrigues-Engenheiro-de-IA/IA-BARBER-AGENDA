@@ -7081,21 +7081,37 @@ async function callAIAgent(
 
     // Claim explícito de criação nova — ainda útil para pegar "já agendei" mesmo
     // quando a mensagem anterior não foi detectada como prompt de confirmação.
-    // ⚠️ Este é o caminho SEM dependência de contexto — o único que pega alegação
-    // de confirmação independente do que veio antes na conversa. Por muito tempo
-    // ele só reconhecia PRIMEIRA PESSOA ("agendei", "criei"), e a frase que o
-    // modelo realmente usa é passiva: "Seu horário está confirmado".
-    // Dois casos reais escaparam por isso (01/09 18:53 e 02/09 14:37): a IA
-    // confirmou agendamento com ZERO chamadas de ferramenta e o guard não viu.
-    // O outro caminho (IMPLIED_FINALIZATION_RE) reconheceria a frase, mas está
-    // atrás de isNewBookingFinalStep, que exige a mensagem anterior ser um
-    // prompt de confirmação reconhecido E o cliente ter respondido algo curto e
-    // afirmativo — em 14:37 o cliente perguntou ("Podemos marcar às 16h?") e em
-    // 18:53 a pergunta anterior era de remarcação, fraseado fora da whitelist.
-    // Ampliar aqui é seguro: o guard só age quando houve ZERO tentativa de
-    // agendar no turno, sem agendamento no ledger e sem busca ativa que
-    // justifique a frase — as três travas de legitimidade seguem intactas.
-    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|remarquei|remarcamos|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|(?:seu|sua|o|a)\s+(?:hor[aá]rio|agendamento|reserva)[^.!?]{0,70}?(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad|reservad|garantid)[oa]|(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad)[oa]\s+para|(?:hor[aá]rio|agendamento|reserva)\s+(?:confirmad|remarcad|agendad)[oa]\s+para|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|remarquei))\b/i;
+    // Caminho SEM dependência de contexto — pega alegação de confirmação
+    // independente do que veio antes. Reconhece apenas PRIMEIRA PESSOA.
+    //
+    // ⛔ NÃO AMPLIE ISTO PARA A FORMA PASSIVA ("seu horário está confirmado")
+    // sem antes consertar as três coisas listadas abaixo. Já foi tentado em
+    // 03/09 e REVERTIDO no mesmo dia por causar regressão em produção.
+    //
+    // Por que a tentativa falhou: a frase "Seu horário está confirmado para
+    // [DIA] às [HORA]" é um SCRIPT OBRIGATÓRIO do prompt (seção DISPARO DE
+    // CONFIRMAÇÃO), usado quando o agendamento JÁ EXISTE e está correto — caso
+    // em que nenhuma ferramenta de criação precisa ser chamada. Ao caçar essa
+    // frase, o guard passou a comer a resposta certa e devolver ao cliente o
+    // fallback "Deixa eu confirmar aqui rapidinho e já te retorno" — que é uma
+    // promessa falsa, porque a IA não reabre conversa. Aconteceu com 4 clientes
+    // numa manhã (03/09), todos respondendo a disparo de confirmação.
+    //
+    // O que precisa estar pronto ANTES de tentar de novo:
+    //   1. isAffirmativeReply (~:9463) casa a string INTEIRA, então "Bom dia
+    //      Confirmado" não conta como afirmativo — e o debounce agrupa a
+    //      saudação com a confirmação. Precisa descascar saudação/cortesia.
+    //   2. O guard não reconhece o disparo. isHumanExistingBookingConfirmation
+    //      só cobre mensagem prefixada [ATENDENTE HUMANO]; disparo do CRM não é
+    //      marcado assim. Precisa detectar o formato "Você agendou ... para
+    //      <data>. Podemos confirmar seu horário?".
+    //   3. lookupLegit exige que a resposta CITE a hora do agendamento achado.
+    //      Um listar_agendamentos com agendamento ativo no turno já deveria
+    //      bastar como legitimidade.
+    // Os casos fantasma que motivaram a tentativa (01/09 18:53 e 02/09 14:37)
+    // seguem SEM cobertura — estão preservados como testes em
+    // src/test/appbarber-failure.test.ts, no describe.skip correspondente.
+    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos))\b/i;
     // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;

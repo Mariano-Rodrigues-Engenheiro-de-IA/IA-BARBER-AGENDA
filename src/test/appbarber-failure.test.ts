@@ -212,15 +212,27 @@ describe("PhantomCancelGuard — alegação de cancelamento sem ferramenta", () 
   });
 });
 
-describe("PhantomConfirmationGuard — confirmação sem ferramenta", () => {
+describe.skip("PhantomConfirmationGuard — confirmação sem ferramenta [GAP ABERTO]", () => {
   /**
-   * Espelho de CONFIRM_CLAIM_RE (whatsapp-webhook/index.ts ~:7031), o caminho
-   * do guard que NÃO depende de contexto conversacional.
+   * ⛔ SKIP PROPOSITAL — não é teste quebrado, é gap documentado.
    *
-   * Antes de 03/09 ele só reconhecia primeira pessoa ("agendei", "criei"), e a
-   * frase que o modelo realmente usa é passiva — "Seu horário está confirmado".
-   * Dois casos reais escaparam por isso: 01/09 18:53 e 02/09 14:37, ambos com
-   * ZERO chamadas de ferramenta e confirmação completa enviada ao cliente.
+   * A regex ampliada abaixo foi aplicada em 03/09 e REVERTIDA no mesmo dia:
+   * ela caçava "seu horário está confirmado", que é um SCRIPT OBRIGATÓRIO do
+   * prompt (seção DISPARO DE CONFIRMAÇÃO) para quando o agendamento JÁ EXISTE.
+   * O guard passou a comer a resposta correta e devolver o fallback
+   * "Deixa eu confirmar aqui rapidinho e já te retorno" — promessa falsa, já
+   * que a IA não reabre conversa. Atingiu 4 clientes numa manhã.
+   *
+   * Os casos fantasma abaixo são REAIS e seguem SEM cobertura em produção.
+   * Ficam aqui para serem reativados quando as três pré-condições estiverem
+   * prontas (ver comentário em index.ts, acima de CONFIRM_CLAIM_RE):
+   *   1. isAffirmativeReply tolerar saudação e cortesia
+   *   2. o guard reconhecer o formato do disparo de confirmação
+   *   3. lookupLegit aceitar listar_agendamentos com agendamento ativo,
+   *      sem exigir que o texto cite a hora
+   *
+   * Para reativar: trocar describe.skip por describe e aplicar a regex
+   * ampliada em index.ts no mesmo commit.
    */
   const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|remarquei|remarcamos|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|(?:seu|sua|o|a)\s+(?:hor[aá]rio|agendamento|reserva)[^.!?]{0,70}?(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad|reservad|garantid)[oa]|(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad)[oa]\s+para|(?:hor[aá]rio|agendamento|reserva)\s+(?:confirmad|remarcad|agendad)[oa]\s+para|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|remarquei))\b/i;
   const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
