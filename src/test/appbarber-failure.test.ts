@@ -212,6 +212,88 @@ describe("PhantomCancelGuard — alegação de cancelamento sem ferramenta", () 
   });
 });
 
+describe("PhantomConfirmationGuard — confirmação sem ferramenta", () => {
+  /**
+   * Espelho de CONFIRM_CLAIM_RE (whatsapp-webhook/index.ts ~:7031), o caminho
+   * do guard que NÃO depende de contexto conversacional.
+   *
+   * Antes de 03/09 ele só reconhecia primeira pessoa ("agendei", "criei"), e a
+   * frase que o modelo realmente usa é passiva — "Seu horário está confirmado".
+   * Dois casos reais escaparam por isso: 01/09 18:53 e 02/09 14:37, ambos com
+   * ZERO chamadas de ferramenta e confirmação completa enviada ao cliente.
+   */
+  const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|remarquei|remarcamos|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|(?:seu|sua|o|a)\s+(?:hor[aá]rio|agendamento|reserva)[^.!?]{0,70}?(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad|reservad|garantid)[oa]|(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad)[oa]\s+para|(?:hor[aá]rio|agendamento|reserva)\s+(?:confirmad|remarcad|agendad)[oa]\s+para|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|remarquei))\b/i;
+  const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
+
+  const alega = (texto: string): boolean =>
+    texto.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean)
+      .some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+
+  it.each([
+    ["02/09 14:37 — zero ferramentas", "Perfeito! Seu horário está confirmado para sexta às 16h com o Nando. Te esperamos 🤝😁"],
+    ["01/09 18:53 — zero ferramentas", "Perfeito! Seu horário está confirmado para o dia 2 do mês que vem às 14h com o Leonardo. Te esperamos 🤝😁"],
+    ["V27 caso 4 — 554498685420", "Perfeito! Seu horário com o Nando hoje às 15h30 está confirmado"],
+    ["V28 caso 3 — 554498603038", "Perfeito! Está confirmado para amanhã às 17h15 com o Gabriel."],
+    ["V17 — remarcação Leonardo", "Seu horário está remarcado para quinta às 18h30."],
+    ["V29 — Gabriel Vargas", "Pode deixar, já está remarcado para hoje às 18h30."],
+    ["primeira pessoa", "Pronto, remarquei seu horário para sábado às 9h."],
+    ["passiva", "Seu agendamento foi confirmado para quinta às 10h."],
+  ])("detecta alegação: %s", (_nome, texto) => {
+    expect(alega(texto)).toBe(true);
+  });
+
+  it.each([
+    ["pergunta de confirmação", "Cabelo com o Leonardo, sexta às 16h. Pode confirmar?"],
+    ["pergunta de remarcação", "Posso remarcar seu horário de sábado das 11h para sábado às 9h?"],
+    ["oferta de horário", "Quer um horário mais cedo no mesmo sábado ou prefere outro dia pela manhã?"],
+    ["pedido de nome (CASO A da V34)", "Cabelo com o Leonardo, sexta às 16h. Pra confirmar, me manda seu nome completo? ☺️"],
+    ["lista de horários", "Com ele tem das 13h30 às 16h15. Qual horário prefere?"],
+    ["trocar ou manter", "Você já tem um agendamento ativo. Quer que eu troque para esse novo horário, ou prefere manter o atual?"],
+    ["cancelamento legítimo", "Pronto, cancelei seu horário. Qualquer coisa é só chamar ☺️"],
+    ["consulta de agendamento", "Você tem um agendamento de cabelo na quarta às 14h. Te esperamos! 🤝"],
+    ["aguardando o nome", "Tranquilo — quando quiser, me manda seu nome que eu confirmo o horário com o Leonardo às 16h na quinta."],
+  ])("não dispara em: %s", (_nome, texto) => {
+    expect(alega(texto)).toBe(false);
+  });
+});
+
+describe("anti-eco — só descarta eco de verdade", () => {
+  /**
+   * Espelho da lógica de comparação de whatsapp-webhook/index.ts (~:1762).
+   * A versão anterior usava `stored.includes(echoNorm)` com limiar de 9 chars e
+   * SEM filtrar por telefone — descartava mensagem legítima de cliente sem
+   * deixar rastro no banco. Provável causa do relato de "a IA não responde".
+   */
+  const MIN = 25;
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  const ehEco = (doCliente: string, daIA: string[]): boolean => {
+    if (doCliente.trim().length < MIN) return false;
+    const alvo = norm(doCliente);
+    return daIA.some((m) => norm(m).length >= MIN && norm(m) === alvo);
+  };
+
+  const respostaDaIA = "Cabelo com o Leonardo, sexta às 16h. Pode confirmar?";
+
+  it("descarta o eco real: a mensagem inteira voltando", () => {
+    expect(ehEco(respostaDaIA, [respostaDaIA])).toBe(true);
+  });
+
+  it("NÃO descarta o cliente respondendo um pedaço da frase", () => {
+    // Era exatamente isto que a versão antiga engolia.
+    expect(ehEco("sexta às 16h", [respostaDaIA])).toBe(false);
+    expect(ehEco("Cabelo com o Leonardo", [respostaDaIA])).toBe(false);
+  });
+
+  it("NÃO descarta mensagem curta de cliente", () => {
+    expect(ehEco("pode ser", [respostaDaIA])).toBe(false);
+    expect(ehEco("Sim obrigado", [respostaDaIA])).toBe(false);
+  });
+
+  it("NÃO descarta frase parecida mas não idêntica", () => {
+    expect(ehEco("Cabelo com o Leonardo, sexta às 17h. Pode confirmar?", [respostaDaIA])).toBe(false);
+  });
+});
+
 describe("isLeakedReasoningResponse — vazamento de raciocínio", () => {
   const STRONG_ENGLISH_LEAK_RE = /\b(?:yet|cannot|unable|awaiting|proceed|user\s+input|next\s+(?:user|message|step|input)|i\s+(?:will|can|should|need|must)|let\s+me\s+(?:check|know|proceed|see)|need\s+(?:to|more|the|next)|waiting\s+for)\b/i;
 

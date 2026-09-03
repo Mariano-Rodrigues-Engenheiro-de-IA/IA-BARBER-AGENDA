@@ -1759,24 +1759,54 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // idêntico a algo que a própria IA enviou nos últimos 3 minutos NESTE tenant
       // (qualquer chat — o eco às vezes chega num @lid diferente do número real),
       // é o eco da nossa mensagem. Responder isso fazia a IA conversar sozinha.
-      if (messageContent && messageContent.trim().length > 8) {
+      // 🚨 ANTI-ECO — versão corrigida (03/09).
+      // A versão anterior descartava MENSAGENS LEGÍTIMAS DE CLIENTE por três
+      // defeitos somados, e sem deixar rastro nenhum no banco:
+      //   1. buscava em todo o tenant, SEM filtrar phone_number — comparava a
+      //      fala do cliente com o que a Carol disse a OUTROS clientes;
+      //   2. usava `stored.includes(echoNorm)` — bastava a mensagem do cliente
+      //      ser um PEDAÇO de qualquer resposta recente;
+      //   3. limiar de 9 caracteres.
+      // Efeito real: a Carol pergunta "Cabelo com o Leonardo, sexta às 16h.
+      // Pode confirmar?", o cliente responde "sexta às 16h" — e a mensagem some.
+      // Sem linha em chat_messages, sem agent_logs. Era a explicação mais
+      // provável para o relato de "chega na UAZAPI e a IA não responde".
+      // Eco de verdade é a mensagem INTEIRA voltando pela UAZAPI, na MESMA
+      // conversa — por isso igualdade exata e filtro de telefone bastam.
+      const ANTI_ECHO_MIN_LEN = 25;
+      if (messageContent && messageContent.trim().length >= ANTI_ECHO_MIN_LEN) {
         const echoNorm = messageContent.trim().replace(/\s+/g, " ").toLowerCase();
         const threeMinAgo = new Date(Date.now() - 180_000).toISOString();
         const { data: recentOwnMsgs } = await supabase
           .from("chat_messages")
           .select("content")
           .eq("tenant_id", tenant.id)
+          .eq("phone_number", phoneNumber)
           .eq("role", "assistant")
           .gte("created_at", threeMinAgo)
           .order("created_at", { ascending: false })
-          .limit(60);
+          .limit(20);
         const isSelfEcho = (recentOwnMsgs || []).some((m: any) => {
           const stored = String(m.content || "").trim().replace(/\s+/g, " ").toLowerCase()
             .replace(/^\[atendente humano\]:\s*/i, "");
-          return stored.length > 8 && (stored === echoNorm || stored.includes(echoNorm));
+          return stored.length >= ANTI_ECHO_MIN_LEN && stored === echoNorm;
         });
         if (isSelfEcho) {
           console.warn(`[AntiEco] Mensagem ignorada: eco da própria IA (tenant=${tenant.id}, phone=${phoneNumber}) -> "${messageContent.slice(0, 80)}"`);
+          // Registra o descarte: antes desta linha, o caminho era invisível no
+          // Monitor — indistinguível de "a mensagem nunca chegou".
+          try {
+            await supabase.from("agent_logs").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              user_message: messageContent.slice(0, 500),
+              ai_response: "",
+              model_used: "discarded:self_echo",
+              errors: [{ message: "Mensagem descartada pelo anti-eco (idêntica a uma resposta da IA nesta conversa nos últimos 3 min).", level: "warning" }],
+            });
+          } catch (e) {
+            console.error("[AntiEco] falha ao registrar descarte:", (e as Error)?.message);
+          }
           return new Response(JSON.stringify({ status: "skipped_self_echo" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -5369,6 +5399,29 @@ async function callAIAgent(
             }
           }
 
+          // 🛡️ REMARCAÇÃO: não cancelar antes de saber que o novo horário existe.
+          // Caso real (02/09 10:43 e 10:54): a IA cancelou o agendamento das 11h,
+          // SÓ ENTÃO consultou a agenda e descobriu que as 9h pedidas não existiam
+          // — só 10h e 11h. Fez isso duas vezes. Deu certo por sorte: se as 10h
+          // tivessem sido tomadas nesse intervalo, o cliente terminaria SEM
+          // agendamento nenhum, que é bem pior que o atrito de "não tenho 9h".
+          // Só vale para remarcação: cancelamento puro ("pode desmarcar") não
+          // exige consultar agenda e passa direto.
+          if (!precondError && toolName === "cancelar_agendamento") {
+            const motivo = String(parsedArgs?.reason || "").toLowerCase();
+            const ehRemarcacao = /remarc|reagend|trocar|troca de hor|mudar (?:o )?hor|antecip/.test(motivo);
+            const consultouAgenda = (logToolCalls || []).some((tc: any) =>
+              tc && (tc.name === "listar_horarios" || tc.name === "listar_horarios_geral"));
+            if (ehRemarcacao && !consultouAgenda) {
+              precondError =
+                "Você está cancelando para remarcar, mas ainda NÃO consultou a agenda do horário novo. "
+                + "Cancelar antes de confirmar que o horário de destino existe pode deixar o cliente SEM agendamento nenhum. "
+                + "Chame listar_horarios para a data e o profissional desejados PRIMEIRO. "
+                + "Se o horário que o cliente pediu não estiver em available_times, diga isso a ele e ofereça os que estão — "
+                + "NÃO cancele e NÃO escolha outro horário por conta própria.";
+            }
+          }
+
           if (!precondError && dateTools.has(toolName)) {
             const startDate = typeof parsedArgs?.start_date === "string" ? parsedArgs.start_date.trim() : "";
             if (/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
@@ -7028,7 +7081,21 @@ async function callAIAgent(
 
     // Claim explícito de criação nova — ainda útil para pegar "já agendei" mesmo
     // quando a mensagem anterior não foi detectada como prompt de confirmação.
-    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos))\b/i;
+    // ⚠️ Este é o caminho SEM dependência de contexto — o único que pega alegação
+    // de confirmação independente do que veio antes na conversa. Por muito tempo
+    // ele só reconhecia PRIMEIRA PESSOA ("agendei", "criei"), e a frase que o
+    // modelo realmente usa é passiva: "Seu horário está confirmado".
+    // Dois casos reais escaparam por isso (01/09 18:53 e 02/09 14:37): a IA
+    // confirmou agendamento com ZERO chamadas de ferramenta e o guard não viu.
+    // O outro caminho (IMPLIED_FINALIZATION_RE) reconheceria a frase, mas está
+    // atrás de isNewBookingFinalStep, que exige a mensagem anterior ser um
+    // prompt de confirmação reconhecido E o cliente ter respondido algo curto e
+    // afirmativo — em 14:37 o cliente perguntou ("Podemos marcar às 16h?") e em
+    // 18:53 a pergunta anterior era de remarcação, fraseado fora da whitelist.
+    // Ampliar aqui é seguro: o guard só age quando houve ZERO tentativa de
+    // agendar no turno, sem agendamento no ledger e sem busca ativa que
+    // justifique a frase — as três travas de legitimidade seguem intactas.
+    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|remarquei|remarcamos|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|(?:seu|sua|o|a)\s+(?:hor[aá]rio|agendamento|reserva)[^.!?]{0,70}?(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad|reservad|garantid)[oa]|(?:est[aá]|foi|ficou)\s+(?:confirmad|marcad|agendad|remarcad)[oa]\s+para|(?:hor[aá]rio|agendamento|reserva)\s+(?:confirmad|remarcad|agendad)[oa]\s+para|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|remarquei))\b/i;
     // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
