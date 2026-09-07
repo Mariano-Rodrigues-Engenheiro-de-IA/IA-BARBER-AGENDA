@@ -55,9 +55,18 @@ Deno.serve(async (req) => {
     }
 
 
+    // Sanitiza (quebra de linha colada no secret estoura o fetch) e manda o
+    // segredo nos três formatos que o CRM pode esperar — ele responde 401
+    // quando não reconhece o cabeçalho.
+    const safeSecret = bridgeSecret.replace(/[^\x21-\x7E]/g, "");
     const crmRes = await fetch(crmUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-shared-secret": bridgeSecret },
+      headers: {
+        "Content-Type": "application/json",
+        "x-shared-secret": safeSecret,
+        "x-api-key": safeSecret,
+        Authorization: `Bearer ${safeSecret}`,
+      },
       body: JSON.stringify({ barbershop_id, enabled: enabled ?? true }),
     });
     if (!crmRes.ok) {
