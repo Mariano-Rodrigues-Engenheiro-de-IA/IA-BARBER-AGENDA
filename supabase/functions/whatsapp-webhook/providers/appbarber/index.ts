@@ -1147,6 +1147,17 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         console.log(`[AppBarber] listar_agendamentos: tried=${JSON.stringify(triedInvoicePhones)}, comandas_abertas=${invoiceAppointments.length}, agenda=${historyAppointments.length}, total=${appointments.length}, periodo=${historyStart}→${historyEnd}`);
 
+        // Nota removida deliberadamente (09/09): o campo "note" sugerindo perguntar sobre
+        // outro telefone/data foi escrito pensando só no cenário de busca intencional
+        // (cliente quer cancelar/remarcar/confirmar algo que deveria existir). Mas essa
+        // mesma ferramenta também é chamada na VERIFICAÇÃO PREVENTIVA antes do primeiro
+        // criar_agendamento da conversa, onde retorno vazio é o resultado NORMAL e
+        // esperado (cliente novo, sem conflito). O note competia com a instrução do
+        // prompt ("se vazio, prossiga normalmente com criar_agendamento") e às vezes
+        // vencia — caso real: cliente Odair José Gaiari, 09/09, ~17 min de atraso porque
+        // a IA perguntou sobre outro telefone em vez de seguir com o agendamento. Os dois
+        // cenários de uso já têm instrução própria e completa no prompt, então a ferramenta
+        // não precisa (e não deve) sugerir nada.
         return {
           source: appointments.length === 0
             ? "invoice_search+appointments_history"
@@ -1158,9 +1169,6 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           history_diagnostics: historyDiagnostics,
           appointments,
           total: appointments.length,
-          ...(appointments.length === 0
-            ? { note: "Nenhum agendamento ativo encontrado para este telefone no AppBarber no período consultado. Confirme com o cliente o número usado no cadastro da barbearia ou a data do agendamento." }
-            : {}),
         };
       }
 
