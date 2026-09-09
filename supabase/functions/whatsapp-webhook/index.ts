@@ -7556,6 +7556,50 @@ async function callAIAgent(
       }
     }
 
+    // 🔒 F1 (FRIZZAR) — contar SERVIÇOS cobertos, não execuções.
+    // Caso real 28/08 (Daniel Morais): uma única chamada `agendar` com
+    // servicos:[Corte, Barba] deu certo, mas o contador olhava execuções (1) e o
+    // guard tratou o turno como incompleto, devolvendo fallback errado ao cliente.
+    if (provider === "frizzar" && prometidos > criados) {
+      const servicosCobertos = (logToolCalls || []).reduce((acc: number, tc: any) => {
+        if (!tc || !_mbBookingNames.has(tc.name)) return acc;
+        const r = tc.result;
+        if (!r || typeof r !== "object" || r.error || r.blocked === true || r.success === false) return acc;
+        const svcs = tc.args?.servicos ?? tc.args?.services;
+        return acc + (Array.isArray(svcs) && svcs.length > 0 ? svcs.length : 1);
+      }, 0);
+      if (servicosCobertos >= prometidos) {
+        console.log(
+          `[MultiBookingGuard] F1 frizzar: prometidos=${prometidos} já coberto por ${servicosCobertos} serviço(s) na(s) comanda(s) criada(s) — clampando para criados=${criados}.`,
+        );
+        prometidos = criados;
+      }
+    }
+
+    // 🔒 F2 (FRIZZAR) — clamp quando o classificador não tem evidência textual.
+    // Caso real 01/09 (Josuel): cliente pediu UM agendamento, classificador
+    // inflou prometidos=2. Sem 2ª pessoa, 2º horário e 2º profissional nas
+    // dimensões, e sem menção explícita na fala do cliente, vale a execução.
+    if (
+      provider === "frizzar" &&
+      _mbCfg.useIntentShape &&
+      cls.intentShape &&
+      prometidos > Math.max(1, bookedExecutionCount) &&
+      cls.intentShape.distinctPeople <= 1 &&
+      cls.intentShape.distinctTimes <= 1 &&
+      cls.intentShape.distinctProfessionals <= 1
+    ) {
+      const visibleMsgs2 = messages.filter((m: any) =>
+        (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim()
+      );
+      const lastUser2 = [...visibleMsgs2].reverse().find((m: any) => m.role === "user")?.content || "";
+      if (countExplicitProfessionalSelections(lastUser2) < 2 && countExplicitUserTimeSelections(lastUser2) < 2) {
+        const alvo = Math.max(1, bookedExecutionCount);
+        console.log(`[MultiBookingGuard] F2 frizzar: clamp sem evidência textual de 2ª pessoa/horário: prometidos=${prometidos} → ${alvo}.`);
+        prometidos = alvo;
+      }
+    }
+
     // 🚨 AJUSTE (ago/2026, auditoria de 45 dias de logs):
     // quando JÁ existe agendamento criado no turno, o loop de recuperação multi
     // só teve resultado no Frizzar (16 recuperações concluídas). No AppBarber,
