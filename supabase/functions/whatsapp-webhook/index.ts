@@ -7063,18 +7063,38 @@ async function callAIAgent(
 
     const lastAssistantMessage = getLastAssistantMessage(history) || "";
     const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
-    const userIsShortConfirmation = isAffirmativeReply(userMessage || "");
+    // 2ª fonte de legitimidade (item 3 da auditoria set/2026): DISPARO DE
+    // CONFIRMAÇÃO de agendamento PRÉ-EXISTENTE — "Você agendou [SERVIÇO] com
+    // [PROFISSIONAL] para [DATA/HORA]. Podemos confirmar seu horário?". Esse
+    // texto é script obrigatório do prompt e NÃO é criação nova; sem reconhecê-lo
+    // o guard tratava a resposta correta como alucinação (7 falsos positivos em
+    // 7 disparos no AppBarber no último mês, 6 deles em 03/09).
+    const CONFIRMATION_DISPATCH_RE =
+      /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)/i;
+    const lastAssistantWasConfirmationDispatch = !lastAssistantWasHuman
+      && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage);
+    // Descasca saudação/cortesia antes de testar afirmação: o debounce agrupa
+    // "Bom dia" + "Confirmado" numa única mensagem, e isAffirmativeReply casa a
+    // string inteira.
+    const _strippedUserMessage = String(userMessage || "")
+      .replace(/^\s*(?:bom\s+dia|boa\s+tarde|boa\s+noite|ol[aá]|oi|opa|e\s+a[íi])\b[\s,!.:;-]*/i, "")
+      .trim();
+    const userIsShortConfirmation = isAffirmativeReply(userMessage || "")
+      || isAffirmativeReply(_strippedUserMessage);
 
-    // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia,
-    // isso é confirmação de agendamento já existente. Não é fluxo de criação da
-    // IA, então este guard fica completamente fora do caminho.
-    const isHumanExistingBookingConfirmation = lastAssistantWasHuman && userIsShortConfirmation;
+    // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia
+    // OU a um disparo de confirmação, isso é confirmação de agendamento já
+    // existente. Não é fluxo de criação da IA, então este guard fica fora do
+    // caminho.
+    const isHumanExistingBookingConfirmation =
+      (lastAssistantWasHuman || lastAssistantWasConfirmationDispatch) && userIsShortConfirmation;
 
     // Contexto estrutural de CRIAÇÃO NOVA: a ÚLTIMA mensagem da IA (não humana)
     // ofereceu/ancorou um horário e pediu confirmação; o cliente respondeu curto
     // confirmando. Neste ponto a IA precisa chamar agendar/criar_agendamento.
     // Se ela apenas disser "tudo certo, te esperamos", isso é promessa fantasma.
     const isNewBookingFinalStep = !lastAssistantWasHuman
+      && !lastAssistantWasConfirmationDispatch
       && userIsShortConfirmation
       && !!lastAssistantMessage
       && isBookingTimeConfirmationPrompt(lastAssistantMessage);
