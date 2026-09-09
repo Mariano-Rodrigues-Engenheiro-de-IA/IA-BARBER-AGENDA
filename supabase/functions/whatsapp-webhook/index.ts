@@ -3886,6 +3886,143 @@ function serviceNameImpliesAnotherService(bookedServiceName: string, candidateSe
 
 
 
+// ============================================================================
+// ⚠️ APPBARBER-ONLY — helpers dos itens 8 e 9 (set/2026).
+// Não são usados por nenhum outro provider; toda chamada abaixo está gateada
+// por provider === "appbarber".
+// ============================================================================
+
+/**
+ * ITEM 8 (APPBARBER) — códigos já obtidos NESTA conversa/turno.
+ * Causa raiz medida em 3 dos 15 casos de reinjeção falha: a IA perdia
+ * service_code / professional_code / duração que ela mesma já tinha buscado no
+ * turno, e a reinjeção não devolvia esses dados. Aqui a gente extrai os códigos
+ * dos args/results das tool_calls do turno e devolve texto curto pra diretiva.
+ */
+function appbarberKnownCodesHint(logToolCalls: any[]): string {
+  const services = new Map<string, { code: string; name?: string; duration?: number }>();
+  const professionals = new Map<string, { code: string; name?: string }>();
+
+  const pushService = (code: any, name?: any, duration?: any) => {
+    const c = code === 0 || code ? String(code).trim() : "";
+    if (!c) return;
+    const prev = services.get(c) || { code: c };
+    services.set(c, {
+      code: c,
+      name: prev.name || (typeof name === "string" && name.trim() ? name.trim() : undefined),
+      duration: prev.duration ?? (Number.isFinite(Number(duration)) && Number(duration) > 0 ? Number(duration) : undefined),
+    });
+  };
+  const pushProfessional = (code: any, name?: any) => {
+    const c = code === 0 || code ? String(code).trim() : "";
+    if (!c) return;
+    const prev = professionals.get(c) || { code: c };
+    professionals.set(c, {
+      code: c,
+      name: prev.name || (typeof name === "string" && name.trim() ? name.trim() : undefined),
+    });
+  };
+
+  for (const tc of logToolCalls || []) {
+    if (!tc || typeof tc.name !== "string") continue;
+    const a = tc.args || {};
+    pushService(a.service_code, a.service_name, a.service_duration_minutes);
+    if (Array.isArray(a.services)) {
+      for (const s of a.services) pushService(s?.service_code, s?.name, s?.duration ?? s?.service_duration_minutes);
+    }
+    pushProfessional(a.professional_code, a.professional_name);
+
+    const r = tc.result;
+    if (!r || typeof r !== "object") continue;
+    const lists: any[] = [
+      Array.isArray((r as any).servicos) ? (r as any).servicos : null,
+      Array.isArray((r as any).services) ? (r as any).services : null,
+      Array.isArray((r as any).profissionais) ? (r as any).profissionais : null,
+      Array.isArray((r as any).professionals) ? (r as any).professionals : null,
+    ].filter(Boolean);
+    for (const list of lists) {
+      for (const item of list.slice(0, 40)) {
+        if (!item || typeof item !== "object") continue;
+        if (item.service_code !== undefined) {
+          pushService(item.service_code, item.name ?? item.nome, item.service_interval ?? item.duration);
+        }
+        if (item.professional_code !== undefined || item.employee_code !== undefined) {
+          pushProfessional(item.professional_code ?? item.employee_code, item.name ?? item.nome);
+        }
+      }
+    }
+  }
+
+  const parts: string[] = [];
+  if (services.size) {
+    parts.push(
+      `service_code já conhecidos: ${[...services.values()].slice(0, 12).map((s) =>
+        `${s.code}${s.name ? ` (${s.name}` : ""}${s.duration ? `${s.name ? ", " : " ("}${s.duration}min` : ""}${s.name || s.duration ? ")" : ""}`
+      ).join(", ")}.`,
+    );
+  }
+  if (professionals.size) {
+    parts.push(
+      `professional_code já conhecidos: ${[...professionals.values()].slice(0, 12).map((p) =>
+        `${p.code}${p.name ? ` (${p.name})` : ""}`
+      ).join(", ")}.`,
+    );
+  }
+  return parts.join(" ");
+}
+
+/**
+ * ITEM 8 (APPBARBER) — a falha do turno foi só o nome do cliente?
+ */
+function appbarberBlockedByInvalidName(logToolCalls: any[], bookingToolNames: Set<string>): boolean {
+  const attempts = (logToolCalls || []).filter((tc: any) => tc && bookingToolNames.has(tc.name));
+  if (attempts.length === 0) return false;
+  return attempts.every((tc: any) => tc?.result?.reason === "invalid_customer_name");
+}
+
+/**
+ * ITEM 9 (APPBARBER) — sinal barato de "isso é claramente 1 agendamento só".
+ * Evita rodar o classificador LLM do MultiBookingGuard em 163/206 eventos
+ * medidos em 30 dias (129 de 144 já liberados + 34 dos 55 não liberados),
+ * sem filtrar nenhum dos 5 casos genuínos de 2 pessoas.
+ * Critério: 1 única tentativa de criação, nenhum services[] com 2+ itens e
+ * nenhuma marca textual de 2ª pessoa / 2º horário nas últimas mensagens.
+ */
+const APPBARBER_MULTI_TEXT_SIGNALS = [
+  /\beu e\b/i, /\bn[óo]s\b/i, /\bnosso[s]?\b/i, /\ba gente\b/i,
+  /\bn[óo]s dois\b/i, /\bos dois\b/i, /\bpra n[óo]s\b/i,
+  /\bdois hor[áa]rios\b/i, /\bdois cortes\b/i, /\bduas pessoas\b/i,
+  /\bpra mim e\b/i, /\bpara mim e\b/i, /\bmais um[a]?\b/i,
+  /\btamb[ée]m (quer|vai|precisa)\b/i,
+  /\b(meu|minha) (filho|filha|esposa|marido|irm[ãa]o|irm[ãa]|pai|m[ãa]e|namorad[oa]|amig[oa]|primo|prima|sobrinho|sobrinha)\b/i,
+  /\bconvidad[oa]\b/i, /\bacompanhante\b/i,
+];
+
+function appbarberIsClearlySingleBooking(params: {
+  logToolCalls: any[];
+  bookingToolNames: Set<string>;
+  bookingAttempts: number;
+  messages: any[];
+}): { single: boolean; reason: string } {
+  const { logToolCalls, bookingToolNames, bookingAttempts, messages } = params;
+  if (bookingAttempts !== 1) return { single: false, reason: `attempts=${bookingAttempts}` };
+
+  for (const tc of logToolCalls || []) {
+    if (!tc || !bookingToolNames.has(tc.name)) continue;
+    const svcs = tc.args?.services ?? tc.args?.servicos;
+    if (Array.isArray(svcs) && svcs.length >= 2) return { single: false, reason: "services[]>=2" };
+  }
+
+  const window = (messages || [])
+    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim())
+    .slice(-5)
+    .map((m: any) => String(m.content))
+    .join("\n");
+  const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(window));
+  if (hit) return { single: false, reason: `texto: ${hit.source}` };
+
+  return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem marca textual" };
+}
 
 
 // ============================================================================
@@ -7535,16 +7672,41 @@ async function callAIAgent(
       .filter((a) => a && a.category === "booking" && a.status === "success" && typeof a.summary === "string")
       .map((a) => String(a.summary))
       .slice(-6);
-    const cls = await classifyPendingBookings({
-      messages,
-      aiEndpoint,
-      aiAuthKey,
-      modelUsed,
-      attempts: _bookingAttempts,
-      bookedServiceNames,
-      bookedExecutionCount,
-      priorTurnBookings,
-    });
+    // 🔒 ITEM 9 (APPBARBER) — filtro barato ANTES do classificador LLM.
+    // Medição de 30 dias: 206 eventos do guard, 199 com prometidos=1 (agendamento
+    // único que nunca precisou de classificador). Com 1 única tentativa, sem
+    // services[] múltiplo e sem marca textual de 2ª pessoa/2º horário, o turno é
+    // tratado deterministicamente como 1 agendamento (163/206 filtrados na
+    // simulação, 0 dos 5 casos genuínos de múltiplas pessoas filtrados).
+    type PendingCls = Awaited<ReturnType<typeof classifyPendingBookings>>;
+    const _cheapSingle = provider === "appbarber"
+      ? appbarberIsClearlySingleBooking({
+        logToolCalls,
+        bookingToolNames: _mbBookingNames,
+        bookingAttempts: _bookingAttempts,
+        messages,
+      })
+      : { single: false, reason: "n/a (provider != appbarber)" };
+    let cls: PendingCls;
+    if (_cheapSingle.single) {
+      console.log(`[MultiBookingGuard] cheap single filter (appbarber): ${_cheapSingle.reason} — classificador não foi chamado.`);
+      cls = {
+        total: 1,
+        source: "cheap_single_filter",
+        reasoning: `filtro barato appbarber: ${_cheapSingle.reason}`,
+      } as unknown as PendingCls;
+    } else {
+      cls = await classifyPendingBookings({
+        messages,
+        aiEndpoint,
+        aiAuthKey,
+        modelUsed,
+        attempts: _bookingAttempts,
+        bookedServiceNames,
+        bookedExecutionCount,
+        priorTurnBookings,
+      });
+    }
     let prometidos = cls.total;
 
     // 🔒 FRIZZAR: a unidade do guard é VISITA/COMANDA, não quantidade de
@@ -7839,14 +8001,25 @@ async function callAIAgent(
       for (let recoveryRound = 1; recoveryRound <= MAX_GUARD_RECOVERY_ROUNDS && current.count < prometidos; recoveryRound++) {
         const faltam = prometidos - current.count;
         const feitosSummary = current.breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum ainda";
+        // 🔒 ITEM 8 (APPBARBER) — a reinjeção perdia os códigos que a própria IA
+        // já havia buscado no turno (3 casos em 30 dias) e proibia perguntar o
+        // nome mesmo quando o bloqueio era exatamente falta de nome (8 casos).
+        const _codesHint = provider === "appbarber" ? appbarberKnownCodesHint(logToolCalls) : "";
+        const _nameBlocked = provider === "appbarber"
+          && appbarberBlockedByInvalidName(logToolCalls, _mbBookingNames);
         const nudge = [
           `[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO]`,
           `CORREÇÃO OBRIGATÓRIA DO MULTI-BOOKING GUARD. Ignore qualquer instrução anterior de parar após um agendamento: a rodada ainda está incompleta.`,
           `O cliente pediu/confirmou ${prometidos} agendamento(s), mas só existem ${current.count} criado(s).`,
           `Já criados: ${feitosSummary}. Faltam ${faltam}.`,
-          `O cliente já forneceu no histórico os dados necessários (serviço, profissional, horário e pessoa quando aplicável). NÃO pergunte nada ao cliente e NÃO escale humano.`,
+          ...(_codesHint ? [`DADOS JÁ OBTIDOS NESTA CONVERSA (use estes, não busque de novo nem invente): ${_codesHint}`] : []),
+          _nameBlocked
+            ? `A criação foi bloqueada por NOME DO CLIENTE inválido/vazio. Releia esta conversa: se o cliente já disse o nome real aqui, use esse nome e chame "${bookingToolName}" agora com os dados acima. Se realmente não houver nome nesta conversa, responda em texto perguntando o nome ao cliente com naturalidade — nesse caso é permitido responder sem tool_calls e é proibido escalar humano.`
+            : `O cliente já forneceu no histórico os dados necessários (serviço, profissional, horário e pessoa quando aplicável). NÃO pergunte nada ao cliente e NÃO escale humano.`,
           `Resolva agora: se precisar consultar alguma ferramenta de leitura para recuperar ID/horário, consulte; em seguida chame "${bookingToolName}" para cada agendamento faltante.`,
-          `É proibido responder em texto enquanto ainda faltar agendamento. A próxima saída deve conter tool_calls.`,
+          _nameBlocked
+            ? `Se o nome já existir na conversa, a próxima saída deve conter tool_calls.`
+            : `É proibido responder em texto enquanto ainda faltar agendamento. A próxima saída deve conter tool_calls.`,
         ].join(" ");
 
         console.warn(`[MultiBookingGuard] recuperação automática rodada=${recoveryRound}/${MAX_GUARD_RECOVERY_ROUNDS} faltam=${faltam}.`);
@@ -7860,7 +8033,10 @@ async function callAIAgent(
             tools,
             // Frizzar: recovery em texto não corrige nada. Obriga ao menos uma
             // tool_call por rodada; consultas auxiliares continuam permitidas.
-            tool_choice: _mbCfg.recoveryToolChoice,
+            // ITEM 8 (appbarber): quando o bloqueio é falta de NOME, a saída certa
+            // pode ser texto (perguntar o nome) — forçar tool_call aqui era o que
+            // empurrava esses turnos pro fallback técnico.
+            tool_choice: _nameBlocked ? "auto" : _mbCfg.recoveryToolChoice,
           };
           if (modelUsed.includes("gpt-5")) retryBody.reasoning_effort = "low";
           const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `guard-reinject-${recoveryRound}`);
@@ -7875,6 +8051,17 @@ async function callAIAgent(
           const retryMsg: any = retryJson?.choices?.[0]?.message;
           const retryToolCalls: any[] = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
           if (retryToolCalls.length === 0) {
+            // ITEM 8 (appbarber): bloqueio por nome + resposta em texto = pergunta
+            // legítima ao cliente. Aceita como resposta final em vez de queimar
+            // rodadas e cair no "tive um probleminha".
+            const _retryText = typeof retryMsg?.content === "string" ? retryMsg.content.trim() : "";
+            if (_nameBlocked && _retryText) {
+              finalResponse = _retryText;
+              guardOverrideResponse = true;
+              guardLog("name_question_asked");
+              console.log(`[MultiBookingGuard] item8: pergunta de nome aceita como resposta final (rodada=${recoveryRound}).`);
+              break;
+            }
             recoveryError = "retry sem tool_calls";
             console.warn(`[MultiBookingGuard] recuperação rodada=${recoveryRound} veio sem tool_calls; reforçando.`);
             logErrors.push({ message: `Multi-booking recovery sem tool_calls na rodada ${recoveryRound}`, level: "warning" });
