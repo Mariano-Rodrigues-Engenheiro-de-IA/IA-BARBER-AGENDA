@@ -735,14 +735,13 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               hint: `Chame listar_horarios_geral novamente para ${combo.name} usando service_code=${comboCode} e só depois chame criar_agendamento com UM único service_code. NÃO use services[] com corte + sobrancelha separados.`,
             };
           }
-          return {
-            error: "O AppBarber não aceita criar vários services[] separados na mesma visita sem um combo cadastrado/selecionado; isso causa Choque de Horário.",
-            blocked: true,
-            recoverable: true,
-            retryable: true,
-            reason: "multi_service_without_combo",
-            hint: "Se existir um combo no catálogo cobrindo esses serviços, use esse combo e consulte disponibilidade dele. Se não existir, ofereça dividir em horários separados.",
-          };
+          // ✅ Sem combo cadastrado cobrindo os serviços: em vez de bloquear (o que
+          // empurrava a IA para DUAS chamadas separadas de criar_agendamento — e a
+          // segunda batia em `future_appointments_limit`, deixando o cliente com
+          // metade do pedido), seguimos com services[] na MESMA comanda. A trava de
+          // slots consecutivos (Correção B, logo abaixo) é quem garante que a soma
+          // das durações cabe no horário escolhido.
+          console.log(`[AppBarber] criar_agendamento multi-serviço sem combo cadastrado — seguindo com services[]=${requestedServices.map((s: any) => s.service_code).join(",")} na mesma comanda.`);
         }
         // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
         // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
