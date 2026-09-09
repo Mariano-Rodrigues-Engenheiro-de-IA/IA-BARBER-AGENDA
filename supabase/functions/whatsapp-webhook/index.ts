@@ -7362,6 +7362,44 @@ async function callAIAgent(
     }
   }
 
+  // ============================================================================
+  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE SOMBRA, SOMENTE APPBARBER
+  // A IA confirma um agendamento PRÉ-EXISTENTE sem reconsultar a agenda nesta
+  // interação. Se a barbearia mudou/cancelou pelo sistema deles, o horário
+  // confirmado pode não existir mais (~425-479 turnos/mês, ~78 divergências
+  // estimadas). Nesta fase só DETECTA e registra — não altera a resposta.
+  // ============================================================================
+  if (finalResponse && provider === "appbarber") {
+    const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
+    const confirmsExisting = /\b(confirmad[oa]|est[aá]\s+confirmad|seu\s+hor[aá]rio|agendamento\s+(?:est[aá]|segue))\b/i.test(finalResponse);
+    const lookedUpThisTurn = (logToolCalls || []).some((tc: any) => {
+      if (!tc || tc.name !== "listar_agendamentos") return false;
+      const r = tc.result;
+      return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+    });
+    const createdThisTurn = (logToolCalls || []).some((tc: any) => {
+      if (!tc || tc.name !== "criar_agendamento") return false;
+      const r = tc.result;
+      return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+    });
+    if (citesTime && confirmsExisting && !lookedUpThisTurn && !createdThisTurn) {
+      console.warn(`[StaleConfirmationGuard] SHADOW: confirmação de horário pré-existente sem listar_agendamentos nesta interação.`);
+      logToolCalls.push({
+        name: "__phantom_guard__",
+        args: { phase: "response_guard" },
+        result: {
+          layer: "stale_confirmation_guard",
+          provider,
+          acao: "detected_shadow_no_block",
+          claim: String(finalResponse).slice(0, 160),
+          looked_up_this_turn: lookedUpThisTurn,
+        },
+      });
+    }
+  }
+
+
+
   // ⚠️ ORDEM (item 2 da auditoria set/2026): o RescheduleGuard roda ANTES do
   // MultiBookingGuard. Quando o MultiBookingGuard já tinha sobrescrito a resposta,
   // a flag guardOverrideResponse desligava o RescheduleGuard antes dele checar o
