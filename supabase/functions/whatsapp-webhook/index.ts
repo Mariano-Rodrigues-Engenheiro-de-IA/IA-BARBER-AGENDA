@@ -7852,7 +7852,14 @@ async function callAIAgent(
               messages.push({
                 role: "tool",
                 tool_call_id: tc.id,
-                content: JSON.stringify({ skipped: true, reason: "MultiBookingGuard: nesta recuperação só são permitidas consultas auxiliares e tools de agendamento." }),
+                // F4 — devolver o MOTIVO do bloqueio, não um "skipped" genérico:
+                // sem isso a IA queimava a rodada tentando escalar humano e o turno
+                // caía no fallback (casos 01/09 e 05/09 do Frizzar).
+                content: JSON.stringify({
+                  skipped: true,
+                  reason: `MultiBookingGuard: a ferramenta "${tname}" está bloqueada nesta rodada de recuperação — só valem consultas de leitura e a tool de agendamento.`,
+                  instruction: "Não tente escalar para humano nem pedir dados ao cliente. Se faltar horário/vaga, use as alternativas reais retornadas pelas consultas e ofereça-as ao cliente.",
+                }),
               });
               continue;
             }
@@ -7917,9 +7924,55 @@ async function callAIAgent(
       } else {
         console.warn(`[MultiBookingGuard] recuperação esgotada sem completar: ${current.count}/${prometidos}. Não escalando humano.`);
         logErrors.push({ message: `Multi-booking recovery esgotada: ${current.count}/${prometidos}${recoveryError ? ` (${recoveryError})` : ""}`, level: "error" });
-        finalResponse = buildPartialBookingFallback(current.count, prometidos, current.breakdown);
-        guardOverrideResponse = true;
-        guardLog("recovery_exhausted_no_human");
+        // F3 — se a indisponibilidade veio com alternativas reais (outros
+        // profissionais, outros horários do mesmo profissional ou outros dias),
+        // oferecer essas alternativas em vez do fallback "tive um probleminha".
+        // Caso real 05/09 (Ney Gomes): 2º serviço sem vaga em nenhum profissional.
+        let _altOffered = false;
+        if (_mbCfg.useAlternativesShortCircuit) {
+          const lateAlt = (logToolCalls || []).find((tc: any) => {
+            if (!tc || !_mbBookingNames.has(tc.name)) return false;
+            const r = tc.result;
+            if (!r || typeof r !== "object" || !r.error) return false;
+            return (Array.isArray(r.horariosOutrosProfissionais) && r.horariosOutrosProfissionais.length > 0)
+              || (Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0)
+              || (Array.isArray(r.outrosDias) && r.outrosDias.length > 0);
+          });
+          if (lateAlt) {
+            try {
+              const feitos = current.breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum";
+              messages.push({
+                role: "system",
+                content: [
+                  `[SISTEMA — INTERNO, NÃO REPETIR AO CLIENTE]`,
+                  `Parte do pedido foi concluída (${feitos}) e o restante não tem vaga no horário pedido, MAS as consultas trouxeram alternativas reais no payload (horariosOutrosProfissionais, horariosLivres, outrosDias).`,
+                  `NÃO chame nenhuma tool. NÃO diga "tive um probleminha" nem prometa retornar depois.`,
+                  `Numa única mensagem curta: confirme o que já ficou agendado e ofereça as alternativas REAIS para o que faltou, perguntando qual o cliente prefere. Não invente horário que não esteja no payload.`,
+                ].join(" "),
+              });
+              const altBody2: any = { model: modelUsed, messages, max_completion_tokens: 500, tool_choice: "none" };
+              if (modelUsed.includes("gpt-5")) altBody2.reasoning_effort = "minimal";
+              const altResp2 = await fetchAIWithRetry(JSON.stringify(altBody2), "guard-late-alternatives-answer");
+              if (altResp2.ok) {
+                const altJson2: any = await altResp2.json();
+                const altText2 = altJson2?.choices?.[0]?.message?.content?.trim();
+                if (altText2) {
+                  finalResponse = altText2;
+                  guardOverrideResponse = true;
+                  guardLog("recovery_exhausted_alternatives_offered");
+                  _altOffered = true;
+                }
+              }
+            } catch (e) {
+              console.error(`[MultiBookingGuard] late-alternatives exception:`, (e as Error)?.message);
+            }
+          }
+        }
+        if (!_altOffered) {
+          finalResponse = buildPartialBookingFallback(current.count, prometidos, current.breakdown);
+          guardOverrideResponse = true;
+          guardLog("recovery_exhausted_no_human");
+        }
       }
       } // fim else (sem falha definitiva → executou recovery loop)
       } // fim else (sem alternatives failure → executou recovery loop tradicional)
