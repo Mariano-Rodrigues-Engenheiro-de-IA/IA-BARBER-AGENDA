@@ -269,6 +269,55 @@ describe.skip("PhantomConfirmationGuard — confirmação sem ferramenta [GAP AB
   });
 });
 
+describe("isBookingTimeConfirmationPrompt — reconhece pedido de confirmação de remarcação", () => {
+  /**
+   * Espelho de whatsapp-webhook/index.ts (~:9510). Caso real: 08/09, cliente
+   * Leonardo Neres (9Cinco). A IA perguntou "Confirmo a mudança para as 17h
+   * com o mesmo profissional, Nando?", o cliente respondeu "Sim", e a resposta
+   * seguinte ("Perfeito, está confirmado para amanhã às 17h") NUNCA foi
+   * testada contra o guard de confirmação fantasma, porque a frase de pergunta
+   * não batia em nenhum padrão reconhecido — "para" ligava ao horário, não a
+   * "você", e por isso isNewBookingFinalStep ficava false. A IA tinha, de
+   * fato, zero chamadas de ferramenta na rodada da confirmação falsa.
+   */
+  const isBookingTimeConfirmationPrompt = (value: string): boolean => {
+    const normalized = value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (!normalized) return false;
+    return /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|confirmo a mudanca|confirmo a troca|confirmo a alteracao|confirmo a remarcacao|confirmo o agendamento|confirmo o horario|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
+  };
+
+  it("pega o caso real do Leonardo Neres (08/09, 9Cinco)", () => {
+    expect(isBookingTimeConfirmationPrompt("Confirmo a mudança para as 17h com o mesmo profissional, Nando?")).toBe(true);
+  });
+
+  it.each([
+    "Confirmo a troca para amanhã às 10h?",
+    "Confirmo a alteração para sexta às 16h?",
+    "Confirmo a remarcação para o mesmo horário?",
+    "Confirmo o agendamento para quinta?",
+    "Confirmo o horário das 9h?",
+  ])("pega variações do mesmo padrão: %s", (texto) => {
+    expect(isBookingTimeConfirmationPrompt(texto)).toBe(true);
+  });
+
+  it.each([
+    "Posso confirmar para você?",
+    "Confirmo pra você às 15h com o Nando?",
+    "Quer que eu confirme esse horário?",
+  ])("não regride nos padrões que já existiam: %s", (texto) => {
+    expect(isBookingTimeConfirmationPrompt(texto)).toBe(true);
+  });
+
+  it.each([
+    "Com o Leonardo tenho 10h ou 10h40, qual prefere?",
+    "Você tem um agendamento de cabelo na quarta às 14h.",
+    "Pronto, cancelei seu horário.",
+    "Tenho 9h, 10h ou 11h. Qual prefere?",
+  ])("não dispara em mensagens que não pedem confirmação: %s", (texto) => {
+    expect(isBookingTimeConfirmationPrompt(texto)).toBe(false);
+  });
+});
+
 describe("anti-eco — só descarta eco de verdade", () => {
   /**
    * Espelho da lógica de comparação de whatsapp-webhook/index.ts (~:1762).

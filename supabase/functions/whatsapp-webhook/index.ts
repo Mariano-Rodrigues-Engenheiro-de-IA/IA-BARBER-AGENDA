@@ -9510,7 +9510,16 @@ function extractSingleTimeReference(value: string): string | null {
 function isBookingTimeConfirmationPrompt(value: string): boolean {
   const normalized = normalizeUserFacingText(value);
   if (!normalized) return false;
-  return /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
+  // "confirmo a mudanca/troca/alteracao/remarcacao [para ...]" cobre o padrão de
+  // remarcação (ex: "Confirmo a mudança para as 17h com o mesmo profissional?"),
+  // que os padrões anteriores ("confirmo pra você"/"confirmo para você") não
+  // cobriam — o "para" nessa frase liga ao horário, não a "você". Caso real:
+  // 08/09, cliente Leonardo Neres (9Cinco) — a IA perguntou exatamente essa
+  // frase, o cliente confirmou, e a resposta final ("está confirmado") nunca
+  // foi testada contra IMPLIED_FINALIZATION_RE porque isNewBookingFinalStep
+  // ficou false aqui. Ver src/test/appbarber-failure.test.ts para o teste de
+  // regressão deste caso específico.
+  return /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|confirmo a mudanca|confirmo a troca|confirmo a alteracao|confirmo a remarcacao|confirmo o agendamento|confirmo o horario|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
 }
 
 // isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
