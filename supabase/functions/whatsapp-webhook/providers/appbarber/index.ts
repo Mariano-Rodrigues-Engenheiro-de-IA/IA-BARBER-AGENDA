@@ -256,11 +256,23 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar UM service_code real, profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. Para combo/múltiplos serviços, use o service_code do combo cadastrado — nunca services[] separados.",
+        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço(s), profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. MÚLTIPLOS SERVIÇOS NA MESMA VISITA: se houver combo cadastrado no catálogo cobrindo os serviços, use o service_code do combo; se NÃO houver, envie services[] com os serviços na MESMA chamada (uma só). NUNCA faça duas chamadas separadas de criar_agendamento para a mesma pessoa/visita — a segunda bate no limite de agendamentos futuros da conta.",
         parameters: {
           type: "object",
           properties: {
-            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Para combo/múltiplos serviços, use o service_code do combo cadastrado." },
+            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Use quando for um único serviço (ou o combo cadastrado)." },
+            services: {
+              type: "array",
+              description: "Múltiplos serviços na MESMA visita, numa única chamada (só quando não existir combo cadastrado cobrindo eles). O primeiro item é o serviço principal usado na checagem de disponibilidade.",
+              items: {
+                type: "object",
+                properties: {
+                  service_code: { type: "number" },
+                  duration: { type: "number", description: "Duração em minutos (service_interval)." },
+                },
+                required: ["service_code"],
+              },
+            },
             professional_code: { type: "number" },
             start_date: { type: "string", description: "YYYY-MM-DD" },
             start_time: { type: "string", description: "HH:MM (exato de available_times)" },
@@ -269,7 +281,7 @@ export function buildAppBarberTools(tenant: any) {
             service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval retornado por listar_servicos). Obrigatório para evitar rejeição da API." },
             scheduling_observation: { type: "string", description: "Observação opcional. O sistema sempre acrescenta nome e telefone para facilitar busca/cancelamento." },
           },
-          required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone", "service_duration_minutes"],
+          required: ["professional_code", "start_date", "start_time", "customer_name", "customer_phone"],
         },
       },
     },
