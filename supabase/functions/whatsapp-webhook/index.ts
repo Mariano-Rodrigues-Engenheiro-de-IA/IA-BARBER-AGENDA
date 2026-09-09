@@ -7273,10 +7273,10 @@ async function callAIAgent(
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
     const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
-    const sentences = finalResponse.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-    const hasExplicitCreationClaim = sentences.some((s) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
+    const hasExplicitCreationClaim = sentences.some((s: string) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
-      && sentences.some((s) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+      && sentences.some((s: string) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
       && (hasExplicitCreationClaim || hasImpliedFinalizationClaim);
 
