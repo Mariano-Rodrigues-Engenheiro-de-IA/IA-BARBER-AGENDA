@@ -7287,7 +7287,9 @@ async function callAIAgent(
         }
 
         if (!recovered) {
-          finalResponse = "Deixa eu confirmar aqui rapidinho e já te retorno.";
+          // Fallback sem promessa de retorno (a IA não reabre conversa sozinha):
+          // convida o cliente a continuar no mesmo turno.
+          finalResponse = "Só um instante que eu confiro seu horário na agenda agora.";
           guardOverrideResponse = true;
         }
       }
