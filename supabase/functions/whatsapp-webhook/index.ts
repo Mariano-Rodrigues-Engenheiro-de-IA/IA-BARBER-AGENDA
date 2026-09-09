@@ -7063,18 +7063,38 @@ async function callAIAgent(
 
     const lastAssistantMessage = getLastAssistantMessage(history) || "";
     const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
-    const userIsShortConfirmation = isAffirmativeReply(userMessage || "");
+    // 2ª fonte de legitimidade (item 3 da auditoria set/2026): DISPARO DE
+    // CONFIRMAÇÃO de agendamento PRÉ-EXISTENTE — "Você agendou [SERVIÇO] com
+    // [PROFISSIONAL] para [DATA/HORA]. Podemos confirmar seu horário?". Esse
+    // texto é script obrigatório do prompt e NÃO é criação nova; sem reconhecê-lo
+    // o guard tratava a resposta correta como alucinação (7 falsos positivos em
+    // 7 disparos no AppBarber no último mês, 6 deles em 03/09).
+    const CONFIRMATION_DISPATCH_RE =
+      /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)/i;
+    const lastAssistantWasConfirmationDispatch = !lastAssistantWasHuman
+      && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage);
+    // Descasca saudação/cortesia antes de testar afirmação: o debounce agrupa
+    // "Bom dia" + "Confirmado" numa única mensagem, e isAffirmativeReply casa a
+    // string inteira.
+    const _strippedUserMessage = String(userMessage || "")
+      .replace(/^\s*(?:bom\s+dia|boa\s+tarde|boa\s+noite|ol[aá]|oi|opa|e\s+a[íi])\b[\s,!.:;-]*/i, "")
+      .trim();
+    const userIsShortConfirmation = isAffirmativeReply(userMessage || "")
+      || isAffirmativeReply(_strippedUserMessage);
 
-    // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia,
-    // isso é confirmação de agendamento já existente. Não é fluxo de criação da
-    // IA, então este guard fica completamente fora do caminho.
-    const isHumanExistingBookingConfirmation = lastAssistantWasHuman && userIsShortConfirmation;
+    // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia
+    // OU a um disparo de confirmação, isso é confirmação de agendamento já
+    // existente. Não é fluxo de criação da IA, então este guard fica fora do
+    // caminho.
+    const isHumanExistingBookingConfirmation =
+      (lastAssistantWasHuman || lastAssistantWasConfirmationDispatch) && userIsShortConfirmation;
 
     // Contexto estrutural de CRIAÇÃO NOVA: a ÚLTIMA mensagem da IA (não humana)
     // ofereceu/ancorou um horário e pediu confirmação; o cliente respondeu curto
     // confirmando. Neste ponto a IA precisa chamar agendar/criar_agendamento.
     // Se ela apenas disser "tudo certo, te esperamos", isso é promessa fantasma.
     const isNewBookingFinalStep = !lastAssistantWasHuman
+      && !lastAssistantWasConfirmationDispatch
       && userIsShortConfirmation
       && !!lastAssistantMessage
       && isBookingTimeConfirmationPrompt(lastAssistantMessage);
@@ -7267,7 +7287,9 @@ async function callAIAgent(
         }
 
         if (!recovered) {
-          finalResponse = "Deixa eu confirmar aqui rapidinho e já te retorno.";
+          // Fallback sem promessa de retorno (a IA não reabre conversa sozinha):
+          // convida o cliente a continuar no mesmo turno.
+          finalResponse = "Só um instante que eu confiro seu horário na agenda agora.";
           guardOverrideResponse = true;
         }
       }
@@ -7341,6 +7363,144 @@ async function callAIAgent(
   }
 
   // ============================================================================
+  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE SOMBRA, SOMENTE APPBARBER
+  // A IA confirma um agendamento PRÉ-EXISTENTE sem reconsultar a agenda nesta
+  // interação. Se a barbearia mudou/cancelou pelo sistema deles, o horário
+  // confirmado pode não existir mais (~425-479 turnos/mês, ~78 divergências
+  // estimadas). Nesta fase só DETECTA e registra — não altera a resposta.
+  // ============================================================================
+  if (finalResponse && provider === "appbarber") {
+    const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
+    const confirmsExisting = /\b(confirmad[oa]|est[aá]\s+confirmad|seu\s+hor[aá]rio|agendamento\s+(?:est[aá]|segue))\b/i.test(finalResponse);
+    const lookedUpThisTurn = (logToolCalls || []).some((tc: any) => {
+      if (!tc || tc.name !== "listar_agendamentos") return false;
+      const r = tc.result;
+      return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+    });
+    const createdThisTurn = (logToolCalls || []).some((tc: any) => {
+      if (!tc || tc.name !== "criar_agendamento") return false;
+      const r = tc.result;
+      return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+    });
+    if (citesTime && confirmsExisting && !lookedUpThisTurn && !createdThisTurn) {
+      console.warn(`[StaleConfirmationGuard] SHADOW: confirmação de horário pré-existente sem listar_agendamentos nesta interação.`);
+      logToolCalls.push({
+        name: "__phantom_guard__",
+        args: { phase: "response_guard" },
+        result: {
+          layer: "stale_confirmation_guard",
+          provider,
+          acao: "detected_shadow_no_block",
+          claim: String(finalResponse).slice(0, 160),
+          looked_up_this_turn: lookedUpThisTurn,
+        },
+      });
+    }
+  }
+
+
+
+  // ⚠️ ORDEM (item 2 da auditoria set/2026): o RescheduleGuard roda ANTES do
+  // MultiBookingGuard. Quando o MultiBookingGuard já tinha sobrescrito a resposta,
+  // a flag guardOverrideResponse desligava o RescheduleGuard antes dele checar o
+  // próprio cenário (cancelou o antigo + criação do novo falhou) — 5 casos reais
+  // do AppBarber e 1 do Frizzar passavam batido.
+  const _guardsCfg = getBookingGuardsConfig(provider);
+  // ============================================================================
+  // 🛡️ RESCHEDULE GUARD — cenário "cancelou o antigo, novo falhou"
+  // Se no mesmo turno a IA CANCELOU com sucesso E tentou criar/agendar mas
+  // FALHOU, o cliente fica sem agendamento. Aqui a gente injeta 1 rodada extra
+  // forçando a IA a recriar usando os dados que já estão no contexto
+  // (chat_messages + sessionState). Sem escalar humano, sem pedir dado ao
+  // cliente. Se ainda assim falhar, envia mensagem determinística avisando
+  // que vai continuar tentando por aqui (o item de rollback via `editar_agendamento`
+  // atômico só existe hoje na Trinks — cobrir os outros 4 fica pra P2).
+  // ============================================================================
+  const _reschedCfg = _guardsCfg.reschedule;
+  const _reschedCancelNames = new Set(_reschedCfg.cancelToolNames);
+  const _reschedBookingNames = new Set(_reschedCfg.bookingToolNames);
+  if (finalResponse && !guardOverrideResponse && _reschedCfg.enabled) {
+    const cancelOk = (logToolCalls || []).some((tc) => {
+      if (!_reschedCancelNames.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !r.error && r.blocked !== true;
+    });
+    const bookingFailed = (logToolCalls || []).some((tc) => {
+      if (!_reschedBookingNames.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      return !!r.error || r.blocked === true || r.success === false;
+    });
+    const bookingOk = (logToolCalls || []).some((tc) => {
+      if (!_reschedBookingNames.has(tc?.name)) return false;
+      const r: any = tc.result || {};
+      if (r.error || r.blocked === true) return false;
+      if (r.success === false) return false;
+      return true;
+    });
+    if (cancelOk && bookingFailed && !bookingOk) {
+      console.warn(`[RescheduleGuard] cancel OK + criar FAIL no mesmo turno para ${phoneNumber}. Tentando recuperação.`);
+      logErrors.push({ message: `Remarcação incompleta detectada (cancelou o antigo, novo falhou) — tentando reinjeção sem pedir dados ao cliente.`, level: "warning" });
+      let recovered = false;
+      try {
+        const nudge = {
+          role: "system",
+          content:
+            "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você cancelou o agendamento antigo com sucesso, mas a criação do novo falhou. O cliente NÃO PODE ficar sem agendamento. " +
+            "Use os dados que já estão no histórico (serviço, profissional, data, hora — tanto do antigo quanto do que o cliente pediu agora) e chame a ferramenta de agendar/criar_agendamento AGORA. " +
+            "Se o erro anterior foi de horário indisponível, tente o horário original do agendamento cancelado como fallback. " +
+            "PROIBIDO: pedir dados ao cliente, escalar pra humano, ou dizer que vai chamar alguém. Você resolve aqui.",
+        };
+        messages.push(nudge);
+        const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
+        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "reschedule-guard-reinject");
+        if (retryResp.ok) {
+          const retryJson = await retryResp.json();
+          const retryMsg = retryJson?.choices?.[0]?.message;
+          const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+          if (retryToolCalls.length > 0) {
+            messages.push(retryMsg);
+            let anyBookingSucceeded = false;
+            for (const tc of retryToolCalls) {
+              let tResult: any;
+              try {
+                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+              } catch (e) {
+                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+              }
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              const toolName = tc?.function?.name;
+              logToolCalls.push({ name: toolName, args: parseToolArguments(tc.function?.arguments), result: tResult });
+              if (_reschedBookingNames.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
+                anyBookingSucceeded = true;
+              }
+            }
+            if (anyBookingSucceeded) {
+              const det = buildDeterministicBookingConfirmation(logToolCalls);
+              if (det) {
+                finalResponse = det;
+                guardOverrideResponse = true;
+                recovered = true;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[RescheduleGuard] reinject exception: ${(e as Error)?.message}`);
+      }
+      if (!recovered) {
+        finalResponse = "Peraí, tive um problema técnico ao remarcar seu horário agora. Vou refazer aqui e já te confirmo em instantes 🙏";
+        guardOverrideResponse = true;
+      }
+    }
+  }
+  // ============================================================================
+  // FIM RESCHEDULE GUARD
+  // ============================================================================
+  // ============================================================================
   // 🛡️ MULTI-BOOKING GUARD — 1 GUARDA POR API (personalizado)
   // Gatilho estrutural: só roda se a IA TENTOU criar pelo menos 1 agendamento
   // no turno (agendar/criar_agendamento). Independente do texto de saída.
@@ -7354,7 +7514,7 @@ async function callAIAgent(
   // ❌ Removidos (Trinks, Bemp, OneBeleza) — o guard genérico estava causando
   // mais falsos positivos do que corrigindo. Cada um será reintroduzido com
   // regras próprias da API depois de validar em produção.
-  const _guardsCfg = getBookingGuardsConfig(provider);
+  // _guardsCfg já declarado acima (RescheduleGuard roda antes deste bloco).
   const _mbCfg = _guardsCfg.multiBooking;
   const _mbBookingNames = new Set(_mbCfg.bookingToolNames);
   if (_bookingAttempts > 0 && _mbCfg.enabled) {
@@ -7431,6 +7591,50 @@ async function callAIAgent(
           `[MultiBookingGuard] clamp 1-exec-1-visita: prometidos=${prometidos} → ${bookedExecutionCount} (executions=${bookedExecutionCount}, explicitPeople=${explicitPeople}, explicitTimes=${explicitTimes}, reasoning="${cls.reasoning || ""}")`,
         );
         prometidos = bookedExecutionCount;
+      }
+    }
+
+    // 🔒 F1 (FRIZZAR) — contar SERVIÇOS cobertos, não execuções.
+    // Caso real 28/08 (Daniel Morais): uma única chamada `agendar` com
+    // servicos:[Corte, Barba] deu certo, mas o contador olhava execuções (1) e o
+    // guard tratou o turno como incompleto, devolvendo fallback errado ao cliente.
+    if (provider === "frizzar" && prometidos > criados) {
+      const servicosCobertos = (logToolCalls || []).reduce((acc: number, tc: any) => {
+        if (!tc || !_mbBookingNames.has(tc.name)) return acc;
+        const r = tc.result;
+        if (!r || typeof r !== "object" || r.error || r.blocked === true || r.success === false) return acc;
+        const svcs = tc.args?.servicos ?? tc.args?.services;
+        return acc + (Array.isArray(svcs) && svcs.length > 0 ? svcs.length : 1);
+      }, 0);
+      if (servicosCobertos >= prometidos) {
+        console.log(
+          `[MultiBookingGuard] F1 frizzar: prometidos=${prometidos} já coberto por ${servicosCobertos} serviço(s) na(s) comanda(s) criada(s) — clampando para criados=${criados}.`,
+        );
+        prometidos = criados;
+      }
+    }
+
+    // 🔒 F2 (FRIZZAR) — clamp quando o classificador não tem evidência textual.
+    // Caso real 01/09 (Josuel): cliente pediu UM agendamento, classificador
+    // inflou prometidos=2. Sem 2ª pessoa, 2º horário e 2º profissional nas
+    // dimensões, e sem menção explícita na fala do cliente, vale a execução.
+    if (
+      provider === "frizzar" &&
+      _mbCfg.useIntentShape &&
+      cls.intentShape &&
+      prometidos > Math.max(1, bookedExecutionCount) &&
+      cls.intentShape.distinctPeople <= 1 &&
+      cls.intentShape.distinctTimes <= 1 &&
+      cls.intentShape.distinctProfessionals <= 1
+    ) {
+      const visibleMsgs2 = messages.filter((m: any) =>
+        (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim()
+      );
+      const lastUser2 = [...visibleMsgs2].reverse().find((m: any) => m.role === "user")?.content || "";
+      if (countExplicitProfessionalSelections(lastUser2) < 2 && countExplicitUserTimeSelections(lastUser2) < 2) {
+        const alvo = Math.max(1, bookedExecutionCount);
+        console.log(`[MultiBookingGuard] F2 frizzar: clamp sem evidência textual de 2ª pessoa/horário: prometidos=${prometidos} → ${alvo}.`);
+        prometidos = alvo;
       }
     }
 
@@ -7686,7 +7890,14 @@ async function callAIAgent(
               messages.push({
                 role: "tool",
                 tool_call_id: tc.id,
-                content: JSON.stringify({ skipped: true, reason: "MultiBookingGuard: nesta recuperação só são permitidas consultas auxiliares e tools de agendamento." }),
+                // F4 — devolver o MOTIVO do bloqueio, não um "skipped" genérico:
+                // sem isso a IA queimava a rodada tentando escalar humano e o turno
+                // caía no fallback (casos 01/09 e 05/09 do Frizzar).
+                content: JSON.stringify({
+                  skipped: true,
+                  reason: `MultiBookingGuard: a ferramenta "${tname}" está bloqueada nesta rodada de recuperação — só valem consultas de leitura e a tool de agendamento.`,
+                  instruction: "Não tente escalar para humano nem pedir dados ao cliente. Se faltar horário/vaga, use as alternativas reais retornadas pelas consultas e ofereça-as ao cliente.",
+                }),
               });
               continue;
             }
@@ -7751,9 +7962,55 @@ async function callAIAgent(
       } else {
         console.warn(`[MultiBookingGuard] recuperação esgotada sem completar: ${current.count}/${prometidos}. Não escalando humano.`);
         logErrors.push({ message: `Multi-booking recovery esgotada: ${current.count}/${prometidos}${recoveryError ? ` (${recoveryError})` : ""}`, level: "error" });
-        finalResponse = buildPartialBookingFallback(current.count, prometidos, current.breakdown);
-        guardOverrideResponse = true;
-        guardLog("recovery_exhausted_no_human");
+        // F3 — se a indisponibilidade veio com alternativas reais (outros
+        // profissionais, outros horários do mesmo profissional ou outros dias),
+        // oferecer essas alternativas em vez do fallback "tive um probleminha".
+        // Caso real 05/09 (Ney Gomes): 2º serviço sem vaga em nenhum profissional.
+        let _altOffered = false;
+        if (_mbCfg.useAlternativesShortCircuit) {
+          const lateAlt = (logToolCalls || []).find((tc: any) => {
+            if (!tc || !_mbBookingNames.has(tc.name)) return false;
+            const r = tc.result;
+            if (!r || typeof r !== "object" || !r.error) return false;
+            return (Array.isArray(r.horariosOutrosProfissionais) && r.horariosOutrosProfissionais.length > 0)
+              || (Array.isArray(r.horariosLivres) && r.horariosLivres.length > 0)
+              || (Array.isArray(r.outrosDias) && r.outrosDias.length > 0);
+          });
+          if (lateAlt) {
+            try {
+              const feitos = current.breakdown.map((b) => b.summary).filter(Boolean).join("; ") || "nenhum";
+              messages.push({
+                role: "system",
+                content: [
+                  `[SISTEMA — INTERNO, NÃO REPETIR AO CLIENTE]`,
+                  `Parte do pedido foi concluída (${feitos}) e o restante não tem vaga no horário pedido, MAS as consultas trouxeram alternativas reais no payload (horariosOutrosProfissionais, horariosLivres, outrosDias).`,
+                  `NÃO chame nenhuma tool. NÃO diga "tive um probleminha" nem prometa retornar depois.`,
+                  `Numa única mensagem curta: confirme o que já ficou agendado e ofereça as alternativas REAIS para o que faltou, perguntando qual o cliente prefere. Não invente horário que não esteja no payload.`,
+                ].join(" "),
+              });
+              const altBody2: any = { model: modelUsed, messages, max_completion_tokens: 500, tool_choice: "none" };
+              if (modelUsed.includes("gpt-5")) altBody2.reasoning_effort = "minimal";
+              const altResp2 = await fetchAIWithRetry(JSON.stringify(altBody2), "guard-late-alternatives-answer");
+              if (altResp2.ok) {
+                const altJson2: any = await altResp2.json();
+                const altText2 = altJson2?.choices?.[0]?.message?.content?.trim();
+                if (altText2) {
+                  finalResponse = altText2;
+                  guardOverrideResponse = true;
+                  guardLog("recovery_exhausted_alternatives_offered");
+                  _altOffered = true;
+                }
+              }
+            } catch (e) {
+              console.error(`[MultiBookingGuard] late-alternatives exception:`, (e as Error)?.message);
+            }
+          }
+        }
+        if (!_altOffered) {
+          finalResponse = buildPartialBookingFallback(current.count, prometidos, current.breakdown);
+          guardOverrideResponse = true;
+          guardLog("recovery_exhausted_no_human");
+        }
       }
       } // fim else (sem falha definitiva → executou recovery loop)
       } // fim else (sem alternatives failure → executou recovery loop tradicional)
@@ -7866,100 +8123,6 @@ async function callAIAgent(
   // FIM CANCEL GUARD
   // ============================================================================
 
-  // ============================================================================
-  // 🛡️ RESCHEDULE GUARD — cenário "cancelou o antigo, novo falhou"
-  // Se no mesmo turno a IA CANCELOU com sucesso E tentou criar/agendar mas
-  // FALHOU, o cliente fica sem agendamento. Aqui a gente injeta 1 rodada extra
-  // forçando a IA a recriar usando os dados que já estão no contexto
-  // (chat_messages + sessionState). Sem escalar humano, sem pedir dado ao
-  // cliente. Se ainda assim falhar, envia mensagem determinística avisando
-  // que vai continuar tentando por aqui (o item de rollback via `editar_agendamento`
-  // atômico só existe hoje na Trinks — cobrir os outros 4 fica pra P2).
-  // ============================================================================
-  const _reschedCfg = _guardsCfg.reschedule;
-  const _reschedCancelNames = new Set(_reschedCfg.cancelToolNames);
-  const _reschedBookingNames = new Set(_reschedCfg.bookingToolNames);
-  if (finalResponse && !guardOverrideResponse && _reschedCfg.enabled) {
-    const cancelOk = (logToolCalls || []).some((tc) => {
-      if (!_reschedCancelNames.has(tc?.name)) return false;
-      const r: any = tc.result || {};
-      return !r.error && r.blocked !== true;
-    });
-    const bookingFailed = (logToolCalls || []).some((tc) => {
-      if (!_reschedBookingNames.has(tc?.name)) return false;
-      const r: any = tc.result || {};
-      return !!r.error || r.blocked === true || r.success === false;
-    });
-    const bookingOk = (logToolCalls || []).some((tc) => {
-      if (!_reschedBookingNames.has(tc?.name)) return false;
-      const r: any = tc.result || {};
-      if (r.error || r.blocked === true) return false;
-      if (r.success === false) return false;
-      return true;
-    });
-    if (cancelOk && bookingFailed && !bookingOk) {
-      console.warn(`[RescheduleGuard] cancel OK + criar FAIL no mesmo turno para ${phoneNumber}. Tentando recuperação.`);
-      logErrors.push({ message: `Remarcação incompleta detectada (cancelou o antigo, novo falhou) — tentando reinjeção sem pedir dados ao cliente.`, level: "warning" });
-      let recovered = false;
-      try {
-        const nudge = {
-          role: "system",
-          content:
-            "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você cancelou o agendamento antigo com sucesso, mas a criação do novo falhou. O cliente NÃO PODE ficar sem agendamento. " +
-            "Use os dados que já estão no histórico (serviço, profissional, data, hora — tanto do antigo quanto do que o cliente pediu agora) e chame a ferramenta de agendar/criar_agendamento AGORA. " +
-            "Se o erro anterior foi de horário indisponível, tente o horário original do agendamento cancelado como fallback. " +
-            "PROIBIDO: pedir dados ao cliente, escalar pra humano, ou dizer que vai chamar alguém. Você resolve aqui.",
-        };
-        messages.push(nudge);
-        const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
-        const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "reschedule-guard-reinject");
-        if (retryResp.ok) {
-          const retryJson = await retryResp.json();
-          const retryMsg = retryJson?.choices?.[0]?.message;
-          const retryToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
-          if (retryToolCalls.length > 0) {
-            messages.push(retryMsg);
-            let anyBookingSucceeded = false;
-            for (const tc of retryToolCalls) {
-              let tResult: any;
-              try {
-                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
-              } catch (e) {
-                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
-              }
-              messages.push({
-                role: "tool",
-                tool_call_id: tc.id,
-                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
-              });
-              const toolName = tc?.function?.name;
-              logToolCalls.push({ name: toolName, args: parseToolArguments(tc.function?.arguments), result: tResult });
-              if (_reschedBookingNames.has(toolName) && tResult && !tResult.error && !tResult.blocked && tResult.success !== false) {
-                anyBookingSucceeded = true;
-              }
-            }
-            if (anyBookingSucceeded) {
-              const det = buildDeterministicBookingConfirmation(logToolCalls);
-              if (det) {
-                finalResponse = det;
-                guardOverrideResponse = true;
-                recovered = true;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        console.error(`[RescheduleGuard] reinject exception: ${(e as Error)?.message}`);
-      }
-      if (!recovered) {
-        finalResponse = "Peraí, tive um problema técnico ao remarcar seu horário agora. Vou refazer aqui e já te confirmo em instantes 🙏";
-        guardOverrideResponse = true;
-      }
-    }
-  }
-  // ============================================================================
-  // FIM RESCHEDULE GUARD
-  // ============================================================================
 
 
 

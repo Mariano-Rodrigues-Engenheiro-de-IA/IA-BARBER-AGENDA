@@ -256,11 +256,23 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar UM service_code real, profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. Para combo/múltiplos serviços, use o service_code do combo cadastrado — nunca services[] separados.",
+        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço(s), profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. MÚLTIPLOS SERVIÇOS NA MESMA VISITA: se houver combo cadastrado no catálogo cobrindo os serviços, use o service_code do combo; se NÃO houver, envie services[] com os serviços na MESMA chamada (uma só). NUNCA faça duas chamadas separadas de criar_agendamento para a mesma pessoa/visita — a segunda bate no limite de agendamentos futuros da conta.",
         parameters: {
           type: "object",
           properties: {
-            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Para combo/múltiplos serviços, use o service_code do combo cadastrado." },
+            service_code: { type: "number", description: "service_code real retornado em listar_servicos. Use quando for um único serviço (ou o combo cadastrado)." },
+            services: {
+              type: "array",
+              description: "Múltiplos serviços na MESMA visita, numa única chamada (só quando não existir combo cadastrado cobrindo eles). O primeiro item é o serviço principal usado na checagem de disponibilidade.",
+              items: {
+                type: "object",
+                properties: {
+                  service_code: { type: "number" },
+                  duration: { type: "number", description: "Duração em minutos (service_interval)." },
+                },
+                required: ["service_code"],
+              },
+            },
             professional_code: { type: "number" },
             start_date: { type: "string", description: "YYYY-MM-DD" },
             start_time: { type: "string", description: "HH:MM (exato de available_times)" },
@@ -269,7 +281,7 @@ export function buildAppBarberTools(tenant: any) {
             service_duration_minutes: { type: "number", description: "Duração em minutos (service_interval retornado por listar_servicos). Obrigatório para evitar rejeição da API." },
             scheduling_observation: { type: "string", description: "Observação opcional. O sistema sempre acrescenta nome e telefone para facilitar busca/cancelamento." },
           },
-          required: ["service_code", "professional_code", "start_date", "start_time", "customer_name", "customer_phone", "service_duration_minutes"],
+          required: ["professional_code", "start_date", "start_time", "customer_name", "customer_phone"],
         },
       },
     },
@@ -723,14 +735,13 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               hint: `Chame listar_horarios_geral novamente para ${combo.name} usando service_code=${comboCode} e só depois chame criar_agendamento com UM único service_code. NÃO use services[] com corte + sobrancelha separados.`,
             };
           }
-          return {
-            error: "O AppBarber não aceita criar vários services[] separados na mesma visita sem um combo cadastrado/selecionado; isso causa Choque de Horário.",
-            blocked: true,
-            recoverable: true,
-            retryable: true,
-            reason: "multi_service_without_combo",
-            hint: "Se existir um combo no catálogo cobrindo esses serviços, use esse combo e consulte disponibilidade dele. Se não existir, ofereça dividir em horários separados.",
-          };
+          // ✅ Sem combo cadastrado cobrindo os serviços: em vez de bloquear (o que
+          // empurrava a IA para DUAS chamadas separadas de criar_agendamento — e a
+          // segunda batia em `future_appointments_limit`, deixando o cliente com
+          // metade do pedido), seguimos com services[] na MESMA comanda. A trava de
+          // slots consecutivos (Correção B, logo abaixo) é quem garante que a soma
+          // das durações cabe no horário escolhido.
+          console.log(`[AppBarber] criar_agendamento multi-serviço sem combo cadastrado — seguindo com services[]=${requestedServices.map((s: any) => s.service_code).join(",")} na mesma comanda.`);
         }
         // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
         // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
