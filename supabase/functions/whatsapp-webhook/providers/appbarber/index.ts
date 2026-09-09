@@ -882,10 +882,16 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             // Foi essa contradição código×prompt que produziu os casos V28-Jellson,
             // V29-Felipe e 25/08-Ansysar: a IA obedeceu a diretiva do código.
             recoverable: true,
+            // ITEM 8 (set/2026): em 7 dos 8 casos medidos em 30 dias o cliente JÁ
+            // havia dito o nome nesta mesma conversa e a IA mandou "Cliente"/vazio.
+            // Antes a diretiva proibia reaproveitar qualquer nome e obrigava a
+            // perguntar — o turno morria sem agendamento mesmo com o nome na tela.
             recoveryDirective:
               "O nome do cliente está vazio ou é genérico e a ferramenta foi bloqueada antes de chamar a API. " +
-              "Pergunte o nome ao cliente NESTA resposta, com naturalidade. " +
-              "Não invente nome, não reaproveite nome de conversa antiga e não chame criar_agendamento de novo até o cliente responder.",
+              "PRIMEIRO: releia as mensagens DESTA conversa. Se o cliente já se identificou aqui (ou o nome vem do CRM no contexto), " +
+              "use esse nome real e chame criar_agendamento de novo AGORA, mantendo service_code, professional_code, duração, data e hora já definidos. " +
+              "SOMENTE se não existir nenhum nome real nesta conversa, pergunte o nome ao cliente NESTA resposta, com naturalidade, e não chame criar_agendamento até ele responder. " +
+              "Nunca invente nome e nunca use pushName do WhatsApp.",
           };
         }
         const customerName = rawName;
