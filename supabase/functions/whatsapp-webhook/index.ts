@@ -7476,7 +7476,7 @@ async function callAIAgent(
   // ❌ Removidos (Trinks, Bemp, OneBeleza) — o guard genérico estava causando
   // mais falsos positivos do que corrigindo. Cada um será reintroduzido com
   // regras próprias da API depois de validar em produção.
-  const _guardsCfg = getBookingGuardsConfig(provider);
+  // _guardsCfg já declarado acima (RescheduleGuard roda antes deste bloco).
   const _mbCfg = _guardsCfg.multiBooking;
   const _mbBookingNames = new Set(_mbCfg.bookingToolNames);
   if (_bookingAttempts > 0 && _mbCfg.enabled) {
