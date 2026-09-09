@@ -1235,6 +1235,10 @@ export const phantomGuardConfig = {
   enabled: true,
   bookingToolNames: ["criar_agendamento"],
   searchToolNames: ["buscar_agendamento"],
+  // 🛡️ PhantomCancelGuard em MODO SOMBRA (detecta + registra, não bloqueia).
+  // Base: 88% de precisão na simulação contra 30 dias de produção.
+  cancelToolNames: ["cancelar_agendamento"],
+  shadow: true,
   recoveryToolNames: [
     "buscar_cliente",
     "cadastrar_cliente",

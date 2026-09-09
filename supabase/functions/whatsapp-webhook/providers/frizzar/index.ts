@@ -1089,6 +1089,9 @@ export const phantomGuardConfig = {
   enabled: true,
   bookingToolNames: ["agendar"],
   searchToolNames: ["buscar_agendamentos"],
+  // 🛡️ PhantomCancelGuard em MODO SOMBRA (detecta + registra, não bloqueia).
+  cancelToolNames: ["cancelar_agendamento"],
+  shadow: true,
   recoveryToolNames: [
     "buscar_cliente",
     "cadastrar_cliente",

@@ -1963,6 +1963,10 @@ export const phantomGuardConfig = {
   enabled: true,
   bookingToolNames: ["agendar"],
   searchToolNames: ["buscar_agendamentos_dia"],
+  // 🛡️ PhantomCancelGuard em MODO SOMBRA (detecta + registra, não bloqueia).
+  // Nome canônico do cancelamento nesta API é `desmarcar_agendamento`.
+  cancelToolNames: ["desmarcar_agendamento"],
+  shadow: true,
   recoveryToolNames: [
     "buscar_cliente",
     "cadastrar_cliente",
