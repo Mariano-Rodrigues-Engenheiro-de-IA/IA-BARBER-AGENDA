@@ -1004,7 +1004,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
         let res: Response;
         let text = "";
-        {
+        try {
           let attempt = 0;
           const maxAttempts = 3;
           while (true) {
@@ -1015,6 +1015,20 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             if (res.status !== 429 || attempt >= maxAttempts) break;
             await new Promise((r) => setTimeout(r, 800 * attempt));
           }
+        } catch (error: unknown) {
+          // O servidor pode ter processado o POST antes de a conexão cair. Repetir
+          // aqui criaria duplicidade. O reconciliador trata este estado como
+          // incerto e exige listar_agendamentos antes de qualquer nova tentativa.
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[AppBarber] criar_agendamento resultado incerto após envio: ${message}`);
+          return {
+            error: "Não foi possível confirmar o resultado do agendamento após o envio.",
+            result_uncertain: true,
+            retryable: false,
+            recoverable: true,
+            failureReason: "create_result_uncertain",
+            recoveryDirective: "NÃO repita criar_agendamento. Chame listar_agendamentos e compare pessoa, serviço, data, horário e profissional. Só crie novamente se a consulta comprovar que o item não existe.",
+          };
         }
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
