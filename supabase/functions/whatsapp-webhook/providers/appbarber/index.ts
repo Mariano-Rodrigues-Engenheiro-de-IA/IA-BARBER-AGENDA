@@ -970,6 +970,14 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // AppBarber armazena telefone SEM DDI 55 (formato: 61983012868).
         // Enviar "5561983012868" cria cadastro duplicado. Sempre local (DDD+9+numero).
         const customerPhoneLocal = appBarberLocalPhone(phoneDigits);
+        // Cadastro explícito ANTES de agendar (ver comentário em appBarberEnsureClient).
+        const clientRegistration = await appBarberEnsureClient(
+          customerPhoneLocal || phoneDigits,
+          customerName,
+        );
+        if (clientRegistration.status === "failed") {
+          console.warn(`[AppBarber] cadastro do cliente falhou (segue agendando): ${clientRegistration.error}`);
+        }
         // Schema real do AppBarber (validado via erro 400):
         // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
         // professionals: [{ professional_code }] | services: [{ service_code, duration }]
