@@ -928,17 +928,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           start_date: startDateTime,
           professionals: [{ professional_code: Number(args.professional_code) }],
           services: serviceItems,
-          // ⚠️ Teste seguro (10/09): documentação oficial (OpenAPI) do AppBarber
-          // descreve o campo de criação como "observation", mas nosso código já
-          // usa "scheduling_observation" há tempos, inclusive para LER retornos
-          // reais de listar_agendamentos (endpoint diferente, pode não ter
-          // relação com o campo de escrita aqui). Em vez de trocar às cegas e
-          // arriscar quebrar o que já funciona, mandamos os dois — campo extra
-          // não reconhecido normalmente é ignorado pela API, sem custo. Checar
-          // depois num listar_agendamentos real qual dos dois foi realmente
-          // salvo, e então remover o que não for usado.
           scheduling_observation: `Cliente: ${customerName} | WhatsApp: ${customerPhoneLocal || phoneDigits}`,
-          observation: `Cliente: ${customerName} | WhatsApp: ${customerPhoneLocal || phoneDigits}`,
         };
         console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
         // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
