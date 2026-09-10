@@ -416,17 +416,25 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
         console.log(`[Bemp] listar_horarios_geral salon=${args.salonId} svc=${args.serviceId} data=${args.data} profs=${profs.map((p) => p.id).join(",")}`);
 
         // 2) Fanout paralelo de slots por profissional.
+        // ⚠️ Ponta aberta 4.5 da auditoria (10/09): falha técnica (429/5xx/rede)
+        // e ausência genuína de vaga caíam as duas em `slots: []`, então a IA
+        // dizia "não tem vaga" quando a consulta nem aconteceu. Mesmo tratamento
+        // já usado no AppBarber (listar_horarios_geral) e no Frizzar.
         const results = await Promise.all(profs.map(async (p) => {
           try {
             const url = `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${p.id}/slots/${args.data}`;
             const res = await bempFetch(url, { headers });
             const text = await res.text();
+            if (!res.ok) {
+              console.log(`[Bemp] horarios_geral prof=${p.id} status=${res.status}`);
+              return { prof: p, slots: [] as any[], erro: `status ${res.status}` };
+            }
             const data = JSON.parse(text);
             const slots = Array.isArray(data) ? data : [];
-            return { prof: p, slots };
+            return { prof: p, slots, erro: undefined as string | undefined };
           } catch (e) {
             console.log(`[Bemp] horarios_geral falha prof=${p.id}:`, String(e));
-            return { prof: p, slots: [] as any[] };
+            return { prof: p, slots: [] as any[], erro: String((e as Error)?.message || e) };
           }
         }));
 
