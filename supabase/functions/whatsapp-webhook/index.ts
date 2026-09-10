@@ -4030,17 +4030,61 @@ function appbarberFindsDifferentProperName(window: string, customerNameUsed: str
  * busca real (não o texto da conversa) é mais robusto porque não depende de
  * como o cliente ou a IA formulam a frase.
  */
-function appbarberFindsUnbookedServiceInSlots(
+type AppBarberPendingServiceEvidence = {
+  serviceCode: number;
+  serviceName: string;
+  durationMinutes: number | null;
+  suggestedStartTime: string;
+};
+
+function appbarberFindsUnbookedServicesInSlots(
   slotOptions: Array<{ service_code: number; start_date: string }> | undefined,
   bookedServiceCode: number | undefined,
   bookedDate: string | undefined,
-): boolean {
-  if (!Array.isArray(slotOptions) || slotOptions.length === 0) return false;
-  if (!bookedServiceCode || !bookedDate) return false;
-  return slotOptions.some((s) =>
-    s && typeof s.service_code === "number" && s.service_code !== bookedServiceCode &&
-    typeof s.start_date === "string" && s.start_date === bookedDate
-  );
+  bookedProfessionalCode: number | undefined,
+  bookedStartTime: string | undefined,
+  bookedDurationMinutes: number | undefined,
+  conversationText: string,
+): AppBarberPendingServiceEvidence[] {
+  if (!Array.isArray(slotOptions) || slotOptions.length === 0) return [];
+  if (!bookedServiceCode || !bookedDate || !bookedProfessionalCode || !bookedStartTime) return [];
+
+  const [hour, minute] = bookedStartTime.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return [];
+  const duration = Number.isFinite(bookedDurationMinutes) && Number(bookedDurationMinutes) > 0
+    ? Number(bookedDurationMinutes)
+    : 0;
+  const pendingMinute = hour * 60 + minute + duration;
+  const suggestedStartTime = `${String(Math.floor(pendingMinute / 60) % 24).padStart(2, "0")}:${String(pendingMinute % 60).padStart(2, "0")}`;
+  const normalizedConversation = normalizeServiceText(conversationText);
+  const stopWords = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "para", "com", "club"]);
+  const mentioned = (name: string): boolean => {
+    const normalizedName = normalizeServiceText(name).replace(/^\d+\s+/, "");
+    if (!normalizedName) return false;
+    if (normalizedConversation.includes(normalizedName)) return true;
+    return normalizedName.split(/\s+/)
+      .filter((word) => word.length >= 4 && !stopWords.has(word))
+      .some((word) => normalizedConversation.includes(word));
+  };
+
+  const candidates = new Map<number, AppBarberPendingServiceEvidence>();
+  for (const raw of slotOptions as Array<any>) {
+    const serviceCode = Number(raw?.service_code);
+    const professionalCode = Number(raw?.professional_code);
+    const startTime = String(raw?.start_time || "").slice(0, 5);
+    const serviceName = String(raw?.service_name || `Serviço ${serviceCode}`);
+    if (!Number.isFinite(serviceCode) || serviceCode <= 0 || serviceCode === bookedServiceCode) continue;
+    if (String(raw?.start_date || "").slice(0, 10) !== bookedDate) continue;
+    if (professionalCode !== bookedProfessionalCode && professionalCode !== 0) continue;
+    if (startTime !== suggestedStartTime || !mentioned(serviceName)) continue;
+    candidates.set(serviceCode, {
+      serviceCode,
+      serviceName,
+      durationMinutes: toPositiveInteger(raw?.duration_minutes),
+      suggestedStartTime,
+    });
+  }
+  return [...candidates.values()];
 }
 
 function appbarberIsClearlySingleBooking(params: {
@@ -4056,6 +4100,9 @@ function appbarberIsClearlySingleBooking(params: {
   let customerNameUsed: string | undefined;
   let bookedServiceCode: number | undefined;
   let bookedDate: string | undefined;
+  let bookedProfessionalCode: number | undefined;
+  let bookedStartTime: string | undefined;
+  let bookedDurationMinutes: number | undefined;
   for (const tc of logToolCalls || []) {
     if (!tc || !bookingToolNames.has(tc.name)) continue;
     const svcs = tc.args?.services ?? tc.args?.servicos;
@@ -4067,9 +4114,27 @@ function appbarberIsClearlySingleBooking(params: {
     if (Number.isFinite(sc) && sc > 0) bookedServiceCode = sc;
     const bd = String(tc.args?.start_date || tc.result?.start_date || "").slice(0, 10);
     if (bd) bookedDate = bd;
+    const pc = Number(tc.args?.professional_code ?? tc.result?.professional_code);
+    if (Number.isFinite(pc) && pc > 0) bookedProfessionalCode = pc;
+    const bt = String(tc.args?.start_time || tc.result?.start_date || "").match(/(?:T|\s)?(\d{2}:\d{2})/)?.[1];
+    if (bt) bookedStartTime = bt;
+    const dur = Number(tc.args?.service_duration_minutes ?? tc.args?.services?.[0]?.duration);
+    if (Number.isFinite(dur) && dur > 0) bookedDurationMinutes = dur;
   }
 
-  if (appbarberFindsUnbookedServiceInSlots(sessionState?.appbarberSlotOptions, bookedServiceCode, bookedDate)) {
+  const conversationText = (messages || [])
+    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+    .map((m: any) => String(m.content))
+    .join("\n");
+  if (appbarberFindsUnbookedServicesInSlots(
+    sessionState?.appbarberSlotOptions,
+    bookedServiceCode,
+    bookedDate,
+    bookedProfessionalCode,
+    bookedStartTime,
+    bookedDurationMinutes,
+    conversationText,
+  ).length > 0) {
     return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
   }
 
@@ -7920,6 +7985,34 @@ async function callAIAgent(
       });
     }
     let prometidos = cls.total;
+    const _visibleConversationText = (messages || [])
+      .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+      .map((m: any) => String(m.content))
+      .join("\n");
+    let _appbarberPendingServices: AppBarberPendingServiceEvidence[] = [];
+    if (provider === "appbarber") {
+      const successfulCreate = [...(logToolCalls || [])].reverse().find((tc: any) =>
+        tc && _mbBookingNames.has(tc.name) && tc?.result?.ok === true && tc?.result?.appointment_id
+      );
+      if (successfulCreate) {
+        const args = successfulCreate.args || {};
+        const bookedStartTime = String(args.start_time || successfulCreate.result?.start_date || "").match(/(?:T|\s)?(\d{2}:\d{2})/)?.[1];
+        _appbarberPendingServices = appbarberFindsUnbookedServicesInSlots(
+          (sessionState as any)?.appbarberSlotOptions,
+          toPositiveInteger(args.service_code ?? successfulCreate.result?.service_code) ?? undefined,
+          String(args.start_date || successfulCreate.result?.start_date || "").slice(0, 10) || undefined,
+          toPositiveInteger(args.professional_code ?? successfulCreate.result?.professional_code) ?? undefined,
+          bookedStartTime,
+          toPositiveInteger(args.service_duration_minutes ?? args.services?.[0]?.duration) ?? undefined,
+          _visibleConversationText,
+        );
+        if (_appbarberPendingServices.length > 0) {
+          prometidos = Math.max(prometidos, bookedExecutionCount + _appbarberPendingServices.length);
+          console.warn(`[MultiBookingGuard] AppBarber multi-serviço estruturado: ${_appbarberPendingServices.map((s) => `${s.serviceCode}@${s.suggestedStartTime}`).join(", ")} ainda pendente(s).`);
+        }
+      }
+    }
+    const _hasStructuredAppbarberMulti = _appbarberPendingServices.length > 0;
 
     // 🔒 FRIZZAR: a unidade do guard é VISITA/COMANDA, não quantidade de
     // serviços. O classificador devolve dimensões separadas para impedir os dois
@@ -7945,7 +8038,7 @@ async function callAIAgent(
     // prometidos=2 só porque viu 2 nomes distintos. Sem sinal determinístico de
     // múltiplas pessoas OU múltiplos horários OU múltiplos profissionais na fala do
     // cliente, forçamos prometidos = executions para não disparar recovery falso.
-    if (bookedExecutionCount >= 1 && prometidos > bookedExecutionCount) {
+    if (!_hasStructuredAppbarberMulti && bookedExecutionCount >= 1 && prometidos > bookedExecutionCount) {
       const visibleMsgs = messages.filter((m: any) =>
         (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim()
       );
@@ -8025,6 +8118,7 @@ async function callAIAgent(
     // no módulo dele.
     if (
       !_mbCfg.allowMultiRecoveryAfterSuccess &&
+      !_hasStructuredAppbarberMulti &&
       bookedExecutionCount >= 1 &&
       prometidos > bookedExecutionCount
     ) {
@@ -8227,6 +8321,11 @@ async function callAIAgent(
         // já havia buscado no turno (3 casos em 30 dias) e proibia perguntar o
         // nome mesmo quando o bloqueio era exatamente falta de nome (8 casos).
         const _codesHint = provider === "appbarber" ? appbarberKnownCodesHint(logToolCalls) : "";
+        const _pendingServicesHint = provider === "appbarber" && _appbarberPendingServices.length > 0
+          ? _appbarberPendingServices.map((service) =>
+              `${service.serviceName}: service_code=${service.serviceCode}${service.durationMinutes ? `, duração=${service.durationMinutes}min` : ""}, iniciar às ${service.suggestedStartTime}`
+            ).join("; ")
+          : "";
         const _nameBlocked = provider === "appbarber"
           && appbarberBlockedByInvalidName(logToolCalls, _mbBookingNames);
         const nudge = [
@@ -8235,6 +8334,7 @@ async function callAIAgent(
           `O cliente pediu/confirmou ${prometidos} agendamento(s), mas só existem ${current.count} criado(s).`,
           `Já criados: ${feitosSummary}. Faltam ${faltam}.`,
           ...(_codesHint ? [`DADOS JÁ OBTIDOS NESTA CONVERSA (use estes, não busque de novo nem invente): ${_codesHint}`] : []),
+          ...(_pendingServicesHint ? [`SERVIÇO(S) PENDENTE(S) COM DISPONIBILIDADE JÁ CONSULTADA: ${_pendingServicesHint}. Chame "${bookingToolName}" uma vez para cada item pendente, usando o mesmo profissional, cliente e data da criação já concluída.`] : []),
           _nameBlocked
             ? `A criação foi bloqueada por NOME DO CLIENTE inválido/vazio. Releia esta conversa: se o cliente já disse o nome real aqui, use esse nome e chame "${bookingToolName}" agora com os dados acima. Se realmente não houver nome nesta conversa, responda em texto perguntando o nome ao cliente com naturalidade — nesse caso é permitido responder sem tool_calls e é proibido escalar humano.`
             : `O cliente já forneceu no histórico os dados necessários (serviço, profissional, horário e pessoa quando aplicável). NÃO pergunte nada ao cliente e NÃO escale humano.`,
