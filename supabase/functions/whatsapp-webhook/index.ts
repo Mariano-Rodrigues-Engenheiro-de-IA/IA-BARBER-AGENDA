@@ -8020,6 +8020,12 @@ async function callAIAgent(
       sessionState.appbarberIntentSnapshot = cls.intentSnapshot;
       prometidos = Math.max(prometidos, cls.intentSnapshot.expectedCount);
     }
+    // A fotografia persistida pertence ao pedido ainda aberto e sobrevive a
+    // mensagens curtas posteriores. Não pode ser usada para reduzir a leitura
+    // nova, somente para impedir que "sim"/"ele também" apague itens pendentes.
+    if (provider === "appbarber" && sessionState.appbarberIntentSnapshot) {
+      prometidos = Math.max(prometidos, sessionState.appbarberIntentSnapshot.expectedCount);
+    }
     const _visibleConversationText = (messages || [])
       .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
       .map((m: any) => String(m.content))
