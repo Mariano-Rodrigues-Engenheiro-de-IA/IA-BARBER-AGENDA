@@ -9878,8 +9878,6 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           } catch (e: any) {
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
-        } else {
-          console.log(`[EscalateHuman] Silent mode — skipping client message`);
         }
 
         const humanNumber = config.human_number;
