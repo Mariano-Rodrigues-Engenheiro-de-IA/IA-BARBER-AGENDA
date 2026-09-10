@@ -375,14 +375,23 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   // A busca aceita telefone com máscara ("(44) 99907-3035") — testado — então
   // não há risco de duplicar cadastro criado pelo app.
   // NUNCA bloqueia o agendamento: falha aqui é apenas registrada em log.
-  const appBarberFindClient = async (phoneLocal: string): Promise<any | null> => {
+  const normalizePersonName = (value: unknown): string => String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const appBarberFindClient = async (phoneLocal: string, expectedName?: string): Promise<any | null> => {
     const res = await callGet("/v1/establishment/clients", { cellphone: phoneLocal });
     if (res?.error) {
       console.warn(`[AppBarber] busca de cliente falhou: ${res.error}`);
       return null;
     }
     const rows: any[] = Array.isArray(res?.data) ? res.data : [];
-    return rows[0] ?? null;
+    if (!expectedName) return rows[0] ?? null;
+    const wanted = normalizePersonName(expectedName);
+    return rows.find((row) => normalizePersonName(row?.person_name ?? row?.name) === wanted) ?? null;
   };
 
   const appBarberEnsureClient = async (phoneLocal: string, name: string): Promise<{
@@ -392,7 +401,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   }> => {
     if (!phoneLocal || !name) return { status: "skipped" };
     try {
-      const existing = await appBarberFindClient(phoneLocal);
+      // Um telefone de WhatsApp pode representar pai/filho, casal ou grupo.
+      // Telefone igual NÃO prova que é a mesma pessoa: só reutiliza cadastro
+      // quando o nome completo normalizado também coincide.
+      const existing = await appBarberFindClient(phoneLocal, name);
       if (existing) return { status: "found", person_code: existing.person_code ?? null };
 
       const url = buildUrl("/v1/establishment/clients", {});
@@ -410,7 +422,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         return { status: "failed", error: parsed?.message || parsed?.error || `HTTP ${res.status}` };
       }
-      const after = await appBarberFindClient(phoneLocal);
+      const after = await appBarberFindClient(phoneLocal, name);
       return { status: "created", person_code: after?.person_code ?? null };
     } catch (e: any) {
       return { status: "failed", error: e?.message || String(e) };

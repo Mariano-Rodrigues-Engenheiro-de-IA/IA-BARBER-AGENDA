@@ -34,7 +34,6 @@ import {
 } from "./providers/appbarber/index.ts";
 import {
   buildAppBarberIntentSnapshot,
-  normalizeAppBarberIntentItems,
   reconcileAppBarberBookings,
   type AppBarberIntentSnapshot,
 } from "./providers/appbarber/guard-core.ts";
