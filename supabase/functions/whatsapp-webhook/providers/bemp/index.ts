@@ -447,7 +447,7 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
           professionals: Array<{ professionalId: number; name: string }>;
         }>();
         const profissionais: any[] = [];
-        for (const { prof, slots } of results) {
+        for (const { prof, slots, erro } of results) {
           const availableSlots: any[] = [];
           for (const slot of slots) {
             const start = String(slot?.start || "");
