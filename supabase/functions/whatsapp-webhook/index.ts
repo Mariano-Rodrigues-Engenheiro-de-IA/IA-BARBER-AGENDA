@@ -7434,12 +7434,20 @@ async function callAIAgent(
           let assistantText = "";
 
           for (let round = 0; round < 3; round++) {
+            // ⚠️ Corrigido (10/09, caso real Ricardo Trento): max_completion_tokens
+            // estava fixo em 700 — o gpt-5-mini conta tokens de "reasoning" (raciocínio
+            // interno) DENTRO desse mesmo limite, e no caso real gastou os 700 tokens
+            // inteiros em reasoning (finish_reason: "length"), retornando content vazio
+            // e nenhum tool_call. Não foi o modelo "decidindo" ignorar a instrução — ele
+            // ficou sem espaço no meio do processo. Mesmo ajuste já usado em outro ponto
+            // do código para esse mesmo problema (ver isGpt5 ~:4662, subiu de 200→1500).
+            const _isGpt5Reinject = modelUsed.includes("gpt-5");
             const retryBody = {
               model: modelUsed,
               messages,
               tools: buildToolsForProvider(provider, tenant),
               tool_choice: "auto",
-              max_completion_tokens: 700,
+              max_completion_tokens: _isGpt5Reinject ? 1500 : 700,
             };
             const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `phantom-confirmation-reinject-r${round + 1}`);
             if (!retryResp.ok) break;
