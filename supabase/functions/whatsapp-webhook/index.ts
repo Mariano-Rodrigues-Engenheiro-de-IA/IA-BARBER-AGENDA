@@ -9922,7 +9922,22 @@ function isAffirmativeReply(value: string): boolean {
   const normalized = normalizeUserFacingText(raw);
   if (!normalized) return false;
 
-  return /^(sim|s|ok|okay|pode|pode sim|pode ser|pode confirmar|confirmo|confirmo sim|confirmado|positivo|isso|isso mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|sim pode|pode cancelar|sim pode cancelar)$/.test(normalized);
+  const FIXED_LIST_RE = /^(sim|s|ok|okay|pode|pode sim|pode ser|pode confirmar|confirmo|confirmo sim|confirmado|positivo|isso|isso mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|sim pode|pode cancelar|sim pode cancelar)$/;
+  if (FIXED_LIST_RE.test(normalized)) return true;
+
+  // ⚠️ Ampliado (10/09): a versão original só reconhecia a mensagem INTEIRA
+  // batendo com a lista fixa acima — "Bom dia, pode sim!" ou "Perfeito, pode
+  // confirmar" não contavam como afirmativo, mesmo sendo confirmações claras.
+  // Cliente pode responder de muitas formas (frase + confirmação), não só a
+  // palavra isolada. As 3 salvaguardas abaixo existem para não capturar por
+  // engano um pedido de MUDANÇA que só contém uma palavra afirmativa solta no
+  // meio (ex: "Pode ser, mas prefiro outro horário" não é confirmação simples).
+  if (/\?/.test(raw)) return false; // pergunta nunca é confirmação simples
+  if (/\b(n[ãa]o|nunca|jamais)\b/.test(normalized)) return false; // negação
+  if (/\b(mas|por[ée]m|s[óo]\s+que|prefiro|consegue|poderia\s+ser|ao\s+inv[ée]s|em\s+vez)\b/.test(normalized)) return false; // sinal de pedido diferente/contraste
+
+  const AFFIRMATIVE_MARKER_RE = /\b(sim|pode(?:\s+(?:ser|confirmar|sim))?|confirmo|confirmado|confirma|positivo|isso\s+mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|claro|com\s+certeza|manda\s+ver|bora|vamos)\b/;
+  return AFFIRMATIVE_MARKER_RE.test(normalized);
 }
 
 function getLastAssistantMessage(history: { role: string; content: string }[]): string | null {
