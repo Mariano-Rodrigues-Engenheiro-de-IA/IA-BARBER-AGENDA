@@ -7361,9 +7361,12 @@ async function callAIAgent(
       logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
     } else {
-      // Last-resort fallback: stay completely silent rather than send a generic line that
-      // breaks character. Returning empty string prevents the webhook from sending a message.
-      finalResponse = "";
+      // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
+      // produziu texto (rounds estourados, resposta vazia, leak descartado),
+      // enviamos uma linha transparente reconhecendo o atraso em vez de calar.
+      console.warn(`[NoSilence] Resposta vazia sem agendamento criado — enviando aviso transparente ao cliente.`);
+      logErrors.push({ message: `Resposta vazia — enviado aviso transparente (política anti-silêncio).`, level: "warning" });
+      finalResponse = "Desculpa, tive uma instabilidade aqui e não consegui finalizar sua resposta agora. Pode me confirmar o que você precisa? Se preferir, já chamo um atendente 🙏";
     }
   }
 
