@@ -477,15 +477,26 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
         const horariosConsolidados = Array.from(consolidatedMap.values())
           .sort((a, b) => a.start.localeCompare(b.start));
         const totalProfissionaisLivres = profissionais.filter((p) => p.total > 0).length;
+        const totalComFalhaTecnica = profissionais.filter((p) => !!p.erro).length;
+
+        let resumoGeral: string;
+        if (totalProfissionaisLivres === 0 && totalComFalhaTecnica === profissionais.length) {
+          resumoGeral = `Não consegui verificar a agenda de ${args.data} agora (falha técnica ao consultar todos os ${profissionais.length} profissionais). NÃO afirme que não há vaga nesse dia — informe que houve um problema técnico e tente novamente, ou ofereça consultar outro dia enquanto isso.`;
+        } else if (totalProfissionaisLivres === 0 && totalComFalhaTecnica > 0) {
+          resumoGeral = `Nenhum profissional com vaga confirmada em ${args.data} (${totalComFalhaTecnica} de ${profissionais.length} não puderam ser verificados por falha técnica — os demais foram checados e não têm vaga). Ofereça outro dia, mas sem afirmar com certeza que não há vaga nenhuma nesse dia.`;
+        } else if (totalProfissionaisLivres === 0) {
+          resumoGeral = `Nenhum profissional disponível em ${args.data}.`;
+        } else {
+          resumoGeral = `${totalProfissionaisLivres} profissional(is) com horários em ${args.data}: ${horariosConsolidados.length} horário(s) únicos.`;
+        }
 
         return {
           salonId: args.salonId,
           serviceId: args.serviceId,
           data: args.data,
-          resumo: totalProfissionaisLivres === 0
-            ? `Nenhum profissional disponível em ${args.data}.`
-            : `${totalProfissionaisLivres} profissional(is) com horários em ${args.data}: ${horariosConsolidados.length} horário(s) únicos.`,
+          resumo: resumoGeral,
           totalProfissionaisLivres,
+          totalComFalhaTecnica,
           horariosConsolidados,
           profissionais,
         };
