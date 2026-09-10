@@ -7415,8 +7415,46 @@ async function callAIAgent(
         console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
       }
 
-      if (!recentBookingSuccess && !lookupLegit) {
-        console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim}. Tentando reinjeção.`);
+      // ⚠️ Ponta aberta 4.1 da auditoria (10/09): até aqui o bloqueio saía APENAS
+      // de regex no texto da IA — os 7 disparos medidos em 30 dias foram 100%
+      // falso positivo (confirmação de horário PRÉ-EXISTENTE). Agora o bloqueio
+      // exige, além do texto, uma SEGUNDA FONTE ESTRUTURADA de que este turno é
+      // de CRIAÇÃO NOVA:
+      //   a) forma do turno: a última mensagem da IA ancorou horário e pediu
+      //      confirmação, e o cliente confirmou (isNewBookingFinalStep); ou
+      //   b) houve consulta de DISPONIBILIDADE bem-sucedida neste turno
+      //      (nome de ferramenta = dado estruturado, não palavra do cliente); ou
+      //   c) a resposta cita um horário que veio de uma consulta de
+      //      disponibilidade desta sessão (appbarberSlotOptions).
+      // Sem nenhuma delas, o guard NÃO reescreve a resposta — só registra em
+      // sombra, pra continuar medindo sem quebrar confirmação legítima.
+      const _availabilityToolRe = /(hor[aá]rio|disponib|slot|agenda_livre)/i;
+      const availabilitySearchThisTurn = (logToolCalls || []).some((tc: any) => {
+        if (!tc || typeof tc.name !== "string" || !_availabilityToolRe.test(tc.name)) return false;
+        const r = tc.result;
+        return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+      });
+      const _sessionSlots = ((sessionState as any)?.appbarberSlotOptions || []) as Array<{ start_time?: string }>;
+      const _responseTimes = new Set<string>((String(finalResponse).match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || []).map((t) => t.padStart(5, "0")));
+      const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
+      const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
+
+      if (!recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
+        console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_confirmation_guard",
+            provider,
+            acao: "detected_shadow_no_structured_evidence",
+            claim: String(finalResponse).slice(0, 160),
+            explicit: hasExplicitCreationClaim,
+            implied: hasImpliedFinalizationClaim,
+          },
+        });
+      } else if (!recentBookingSuccess && !lookupLegit) {
+        console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}. Tentando reinjeção.`);
         logErrors.push({ message: `Resposta prometia finalização de agendamento novo sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
