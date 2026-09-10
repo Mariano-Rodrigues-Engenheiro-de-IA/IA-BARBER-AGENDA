@@ -649,6 +649,14 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         const resultados = await Promise.all(profs.map(consultaUm));
         const comHorario = resultados.filter((r) => Array.isArray(r.available_times) && r.available_times.length > 0);
+        // ⚠️ Corrigido (10/09): profissionais com ERRO (ex: 429, falha de rede) e
+        // profissionais genuinamente SEM vaga ficavam indistinguíveis — os dois
+        // caem em available_times:[]. Caso real: 4 dias seguidos com HTTP 429 em
+        // TODOS os 8 profissionais foram reportados como "Nenhum profissional com
+        // vaga... Ofereça outro dia", quando na verdade a consulta nunca chegou a
+        // acontecer de verdade. A IA (e o cliente) receberam "está lotado" quando
+        // o correto era "não consegui verificar agora".
+        const comErro = resultados.filter((r: any) => !!r.erro);
 
         // Horários consolidados → mapa hora → profissionais livres naquele horário
         const horariosMap = new Map<string, Array<{ professional_code: number; name: string | null }>>();
@@ -664,7 +672,13 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           .map(([time, professionals]) => ({ time, professionals }));
 
         let resumo: string;
-        if (comHorario.length === 0) {
+        if (comHorario.length === 0 && comErro.length === profs.length) {
+          // Nenhum profissional foi genuinamente consultado — 100% falhou.
+          resumo = `Não consegui verificar a agenda de ${args.start_date} agora (falha técnica ao consultar todos os ${profs.length} profissionais). NÃO afirme que não há vaga nesse dia — informe que houve um problema técnico e tente novamente, ou ofereça consultar outro dia enquanto isso.`;
+        } else if (comHorario.length === 0 && comErro.length > 0) {
+          // Parte falhou, parte foi consultada com sucesso e realmente não tinha vaga.
+          resumo = `Nenhum profissional com vaga confirmada em ${args.start_date} (${comErro.length} de ${profs.length} não puderam ser verificados por falha técnica — os demais foram checados e não têm vaga). Ofereça outro dia, mas sem certeza total de que não há vaga nenhuma nesse dia.`;
+        } else if (comHorario.length === 0) {
           resumo = `Nenhum profissional com vaga em ${args.start_date}. Ofereça outro dia — NÃO pergunte preferência de profissional.`;
         } else if (comHorario.length === 1) {
           resumo = `Apenas 1 profissional livre em ${args.start_date}: ${comHorario[0].name || comHorario[0].professional_code}. NÃO pergunte preferência — proponha direto os horários dele.`;
@@ -677,6 +691,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           service_code: requestedCode,
           resumo,
           totalProfissionaisLivres: comHorario.length,
+          totalComFalhaTecnica: comErro.length,
           horariosConsolidados,
           profissionais: resultados,
         };
