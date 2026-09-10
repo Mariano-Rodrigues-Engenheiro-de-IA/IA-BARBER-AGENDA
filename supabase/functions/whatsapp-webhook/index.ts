@@ -2704,6 +2704,14 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
+      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do cliente pode terminar
+      // sem resposta enviada no WhatsApp. Se por qualquer caminho a resposta
+      // chegou vazia aqui, mandamos uma linha transparente em vez de calar.
+      if (!String(aiResponse || "").trim()) {
+        console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
+        aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
+      }
+
       const messageParts = splitIntoMessages(aiResponse);
 
       let tFirstSend = 0;
@@ -3736,6 +3744,26 @@ function recordAssistantReply(state: AgentSessionState, text: string): void {
   const next = pruneRecentAssistantReplies(state);
   next.push({ text: trimmed.slice(0, 600), norm: norm.slice(0, 600), at: new Date().toISOString() });
   state.recentAssistantReplies = next.slice(-ASSISTANT_REPLY_MAX);
+}
+
+// 🚫 POLÍTICA ANTI-SILÊNCIO: quando a única alternativa seria não enviar nada
+// (ex: cliente mandou só "ok" e a regeneração veio duplicada/vazia), devolvemos
+// uma linha curta de encerramento que ainda não foi usada recentemente.
+const SHORT_ACK_REPLIES = [
+  "Perfeito! Qualquer coisa é só chamar 🤝",
+  "Combinado! Tô por aqui se precisar 😉",
+  "Show! Se surgir qualquer dúvida, me chama.",
+  "Tranquilo! Fico à disposição 👍",
+];
+
+function pickShortAckReply(state: AgentSessionState): string {
+  const list = pruneRecentAssistantReplies(state);
+  state.recentAssistantReplies = list;
+  const used = new Set(list.map((e) => e.norm));
+  for (const candidate of SHORT_ACK_REPLIES) {
+    if (!used.has(normalizeReplyForCompare(candidate))) return candidate;
+  }
+  return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
 }
 
 
@@ -7361,9 +7389,12 @@ async function callAIAgent(
       logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
     } else {
-      // Last-resort fallback: stay completely silent rather than send a generic line that
-      // breaks character. Returning empty string prevents the webhook from sending a message.
-      finalResponse = "";
+      // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
+      // produziu texto (rounds estourados, resposta vazia, leak descartado),
+      // enviamos uma linha transparente reconhecendo o atraso em vez de calar.
+      console.warn(`[NoSilence] Resposta vazia sem agendamento criado — enviando aviso transparente ao cliente.`);
+      logErrors.push({ message: `Resposta vazia — enviado aviso transparente (política anti-silêncio).`, level: "warning" });
+      finalResponse = "Desculpa, tive uma instabilidade aqui e não consegui finalizar sua resposta agora. Pode me confirmar o que você precisa? Se preferir, já chamo um atendente 🙏";
     }
   }
 
@@ -8753,7 +8784,7 @@ async function callAIAgent(
         const antiRepeatReminder = {
           role: "system" as const,
           content: isPureAck
-            ? `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente é apenas um "ok/valeu/emoji" sem conteúdo novo — devolva STRING VAZIA (não envie nada). Nunca reenvie a mesma resposta.`
+            ? `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente é apenas um "ok/valeu/emoji" sem conteúdo novo — responda com UMA frase curta e diferente de encerramento (ex: "Qualquer coisa é só chamar!"). NUNCA devolva string vazia: silêncio é proibido.`
             : `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente TEM CONTEÚDO NOVO ("${lastUserText.slice(0, 160)}") e precisa ser respondida. NÃO repita a mensagem anterior nem uma paráfrase — avance a conversa reconhecendo o que o cliente acabou de dizer e faça a próxima pergunta ou ação. É obrigatório responder algo diferente; não devolva string vazia.`,
         };
         const regenRaw = await requestFinalNaturalResponse([...messages, antiRepeatReminder]);
@@ -8762,9 +8793,10 @@ async function callAIAgent(
           const stillDup = findSimilarRecentReply(sessionState, regen);
           if (stillDup) {
             if (isPureAck) {
-              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack. Silenciando.`);
-              logErrors.push({ message: `Regeneração ainda duplicada — mensagem suprimida (ack).`, level: "warning" });
-              finalResponse = "";
+              // 🚫 SILÊNCIO PROIBIDO: em vez de calar, manda um encerramento curto e variado.
+              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack — usando encerramento curto.`);
+              logErrors.push({ message: `Regeneração duplicada em ack — enviado encerramento curto (anti-silêncio).`, level: "warning" });
+              finalResponse = pickShortAckReply(sessionState);
             } else {
               // Cliente trouxe contexto novo — melhor mandar duplicado do que ficar mudo.
               console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) mas cliente trouxe contexto novo. Enviando mesmo assim.`);
@@ -8776,8 +8808,9 @@ async function callAIAgent(
           }
         } else {
           if (isPureAck) {
-            console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
-            finalResponse = "";
+            console.warn(`[ReplyDedup] Regeneração vazia em ack — enviando encerramento curto (anti-silêncio) para ${phoneNumber}.`);
+            logErrors.push({ message: `Regeneração vazia em ack — enviado encerramento curto (anti-silêncio).`, level: "warning" });
+            finalResponse = pickShortAckReply(sessionState);
           } else {
             // Cliente trouxe contexto novo e regeneração falhou — mantém a resposta original
             // para não deixar o cliente sem retorno.
@@ -8789,7 +8822,7 @@ async function callAIAgent(
       } catch (e) {
         console.error("[ReplyDedup] Falha ao regenerar:", (e as any)?.message);
         if (isPureAck) {
-          finalResponse = "";
+          finalResponse = pickShortAckReply(sessionState);
         }
         // se não é ack, mantém finalResponse original
       }
@@ -9819,8 +9852,13 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           return payload?.messageid || payload?.id || payload?.message?.id || payload?.messages?.[0]?.id || null;
         };
 
-        const silentMode = config.silent_mode === true;
-        if (!silentMode) {
+        // 🚫 SILÊNCIO PROIBIDO: transferência para humano SEMPRE avisa o cliente.
+        // `silent_mode` foi desativado — antes o cliente ficava sem nenhuma resposta
+        // e a conversa morria sem ele saber que havia sido transferido.
+        if (config.silent_mode === true) {
+          console.warn(`[EscalateHuman] silent_mode ignorado (política anti-silêncio) — avisando o cliente.`);
+        }
+        {
           const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
           try {
             const delay = typingDelayMs(clientText);
@@ -9848,8 +9886,6 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           } catch (e: any) {
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
-        } else {
-          console.log(`[EscalateHuman] Silent mode — skipping client message`);
         }
 
         const humanNumber = config.human_number;
