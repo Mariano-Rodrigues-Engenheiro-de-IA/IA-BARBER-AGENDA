@@ -7999,7 +7999,17 @@ async function callAIAgent(
         `[MultiBookingGuard] todas as ${_mbAttemptResults.length} tentativa(s) falharam por regra de negócio recuperável — devolvendo o turno para a resposta da IA, sem recovery.`,
       );
       guardLog("recoverable_business_rule_deferred");
-    } else if (_mbCfg.skipWhenSingleVisit && prometidos <= 1) {
+    } else if (
+      _mbCfg.skipWhenSingleVisit && prometidos <= 1
+      // 🔒 Cruzamento de guards (10/09): no Frizzar (useIntentShape) o provider
+      // devolve alternativas estruturadas e o guard pode se retirar mesmo com
+      // criados=0. No AppBarber NÃO: prometidos=1 e criados=0 é justamente o
+      // caminho da recuperação do ITEM 8 (reinjeta service_code/professional_code
+      // já obtidos, ou pergunta o nome). Retirar o guard ali devolveria esses
+      // turnos ao fallback genérico. Então aqui ele só se retira quando não
+      // falta nada.
+      && (_mbCfg.useIntentShape || criados >= prometidos)
+    ) {
       // Não sequestra falhas de disponibilidade de uma visita simples. O
       // BookingGuard/provider já devolve as alternativas corretas; este guard
       // existe exclusivamente para garantir múltiplas visitas.
