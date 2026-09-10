@@ -4680,6 +4680,7 @@ function heuristicPromisedFromWindow(messages: any[], attempts: number): number 
  */
 async function classifyPendingBookings(params: {
   messages: any[];
+  provider?: string;
   aiEndpoint: string;
   aiAuthKey: string;
   modelUsed: string;
@@ -8003,6 +8004,7 @@ async function callAIAgent(
     } else {
       cls = await classifyPendingBookings({
         messages,
+        provider,
         aiEndpoint,
         aiAuthKey,
         modelUsed,
@@ -8013,6 +8015,12 @@ async function callAIAgent(
       });
     }
     let prometidos = cls.total;
+    if (provider === "appbarber" && cls.intentSnapshot) {
+      // O extrator pode errar para cima e por isso ainda não executa ações sozinho,
+      // mas um múltiplo estruturado nunca pode ser apagado pelos clamps antigos.
+      sessionState.appbarberIntentSnapshot = cls.intentSnapshot;
+      prometidos = Math.max(prometidos, cls.intentSnapshot.expectedCount);
+    }
     const _visibleConversationText = (messages || [])
       .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
       .map((m: any) => String(m.content))
@@ -8040,7 +8048,8 @@ async function callAIAgent(
         }
       }
     }
-    const _hasStructuredAppbarberMulti = _appbarberPendingServices.length > 0;
+    const _hasStructuredAppbarberMulti = _appbarberPendingServices.length > 0
+      || (provider === "appbarber" && (sessionState.appbarberIntentSnapshot?.expectedCount ?? 1) > 1);
 
     // 🔒 FRIZZAR: a unidade do guard é VISITA/COMANDA, não quantidade de
     // serviços. O classificador devolve dimensões separadas para impedir os dois
@@ -8163,6 +8172,9 @@ async function callAIAgent(
 
     // Log estruturado no rastro de tool_calls pra auditoria.
     const guardLog = (acao: string) => {
+      const appbarberReconciliation = provider === "appbarber"
+        ? reconcileAppBarberBookings(sessionState.appbarberIntentSnapshot, logToolCalls)
+        : null;
       logToolCalls.push({
         name: "__multi_booking_guard__",
         args: { phase: "response_guard" },
@@ -8177,6 +8189,10 @@ async function callAIAgent(
           classifier_source: cls.source,
           classifier_reasoning: cls.reasoning,
           ...(_mbCfg.useIntentShape && cls.intentShape ? { classifier_intent_shape: cls.intentShape } : {}),
+          ...(provider === "appbarber" ? {
+            intent_snapshot: sessionState.appbarberIntentSnapshot,
+            reconciliation: appbarberReconciliation,
+          } : {}),
         },
       });
     };

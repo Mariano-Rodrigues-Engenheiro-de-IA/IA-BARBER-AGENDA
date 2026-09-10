@@ -263,7 +263,7 @@ export function buildAppBarberTools(tenant: any) {
             service_code: { type: "number", description: "service_code real retornado em listar_servicos. Use quando for um único serviço (ou o combo cadastrado)." },
             services: {
               type: "array",
-              description: "Múltiplos serviços na MESMA visita, numa única chamada (só quando não existir combo cadastrado cobrindo eles). O primeiro item é o serviço principal usado na checagem de disponibilidade.",
+              description: "Compatibilidade interna. Não envie mais de um item. Para múltiplos serviços sem combo, use chamadas separadas em horários consecutivos.",
               items: {
                 type: "object",
                 properties: {
@@ -803,13 +803,15 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               hint: `Chame listar_horarios_geral novamente para ${combo.name} usando service_code=${comboCode} e só depois chame criar_agendamento com UM único service_code. NÃO use services[] com corte + sobrancelha separados.`,
             };
           }
-          // ✅ Sem combo cadastrado cobrindo os serviços: em vez de bloquear (o que
-          // empurrava a IA para DUAS chamadas separadas de criar_agendamento — e a
-          // segunda batia em `future_appointments_limit`, deixando o cliente com
-          // metade do pedido), seguimos com services[] na MESMA comanda. A trava de
-          // slots consecutivos (Correção B, logo abaixo) é quem garante que a soma
-          // das durações cabe no horário escolhido.
-          console.log(`[AppBarber] criar_agendamento multi-serviço sem combo cadastrado — seguindo com services[]=${requestedServices.map((s: any) => s.service_code).join(",")} na mesma comanda.`);
+          return {
+            error: "services[] com múltiplos itens não é aceito sem combo cadastrado. Crie cada serviço separadamente, no mesmo profissional e em horários consecutivos já consultados.",
+            blocked: true,
+            recoverable: true,
+            retryable: true,
+            reason: "separate_service_calls_required",
+            requested_service_codes: requestedServices.map((service: any) => service.service_code),
+            recoveryDirective: "Faça uma chamada de criar_agendamento por serviço, em horários consecutivos. Preserve a pessoa correta em customer_name e só confirme depois de todos os retornos com appointment_id.",
+          };
         }
         // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
         // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
@@ -848,13 +850,9 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           const wantedTime = String(args.start_time).slice(0, 5);
           const pc = Number(args.professional_code);
           if (slotOptions.length > 0) {
-            // professional_code === 0 = consulta registrada sem profissional
-            // identificado (listar_horarios sem esse argumento). Vale como
-            // checagem prévia para qualquer profissional — o horário foi
-            // realmente consultado na API, só não sabemos de quem era a grade.
             const hasChecked = slotOptions.some((s) =>
               s.service_code === primaryServiceCode &&
-              (s.professional_code === pc || s.professional_code === 0) &&
+              s.professional_code === pc &&
               s.start_date === wantedDate &&
               s.start_time.slice(0, 5) === wantedTime
             );
