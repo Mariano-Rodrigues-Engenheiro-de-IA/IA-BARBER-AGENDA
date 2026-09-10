@@ -33,6 +33,12 @@ import {
   bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
+  buildAppBarberIntentSnapshot,
+  normalizeAppBarberIntentItems,
+  reconcileAppBarberBookings,
+  type AppBarberIntentSnapshot,
+} from "./providers/appbarber/guard-core.ts";
+import {
   buildBempTools,
   executeBempTool,
   evaluateSuccessfulBooking as evaluateBempBooking,
@@ -3145,6 +3151,10 @@ interface AgentSessionState {
     times: string[]; // HH:MM extraídos do payload
     dates: string[]; // YYYY-MM-DD ou DD/MM[/YYYY]
   } | null;
+  // APPBARBER — fotografia estruturada da solicitação. É extraída da conversa
+  // completa e reconciliada apenas com IDs reais devolvidos pelas ferramentas.
+  // Nesta primeira etapa roda em sombra e impede clamps de apagarem múltiplos.
+  appbarberIntentSnapshot?: AppBarberIntentSnapshot | null;
 }
 
 
@@ -3179,6 +3189,7 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
     appbarberServiceCatalog: [],
     appbarberSlotOptions: [],
     recentActiveBookingsLookup: null,
+    appbarberIntentSnapshot: null,
   };
 
   try {
@@ -3285,6 +3296,16 @@ async function loadConversationState(supabase: any, tenantId: string, phoneNumbe
             dates: s.recentActiveBookingsLookup.dates.filter((d: any) => typeof d === "string").slice(0, 30),
           }
         : null,
+      appbarberIntentSnapshot: (s.appbarberIntentSnapshot && typeof s.appbarberIntentSnapshot === "object")
+        ? buildAppBarberIntentSnapshot({
+            total_bookings_requested: s.appbarberIntentSnapshot.expectedCount,
+            distinct_people: s.appbarberIntentSnapshot.distinctPeople,
+            distinct_times: s.appbarberIntentSnapshot.distinctTimes,
+            distinct_professionals: s.appbarberIntentSnapshot.distinctProfessionals,
+            requested_items: s.appbarberIntentSnapshot.items,
+            ambiguous: s.appbarberIntentSnapshot.ambiguous,
+          }, s.appbarberIntentSnapshot.source === "fallback" ? "fallback" : "llm", new Date(s.appbarberIntentSnapshot.updatedAt || Date.now()))
+        : null,
     } as AgentSessionState;
   } catch {
     return defaultState;
@@ -3356,6 +3377,7 @@ async function saveConversationState(supabase: any, tenantId: string, phoneNumbe
         ? (state as any).frizzarListedByProfessional.slice(-30)
         : [],
       recentActiveBookingsLookup: (state as any).recentActiveBookingsLookup ?? null,
+      appbarberIntentSnapshot: state.appbarberIntentSnapshot ?? null,
     };
 
     await supabase
@@ -4675,6 +4697,7 @@ async function classifyPendingBookings(params: {
     distinctProfessionals: number;
     sameVisitServicesOnly: boolean;
   };
+  intentSnapshot?: AppBarberIntentSnapshot;
 }> {
   const { messages, aiEndpoint, aiAuthKey, modelUsed, attempts, bookedServiceNames, bookedExecutionCount, priorTurnBookings } = params;
   const fallback = () => ({
@@ -4682,11 +4705,13 @@ async function classifyPendingBookings(params: {
     source: "fallback" as const,
   });
 
-  // Janela: últimas ~6 mensagens do histórico visível (só role/content, sem tool_calls).
+  // AppBarber precisa da conversa visível completa: pedidos parcelados ("pra mim"
+  // ... várias mensagens depois ... "e pro Lucas") não podem sumir por slice(-6).
+  // Para os demais providers preservamos a janela histórica já validada.
   const window = messages
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim())
-    .slice(-6)
-    .map((m: any) => ({ role: m.role, content: m.content.slice(0, 800) }));
+    .slice(params.provider === "appbarber" ? -30 : -6)
+    .map((m: any) => ({ role: m.role, content: m.content.slice(0, params.provider === "appbarber" ? 1600 : 800) }));
 
   if (window.length === 0) return fallback();
 
@@ -4713,8 +4738,9 @@ async function classifyPendingBookings(params: {
     ...(execInfo ? [execInfo.trim()] : []),
     ...(priorInfo ? [priorInfo.trim()] : []),
     "- IMPORTANTE PARA FRIZZAR: vários serviços para a MESMA pessoa, na MESMA visita, formam 1 agendamento/comanda. Corte + barba não são 2 agendamentos. Duas pessoas, ainda que no mesmo horário, são 2 agendamentos.",
-    '- Preencha também as dimensões da intenção: pessoas distintas, horários distintos e profissionais distintos. Se a conversa diz "dois cortes", "para mim e outra pessoa", "nós dois" ou equivalente, distinct_people deve ser 2 mesmo quando a última resposta do cliente for apenas "sim".',
-    'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "distinct_people": <numero>, "distinct_times": <numero>, "distinct_professionals": <numero>, "same_visit_services_only": <boolean>, "reasoning": "<curto>"}',
+    '- Preencha também as dimensões da intenção: pessoas distintas, horários distintos e profissionais distintos. Preserve pedidos feitos em mensagens anteriores que ainda não foram concluídos.',
+    '- requested_items deve ter um item por criação necessária. Use null quando pessoa, serviço, código, data, hora ou profissional ainda não estiver comprovado na conversa/ferramentas. Não invente códigos.',
+    'Responda APENAS em JSON: {"total_bookings_requested": <numero>, "distinct_people": <numero>, "distinct_times": <numero>, "distinct_professionals": <numero>, "same_visit_services_only": <boolean>, "ambiguous": <boolean>, "requested_items": [{"person_name": <string|null>, "service_name": <string|null>, "service_code": <number|null>, "date": <string|null>, "time": <string|null>, "professional_name": <string|null>, "professional_code": <number|null>}], "reasoning": "<curto>"}',
   ].join("\n");
 
   const isGpt5 = modelUsed.includes("gpt-5");
@@ -4766,6 +4792,7 @@ async function classifyPendingBookings(params: {
       distinctProfessionals: dimension(parsed?.distinct_professionals),
       sameVisitServicesOnly: parsed?.same_visit_services_only === true,
     };
+    const intentSnapshot = buildAppBarberIntentSnapshot(parsed, "llm");
 
     // 🚨 FIX — o classificador às vezes erra a própria conta: o texto de
     // `reasoning` soma corretamente (ex: "corte (1) + avô (1) = total 2
@@ -4828,6 +4855,7 @@ async function classifyPendingBookings(params: {
       source: "llm",
       reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? " heur_ignored" : ""}`,
       intentShape,
+      intentSnapshot,
     };
   } catch (e) {
     console.warn(`[MultiBookingGuard] classifier failed:`, (e as Error)?.message);

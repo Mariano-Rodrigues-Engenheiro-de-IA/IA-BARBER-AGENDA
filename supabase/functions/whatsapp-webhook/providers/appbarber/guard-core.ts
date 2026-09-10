@@ -154,7 +154,7 @@ export function reconcileAppBarberBookings(
       professionalCode: positiveInt(args.professional_code ?? result.professional_code),
     });
   }
-  const expectedCount = Math.max(1, snapshot?.expectedCount ?? completed.length || 1);
+  const expectedCount = Math.max(1, snapshot?.expectedCount ?? completed.length ?? 1);
   return {
     expectedCount,
     completedCount: completed.length,
