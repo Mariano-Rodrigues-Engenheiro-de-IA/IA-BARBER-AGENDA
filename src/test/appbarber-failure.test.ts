@@ -353,6 +353,20 @@ describe("anti-eco — só descarta eco de verdade", () => {
   it("NÃO descarta frase parecida mas não idêntica", () => {
     expect(ehEco("Cabelo com o Leonardo, sexta às 17h. Pode confirmar?", [respostaDaIA])).toBe(false);
   });
+
+  it("NÃO descarta envio manual com message_id próprio, mesmo se o texto for idêntico", () => {
+    const ehEcoFromMe = (texto: string, mensagensDaIA: string[], messageId: string | null) =>
+      !messageId && ehEco(texto, mensagensDaIA);
+    expect(ehEcoFromMe(respostaDaIA, [respostaDaIA], "556183012868:3EB0MANUAL")).toBe(false);
+  });
+
+  it("extrai do message_id o cliente destinatário de uma mensagem manual", () => {
+    const owner = "556193359125";
+    const messageId = "556183012868:3EB0F77A7390A305A332AA";
+    const peer = messageId.slice(0, messageId.indexOf(":"));
+    expect(peer).toBe("556183012868");
+    expect(peer).not.toBe(owner);
+  });
 });
 
 describe("isLeakedReasoningResponse — vazamento de raciocínio", () => {
