@@ -1500,7 +1500,15 @@ export const bookingGuardsConfig = {
     skipWhenSingleVisit: false,
     allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
-    recoveryToolChoice: "auto" as const,
+    // ⚠️ Corrigido (10/09): estava "auto", permitindo a IA responder só texto
+    // na rodada de recuperação em vez de completar a chamada de
+    // criar_agendamento que faltava (padrão medido: "recovery sem tool_calls",
+    // causa raiz de baixa recuperação no AppBarber vs Frizzar, que já usa
+    // "required" e recupera 63% contra ~17% do AppBarber). O caso de nome
+    // bloqueado continua protegido à parte (ver _nameBlocked na chamada de
+    // recuperação, index.ts) — ali a saída certa é texto (perguntar o nome),
+    // e isso não muda com esta config.
+    recoveryToolChoice: "required" as const,
   },
   cancel: {
     enabled: true,
