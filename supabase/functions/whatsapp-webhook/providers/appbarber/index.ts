@@ -365,6 +365,58 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
     return parsed ?? { raw: text.slice(0, 300) };
   };
 
+  // ===== AppBarber: garantia de CADASTRO do cliente =====
+  // Validado contra a API real (9Cinco, set/2026): POST /v1/appointments cria o
+  // cadastro implicitamente na maioria dos casos, mas já houve caso em produção
+  // (Mariano Rodrigues, 61983012868) em que o agendamento existiu e o cliente
+  // NÃO ficou cadastrado — nome/telefone só sobraram na observação da comanda.
+  // Por isso o cadastro passa a ser determinístico: buscamos o cliente pelo
+  // telefone e, se não existir, inserimos explicitamente antes de agendar.
+  // A busca aceita telefone com máscara ("(44) 99907-3035") — testado — então
+  // não há risco de duplicar cadastro criado pelo app.
+  // NUNCA bloqueia o agendamento: falha aqui é apenas registrada em log.
+  const appBarberFindClient = async (phoneLocal: string): Promise<any | null> => {
+    const res = await callGet("/v1/establishment/clients", { cellphone: phoneLocal });
+    if (res?.error) {
+      console.warn(`[AppBarber] busca de cliente falhou: ${res.error}`);
+      return null;
+    }
+    const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+    return rows[0] ?? null;
+  };
+
+  const appBarberEnsureClient = async (phoneLocal: string, name: string): Promise<{
+    status: "found" | "created" | "failed" | "skipped";
+    person_code?: number | null;
+    error?: string;
+  }> => {
+    if (!phoneLocal || !name) return { status: "skipped" };
+    try {
+      const existing = await appBarberFindClient(phoneLocal);
+      if (existing) return { status: "found", person_code: existing.person_code ?? null };
+
+      const url = buildUrl("/v1/establishment/clients", {});
+      const body = {
+        establishment: estCode,
+        person_name: name,
+        person_cellphone: phoneLocal,
+        person_dial_code: "+55",
+      };
+      console.log(`[AppBarber] POST ${url} body=${JSON.stringify(body)}`);
+      const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+      const text = await res.text();
+      console.log(`[AppBarber] cadastrar_cliente (${res.status}):`, text.slice(0, 400));
+      if (!res.ok) {
+        let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
+        return { status: "failed", error: parsed?.message || parsed?.error || `HTTP ${res.status}` };
+      }
+      const after = await appBarberFindClient(phoneLocal);
+      return { status: "created", person_code: after?.person_code ?? null };
+    } catch (e: any) {
+      return { status: "failed", error: e?.message || String(e) };
+    }
+  };
+
   const normalizePhoneDigits = (raw: string): string => {
     let tel = (raw || "").trim().replace(/[^\d]/g, "");
     if (!tel) return "";
@@ -918,6 +970,14 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // AppBarber armazena telefone SEM DDI 55 (formato: 61983012868).
         // Enviar "5561983012868" cria cadastro duplicado. Sempre local (DDD+9+numero).
         const customerPhoneLocal = appBarberLocalPhone(phoneDigits);
+        // Cadastro explícito ANTES de agendar (ver comentário em appBarberEnsureClient).
+        const clientRegistration = await appBarberEnsureClient(
+          customerPhoneLocal || phoneDigits,
+          customerName,
+        );
+        if (clientRegistration.status === "failed") {
+          console.warn(`[AppBarber] cadastro do cliente falhou (segue agendando): ${clientRegistration.error}`);
+        }
         // Schema real do AppBarber (validado via erro 400):
         // customer_phone: bigint | customer_name: string | start_date: "YYYY-MM-DD HH:MM"
         // professionals: [{ professional_code }] | services: [{ service_code, duration }]
@@ -1001,6 +1061,9 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           service_codes: serviceItems.map((service) => service.service_code),
           services: serviceItems,
           professional_code: Number(args.professional_code),
+          // Observabilidade: found | created | failed | skipped (nunca bloqueia).
+          client_registration: clientRegistration.status,
+          client_person_code: clientRegistration.person_code ?? null,
           raw: parsed?.data ?? parsed,
         };
       }

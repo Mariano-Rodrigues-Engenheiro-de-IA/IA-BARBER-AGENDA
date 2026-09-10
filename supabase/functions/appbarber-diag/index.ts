@@ -20,6 +20,8 @@ const ALLOWED_PREFIXES = [
   "/v1/client",
   "/v1/customer",
   "/v1/person",
+  // Diagnóstico do cadastro de cliente (GET /v1/establishment/clients).
+  "/v1/establishment/clients",
 ];
 
 Deno.serve(async (req) => {
