@@ -6778,13 +6778,19 @@ async function callAIAgent(
           const slotOptions: NonNullable<AgentSessionState["appbarberSlotOptions"]> = [];
 
           if (serviceCode && startDate && toolCall.function.name === "listar_horarios" && Array.isArray((toolResult as any)?.available_times)) {
-            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code);
-            if (professionalCode) {
-              for (const time of (toolResult as any).available_times) {
-                const hhmm = String(time || "").slice(0, 5);
-                if (/^\d{2}:\d{2}$/.test(hhmm)) {
-                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
-                }
+            // ⚠️ Ponta aberta 4.4 da auditoria (10/09): quando o professional_code
+            // não vinha nem nos args nem no retorno, a consulta inteira era
+            // descartada e a sessão ficava sem histórico de busca — por isso
+            // apenas 27 de 126 sessões tinham appbarberSlotOptions preenchido.
+            // Agora registra com professional_code 0 ("não informado"): as
+            // checagens que usam esse histórico (múltiplos serviços na mesma
+            // data, horário citado que veio de busca real) só dependem de
+            // service_code + start_date + start_time.
+            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code) ?? 0;
+            for (const time of (toolResult as any).available_times) {
+              const hhmm = String(time || "").slice(0, 5);
+              if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
               }
             }
           }
@@ -7415,8 +7421,46 @@ async function callAIAgent(
         console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
       }
 
-      if (!recentBookingSuccess && !lookupLegit) {
-        console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim}. Tentando reinjeção.`);
+      // ⚠️ Ponta aberta 4.1 da auditoria (10/09): até aqui o bloqueio saía APENAS
+      // de regex no texto da IA — os 7 disparos medidos em 30 dias foram 100%
+      // falso positivo (confirmação de horário PRÉ-EXISTENTE). Agora o bloqueio
+      // exige, além do texto, uma SEGUNDA FONTE ESTRUTURADA de que este turno é
+      // de CRIAÇÃO NOVA:
+      //   a) forma do turno: a última mensagem da IA ancorou horário e pediu
+      //      confirmação, e o cliente confirmou (isNewBookingFinalStep); ou
+      //   b) houve consulta de DISPONIBILIDADE bem-sucedida neste turno
+      //      (nome de ferramenta = dado estruturado, não palavra do cliente); ou
+      //   c) a resposta cita um horário que veio de uma consulta de
+      //      disponibilidade desta sessão (appbarberSlotOptions).
+      // Sem nenhuma delas, o guard NÃO reescreve a resposta — só registra em
+      // sombra, pra continuar medindo sem quebrar confirmação legítima.
+      const _availabilityToolRe = /(hor[aá]rio|disponib|slot|agenda_livre)/i;
+      const availabilitySearchThisTurn = (logToolCalls || []).some((tc: any) => {
+        if (!tc || typeof tc.name !== "string" || !_availabilityToolRe.test(tc.name)) return false;
+        const r = tc.result;
+        return !!r && typeof r === "object" && !r.error && r.blocked !== true;
+      });
+      const _sessionSlots = ((sessionState as any)?.appbarberSlotOptions || []) as Array<{ start_time?: string }>;
+      const _responseTimes = new Set<string>((String(finalResponse).match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || []).map((t) => t.padStart(5, "0")));
+      const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
+      const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
+
+      if (!recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
+        console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_confirmation_guard",
+            provider,
+            acao: "detected_shadow_no_structured_evidence",
+            claim: String(finalResponse).slice(0, 160),
+            explicit: hasExplicitCreationClaim,
+            implied: hasImpliedFinalizationClaim,
+          },
+        });
+      } else if (!recentBookingSuccess && !lookupLegit) {
+        console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}. Tentando reinjeção.`);
         logErrors.push({ message: `Resposta prometia finalização de agendamento novo sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
         let recovered = false;
@@ -7583,7 +7627,30 @@ async function callAIAgent(
       const cancelInLedger = ((sessionState.recentCompletedActions || []) as any[])
         .some((a) => a && a.category === "booking_cancel" && a.status === "success");
 
-      if (!cancelSucceededThisTurn && !cancelInLedger) {
+      // ⚠️ Ponta aberta 4.2 da auditoria (10/09): pré-requisito ESTRUTURADO pra
+      // este guard sequer considerar que houve alegação de cancelamento — tem que
+      // existir um agendamento conhecido/cancelável nesta conversa (busca ativa
+      // recente com count>0, ou tentativa real da ferramenta de cancelar no turno).
+      // Sem isso, "remarcado/remarquei" costuma ser texto legítimo de agendamento
+      // NOVO, e o guard estaria decidindo só por palavra-chave. Requisito
+      // obrigatório antes de tirar este guard da sombra.
+      const knownCancelableBooking = ((sessionState.recentActiveBookingsLookup?.count || 0) > 0)
+        || (logToolCalls || []).some((tc: any) => tc && cancelNames.has(tc.name))
+        || ((sessionState.recentCompletedActions || []) as any[]).some((a) => a && a.category === "booking" && a.status === "success");
+
+      if (!cancelSucceededThisTurn && !cancelInLedger && !knownCancelableBooking) {
+        console.log(`[PhantomCancelGuard] ignorado: nenhum agendamento conhecido/cancelável nesta conversa (sem 2ª fonte estruturada).`);
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_cancel_guard",
+            provider,
+            acao: "skipped_no_known_appointment",
+            claim: claimSentence.trim().slice(0, 160),
+          },
+        });
+      } else if (!cancelSucceededThisTurn && !cancelInLedger) {
         const isShadow = _phantomCfg.shadow !== false;
         const trecho = claimSentence.trim().slice(0, 160);
         console.warn(`[PhantomCancelGuard]${isShadow ? " SHADOW" : ""} alegação de cancelamento sem ferramenta: "${trecho}"`);
@@ -7621,27 +7688,59 @@ async function callAIAgent(
   if (finalResponse && provider === "appbarber") {
     const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
     const confirmsExisting = /\b(confirmad[oa]|est[aá]\s+confirmad|seu\s+hor[aá]rio|agendamento\s+(?:est[aá]|segue))\b/i.test(finalResponse);
-    const lookedUpThisTurn = (logToolCalls || []).some((tc: any) => {
+    const lookupCallThisTurn = (logToolCalls || []).find((tc: any) => {
       if (!tc || tc.name !== "listar_agendamentos") return false;
       const r = tc.result;
       return !!r && typeof r === "object" && !r.error && r.blocked !== true;
     });
+    const lookedUpThisTurn = !!lookupCallThisTurn;
     const createdThisTurn = (logToolCalls || []).some((tc: any) => {
       if (!tc || tc.name !== "criar_agendamento") return false;
       const r = tc.result;
       return !!r && typeof r === "object" && !r.error && r.blocked !== true;
     });
-    if (citesTime && confirmsExisting && !lookedUpThisTurn && !createdThisTurn) {
-      console.warn(`[StaleConfirmationGuard] SHADOW: confirmação de horário pré-existente sem listar_agendamentos nesta interação.`);
+
+    // ⚠️ Ponta aberta 4.3 da auditoria (10/09): antes o sinal era só "houve
+    // chamada de listar_agendamentos nesta interação?" — ou seja, uma consulta
+    // vazia (cliente sem nada na agenda) contava como prova. Agora a comparação
+    // é com a AGENDA REAL: os horários efetivamente retornados pela consulta
+    // (deste turno ou da última busca válida da sessão) versus o horário citado
+    // na resposta. Continua em sombra, mas agora separa três desfechos
+    // distinguíveis no log, em vez de um só.
+    const _agendaTimes = new Set<string>();
+    if (lookupCallThisTurn) {
+      for (const t of _extractTimesAndDatesFromPayload((lookupCallThisTurn as any).result).times) _agendaTimes.add(t);
+    }
+    if (isActiveBookingLookupStillValid(sessionState)) {
+      for (const t of (sessionState.recentActiveBookingsLookup?.times || [])) _agendaTimes.add(t);
+    }
+    const _citedTimes = new Set<string>(
+      (String(finalResponse).match(/\b([01]?\d|2[0-3])[:h][0-5]\d\b/g) || [])
+        .map((t) => t.replace("h", ":"))
+        .map((t) => (t.length === 4 ? `0${t}` : t)),
+    );
+    const _hourOnly = (t: string) => (t.split(":")[0] || "").replace(/^0+/, "") || "0";
+    const _agendaHours = new Set<string>(Array.from(_agendaTimes).map(_hourOnly));
+    const citedMatchesRealAgenda = Array.from(_citedTimes).some(
+      (t) => _agendaTimes.has(t) || _agendaHours.has(_hourOnly(t)),
+    );
+
+    if (citesTime && confirmsExisting && !createdThisTurn && !citedMatchesRealAgenda) {
+      const acao = _agendaTimes.size > 0
+        ? "detected_shadow_time_mismatch"   // agenda real conhecida e o horário citado NÃO está nela
+        : "detected_shadow_no_agenda_data"; // nenhuma agenda real conhecida pra comparar
+      console.warn(`[StaleConfirmationGuard] SHADOW (${acao}): citados=[${Array.from(_citedTimes).join(",")}] agenda_real=[${Array.from(_agendaTimes).join(",")}] consultou_neste_turno=${lookedUpThisTurn}`);
       logToolCalls.push({
         name: "__phantom_guard__",
         args: { phase: "response_guard" },
         result: {
           layer: "stale_confirmation_guard",
           provider,
-          acao: "detected_shadow_no_block",
+          acao,
           claim: String(finalResponse).slice(0, 160),
           looked_up_this_turn: lookedUpThisTurn,
+          cited_times: Array.from(_citedTimes),
+          agenda_times: Array.from(_agendaTimes),
         },
       });
     }

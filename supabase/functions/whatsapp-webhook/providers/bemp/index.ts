@@ -416,17 +416,25 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
         console.log(`[Bemp] listar_horarios_geral salon=${args.salonId} svc=${args.serviceId} data=${args.data} profs=${profs.map((p) => p.id).join(",")}`);
 
         // 2) Fanout paralelo de slots por profissional.
+        // ⚠️ Ponta aberta 4.5 da auditoria (10/09): falha técnica (429/5xx/rede)
+        // e ausência genuína de vaga caíam as duas em `slots: []`, então a IA
+        // dizia "não tem vaga" quando a consulta nem aconteceu. Mesmo tratamento
+        // já usado no AppBarber (listar_horarios_geral) e no Frizzar.
         const results = await Promise.all(profs.map(async (p) => {
           try {
             const url = `${apiBase}/salons/${args.salonId}/services/${args.serviceId}/professionals/${p.id}/slots/${args.data}`;
             const res = await bempFetch(url, { headers });
             const text = await res.text();
+            if (!res.ok) {
+              console.log(`[Bemp] horarios_geral prof=${p.id} status=${res.status}`);
+              return { prof: p, slots: [] as any[], erro: `status ${res.status}` };
+            }
             const data = JSON.parse(text);
             const slots = Array.isArray(data) ? data : [];
-            return { prof: p, slots };
+            return { prof: p, slots, erro: undefined as string | undefined };
           } catch (e) {
             console.log(`[Bemp] horarios_geral falha prof=${p.id}:`, String(e));
-            return { prof: p, slots: [] as any[] };
+            return { prof: p, slots: [] as any[], erro: String((e as Error)?.message || e) };
           }
         }));
 
@@ -439,7 +447,7 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
           professionals: Array<{ professionalId: number; name: string }>;
         }>();
         const profissionais: any[] = [];
-        for (const { prof, slots } of results) {
+        for (const { prof, slots, erro } of results) {
           const availableSlots: any[] = [];
           for (const slot of slots) {
             const start = String(slot?.start || "");
@@ -462,21 +470,33 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
             name: prof.name,
             total: availableSlots.length,
             available_slots: availableSlots,
+            ...(erro ? { erro } : {}),
           });
         }
 
         const horariosConsolidados = Array.from(consolidatedMap.values())
           .sort((a, b) => a.start.localeCompare(b.start));
         const totalProfissionaisLivres = profissionais.filter((p) => p.total > 0).length;
+        const totalComFalhaTecnica = profissionais.filter((p) => !!p.erro).length;
+
+        let resumoGeral: string;
+        if (totalProfissionaisLivres === 0 && totalComFalhaTecnica === profissionais.length) {
+          resumoGeral = `Não consegui verificar a agenda de ${args.data} agora (falha técnica ao consultar todos os ${profissionais.length} profissionais). NÃO afirme que não há vaga nesse dia — informe que houve um problema técnico e tente novamente, ou ofereça consultar outro dia enquanto isso.`;
+        } else if (totalProfissionaisLivres === 0 && totalComFalhaTecnica > 0) {
+          resumoGeral = `Nenhum profissional com vaga confirmada em ${args.data} (${totalComFalhaTecnica} de ${profissionais.length} não puderam ser verificados por falha técnica — os demais foram checados e não têm vaga). Ofereça outro dia, mas sem afirmar com certeza que não há vaga nenhuma nesse dia.`;
+        } else if (totalProfissionaisLivres === 0) {
+          resumoGeral = `Nenhum profissional disponível em ${args.data}.`;
+        } else {
+          resumoGeral = `${totalProfissionaisLivres} profissional(is) com horários em ${args.data}: ${horariosConsolidados.length} horário(s) únicos.`;
+        }
 
         return {
           salonId: args.salonId,
           serviceId: args.serviceId,
           data: args.data,
-          resumo: totalProfissionaisLivres === 0
-            ? `Nenhum profissional disponível em ${args.data}.`
-            : `${totalProfissionaisLivres} profissional(is) com horários em ${args.data}: ${horariosConsolidados.length} horário(s) únicos.`,
+          resumo: resumoGeral,
           totalProfissionaisLivres,
+          totalComFalhaTecnica,
           horariosConsolidados,
           profissionais,
         };

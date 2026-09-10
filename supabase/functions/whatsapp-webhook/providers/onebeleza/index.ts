@@ -1617,8 +1617,21 @@ export async function executeOneBelezaTool(tenant: any, toolCall: any, phoneNumb
         const res = await fetchOneBelezaWithRetry(url, { method: "POST", headers: authHeaders });
         const text = await res.text();
         console.log(`[OneBeleza] buscar_horarios_disponiveis response (${res.status}):`, text.slice(0, 1500));
+        // ⚠️ Ponta aberta 4.5 da auditoria (10/09): com HTTP de erro (429/5xx) o
+        // corpo não é a lista esperada, então o detector de "vazio" abaixo
+        // classificava como `dia_sem_vaga` — a IA dizia "não tem horário" quando
+        // a consulta nem aconteceu. Mesmo tratamento do AppBarber/Frizzar/Bemp.
+        if (!res.ok) {
+          return {
+            error: `Não foi possível consultar a agenda de ${date} agora (HTTP ${res.status} da One Beleza).`,
+            status: res.status,
+            recoverable: true,
+            falha_tecnica: true,
+            mensagem: `NÃO afirme que não há vaga em ${date} — foi falha técnica na consulta. Tente novamente em alguns segundos ou ofereça verificar outro dia.`,
+          };
+        }
         let parsed: any;
-        try { parsed = JSON.parse(text); } catch { return { raw: text.slice(0, 200), status: res.status }; }
+        try { parsed = JSON.parse(text); } catch { return { error: `Resposta inválida da One Beleza (HTTP ${res.status}). NÃO afirme ausência de vaga.`, raw: text.slice(0, 200), status: res.status, recoverable: true, falha_tecnica: true }; }
 
         // Filter past times if today
         if (date === br.todayDate && Array.isArray(parsed)) {

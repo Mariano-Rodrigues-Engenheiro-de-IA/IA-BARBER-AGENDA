@@ -555,6 +555,18 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
         const res = await fetch(url, { headers });
         const text = await res.text();
         console.log(`listar_horarios response (${res.status}):`, text.slice(0, 1000));
+        // ⚠️ Ponta aberta 4.5 da auditoria (10/09): em HTTP de erro (429/5xx) o
+        // corpo podia ser parseável e cair na consolidação como "NENHUM
+        // profissional livre" — a IA afirmava dia lotado sem consulta real.
+        if (!res.ok) {
+          return {
+            error: `Não foi possível consultar a agenda de ${args.data} agora (HTTP ${res.status} da Trinks).`,
+            status: res.status,
+            recoverable: true,
+            falha_tecnica: true,
+            dica: `NÃO afirme que não há vaga em ${args.data} — foi falha técnica na consulta. Tente novamente em alguns segundos ou ofereça verificar outro dia.`,
+          };
+        }
         try {
           const parsed = JSON.parse(text);
 
