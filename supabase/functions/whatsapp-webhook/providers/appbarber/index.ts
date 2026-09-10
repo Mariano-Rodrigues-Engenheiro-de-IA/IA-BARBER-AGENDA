@@ -796,9 +796,13 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           const wantedTime = String(args.start_time).slice(0, 5);
           const pc = Number(args.professional_code);
           if (slotOptions.length > 0) {
+            // professional_code === 0 = consulta registrada sem profissional
+            // identificado (listar_horarios sem esse argumento). Vale como
+            // checagem prévia para qualquer profissional — o horário foi
+            // realmente consultado na API, só não sabemos de quem era a grade.
             const hasChecked = slotOptions.some((s) =>
               s.service_code === primaryServiceCode &&
-              s.professional_code === pc &&
+              (s.professional_code === pc || s.professional_code === 0) &&
               s.start_date === wantedDate &&
               s.start_time.slice(0, 5) === wantedTime
             );
