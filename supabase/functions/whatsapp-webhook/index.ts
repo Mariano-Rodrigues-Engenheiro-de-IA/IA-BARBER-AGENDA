@@ -4018,16 +4018,44 @@ function appbarberFindsDifferentProperName(window: string, customerNameUsed: str
   });
 }
 
+/**
+ * ⚠️ Terceira checagem independente (10/09) — detecta um service_code
+ * DIFERENTE do que foi realmente criado, já pesquisado nesta conversa (via
+ * listar_horarios/listar_horarios_geral, persistido em appbarberSlotOptions),
+ * para a mesma data. Caso real: cliente pediu "corte e sobrancelha", a IA
+ * pesquisou os dois serviços (1131457 e 1131448) na primeira mensagem, mas na
+ * rodada de criação (2 mensagens depois) só criou o corte. Nem a regex de
+ * texto nem a checagem de nome pegam esse padrão — ele é sobre MÚLTIPLOS
+ * SERVIÇOS da MESMA pessoa, não sobre uma segunda pessoa. Usar o histórico de
+ * busca real (não o texto da conversa) é mais robusto porque não depende de
+ * como o cliente ou a IA formulam a frase.
+ */
+function appbarberFindsUnbookedServiceInSlots(
+  slotOptions: Array<{ service_code: number; start_date: string }> | undefined,
+  bookedServiceCode: number | undefined,
+  bookedDate: string | undefined,
+): boolean {
+  if (!Array.isArray(slotOptions) || slotOptions.length === 0) return false;
+  if (!bookedServiceCode || !bookedDate) return false;
+  return slotOptions.some((s) =>
+    s && typeof s.service_code === "number" && s.service_code !== bookedServiceCode &&
+    typeof s.start_date === "string" && s.start_date === bookedDate
+  );
+}
+
 function appbarberIsClearlySingleBooking(params: {
   logToolCalls: any[];
   bookingToolNames: Set<string>;
   bookingAttempts: number;
   messages: any[];
+  sessionState?: any;
 }): { single: boolean; reason: string } {
-  const { logToolCalls, bookingToolNames, bookingAttempts, messages } = params;
+  const { logToolCalls, bookingToolNames, bookingAttempts, messages, sessionState } = params;
   if (bookingAttempts !== 1) return { single: false, reason: `attempts=${bookingAttempts}` };
 
   let customerNameUsed: string | undefined;
+  let bookedServiceCode: number | undefined;
+  let bookedDate: string | undefined;
   for (const tc of logToolCalls || []) {
     if (!tc || !bookingToolNames.has(tc.name)) continue;
     const svcs = tc.args?.services ?? tc.args?.servicos;
@@ -4035,6 +4063,14 @@ function appbarberIsClearlySingleBooking(params: {
     if (typeof tc.args?.customer_name === "string" && tc.args.customer_name.trim()) {
       customerNameUsed = tc.args.customer_name.trim();
     }
+    const sc = Number(tc.args?.service_code ?? tc.result?.service_code);
+    if (Number.isFinite(sc) && sc > 0) bookedServiceCode = sc;
+    const bd = String(tc.args?.start_date || tc.result?.start_date || "").slice(0, 10);
+    if (bd) bookedDate = bd;
+  }
+
+  if (appbarberFindsUnbookedServiceInSlots(sessionState?.appbarberSlotOptions, bookedServiceCode, bookedDate)) {
+    return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
   }
 
   // ⚠️ Janela ampliada (10/09): usa todo o histórico já carregado da conversa em
@@ -4053,7 +4089,7 @@ function appbarberIsClearlySingleBooking(params: {
     return { single: false, reason: "nome próprio distinto do customer_name usado" };
   }
 
-  return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem marca textual, sem nome distinto (janela completa)" };
+  return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem service_code pendente, sem marca textual, sem nome distinto (janela completa)" };
 }
 
 
@@ -7725,6 +7761,7 @@ async function callAIAgent(
         bookingToolNames: _mbBookingNames,
         bookingAttempts: _bookingAttempts,
         messages,
+        sessionState,
       })
       : { single: false, reason: "n/a (provider != appbarber)" };
     let cls: PendingCls;
