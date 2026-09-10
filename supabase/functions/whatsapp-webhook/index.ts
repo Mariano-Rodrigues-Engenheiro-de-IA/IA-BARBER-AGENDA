@@ -8756,7 +8756,7 @@ async function callAIAgent(
         const antiRepeatReminder = {
           role: "system" as const,
           content: isPureAck
-            ? `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente é apenas um "ok/valeu/emoji" sem conteúdo novo — devolva STRING VAZIA (não envie nada). Nunca reenvie a mesma resposta.`
+            ? `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente é apenas um "ok/valeu/emoji" sem conteúdo novo — responda com UMA frase curta e diferente de encerramento (ex: "Qualquer coisa é só chamar!"). NUNCA devolva string vazia: silêncio é proibido.`
             : `ALERTA: você acabou de gerar uma mensagem quase idêntica a "${dupHit.entry.text.slice(0, 200)}" que já enviou há poucos minutos. A última mensagem do cliente TEM CONTEÚDO NOVO ("${lastUserText.slice(0, 160)}") e precisa ser respondida. NÃO repita a mensagem anterior nem uma paráfrase — avance a conversa reconhecendo o que o cliente acabou de dizer e faça a próxima pergunta ou ação. É obrigatório responder algo diferente; não devolva string vazia.`,
         };
         const regenRaw = await requestFinalNaturalResponse([...messages, antiRepeatReminder]);
@@ -8765,9 +8765,10 @@ async function callAIAgent(
           const stillDup = findSimilarRecentReply(sessionState, regen);
           if (stillDup) {
             if (isPureAck) {
-              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack. Silenciando.`);
-              logErrors.push({ message: `Regeneração ainda duplicada — mensagem suprimida (ack).`, level: "warning" });
-              finalResponse = "";
+              // 🚫 SILÊNCIO PROIBIDO: em vez de calar, manda um encerramento curto e variado.
+              console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) e cliente só mandou ack — usando encerramento curto.`);
+              logErrors.push({ message: `Regeneração duplicada em ack — enviado encerramento curto (anti-silêncio).`, level: "warning" });
+              finalResponse = pickShortAckReply(sessionState);
             } else {
               // Cliente trouxe contexto novo — melhor mandar duplicado do que ficar mudo.
               console.warn(`[ReplyDedup] Regeneração ainda duplicada (sim=${stillDup.sim.toFixed(2)}) mas cliente trouxe contexto novo. Enviando mesmo assim.`);
@@ -8779,8 +8780,9 @@ async function callAIAgent(
           }
         } else {
           if (isPureAck) {
-            console.log(`[ReplyDedup] Regeneração vazia → silêncio intencional para ${phoneNumber}.`);
-            finalResponse = "";
+            console.warn(`[ReplyDedup] Regeneração vazia em ack — enviando encerramento curto (anti-silêncio) para ${phoneNumber}.`);
+            logErrors.push({ message: `Regeneração vazia em ack — enviado encerramento curto (anti-silêncio).`, level: "warning" });
+            finalResponse = pickShortAckReply(sessionState);
           } else {
             // Cliente trouxe contexto novo e regeneração falhou — mantém a resposta original
             // para não deixar o cliente sem retorno.
@@ -8792,7 +8794,7 @@ async function callAIAgent(
       } catch (e) {
         console.error("[ReplyDedup] Falha ao regenerar:", (e as any)?.message);
         if (isPureAck) {
-          finalResponse = "";
+          finalResponse = pickShortAckReply(sessionState);
         }
         // se não é ack, mantém finalResponse original
       }
