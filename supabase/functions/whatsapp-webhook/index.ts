@@ -9844,8 +9844,13 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           return payload?.messageid || payload?.id || payload?.message?.id || payload?.messages?.[0]?.id || null;
         };
 
-        const silentMode = config.silent_mode === true;
-        if (!silentMode) {
+        // 🚫 SILÊNCIO PROIBIDO: transferência para humano SEMPRE avisa o cliente.
+        // `silent_mode` foi desativado — antes o cliente ficava sem nenhuma resposta
+        // e a conversa morria sem ele saber que havia sido transferido.
+        if (config.silent_mode === true) {
+          console.warn(`[EscalateHuman] silent_mode ignorado (política anti-silêncio) — avisando o cliente.`);
+        }
+        {
           const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
           try {
             const delay = typingDelayMs(clientText);
