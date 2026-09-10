@@ -3996,7 +3996,27 @@ const APPBARBER_MULTI_TEXT_SIGNALS = [
   /\btamb[ée]m (quer|vai|precisa)\b/i,
   /\b(meu|minha) (filho|filha|esposa|marido|irm[ãa]o|irm[ãa]|pai|m[ãa]e|namorad[oa]|amig[oa]|primo|prima|sobrinho|sobrinha)\b/i,
   /\bconvidad[oa]\b/i, /\bacompanhante\b/i,
+  // ⚠️ Adicionados (10/09) — formas que faltavam, achadas no caso real do Mariano/Lucas
+  /\bpro meu\b/i, /\bpara o meu\b/i, /\btamb[ée]m pro\b/i, /\btbm pro\b/i, /\bno mesmo hor[áa]rio\b/i,
 ];
+
+/**
+ * ⚠️ Segunda checagem independente (10/09) — detecta nome próprio na janela que
+ * seja DIFERENTE do customer_name usado na chamada de criar_agendamento. Caso
+ * real: "Lucas Rodrigues" apareceu na conversa, o agendamento foi criado só
+ * pra "Mariano Rodrigues" — essa checagem pega isso mesmo se a regex de sinal
+ * textual acima falhar por algum motivo não previsto.
+ */
+function appbarberFindsDifferentProperName(window: string, customerNameUsed: string | undefined): boolean {
+  if (!customerNameUsed) return false;
+  const normalize = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  const usedNorm = normalize(customerNameUsed);
+  const nameMatches = window.match(/\b[A-ZÀ-Ú][a-zà-ú]+(?:\s+[A-ZÀ-Ú][a-zà-ú]+)+\b/g) || [];
+  return nameMatches.some((n) => {
+    const nNorm = normalize(n);
+    return nNorm !== usedNorm && !usedNorm.includes(nNorm) && !nNorm.includes(usedNorm);
+  });
+}
 
 function appbarberIsClearlySingleBooking(params: {
   logToolCalls: any[];
@@ -4007,21 +4027,33 @@ function appbarberIsClearlySingleBooking(params: {
   const { logToolCalls, bookingToolNames, bookingAttempts, messages } = params;
   if (bookingAttempts !== 1) return { single: false, reason: `attempts=${bookingAttempts}` };
 
+  let customerNameUsed: string | undefined;
   for (const tc of logToolCalls || []) {
     if (!tc || !bookingToolNames.has(tc.name)) continue;
     const svcs = tc.args?.services ?? tc.args?.servicos;
     if (Array.isArray(svcs) && svcs.length >= 2) return { single: false, reason: "services[]>=2" };
+    if (typeof tc.args?.customer_name === "string" && tc.args.customer_name.trim()) {
+      customerNameUsed = tc.args.customer_name.trim();
+    }
   }
 
-  const window = (messages || [])
-    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim())
-    .slice(-5)
-    .map((m: any) => String(m.content))
-    .join("\n");
+  // ⚠️ Janela ampliada (10/09): usa todo o histórico já carregado da conversa em
+  // vez de só as últimas 5 mensagens — a janela de 5 se mostrou curta demais
+  // (a IA quebra respostas em 2-3 mensagens, então 5 vagas cobrem menos de 2
+  // turnos reais de conversa). Sem histórico reconstruível → não libera.
+  const allMsgs = (messages || [])
+    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim());
+  if (allMsgs.length === 0) return { single: false, reason: "janela vazia/indisponível" };
+
+  const window = allMsgs.map((m: any) => String(m.content)).join("\n");
   const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(window));
   if (hit) return { single: false, reason: `texto: ${hit.source}` };
 
-  return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem marca textual" };
+  if (appbarberFindsDifferentProperName(window, customerNameUsed)) {
+    return { single: false, reason: "nome próprio distinto do customer_name usado" };
+  }
+
+  return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem marca textual, sem nome distinto (janela completa)" };
 }
 
 
@@ -5253,7 +5285,15 @@ async function callAIAgent(
 
   // Build the user message — multimodal if media is present
   const lastMsg = messages[messages.length - 1];
-  const alreadyHasUserMsg = lastMsg?.role === "user" && lastMsg?.content === userMessage;
+  // ⚠️ Correção (10/09): lastMsg.content vem com prefixo de timestamp (tsPrefix),
+  // então comparar com igualdade estrita contra userMessage (sem prefixo) NUNCA
+  // batia — a última mensagem do usuário era sistematicamente duplicada no
+  // histórico. Isso empurrou mensagens relevantes pra fora da janela de 5 usada
+  // pelo appbarberIsClearlySingleBooking (caso real: "Meu filho se chama Lucas
+  // Rodrigues" saiu da janela por exatamente 1 posição, o guard liberou um
+  // agendamento incompleto sem avisar ninguém). Usar endsWith em vez de
+  // igualdade estrita, pra tolerar o prefixo sem precisar reconstruí-lo aqui.
+  const alreadyHasUserMsg = lastMsg?.role === "user" && typeof lastMsg?.content === "string" && lastMsg.content.endsWith(userMessage);
 
   const normalizeMediaPromptText = (text: string) =>
     text
