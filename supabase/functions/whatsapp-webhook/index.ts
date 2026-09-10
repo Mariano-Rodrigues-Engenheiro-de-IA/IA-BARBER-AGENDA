@@ -7282,8 +7282,20 @@ async function callAIAgent(
     // texto é script obrigatório do prompt e NÃO é criação nova; sem reconhecê-lo
     // o guard tratava a resposta correta como alucinação (7 falsos positivos em
     // 7 disparos no AppBarber no último mês, 6 deles em 03/09).
+    // ⚠️ Ampliado (10/09, caso real Ricardo Trento): o script de disparo tem uma
+    // variação mais direta, sem a frase "você agendou" antes — "Posso confirmar
+    // seu horário hoje às [HORA] com o [PROFISSIONAL]?". A regra original exigia
+    // "você agendou" na mesma janela, então essa variação não batia, e o cliente
+    // respondendo "Pode" caiu no fallback ("Só um instante que eu confiro seu
+    // horário na agenda agora") em vez de simplesmente reconhecer a confirmação.
+    // A segunda alternativa abaixo (SEM exigir "você agendou") é segura porque
+    // exige "confirmar SEU/O HORÁRIO" com o objeto explícito — os scripts de
+    // CRIAÇÃO nova (CASO B do PASSO 3, TIPO 1/TIPO 2) terminam em só "Pode
+    // confirmar?" / "Posso confirmar?" sem "horário" logo depois, então não
+    // colidem com esta regra (testado localmente contra os 3 scripts de criação
+    // nova antes de aplicar).
     const CONFIRMATION_DISPATCH_RE =
-      /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)/i;
+      /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)|\b(?:posso|podemos)\s+confirmar\s+(?:seu|o)\s+hor[aá]rio\b/i;
     const lastAssistantWasConfirmationDispatch = !lastAssistantWasHuman
       && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage);
     // Descasca saudação/cortesia antes de testar afirmação: o debounce agrupa
