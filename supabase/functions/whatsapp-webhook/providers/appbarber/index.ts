@@ -1552,7 +1552,13 @@ export const bookingGuardsConfig = {
     // Multi-serviço vira `services[]` numa única comanda; a contagem por
     // execução já resolve, não precisa do classificador de forma de intenção.
     useIntentShape: false,
-    skipWhenSingleVisit: false,
+    // ⚠️ Ligado em 10/09 (pedido 1.3), com semântica RESTRITA no index.ts: o
+    // guard só se retira quando prometidos<=1 E nada ficou faltando
+    // (criados >= prometidos). Não pode se retirar quando prometidos=1 e
+    // criados=0, porque é exatamente esse o caminho da recuperação do ITEM 8
+    // (reinjeção com os códigos já obtidos / pergunta de nome) — desligar ali
+    // reabriria os 15 casos de agendamento único que ficavam no fallback.
+    skipWhenSingleVisit: true,
     allowMultiRecoveryAfterSuccess: false,
     useAlternativesShortCircuit: false,
     // ⚠️ Corrigido (10/09): estava "auto", permitindo a IA responder só texto
