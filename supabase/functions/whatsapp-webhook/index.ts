@@ -3738,6 +3738,26 @@ function recordAssistantReply(state: AgentSessionState, text: string): void {
   state.recentAssistantReplies = next.slice(-ASSISTANT_REPLY_MAX);
 }
 
+// 🚫 POLÍTICA ANTI-SILÊNCIO: quando a única alternativa seria não enviar nada
+// (ex: cliente mandou só "ok" e a regeneração veio duplicada/vazia), devolvemos
+// uma linha curta de encerramento que ainda não foi usada recentemente.
+const SHORT_ACK_REPLIES = [
+  "Perfeito! Qualquer coisa é só chamar 🤝",
+  "Combinado! Tô por aqui se precisar 😉",
+  "Show! Se surgir qualquer dúvida, me chama.",
+  "Tranquilo! Fico à disposição 👍",
+];
+
+function pickShortAckReply(state: AgentSessionState): string {
+  const list = pruneRecentAssistantReplies(state);
+  state.recentAssistantReplies = list;
+  const used = new Set(list.map((e) => e.norm));
+  for (const candidate of SHORT_ACK_REPLIES) {
+    if (!used.has(normalizeReplyForCompare(candidate))) return candidate;
+  }
+  return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
+}
+
 
 // Constrói uma mensagem determinística de confirmação de agendamento a partir
 // dos tool_calls da rodada. Usada como rede de segurança quando a IA cria a
