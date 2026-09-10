@@ -256,7 +256,7 @@ export function buildAppBarberTools(tenant: any) {
       type: "function",
       function: {
         name: "criar_agendamento",
-        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço(s), profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. MÚLTIPLOS SERVIÇOS NA MESMA VISITA: se houver combo cadastrado no catálogo cobrindo os serviços, use o service_code do combo numa única chamada. Se NÃO houver combo, faça UMA chamada de criar_agendamento por serviço, em sequência (mesmo profissional, mesmo cliente, horário consecutivo) — não precisa esperar entre as chamadas. NÃO use o parâmetro services[] com mais de um item: testado em produção (09/09) e confirmado quebrado do lado do AppBarber (retorna 422 'Choque de Horário', errorCode 20022, mesmo com disponibilidade real confirmada).",
+        description: "Cria o agendamento real no AppBarber. Só use depois de confirmar serviço(s), profissional, dia e horário EXATO de listar_horarios/listar_horarios_geral. MÚLTIPLOS SERVIÇOS NA MESMA VISITA: se houver combo cadastrado cobrindo os serviços, use o service_code do combo numa única chamada. Se NÃO houver combo, faça UMA chamada de criar_agendamento por serviço, em sequência (mesmo profissional, mesmo cliente, horários consecutivos) e só confirme ao cliente depois que todas tiverem sucesso. NÃO use services[] com mais de um item: isso retorna 422 'Choque de Horário' mesmo com disponibilidade real confirmada.",
         parameters: {
           type: "object",
           properties: {
