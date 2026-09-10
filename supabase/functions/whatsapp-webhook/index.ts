@@ -7621,7 +7621,30 @@ async function callAIAgent(
       const cancelInLedger = ((sessionState.recentCompletedActions || []) as any[])
         .some((a) => a && a.category === "booking_cancel" && a.status === "success");
 
-      if (!cancelSucceededThisTurn && !cancelInLedger) {
+      // ⚠️ Ponta aberta 4.2 da auditoria (10/09): pré-requisito ESTRUTURADO pra
+      // este guard sequer considerar que houve alegação de cancelamento — tem que
+      // existir um agendamento conhecido/cancelável nesta conversa (busca ativa
+      // recente com count>0, ou tentativa real da ferramenta de cancelar no turno).
+      // Sem isso, "remarcado/remarquei" costuma ser texto legítimo de agendamento
+      // NOVO, e o guard estaria decidindo só por palavra-chave. Requisito
+      // obrigatório antes de tirar este guard da sombra.
+      const knownCancelableBooking = ((sessionState.recentActiveBookingsLookup?.count || 0) > 0)
+        || (logToolCalls || []).some((tc: any) => tc && cancelNames.has(tc.name))
+        || ((sessionState.recentCompletedActions || []) as any[]).some((a) => a && a.category === "booking" && a.status === "success");
+
+      if (!cancelSucceededThisTurn && !cancelInLedger && !knownCancelableBooking) {
+        console.log(`[PhantomCancelGuard] ignorado: nenhum agendamento conhecido/cancelável nesta conversa (sem 2ª fonte estruturada).`);
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_cancel_guard",
+            provider,
+            acao: "skipped_no_known_appointment",
+            claim: claimSentence.trim().slice(0, 160),
+          },
+        });
+      } else if (!cancelSucceededThisTurn && !cancelInLedger) {
         const isShadow = _phantomCfg.shadow !== false;
         const trecho = claimSentence.trim().slice(0, 160);
         console.warn(`[PhantomCancelGuard]${isShadow ? " SHADOW" : ""} alegação de cancelamento sem ferramenta: "${trecho}"`);
