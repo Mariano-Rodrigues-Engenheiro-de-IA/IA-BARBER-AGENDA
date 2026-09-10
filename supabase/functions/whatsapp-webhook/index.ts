@@ -7296,8 +7296,24 @@ async function callAIAgent(
     // nova antes de aplicar).
     const CONFIRMATION_DISPATCH_RE =
       /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)|\b(?:posso|podemos)\s+confirmar\s+(?:seu|o)\s+hor[aá]rio\b/i;
+    const CONFIRMATION_DISPATCH_STRICT_RE =
+      /voc[êe]\s+agendou[\s\S]{0,220}?(?:podemos\s+confirmar|posso\s+confirmar|confirmar\s+(?:seu|o)\s+hor[aá]rio|est[aá]\s+confirmado\?)/i;
+    // ⚠️ Ajuste (10/09, medido em 30 dias reais): a variação sem "você agendou"
+    // casou 5 mensagens geradas pela IA no período — 3 eram reformulação de um
+    // disparo real da barbearia (legítimo) e 2 eram pedido de confirmação de
+    // agendamento NOVO ("O valor de corte e barba é R$100. Posso confirmar seu
+    // horário das 18h?"), onde desligar o guard reabriria justamente o risco de
+    // promessa fantasma. Por isso a variação curta só vale quando existe, no
+    // histórico da conversa, um disparo real da barbearia sobre agendamento já
+    // existente.
+    const _historyHasExistingBookingDispatch = (history || []).some((m: any) =>
+      m?.role === "assistant" && typeof m?.content === "string"
+      && /\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(m.content)
+      && /\b(agendou|tem\s+agendado|est[áa]\s+agendado)\b/i.test(m.content)
+    );
     const lastAssistantWasConfirmationDispatch = !lastAssistantWasHuman
-      && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage);
+      && (CONFIRMATION_DISPATCH_STRICT_RE.test(lastAssistantMessage)
+        || (_historyHasExistingBookingDispatch && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage)));
     // Descasca saudação/cortesia antes de testar afirmação: o debounce agrupa
     // "Bom dia" + "Confirmado" numa única mensagem, e isAffirmativeReply casa a
     // string inteira.
@@ -9943,6 +9959,15 @@ function isAffirmativeReply(value: string): boolean {
   if (/\?/.test(raw)) return false; // pergunta nunca é confirmação simples
   if (/\b(n[ãa]o|nunca|jamais)\b/.test(normalized)) return false; // negação
   if (/\b(mas|por[ée]m|s[óo]\s+que|prefiro|consegue|poderia\s+ser|ao\s+inv[ée]s|em\s+vez)\b/.test(normalized)) return false; // sinal de pedido diferente/contraste
+  // ⚠️ Salvaguarda adicional (10/09, medida em 30 dias de conversas reais):
+  // "Pode ser amanhã", "Pode ser 13h30", "Pode ser outro dia", "Pode ser com
+  // outro" são PEDIDOS DE HORÁRIO/DIA/PROFISSIONAL DIFERENTE, não confirmação
+  // simples do que a IA ofereceu. Sem esta trava, 395 mensagens reais do último
+  // mês (a maioria "pode ser <hora/dia>") passariam a valer como "sim" e
+  // poderiam confirmar o horário anterior em vez do pedido novo.
+  if (/\d{1,2}\s*[:h]\s*\d{0,2}\b/.test(normalized)) return false; // horário explícito
+  if (/\b(amanh[ãa]|hoje|depois\s+de\s+amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|semana\s+que\s+vem|de\s+manh[ãa]|[àa]\s+tarde|[àa]\s+noite|mais\s+tarde|mais\s+cedo)\b/.test(normalized)) return false; // dia/período alternativo
+  if (/\b(outro|outra|outros|outras)\b/.test(normalized)) return false; // outro horário/profissional/dia
 
   const AFFIRMATIVE_MARKER_RE = /\b(sim|pode(?:\s+(?:ser|confirmar|sim))?|confirmo|confirmado|confirma|positivo|isso\s+mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|claro|com\s+certeza|manda\s+ver|bora|vamos)\b/;
   return AFFIRMATIVE_MARKER_RE.test(normalized);
