@@ -7682,27 +7682,59 @@ async function callAIAgent(
   if (finalResponse && provider === "appbarber") {
     const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
     const confirmsExisting = /\b(confirmad[oa]|est[aá]\s+confirmad|seu\s+hor[aá]rio|agendamento\s+(?:est[aá]|segue))\b/i.test(finalResponse);
-    const lookedUpThisTurn = (logToolCalls || []).some((tc: any) => {
+    const lookupCallThisTurn = (logToolCalls || []).find((tc: any) => {
       if (!tc || tc.name !== "listar_agendamentos") return false;
       const r = tc.result;
       return !!r && typeof r === "object" && !r.error && r.blocked !== true;
     });
+    const lookedUpThisTurn = !!lookupCallThisTurn;
     const createdThisTurn = (logToolCalls || []).some((tc: any) => {
       if (!tc || tc.name !== "criar_agendamento") return false;
       const r = tc.result;
       return !!r && typeof r === "object" && !r.error && r.blocked !== true;
     });
-    if (citesTime && confirmsExisting && !lookedUpThisTurn && !createdThisTurn) {
-      console.warn(`[StaleConfirmationGuard] SHADOW: confirmação de horário pré-existente sem listar_agendamentos nesta interação.`);
+
+    // ⚠️ Ponta aberta 4.3 da auditoria (10/09): antes o sinal era só "houve
+    // chamada de listar_agendamentos nesta interação?" — ou seja, uma consulta
+    // vazia (cliente sem nada na agenda) contava como prova. Agora a comparação
+    // é com a AGENDA REAL: os horários efetivamente retornados pela consulta
+    // (deste turno ou da última busca válida da sessão) versus o horário citado
+    // na resposta. Continua em sombra, mas agora separa três desfechos
+    // distinguíveis no log, em vez de um só.
+    const _agendaTimes = new Set<string>();
+    if (lookupCallThisTurn) {
+      for (const t of _extractTimesAndDatesFromPayload((lookupCallThisTurn as any).result).times) _agendaTimes.add(t);
+    }
+    if (isActiveBookingLookupStillValid(sessionState)) {
+      for (const t of (sessionState.recentActiveBookingsLookup?.times || [])) _agendaTimes.add(t);
+    }
+    const _citedTimes = new Set<string>(
+      (String(finalResponse).match(/\b([01]?\d|2[0-3])[:h][0-5]\d\b/g) || [])
+        .map((t) => t.replace("h", ":"))
+        .map((t) => (t.length === 4 ? `0${t}` : t)),
+    );
+    const _hourOnly = (t: string) => (t.split(":")[0] || "").replace(/^0+/, "") || "0";
+    const _agendaHours = new Set<string>(Array.from(_agendaTimes).map(_hourOnly));
+    const citedMatchesRealAgenda = Array.from(_citedTimes).some(
+      (t) => _agendaTimes.has(t) || _agendaHours.has(_hourOnly(t)),
+    );
+
+    if (citesTime && confirmsExisting && !createdThisTurn && !citedMatchesRealAgenda) {
+      const acao = _agendaTimes.size > 0
+        ? "detected_shadow_time_mismatch"   // agenda real conhecida e o horário citado NÃO está nela
+        : "detected_shadow_no_agenda_data"; // nenhuma agenda real conhecida pra comparar
+      console.warn(`[StaleConfirmationGuard] SHADOW (${acao}): citados=[${Array.from(_citedTimes).join(",")}] agenda_real=[${Array.from(_agendaTimes).join(",")}] consultou_neste_turno=${lookedUpThisTurn}`);
       logToolCalls.push({
         name: "__phantom_guard__",
         args: { phase: "response_guard" },
         result: {
           layer: "stale_confirmation_guard",
           provider,
-          acao: "detected_shadow_no_block",
+          acao,
           claim: String(finalResponse).slice(0, 160),
           looked_up_this_turn: lookedUpThisTurn,
+          cited_times: Array.from(_citedTimes),
+          agenda_times: Array.from(_agendaTimes),
         },
       });
     }
