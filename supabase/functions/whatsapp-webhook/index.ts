@@ -1777,6 +1777,42 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const provider: string = tenant.api_provider || "trinks";
       console.log(`Tenant matched: ${tenant.name} (${tenant.id}), provider: ${provider}, owner: ${ownerDigits}`);
 
+      // 🔒 ANTI-LOOP ENTRE NÚMEROS PRÓPRIOS (fail-closed).
+      // Se o interlocutor for o número de QUALQUER instância nossa (o próprio
+      // tenant ou outro tenant da plataforma), não existe cliente humano nessa
+      // conversa: são duas IAs nossas se respondendo. Isso já gerou looping real
+      // (IA TESTE ZAYLO 556193359125 <-> 556183012868) e aparece em 16 tenants.
+      // Aqui nunca respondemos — só registramos o descarte, de forma visível.
+      const selfInstanceMatch = allTenantsRaw.find((t: any) => {
+        if (!t.whatsapp_number) return false;
+        return exactDigitsMatch(phoneNumber, String(t.whatsapp_number).replace(/\D/g, ""));
+      });
+      if (selfInstanceMatch) {
+        console.warn(
+          `[AntiLoop] Interlocutor ${phoneNumber} é número de instância própria ("${selfInstanceMatch.name}"). ` +
+          `Mensagem NÃO será respondida (tenant=${tenant.id}).`,
+        );
+        try {
+          await supabase.from("agent_logs").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: messageContent.slice(0, 500),
+            ai_response: "",
+            model_used: "discarded:self_instance_loop",
+            errors: [{
+              message: `Descartado para evitar looping: ${phoneNumber} é o número WhatsApp da instância "${selfInstanceMatch.name}". IA não responde outra instância da plataforma.`,
+              level: "warning",
+            }],
+          });
+        } catch (e) {
+          console.error("[AntiLoop] falha ao registrar descarte:", (e as Error)?.message);
+        }
+        return new Response(JSON.stringify({ status: "skipped_self_instance_loop" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+
       // 🔒 ANTI-ECO (fail-closed): mesmo sem fromMe, se o texto recebido for
       // idêntico a algo que a própria IA enviou nos últimos 3 minutos NESTE tenant
       // (qualquer chat — o eco às vezes chega num @lid diferente do número real),
