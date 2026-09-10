@@ -6,6 +6,7 @@
 - [x] Corrigir confirmação parcial, múltiplas pessoas/serviços e repetição de resultado incerto
 - [x] Adicionar matriz inicial de testes com múltiplas pessoas, dedupe, incerteza e precedência
 - [x] Validar e publicar somente whatsapp-webhook em modo sombra
+- [x] Corrigir roteamento e anti-eco de mensagens manuais da barbearia
 
 ## Próxima etapa condicionada aos dados de sombra
 - [ ] Revisar divergências reais do extrator estruturado antes de torná-lo bloqueante em todos os guards

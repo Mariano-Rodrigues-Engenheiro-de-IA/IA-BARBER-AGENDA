@@ -1433,14 +1433,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       const remoteJid = extractRemoteJid(payload, msg);
       const phoneMatch = extractPhoneNumber(payload, msg);
-      const phoneNumber = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
+      const initiallyResolvedPhone = phoneMatch?.phone ?? normalizePhoneNumber(remoteJid);
+      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id || null;
+      const ownerNumberForRouting = digitsOnly(payload.chat?.owner || payload.owner || payload.to || "");
+      const messagePeerPhone = extractPeerPhoneFromMessageId(messageId, ownerNumberForRouting);
 
       // ⚠️ A UAZAPI às vezes entrega o eco da nossa própria mensagem SEM o campo
       // fromMe no lugar esperado (visto em produção: fromMe=undefined com o texto
       // que a IA acabou de enviar). Por isso olhamos todos os lugares possíveis e
       // aceitamos também a string "true".
       const truthyFlag = (v: unknown) => v === true || v === "true";
-      const fromMe = truthyFlag(payload.fromMe) ||
+      const explicitFromMe = truthyFlag(payload.fromMe) ||
         truthyFlag(msg.fromMe) ||
         truthyFlag(msg.key?.fromMe) ||
         truthyFlag(payload.message?.fromMe) ||
@@ -1451,6 +1454,20 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         (payload.sender && payload.owner && payload.sender === payload.owner) ||
         (!!digitsOnly(payload.sender || "") && !!digitsOnly(payload.chat?.owner || payload.owner || "") &&
           digitsOnly(payload.sender || "") === digitsOnly(payload.chat?.owner || payload.owner || ""));
+      // UAZAPI message IDs encode the conversation peer before `:`. In some
+      // owner-originated events `fromMe` is absent and payload.from points to the
+      // establishment itself. Treat a distinct message-id peer as the recipient.
+      const inferredFromMeByMessageId = Boolean(
+        ownerNumberForRouting &&
+        messagePeerPhone &&
+        !exactDigitsMatch(messagePeerPhone, ownerNumberForRouting) &&
+        initiallyResolvedPhone &&
+        exactDigitsMatch(initiallyResolvedPhone, ownerNumberForRouting),
+      );
+      const fromMe = explicitFromMe || inferredFromMeByMessageId;
+      const phoneNumber = fromMe
+        ? (messagePeerPhone || extractOutboundPeerPhone(payload, msg, ownerNumberForRouting) || initiallyResolvedPhone)
+        : initiallyResolvedPhone;
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
 
 
@@ -1573,7 +1590,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           });
 
           if (tenantForStore) {
-            const storeMessageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
+            const storeMessageId = messageId;
             // Check for duplicate by message_id
             const { data: existingMsg } = storeMessageId
               ? await supabase.from("chat_messages").select("id").eq("message_id", storeMessageId).maybeSingle()
@@ -1595,13 +1612,14 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
               const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
               const incoming = normalize(messageContent);
-              const isEchoOfAI = incoming.length > 0 && (recentAssistant || []).some((m: any) => {
+              // A new UAZAPI message id is evidence of a distinct manual send.
+              // Text comparison is only a fallback for legacy payloads without id,
+              // and must be exact: substring matching swallowed real confirmations.
+              const isEchoOfAI = !storeMessageId && incoming.length >= 25 && (recentAssistant || []).some((m: any) => {
                 if (!m.content) return false;
                 const stored = normalize(m.content).replace(/^\[atendente humano\]:\s*/i, "");
                 if (!stored) return false;
-                // Exact match OR incoming is a chunk of the stored AI reply (the AI splits
-                // long replies into multiple WhatsApp messages, so each echo is a substring).
-                return stored === incoming || stored.includes(incoming) || incoming.includes(stored);
+                return stored.length >= 25 && stored === incoming;
               });
 
               if (isEchoOfAI) {
@@ -1642,7 +1660,6 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         });
       }
 
-      const messageId = msg.key?.id || msg.id || payload.key?.id || payload.id || payload.chat?.lastMessage_id;
       const senderName = payload.pushName || payload.senderName || msg.pushName || msg.senderName || payload.chat?.name || payload.chat?.pushName || payload.notify || msg.notify || "";
       console.log(`Message from ${phoneNumber}: ${messageContent}`, "messageId:", messageId, "senderName:", senderName, "msg.key:", JSON.stringify(msg.key || {}));
 
@@ -10191,6 +10208,30 @@ function normalizePhoneNumber(value: unknown): string | null {
   if (jidMatch) return jidMatch[1];
   const digits = raw.replace(/\D/g, "");
   if (digits.length >= 10 && digits.length <= 15) return digits;
+  return null;
+}
+
+function extractPeerPhoneFromMessageId(messageId: unknown, ownerNumber: string): string | null {
+  if (typeof messageId !== "string") return null;
+  const separator = messageId.indexOf(":");
+  if (separator <= 0) return null;
+  const candidate = normalizePhoneNumber(messageId.slice(0, separator));
+  if (!candidate || (ownerNumber && exactDigitsMatch(candidate, ownerNumber))) return null;
+  return candidate;
+}
+
+function extractOutboundPeerPhone(payload: any, msg: any, ownerNumber: string): string | null {
+  const candidates = [
+    payload.chat?.phone, payload.chat?.number, payload.chat?.whatsapp,
+    payload.chat?.whatsappNumber, payload.chat?.phoneNumber,
+    payload.chat?.contactPhone, payload.chat?.customerPhone,
+    payload.chat?.lead_phone, payload.chat?.leadPhone, payload.chat?.lead_whatsapp,
+    msg.key?.remoteJid, msg.remoteJid, payload.chat?.remoteJid,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizePhoneNumber(candidate);
+    if (normalized && (!ownerNumber || !exactDigitsMatch(normalized, ownerNumber))) return normalized;
+  }
   return null;
 }
 
