@@ -263,7 +263,7 @@ export function buildAppBarberTools(tenant: any) {
             service_code: { type: "number", description: "service_code real retornado em listar_servicos. Use quando for um único serviço (ou o combo cadastrado)." },
             services: {
               type: "array",
-              description: "Múltiplos serviços na MESMA visita, numa única chamada (só quando não existir combo cadastrado cobrindo eles). O primeiro item é o serviço principal usado na checagem de disponibilidade.",
+              description: "Compatibilidade interna. Não envie mais de um item. Para múltiplos serviços sem combo, use chamadas separadas em horários consecutivos.",
               items: {
                 type: "object",
                 properties: {
@@ -375,14 +375,23 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   // A busca aceita telefone com máscara ("(44) 99907-3035") — testado — então
   // não há risco de duplicar cadastro criado pelo app.
   // NUNCA bloqueia o agendamento: falha aqui é apenas registrada em log.
-  const appBarberFindClient = async (phoneLocal: string): Promise<any | null> => {
+  const normalizePersonName = (value: unknown): string => String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const appBarberFindClient = async (phoneLocal: string, expectedName?: string): Promise<any | null> => {
     const res = await callGet("/v1/establishment/clients", { cellphone: phoneLocal });
     if (res?.error) {
       console.warn(`[AppBarber] busca de cliente falhou: ${res.error}`);
       return null;
     }
     const rows: any[] = Array.isArray(res?.data) ? res.data : [];
-    return rows[0] ?? null;
+    if (!expectedName) return rows[0] ?? null;
+    const wanted = normalizePersonName(expectedName);
+    return rows.find((row) => normalizePersonName(row?.person_name ?? row?.name) === wanted) ?? null;
   };
 
   const appBarberEnsureClient = async (phoneLocal: string, name: string): Promise<{
@@ -392,7 +401,10 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
   }> => {
     if (!phoneLocal || !name) return { status: "skipped" };
     try {
-      const existing = await appBarberFindClient(phoneLocal);
+      // Um telefone de WhatsApp pode representar pai/filho, casal ou grupo.
+      // Telefone igual NÃO prova que é a mesma pessoa: só reutiliza cadastro
+      // quando o nome completo normalizado também coincide.
+      const existing = await appBarberFindClient(phoneLocal, name);
       if (existing) return { status: "found", person_code: existing.person_code ?? null };
 
       const url = buildUrl("/v1/establishment/clients", {});
@@ -410,7 +422,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         return { status: "failed", error: parsed?.message || parsed?.error || `HTTP ${res.status}` };
       }
-      const after = await appBarberFindClient(phoneLocal);
+      const after = await appBarberFindClient(phoneLocal, name);
       return { status: "created", person_code: after?.person_code ?? null };
     } catch (e: any) {
       return { status: "failed", error: e?.message || String(e) };
@@ -803,13 +815,15 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               hint: `Chame listar_horarios_geral novamente para ${combo.name} usando service_code=${comboCode} e só depois chame criar_agendamento com UM único service_code. NÃO use services[] com corte + sobrancelha separados.`,
             };
           }
-          // ✅ Sem combo cadastrado cobrindo os serviços: em vez de bloquear (o que
-          // empurrava a IA para DUAS chamadas separadas de criar_agendamento — e a
-          // segunda batia em `future_appointments_limit`, deixando o cliente com
-          // metade do pedido), seguimos com services[] na MESMA comanda. A trava de
-          // slots consecutivos (Correção B, logo abaixo) é quem garante que a soma
-          // das durações cabe no horário escolhido.
-          console.log(`[AppBarber] criar_agendamento multi-serviço sem combo cadastrado — seguindo com services[]=${requestedServices.map((s: any) => s.service_code).join(",")} na mesma comanda.`);
+          return {
+            error: "services[] com múltiplos itens não é aceito sem combo cadastrado. Crie cada serviço separadamente, no mesmo profissional e em horários consecutivos já consultados.",
+            blocked: true,
+            recoverable: true,
+            retryable: true,
+            reason: "separate_service_calls_required",
+            requested_service_codes: requestedServices.map((service: any) => service.service_code),
+            recoveryDirective: "Faça uma chamada de criar_agendamento por serviço, em horários consecutivos. Preserve a pessoa correta em customer_name e só confirme depois de todos os retornos com appointment_id.",
+          };
         }
         // 🛡️ Ownership de profissional: se algum listar_* rodou, professional_code precisa estar no catálogo.
         // Grave porque /v1/availability tem bug conhecido (ignora filtro por profissional) — sem essa trava,
@@ -848,13 +862,9 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           const wantedTime = String(args.start_time).slice(0, 5);
           const pc = Number(args.professional_code);
           if (slotOptions.length > 0) {
-            // professional_code === 0 = consulta registrada sem profissional
-            // identificado (listar_horarios sem esse argumento). Vale como
-            // checagem prévia para qualquer profissional — o horário foi
-            // realmente consultado na API, só não sabemos de quem era a grade.
             const hasChecked = slotOptions.some((s) =>
               s.service_code === primaryServiceCode &&
-              (s.professional_code === pc || s.professional_code === 0) &&
+              s.professional_code === pc &&
               s.start_date === wantedDate &&
               s.start_time.slice(0, 5) === wantedTime
             );
@@ -994,7 +1004,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // Retry 429 antes de devolver rate-limit à IA (2 tentativas extras, backoff 800/1600ms).
         let res: Response;
         let text = "";
-        {
+        try {
           let attempt = 0;
           const maxAttempts = 3;
           while (true) {
@@ -1005,6 +1015,20 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             if (res.status !== 429 || attempt >= maxAttempts) break;
             await new Promise((r) => setTimeout(r, 800 * attempt));
           }
+        } catch (error: unknown) {
+          // O servidor pode ter processado o POST antes de a conexão cair. Repetir
+          // aqui criaria duplicidade. O reconciliador trata este estado como
+          // incerto e exige listar_agendamentos antes de qualquer nova tentativa.
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[AppBarber] criar_agendamento resultado incerto após envio: ${message}`);
+          return {
+            error: "Não foi possível confirmar o resultado do agendamento após o envio.",
+            result_uncertain: true,
+            retryable: false,
+            recoverable: true,
+            failureReason: "create_result_uncertain",
+            recoveryDirective: "NÃO repita criar_agendamento. Chame listar_agendamentos e compare pessoa, serviço, data, horário e profissional. Só crie novamente se a consulta comprovar que o item não existe.",
+          };
         }
         let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
         if (!res.ok) {
