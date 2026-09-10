@@ -315,6 +315,7 @@ export function buildAppBarberTools(tenant: any) {
             cancel_scope: { type: "string", enum: ["invoice", "item"], description: "Padrão invoice. Use item apenas quando for remover um item específico da comanda." },
             customer_phone: { type: "string", description: "Telefone local do cliente SEM DDI 55 (só dígitos). Padrão: telefone da conversa removendo o prefixo 55." },
             reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
+            confirm_cancel_all_items: { type: "boolean", description: "Obrigatório = true quando a comanda alvo tem 2+ serviços e a intenção é realmente cancelar TODOS eles de uma vez (não usar quando só 1 dos serviços deve ser movido/cancelado — nesse caso use invoice_item_code + cancel_scope='item')." },
           },
           required: [],
         },
@@ -1270,6 +1271,45 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
 
         if (!args.invoice_code) return { error: "invoice_code é obrigatório. Use listar_agendamentos para obter." };
         if (!phoneDigits) return { error: "customer_phone é obrigatório." };
+
+        // ⚠️ Proteção (10/09, caso real Eduardo Gregolin): cancelar a comanda
+        // inteira quando ela tem 2+ itens apaga TODOS os serviços, mesmo quando
+        // a intenção real era mover só 1 (ex: remarcação parcial). No caso real,
+        // isso cancelou barba+cabelo quando só a barba deveria mudar de horário
+        // — o cabelo nunca foi recriado, cliente ficou sem avisar. Exige
+        // confirmação explícita (confirm_cancel_all_items: true) sempre que a
+        // comanda alvo tiver 2+ itens e a IA não estiver cancelando por item.
+        if (!removingItem) {
+          try {
+            const searchUrl = buildUrl(`/v1/invoice/search`, { customer_phone: phoneDigits });
+            const sRes = await fetch(searchUrl, { method: "GET", headers });
+            const sText = await sRes.text();
+            let sParsed: any = null; try { sParsed = JSON.parse(sText); } catch { /* keep null */ }
+            const invoices = sParsed?.data?.invoices || sParsed?.data || sParsed?.invoices || [];
+            const target = Array.isArray(invoices)
+              ? invoices.find((inv: any) => String(inv?.invoice_code ?? inv?.code ?? inv?.id) === String(args.invoice_code))
+              : null;
+            const items = target?.items || target?.invoice_items || target?.services || [];
+            if (Array.isArray(items) && items.length >= 2 && args.confirm_cancel_all_items !== true) {
+              const nomes = items.map((it: any) => it?.item_description || it?.service_description || it?.description || "serviço").join(", ");
+              console.warn(`[AppBarber] cancelar_agendamento BLOCKED: invoice_code=${args.invoice_code} tem ${items.length} itens (${nomes}) e a IA tentou cancelar a comanda inteira sem confirmar.`);
+              return {
+                error: `Esta comanda tem ${items.length} serviços (${nomes}), e você está tentando cancelar TODOS de uma vez.`,
+                blocked: true,
+                recoverable: true,
+                multi_item_invoice: true,
+                items_in_invoice: items.map((it: any) => ({
+                  invoice_item_code: it?.invoice_item_code,
+                  description: it?.item_description || it?.service_description || it?.description,
+                })),
+                recoveryDirective: `Esta comanda tem ${items.length} serviços (${nomes}). Se a intenção do cliente é mover/cancelar SÓ UM desses serviços, mantendo o(s) outro(s) intacto(s), use cancelar_agendamento com invoice_item_code do item específico + cancel_scope: "item" — NÃO cancele a comanda inteira. Se o cliente realmente quer cancelar TODOS os serviços dessa comanda, chame cancelar_agendamento de novo com os mesmos parâmetros e adicione confirm_cancel_all_items: true.`,
+              };
+            }
+          } catch (e) {
+            console.log(`[AppBarber] cancelar_agendamento: falha ao pré-checar itens antes de cancelar comanda inteira:`, e instanceof Error ? e.message : e);
+          }
+        }
+
         const url = buildUrl(`/v1/invoice/${encodeURIComponent(String(args.invoice_code))}`, {});
         const body = {
           customer_phone: String(phoneDigits),
