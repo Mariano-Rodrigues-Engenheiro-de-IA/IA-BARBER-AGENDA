@@ -6778,13 +6778,19 @@ async function callAIAgent(
           const slotOptions: NonNullable<AgentSessionState["appbarberSlotOptions"]> = [];
 
           if (serviceCode && startDate && toolCall.function.name === "listar_horarios" && Array.isArray((toolResult as any)?.available_times)) {
-            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code);
-            if (professionalCode) {
-              for (const time of (toolResult as any).available_times) {
-                const hhmm = String(time || "").slice(0, 5);
-                if (/^\d{2}:\d{2}$/.test(hhmm)) {
-                  slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
-                }
+            // ⚠️ Ponta aberta 4.4 da auditoria (10/09): quando o professional_code
+            // não vinha nem nos args nem no retorno, a consulta inteira era
+            // descartada e a sessão ficava sem histórico de busca — por isso
+            // apenas 27 de 126 sessões tinham appbarberSlotOptions preenchido.
+            // Agora registra com professional_code 0 ("não informado"): as
+            // checagens que usam esse histórico (múltiplos serviços na mesma
+            // data, horário citado que veio de busca real) só dependem de
+            // service_code + start_date + start_time.
+            const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code) ?? 0;
+            for (const time of (toolResult as any).available_times) {
+              const hhmm = String(time || "").slice(0, 5);
+              if (/^\d{2}:\d{2}$/.test(hhmm)) {
+                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
               }
             }
           }
