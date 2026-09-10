@@ -1061,6 +1061,9 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           service_codes: serviceItems.map((service) => service.service_code),
           services: serviceItems,
           professional_code: Number(args.professional_code),
+          // Observabilidade: found | created | failed | skipped (nunca bloqueia).
+          client_registration: clientRegistration.status,
+          client_person_code: clientRegistration.person_code ?? null,
           raw: parsed?.data ?? parsed,
         };
       }
