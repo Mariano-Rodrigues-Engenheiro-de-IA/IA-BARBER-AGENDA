@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
       }
       const url = `${baseUrl}${path}?${params.toString()}`;
       const method = String(r.method || "GET").toUpperCase();
-      if (!["GET", "POST", "PUT", "DELETE"].includes(method)) {
+      if (!["GET", "POST", "DELETE"].includes(method)) {
         out.push({ path, error: "método não permitido" });
         continue;
       }
