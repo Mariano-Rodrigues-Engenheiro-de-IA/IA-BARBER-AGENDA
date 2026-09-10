@@ -470,6 +470,7 @@ export async function executeBempTool(tenant: any, toolCall: any, phoneNumber?: 
             name: prof.name,
             total: availableSlots.length,
             available_slots: availableSlots,
+            ...(erro ? { erro } : {}),
           });
         }
 
