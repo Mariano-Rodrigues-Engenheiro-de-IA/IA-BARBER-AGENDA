@@ -859,7 +859,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             const pc = Number(args.professional_code);
             const primaryTimes = new Set(
               slotOptions
-                .filter((s) => s.service_code === primaryServiceCode && s.professional_code === pc && s.start_date === wantedDate)
+                .filter((s) => s.service_code === primaryServiceCode && (s.professional_code === pc || s.professional_code === 0) && s.start_date === wantedDate)
                 .map((s) => s.start_time.slice(0, 5))
             );
             if (primaryTimes.size > 0) {
