@@ -4254,9 +4254,11 @@ function appbarberFindsUnbookedServicesInSlots(
     const startTime = String(raw?.start_time || "").slice(0, 5);
     const serviceName = String(raw?.service_name || `Serviço ${serviceCode}`);
     if (!Number.isFinite(serviceCode) || serviceCode <= 0 || serviceCode === bookedServiceCode) continue;
+    if (bookedServiceCodes.has(serviceCode)) continue;
     if (String(raw?.start_date || "").slice(0, 10) !== bookedDate) continue;
     if (professionalCode !== bookedProfessionalCode && professionalCode !== 0) continue;
     if (startTime !== suggestedStartTime || !mentioned(serviceName)) continue;
+    if (appbarberServiceCoveredByBooked(bookedServiceNames, serviceName)) continue;
     candidates.set(serviceCode, {
       serviceCode,
       serviceName,
