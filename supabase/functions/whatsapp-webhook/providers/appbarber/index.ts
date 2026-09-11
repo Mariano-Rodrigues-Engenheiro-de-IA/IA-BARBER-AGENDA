@@ -1583,11 +1583,22 @@ export function evaluateSuccessfulBooking(tc: any, _sessionState?: any): Booking
   // correção já aplicada na Frizzar (caso Matheus/Henrico, jul/2026).
   const abServices = Array.isArray(args?.services) ? args.services : [];
   const serviceCount = abServices.length;
+  // ⚠️ Adicionado (10/09): serviceName/professionalName ficavam sempre vazios
+  // — cruzamos aqui com o que já foi consultado nesta conversa (catálogo de
+  // serviços e slots de disponibilidade), sem precisar de chamada nova.
+  const requestedServiceCode = Number(args.service_code ?? abServices[0]?.service_code);
+  const catalog = Array.isArray(_sessionState?.appbarberServiceCatalog) ? _sessionState.appbarberServiceCatalog : [];
+  const serviceName = catalog.find((s: any) => Number(s?.service_code) === requestedServiceCode)?.name;
+  const slotOptions = Array.isArray(_sessionState?.appbarberSlotOptions) ? _sessionState.appbarberSlotOptions : [];
+  const professionalCode = Number(args.professional_code);
+  const professionalName = slotOptions.find((s: any) => Number(s?.professional_code) === professionalCode)?.professional_name;
   return {
     succeeded: true,
     bookedCount: 1,
     dateStr: String(args.start_date || ""),
     timeStr: String(args.start_time || ""),
+    ...(serviceName ? { serviceName: String(serviceName) } : {}),
+    ...(professionalName ? { professionalName: String(professionalName) } : {}),
     ...(serviceCount > 1 ? { extraServiceCount: serviceCount } : {}),
   };
 }

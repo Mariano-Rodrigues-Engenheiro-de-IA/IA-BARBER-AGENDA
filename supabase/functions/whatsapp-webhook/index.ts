@@ -4463,8 +4463,8 @@ function countSuccessfulBookingsInTurn(
   logToolCalls: any[],
   provider: string,
   sessionState?: any,
-): { count: number; breakdown: Array<{ tool: string; summary: string }>; executions: number } {
-  const breakdown: Array<{ tool: string; summary: string }> = [];
+): { count: number; breakdown: Array<{ tool: string; summary: string; raw?: { dateStr: string; timeStr?: string; serviceName?: string; professionalName?: string } }>; executions: number } {
+  const breakdown: Array<{ tool: string; summary: string; raw?: { dateStr: string; timeStr?: string; serviceName?: string; professionalName?: string } }> = [];
   let count = 0;
   // executions = quantas chamadas distintas de agendar/criar_agendamento tiveram sucesso
   // nesta rodada. Diferente de `count`, que pode ser inflado por bookedCount>1 dentro
@@ -4537,7 +4537,8 @@ function countSuccessfulBookingsInTurn(
     const summary = formatBookingSummary(ev);
     count += ev.bookedCount;
     executions += 1;
-    for (let i = 0; i < ev.bookedCount; i++) breakdown.push({ tool: tc.name, summary });
+    const raw = { dateStr: ev.dateStr, timeStr: ev.timeStr, serviceName: ev.serviceName, professionalName: ev.professionalName };
+    for (let i = 0; i < ev.bookedCount; i++) breakdown.push({ tool: tc.name, summary, raw });
   }
 
   return { count, breakdown, executions };
@@ -8606,8 +8607,28 @@ async function callAIAgent(
           if (items.length === 2) return `${items[0]} e ${items[1]}`;
           return `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}`;
         };
+        // ⚠️ Adicionado (10/09): quando todos os itens são no MESMO dia (caso
+        // comum de múltiplos serviços/pessoas na mesma visita), cita a data
+        // uma vez só, e cada item traz serviço + horário + profissional (sem
+        // repetir a data). Se as datas forem diferentes entre os itens, mantém
+        // o formato anterior (cada item com sua própria data completa).
+        const rawItems = current.breakdown.map((b) => b.raw).filter((r): r is NonNullable<typeof r> => !!r?.dateStr);
+        const allSameDate = rawItems.length === current.breakdown.length && rawItems.length > 0
+          && rawItems.every((r) => r.dateStr === rawItems[0].dateStr);
+        let bodyText: string;
+        if (allSameDate) {
+          const dateLabel = formatBookingWhen(rawItems[0].dateStr, undefined);
+          const perItem = rawItems.map((r) => {
+            const time = r.timeStr ? String(r.timeStr).slice(0, 5) : "";
+            const head = r.serviceName ? `${r.serviceName}${time ? ` às ${time}` : ""}` : (time || "horário a confirmar");
+            return r.professionalName ? `${head} com ${r.professionalName}` : head;
+          });
+          bodyText = `${dateLabel}: ${naturalJoin(perItem)}`;
+        } else {
+          bodyText = naturalJoin(allSummaries);
+        }
         finalResponse = allSummaries.length > 0
-          ? `Prontinho! Ficou tudo certo: ${naturalJoin(allSummaries)}. Te esperamos! 🤝😁`
+          ? `Prontinho! Ficou tudo certo: ${bodyText}. Te esperamos! 🤝😁`
           : (detConfirm || `Prontinho! Ficou tudo certo, ${prometidos} agendamentos confirmados. Te esperamos! 🤝😁`);
         guardOverrideResponse = true;
         guardLog("recovery_completed");
