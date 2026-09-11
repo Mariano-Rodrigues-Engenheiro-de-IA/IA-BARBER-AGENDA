@@ -4219,6 +4219,12 @@ function appbarberFindsUnbookedServicesInSlots(
   bookedStartTime: string | undefined,
   bookedDurationMinutes: number | undefined,
   conversationText: string,
+  // ⚠️ 11/09 — nomes de TODOS os serviços já reservados no turno e códigos já
+  // reservados. Sem isso, um combo do catálogo ("01. Cabelo & Barba") deixava
+  // "Barba" e "Cabelo" marcados como pendentes e o guard cobrava agendamentos
+  // que o cliente nunca pediu.
+  bookedServiceNames: string[] = [],
+  bookedServiceCodes: Set<number> = new Set(),
 ): AppBarberPendingServiceEvidence[] {
   if (!Array.isArray(slotOptions) || slotOptions.length === 0) return [];
   if (!bookedServiceCode || !bookedDate || !bookedProfessionalCode || !bookedStartTime) return [];
