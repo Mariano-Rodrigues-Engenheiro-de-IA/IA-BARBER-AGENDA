@@ -5698,16 +5698,13 @@ async function callAIAgent(
 
 
 
-  // ⚠️ Teste (11/09): voltado para "minimal" — "high" testado e descartado:
-  // 64-76s de processamento mesmo para "Oi" simples, sem ferramenta nenhuma
-  // (testes reais: IA TESTE ZAYLO e THALLYS BARBER/Trinks), mais de 10x mais
-  // lento que "minimal" (~5,7s) no mesmo caso. Inviável para WhatsApp.
-  // Histórico completo desta sessão de teste: "low" (original) 18-29s,
-  // "minimal" 5,7s, "high" 64-76s. Próximo teste necessário: múltiplos
-  // agendamentos (TIPO 1/TIPO 2, sem combo) com "minimal" e prompt completo,
-  // para confirmar se o portão obrigatório ainda é seguido corretamente.
+  // Voltado para "low" (valor original, decisão explícita do usuário em
+  // 11/09). Histórico de teste desta sessão: "low" 18-29s, "minimal" 5,7s,
+  // "high" 64-76s (descartado por inviável). "minimal" ainda não foi
+  // confirmado contra caso real de múltiplos agendamentos (TIPO 1/TIPO 2)
+  // com o prompt completo — retomar esse teste antes de mudar de novo.
   if (modelUsed.includes("gpt-5")) {
-    requestBody.reasoning_effort = "minimal";
+    requestBody.reasoning_effort = "low";
   }
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
