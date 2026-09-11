@@ -8703,7 +8703,7 @@ async function callAIAgent(
             const proName = shortProName(r.professionalName);
             const sameAsPrevious = !!proName && proName === previousProName;
             previousProName = proName;
-            return proName && !sameAsPrevious ? `${head} com ${proName}` : head;
+            return proName && !sameAsPrevious ? `${head} com *${proName}*` : head;
           });
           bodyText = `${dateLabel}: ${naturalJoin(perItem)}`;
         } else {
