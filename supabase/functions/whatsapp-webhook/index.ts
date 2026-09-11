@@ -3978,6 +3978,20 @@ function serviceNameImpliesAnotherService(bookedServiceName: string, candidateSe
   return booked.includes(candidate) || candidate.includes(booked);
 }
 
+/**
+ * ⚠️ APPBARBER (11/09) — combo do catálogo cobre serviços individuais.
+ * Caso real (Mariano, IA TESTE ZAYLO): cliente pediu "corte e barba", o catálogo
+ * vende isso como UM serviço ("01. Cabelo & Barba"). A IA reservou o combo e as
+ * checagens de pendência ainda cobraram "Cabelo" e "Barba" separados →
+ * prometidos=3 e duas criações indevidas. Se algum serviço já reservado é um
+ * combo cujo nome cobre o candidato, o candidato NÃO está pendente.
+ */
+function appbarberServiceCoveredByBooked(bookedServiceNames: string[], candidateName: string): boolean {
+  return (bookedServiceNames || []).some((booked) =>
+    booked && serviceNameImpliesAnotherService(String(booked), String(candidateName || ""))
+  );
+}
+
 // inferAppBarberServicesForSameSlot foi movido para providers/appbarber/index.ts.
 
 
