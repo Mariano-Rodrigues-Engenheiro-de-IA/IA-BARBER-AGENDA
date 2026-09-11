@@ -212,7 +212,22 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: false })
         .limit(14);
 
-      const { dossier, conversationText, toolText } = buildDossier(log, (history ?? []).slice().reverse(), toolCalls);
+      // Reação do cliente depois da resposta — prova real de atendimento incompleto
+      const { data: afterRaw } = await supabase
+        .from("chat_messages")
+        .select("role, content, created_at")
+        .eq("tenant_id", log.tenant_id)
+        .eq("phone_number", log.phone_number)
+        .gt("created_at", log.created_at)
+        .order("created_at", { ascending: true })
+        .limit(4);
+
+      const { dossier, conversationText, toolText } = buildDossier(
+        log,
+        (history ?? []).slice().reverse(),
+        toolCalls,
+        afterRaw ?? [],
+      );
 
       let rawFindings: any[] = [];
       let errorMessage: string | null = null;
