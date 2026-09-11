@@ -4259,6 +4259,7 @@ function appbarberIsClearlySingleBooking(params: {
   let bookedProfessionalCode: number | undefined;
   let bookedStartTime: string | undefined;
   let bookedDurationMinutes: number | undefined;
+  const bookedServiceCodes = new Set<number>();
   for (const tc of logToolCalls || []) {
     if (!tc || !bookingToolNames.has(tc.name)) continue;
     const svcs = tc.args?.services ?? tc.args?.servicos;
@@ -4268,6 +4269,10 @@ function appbarberIsClearlySingleBooking(params: {
     }
     const sc = Number(tc.args?.service_code ?? tc.result?.service_code);
     if (Number.isFinite(sc) && sc > 0) bookedServiceCode = sc;
+    for (const raw of [tc.args?.service_code, tc.result?.service_code, ...(Array.isArray(tc.result?.service_codes) ? tc.result.service_codes : []), ...(Array.isArray(svcs) ? svcs.map((s: any) => s?.service_code) : [])]) {
+      const code = Number(raw);
+      if (Number.isFinite(code) && code > 0) bookedServiceCodes.add(code);
+    }
     const bd = String(tc.args?.start_date || tc.result?.start_date || "").slice(0, 10);
     if (bd) bookedDate = bd;
     const pc = Number(tc.args?.professional_code ?? tc.result?.professional_code);
