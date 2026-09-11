@@ -45,6 +45,7 @@ export function buildDossier(
   log: { user_message?: string | null; ai_response?: string | null; errors?: unknown; created_at?: string },
   history: Array<{ role: string; content: string; created_at?: string }>,
   toolCalls: any[],
+  afterMessages: Array<{ role: string; content: string }> = [],
 ) {
   const historyLines = history
     .filter((m) => m?.role === "user" || m?.role === "assistant")
