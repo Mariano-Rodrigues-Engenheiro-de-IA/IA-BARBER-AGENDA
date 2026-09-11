@@ -4313,6 +4313,11 @@ function appbarberIsClearlySingleBooking(params: {
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
     .map((m: any) => String(m.content))
     .join("\n");
+  const catalogForBooked = (sessionState?.appbarberServiceCatalog || []) as Array<{ service_code: number; name: string }>;
+  const bookedNamesFromCatalog = catalogForBooked
+    .filter((s) => bookedServiceCodes.has(Number(s?.service_code)))
+    .map((s) => String(s?.name || ""))
+    .filter(Boolean);
   if (appbarberFindsUnbookedServicesInSlots(
     sessionState?.appbarberSlotOptions,
     bookedServiceCode,
@@ -4321,6 +4326,8 @@ function appbarberIsClearlySingleBooking(params: {
     bookedStartTime,
     bookedDurationMinutes,
     conversationText,
+    bookedNamesFromCatalog,
+    bookedServiceCodes,
   ).length > 0) {
     return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
   }
