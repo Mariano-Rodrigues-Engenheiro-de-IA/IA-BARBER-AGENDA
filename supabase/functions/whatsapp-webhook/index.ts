@@ -8615,13 +8615,23 @@ async function callAIAgent(
         const rawItems = current.breakdown.map((b) => b.raw).filter((r): r is NonNullable<typeof r> => !!r?.dateStr);
         const allSameDate = rawItems.length === current.breakdown.length && rawItems.length > 0
           && rawItems.every((r) => r.dateStr === rawItems[0].dateStr);
+        // ⚠️ Adicionado (10/09): nome do profissional encurtado (primeiro e
+        // segundo nome, ex: "Victor Hugo Amaral" → "Victor Hugo") e omitido
+        // quando é o mesmo profissional do item anterior na lista, para não
+        // repetir "com Victor Hugo" em toda entrada quando é a mesma pessoa.
+        const shortProName = (full?: string): string | undefined =>
+          full ? full.trim().split(/\s+/).slice(0, 2).join(" ") : undefined;
         let bodyText: string;
         if (allSameDate) {
           const dateLabel = formatBookingWhen(rawItems[0].dateStr, undefined);
+          let previousProName: string | undefined;
           const perItem = rawItems.map((r) => {
             const time = r.timeStr ? String(r.timeStr).slice(0, 5) : "";
             const head = r.serviceName ? `${r.serviceName}${time ? ` às ${time}` : ""}` : (time || "horário a confirmar");
-            return r.professionalName ? `${head} com ${r.professionalName}` : head;
+            const proName = shortProName(r.professionalName);
+            const sameAsPrevious = !!proName && proName === previousProName;
+            previousProName = proName;
+            return proName && !sameAsPrevious ? `${head} com ${proName}` : head;
           });
           bodyText = `${dateLabel}: ${naturalJoin(perItem)}`;
         } else {
