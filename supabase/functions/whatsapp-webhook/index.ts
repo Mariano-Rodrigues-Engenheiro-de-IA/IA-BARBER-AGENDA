@@ -4169,8 +4169,10 @@ function appbarberFindsUnbookedCatalogService(
   };
 
   const bookedTokens = new Set<string>();
+  const bookedNames: string[] = [];
   for (const svc of catalog) {
     if (bookedServiceCodes.has(Number(svc?.service_code))) {
+      bookedNames.push(String(svc?.name || ""));
       for (const token of tokensOf(String(svc?.name || ""))) bookedTokens.add(token);
     }
   }
@@ -4179,10 +4181,12 @@ function appbarberFindsUnbookedCatalogService(
   for (const svc of catalog) {
     const code = Number(svc?.service_code);
     if (!Number.isFinite(code) || code <= 0 || bookedServiceCodes.has(code)) continue;
-    const tokens = tokensOf(String(svc?.name || "")).filter((token) => !bookedTokens.has(token));
+    const name = String(svc?.name || `Serviço ${code}`);
+    if (appbarberServiceCoveredByBooked(bookedNames, name)) continue;
+    const tokens = tokensOf(name).filter((token) => !bookedTokens.has(token));
     if (tokens.length === 0) continue;
     if (tokens.some((token) => new RegExp(`\\b${token}`, "i").test(text))) {
-      return { serviceCode: code, serviceName: String(svc?.name || `Serviço ${code}`) };
+      return { serviceCode: code, serviceName: name };
     }
   }
   return null;
