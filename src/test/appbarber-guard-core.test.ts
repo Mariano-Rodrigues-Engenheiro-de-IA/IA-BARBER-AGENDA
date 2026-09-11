@@ -1,11 +1,35 @@
 import { describe, expect, it } from "vitest";
 import {
+  appBarberCurrentRequestMentionsPendingService,
   appBarberExecutionKey,
   appBarberNamesConflict,
   arbitrateAppBarberGuardDecisions,
   buildAppBarberIntentSnapshot,
   reconcileAppBarberBookings,
 } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/guard-core";
+
+describe("AppBarber guard core — serviços pendentes do pedido atual", () => {
+  it("não transforma um pedido novo de corte em combo e barba por causa de slots antigos", () => {
+    expect(appBarberCurrentRequestMentionsPendingService(
+      "marca pra mim na terça às 9 corte",
+      ["02. Cabelo"],
+      "01. Cabelo & Barba",
+    )).toBe(false);
+    expect(appBarberCurrentRequestMentionsPendingService(
+      "marca pra mim na terça às 9 corte",
+      ["02. Cabelo"],
+      "03. Barba & Bigode",
+    )).toBe(false);
+  });
+
+  it("mantém um segundo serviço realmente pedido na mensagem atual", () => {
+    expect(appBarberCurrentRequestMentionsPendingService(
+      "quero corte e sobrancelha amanhã",
+      ["02. Cabelo"],
+      "11. Sobrancelha a Navalha",
+    )).toBe(true);
+  });
+});
 
 describe("AppBarber guard core — intenção ampla", () => {
   it("preserva o maior eixo e itens parcelados em vez de reduzir para uma execução", () => {

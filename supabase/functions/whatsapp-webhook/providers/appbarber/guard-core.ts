@@ -47,6 +47,41 @@ const cleanText = (value: unknown): string => String(value ?? "")
   .replace(/\s+/g, " ")
   .trim();
 
+const SERVICE_STOP_WORDS = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "com", "para", "club", "cinco", "9cinco"]);
+
+const serviceMentionTokens = (value: unknown): string[] => {
+  const synonyms: Record<string, string[]> = {
+    cabelo: ["corte", "cortar", "cortinho", "maquina"],
+    barba: ["barbear", "barbinha"],
+    sobrancelha: ["sobrancelhas", "design"],
+    hidratacao: ["hidratar"],
+  };
+  const base = cleanText(value).replace(/^\d+\s*/, "").split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4 && !SERVICE_STOP_WORDS.has(word));
+  const tokens = new Set(base);
+  for (const word of base) for (const synonym of synonyms[word] || []) tokens.add(synonym);
+  return [...tokens];
+};
+
+/**
+ * AppBarber: decide se o pedido ATUAL contém a parte ainda não coberta de um
+ * serviço candidato. Evita que slots antigos transformem "corte" em
+ * "corte + combo + barba", mas preserva "corte e sobrancelha".
+ */
+export function appBarberCurrentRequestMentionsPendingService(
+  currentRequest: unknown,
+  bookedServiceNames: string[],
+  candidateServiceName: unknown,
+): boolean {
+  const request = cleanText(currentRequest);
+  if (!request) return false;
+  const bookedTokens = new Set(bookedServiceNames.flatMap(serviceMentionTokens));
+  const uncoveredTokens = serviceMentionTokens(candidateServiceName)
+    .filter((token) => !bookedTokens.has(token));
+  return uncoveredTokens.length > 0
+    && uncoveredTokens.some((token) => new RegExp(`\\b${token}\\b`, "i").test(request));
+}
+
 const positiveInt = (value: unknown): number | null => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;

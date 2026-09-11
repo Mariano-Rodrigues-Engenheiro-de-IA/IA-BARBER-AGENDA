@@ -11,3 +11,4 @@
 ## Próxima etapa condicionada aos dados de sombra
 - [ ] Revisar divergências reais do extrator estruturado antes de torná-lo bloqueante em todos os guards
 - [ ] Ampliar testes fim a fim dos dispatchers legados ainda presos ao handler principal
+- [x] Corrigir falso MultiBooking do AppBarber causado por slots antigos em pedido único

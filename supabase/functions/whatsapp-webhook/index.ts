@@ -33,6 +33,7 @@ import {
   bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
+  appBarberCurrentRequestMentionsPendingService,
   buildAppBarberIntentSnapshot,
   reconcileAppBarberBookings,
   type AppBarberIntentSnapshot,
@@ -4218,7 +4219,7 @@ function appbarberFindsUnbookedServicesInSlots(
   bookedProfessionalCode: number | undefined,
   bookedStartTime: string | undefined,
   bookedDurationMinutes: number | undefined,
-  conversationText: string,
+  currentRequestText: string,
   // ⚠️ 11/09 — nomes de TODOS os serviços já reservados no turno e códigos já
   // reservados. Sem isso, um combo do catálogo ("01. Cabelo & Barba") deixava
   // "Barba" e "Cabelo" marcados como pendentes e o guard cobrava agendamentos
@@ -4236,17 +4237,6 @@ function appbarberFindsUnbookedServicesInSlots(
     : 0;
   const pendingMinute = hour * 60 + minute + duration;
   const suggestedStartTime = `${String(Math.floor(pendingMinute / 60) % 24).padStart(2, "0")}:${String(pendingMinute % 60).padStart(2, "0")}`;
-  const normalizedConversation = normalizeServiceText(conversationText);
-  const stopWords = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "para", "com", "club"]);
-  const mentioned = (name: string): boolean => {
-    const normalizedName = normalizeServiceText(name).replace(/^\d+\s+/, "");
-    if (!normalizedName) return false;
-    if (normalizedConversation.includes(normalizedName)) return true;
-    return normalizedName.split(/\s+/)
-      .filter((word) => word.length >= 4 && !stopWords.has(word))
-      .some((word) => normalizedConversation.includes(word));
-  };
-
   const candidates = new Map<number, AppBarberPendingServiceEvidence>();
   for (const raw of slotOptions as Array<any>) {
     const serviceCode = Number(raw?.service_code);
@@ -4257,8 +4247,9 @@ function appbarberFindsUnbookedServicesInSlots(
     if (bookedServiceCodes.has(serviceCode)) continue;
     if (String(raw?.start_date || "").slice(0, 10) !== bookedDate) continue;
     if (professionalCode !== bookedProfessionalCode && professionalCode !== 0) continue;
-    if (startTime !== suggestedStartTime || !mentioned(serviceName)) continue;
+    if (startTime !== suggestedStartTime) continue;
     if (appbarberServiceCoveredByBooked(bookedServiceNames, serviceName)) continue;
+    if (!appBarberCurrentRequestMentionsPendingService(currentRequestText, bookedServiceNames, serviceName)) continue;
     candidates.set(serviceCode, {
       serviceCode,
       serviceName,
@@ -4275,8 +4266,9 @@ function appbarberIsClearlySingleBooking(params: {
   bookingAttempts: number;
   messages: any[];
   sessionState?: any;
+  currentUserMessage?: string;
 }): { single: boolean; reason: string } {
-  const { logToolCalls, bookingToolNames, bookingAttempts, messages, sessionState } = params;
+  const { logToolCalls, bookingToolNames, bookingAttempts, messages, sessionState, currentUserMessage } = params;
   if (bookingAttempts !== 1) return { single: false, reason: `attempts=${bookingAttempts}` };
 
   let customerNameUsed: string | undefined;
@@ -4313,6 +4305,11 @@ function appbarberIsClearlySingleBooking(params: {
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
     .map((m: any) => String(m.content))
     .join("\n");
+  // Um pedido novo e explícito não pode herdar serviços/slots de pedidos já
+  // concluídos na mesma conversa. Confirmações curtas ainda usam o contexto.
+  const currentRequestEvidence = currentUserMessage && !isAffirmativeReply(currentUserMessage)
+    ? currentUserMessage
+    : conversationText;
   const catalogForBooked = (sessionState?.appbarberServiceCatalog || []) as Array<{ service_code: number; name: string }>;
   const bookedNamesFromCatalog = catalogForBooked
     .filter((s) => bookedServiceCodes.has(Number(s?.service_code)))
@@ -4325,7 +4322,7 @@ function appbarberIsClearlySingleBooking(params: {
     bookedProfessionalCode,
     bookedStartTime,
     bookedDurationMinutes,
-    conversationText,
+    currentRequestEvidence,
     bookedNamesFromCatalog,
     bookedServiceCodes,
   ).length > 0) {
@@ -4348,10 +4345,9 @@ function appbarberIsClearlySingleBooking(params: {
     return { single: false, reason: "nome próprio distinto do customer_name usado" };
   }
 
-  const userText = allMsgs
-    .filter((m: any) => m.role === "user")
-    .map((m: any) => String(m.content))
-    .join("\n");
+  const userText = currentUserMessage && !isAffirmativeReply(currentUserMessage)
+    ? currentUserMessage
+    : allMsgs.filter((m: any) => m.role === "user").map((m: any) => String(m.content)).join("\n");
   const unbookedCatalogService = appbarberFindsUnbookedCatalogService(
     sessionState?.appbarberServiceCatalog,
     bookedServiceCodes,
@@ -8180,6 +8176,7 @@ async function callAIAgent(
         bookingAttempts: _bookingAttempts,
         messages,
         sessionState,
+        currentUserMessage: userMessage,
       })
       : { single: false, reason: "n/a (provider != appbarber)" };
     let cls: PendingCls;
@@ -8255,7 +8252,7 @@ async function callAIAgent(
           toPositiveInteger(args.professional_code ?? successfulCreate.result?.professional_code) ?? undefined,
           bookedStartTime,
           toPositiveInteger(args.service_duration_minutes ?? args.services?.[0]?.duration) ?? undefined,
-          _visibleConversationText,
+          userMessage && !isAffirmativeReply(userMessage) ? userMessage : _visibleConversationText,
           _abBookedNames,
           _abBookedCodes,
         );
