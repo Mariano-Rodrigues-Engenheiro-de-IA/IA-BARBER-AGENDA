@@ -4121,6 +4121,60 @@ function appbarberFindsDifferentProperName(window: string, customerNameUsed: str
 }
 
 /**
+ * ⚠️ Quarta checagem independente (11/09) — serviço do CATÁLOGO citado pelo
+ * cliente nesta conversa que nunca foi agendado. Caso real (11/09, Mariano):
+ * o cliente pediu "corte e sobrancelha" (transcrição veio como "a corte de
+ * sobrancelha"), a IA só pesquisou horários da sobrancelha, então
+ * appbarberFindsUnbookedServicesInSlots não tinha evidência de slot e o filtro
+ * barato liberou o turno como agendamento único. Aqui a evidência vem do
+ * catálogo real do tenant (appbarberServiceCatalog), não de slot pesquisado.
+ * Só olha mensagens do CLIENTE — texto da IA cita serviço por conta própria.
+ * Falso positivo aqui é barato: apenas faz o classificador rodar, não bloqueia.
+ */
+function appbarberFindsUnbookedCatalogService(
+  catalog: Array<{ service_code: number; name: string }> | undefined,
+  bookedServiceCodes: Set<number>,
+  userText: string,
+): { serviceCode: number; serviceName: string } | null {
+  if (!Array.isArray(catalog) || catalog.length === 0) return null;
+  const text = normalizeServiceText(userText);
+  if (!text) return null;
+  const SYNONYMS: Record<string, string[]> = {
+    cabelo: ["corte", "cortar", "cortinho", "maquina"],
+    barba: ["barbear", "barbinha"],
+    sobrancelha: ["sobrancelhas", "design"],
+    hidratacao: ["hidratar"],
+  };
+  const STOP = new Set(["de", "da", "do", "das", "dos", "a", "o", "e", "com", "para", "club", "cinco", "9cinco"]);
+  const tokensOf = (name: string): string[] => {
+    const base = normalizeServiceText(name).replace(/^\d+\s*/, "").split(/[^a-z0-9]+/)
+      .filter((w) => w.length >= 4 && !STOP.has(w));
+    const out = new Set<string>(base);
+    for (const word of base) for (const syn of SYNONYMS[word] || []) out.add(syn);
+    return [...out];
+  };
+
+  const bookedTokens = new Set<string>();
+  for (const svc of catalog) {
+    if (bookedServiceCodes.has(Number(svc?.service_code))) {
+      for (const token of tokensOf(String(svc?.name || ""))) bookedTokens.add(token);
+    }
+  }
+  if (bookedTokens.size === 0) return null;
+
+  for (const svc of catalog) {
+    const code = Number(svc?.service_code);
+    if (!Number.isFinite(code) || code <= 0 || bookedServiceCodes.has(code)) continue;
+    const tokens = tokensOf(String(svc?.name || "")).filter((token) => !bookedTokens.has(token));
+    if (tokens.length === 0) continue;
+    if (tokens.some((token) => new RegExp(`\\b${token}`, "i").test(text))) {
+      return { serviceCode: code, serviceName: String(svc?.name || `Serviço ${code}`) };
+    }
+  }
+  return null;
+}
+
+/**
  * ⚠️ Terceira checagem independente (10/09) — detecta um service_code
  * DIFERENTE do que foi realmente criado, já pesquisado nesta conversa (via
  * listar_horarios/listar_horarios_geral, persistido em appbarberSlotOptions),
@@ -4205,6 +4259,7 @@ function appbarberIsClearlySingleBooking(params: {
   let bookedProfessionalCode: number | undefined;
   let bookedStartTime: string | undefined;
   let bookedDurationMinutes: number | undefined;
+  const bookedServiceCodes = new Set<number>();
   for (const tc of logToolCalls || []) {
     if (!tc || !bookingToolNames.has(tc.name)) continue;
     const svcs = tc.args?.services ?? tc.args?.servicos;
@@ -4214,6 +4269,10 @@ function appbarberIsClearlySingleBooking(params: {
     }
     const sc = Number(tc.args?.service_code ?? tc.result?.service_code);
     if (Number.isFinite(sc) && sc > 0) bookedServiceCode = sc;
+    for (const raw of [tc.args?.service_code, tc.result?.service_code, ...(Array.isArray(tc.result?.service_codes) ? tc.result.service_codes : []), ...(Array.isArray(svcs) ? svcs.map((s: any) => s?.service_code) : [])]) {
+      const code = Number(raw);
+      if (Number.isFinite(code) && code > 0) bookedServiceCodes.add(code);
+    }
     const bd = String(tc.args?.start_date || tc.result?.start_date || "").slice(0, 10);
     if (bd) bookedDate = bd;
     const pc = Number(tc.args?.professional_code ?? tc.result?.professional_code);
@@ -4254,6 +4313,19 @@ function appbarberIsClearlySingleBooking(params: {
 
   if (appbarberFindsDifferentProperName(window, customerNameUsed)) {
     return { single: false, reason: "nome próprio distinto do customer_name usado" };
+  }
+
+  const userText = allMsgs
+    .filter((m: any) => m.role === "user")
+    .map((m: any) => String(m.content))
+    .join("\n");
+  const unbookedCatalogService = appbarberFindsUnbookedCatalogService(
+    sessionState?.appbarberServiceCatalog,
+    bookedServiceCodes,
+    userText,
+  );
+  if (unbookedCatalogService) {
+    return { single: false, reason: `serviço do catálogo citado pelo cliente e não agendado: ${unbookedCatalogService.serviceName}` };
   }
 
   return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem service_code pendente, sem marca textual, sem nome distinto (janela completa)" };
