@@ -31,6 +31,8 @@ Categorias possíveis:
 - comunicacao: a resposta final afirma algo que os retornos reais não sustentam (ex: "agendei" sem appointment_id real).
 - erro_tecnico_mascarado: alguma ferramenta falhou (429, 422, limite de agendamentos, falta de pagamento, erro de rede) e a resposta seguiu como se nada tivesse acontecido, ou tratou falha técnica como "sem vaga".
 
+USE A REAÇÃO POSTERIOR DO CLIENTE COMO PROVA: se logo depois o cliente cobra algo que faltou ("e o corte?", "e do meu filho?", "não foi cancelado"), isso é evidência forte de que o atendimento ficou incompleto — aponte, citando essa fala.
+
 REGRAS DURAS:
 - Só aponte problema com PROVA. Para cada achado, copie LITERALMENTE (sem parafrasear, sem reticências) um trecho da conversa/resposta em "evidence_conversation" e um trecho do bloco de FERRAMENTAS em "evidence_tool". Trechos inventados invalidam o achado.
 - Sucesso de agendamento só existe com identificador real retornado (appointment_id / scheduling_code / ok:true).
