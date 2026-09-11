@@ -5698,8 +5698,18 @@ async function callAIAgent(
 
 
 
+  // ⚠️ Teste (11/09): trocado de "low" para "minimal" para investigar latência
+  // base. Confirmado com teste real que mensagem trivial ("Oi"), com prompt
+  // minúsculo (556 tokens) e sem nenhuma chamada de ferramenta, ainda levava
+  // 18,3s de processamento — descartando tamanho de prompt como causa. Outras
+  // chamadas auxiliares no código já usam "minimal" (linhas ~4940, ~8542);
+  // essa é a primeira vez que a chamada PRINCIPAL (a que gera a resposta que
+  // o cliente realmente espera) testa esse nível mais baixo. Risco a observar:
+  // "minimal" pode reduzir a qualidade do raciocínio em casos que dependem de
+  // seguir várias regras em sequência (TIPO 1/TIPO 2, portão obrigatório) —
+  // acompanhar os próximos testes reais tanto para velocidade quanto correção.
   if (modelUsed.includes("gpt-5")) {
-    requestBody.reasoning_effort = "low";
+    requestBody.reasoning_effort = "minimal";
   }
   if (tools && tools.length > 0) {
     requestBody.tools = tools;
