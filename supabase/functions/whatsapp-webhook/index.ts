@@ -3978,6 +3978,20 @@ function serviceNameImpliesAnotherService(bookedServiceName: string, candidateSe
   return booked.includes(candidate) || candidate.includes(booked);
 }
 
+/**
+ * ⚠️ APPBARBER (11/09) — combo do catálogo cobre serviços individuais.
+ * Caso real (Mariano, IA TESTE ZAYLO): cliente pediu "corte e barba", o catálogo
+ * vende isso como UM serviço ("01. Cabelo & Barba"). A IA reservou o combo e as
+ * checagens de pendência ainda cobraram "Cabelo" e "Barba" separados →
+ * prometidos=3 e duas criações indevidas. Se algum serviço já reservado é um
+ * combo cujo nome cobre o candidato, o candidato NÃO está pendente.
+ */
+function appbarberServiceCoveredByBooked(bookedServiceNames: string[], candidateName: string): boolean {
+  return (bookedServiceNames || []).some((booked) =>
+    booked && serviceNameImpliesAnotherService(String(booked), String(candidateName || ""))
+  );
+}
+
 // inferAppBarberServicesForSameSlot foi movido para providers/appbarber/index.ts.
 
 
@@ -4155,8 +4169,10 @@ function appbarberFindsUnbookedCatalogService(
   };
 
   const bookedTokens = new Set<string>();
+  const bookedNames: string[] = [];
   for (const svc of catalog) {
     if (bookedServiceCodes.has(Number(svc?.service_code))) {
+      bookedNames.push(String(svc?.name || ""));
       for (const token of tokensOf(String(svc?.name || ""))) bookedTokens.add(token);
     }
   }
@@ -4165,10 +4181,12 @@ function appbarberFindsUnbookedCatalogService(
   for (const svc of catalog) {
     const code = Number(svc?.service_code);
     if (!Number.isFinite(code) || code <= 0 || bookedServiceCodes.has(code)) continue;
-    const tokens = tokensOf(String(svc?.name || "")).filter((token) => !bookedTokens.has(token));
+    const name = String(svc?.name || `Serviço ${code}`);
+    if (appbarberServiceCoveredByBooked(bookedNames, name)) continue;
+    const tokens = tokensOf(name).filter((token) => !bookedTokens.has(token));
     if (tokens.length === 0) continue;
     if (tokens.some((token) => new RegExp(`\\b${token}`, "i").test(text))) {
-      return { serviceCode: code, serviceName: String(svc?.name || `Serviço ${code}`) };
+      return { serviceCode: code, serviceName: name };
     }
   }
   return null;
@@ -4201,6 +4219,12 @@ function appbarberFindsUnbookedServicesInSlots(
   bookedStartTime: string | undefined,
   bookedDurationMinutes: number | undefined,
   conversationText: string,
+  // ⚠️ 11/09 — nomes de TODOS os serviços já reservados no turno e códigos já
+  // reservados. Sem isso, um combo do catálogo ("01. Cabelo & Barba") deixava
+  // "Barba" e "Cabelo" marcados como pendentes e o guard cobrava agendamentos
+  // que o cliente nunca pediu.
+  bookedServiceNames: string[] = [],
+  bookedServiceCodes: Set<number> = new Set(),
 ): AppBarberPendingServiceEvidence[] {
   if (!Array.isArray(slotOptions) || slotOptions.length === 0) return [];
   if (!bookedServiceCode || !bookedDate || !bookedProfessionalCode || !bookedStartTime) return [];
@@ -4230,9 +4254,11 @@ function appbarberFindsUnbookedServicesInSlots(
     const startTime = String(raw?.start_time || "").slice(0, 5);
     const serviceName = String(raw?.service_name || `Serviço ${serviceCode}`);
     if (!Number.isFinite(serviceCode) || serviceCode <= 0 || serviceCode === bookedServiceCode) continue;
+    if (bookedServiceCodes.has(serviceCode)) continue;
     if (String(raw?.start_date || "").slice(0, 10) !== bookedDate) continue;
     if (professionalCode !== bookedProfessionalCode && professionalCode !== 0) continue;
     if (startTime !== suggestedStartTime || !mentioned(serviceName)) continue;
+    if (appbarberServiceCoveredByBooked(bookedServiceNames, serviceName)) continue;
     candidates.set(serviceCode, {
       serviceCode,
       serviceName,
@@ -4287,6 +4313,11 @@ function appbarberIsClearlySingleBooking(params: {
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
     .map((m: any) => String(m.content))
     .join("\n");
+  const catalogForBooked = (sessionState?.appbarberServiceCatalog || []) as Array<{ service_code: number; name: string }>;
+  const bookedNamesFromCatalog = catalogForBooked
+    .filter((s) => bookedServiceCodes.has(Number(s?.service_code)))
+    .map((s) => String(s?.name || ""))
+    .filter(Boolean);
   if (appbarberFindsUnbookedServicesInSlots(
     sessionState?.appbarberSlotOptions,
     bookedServiceCode,
@@ -4295,6 +4326,8 @@ function appbarberIsClearlySingleBooking(params: {
     bookedStartTime,
     bookedDurationMinutes,
     conversationText,
+    bookedNamesFromCatalog,
+    bookedServiceCodes,
   ).length > 0) {
     return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
   }
@@ -8195,6 +8228,26 @@ async function callAIAgent(
       if (successfulCreate) {
         const args = successfulCreate.args || {};
         const bookedStartTime = String(args.start_time || successfulCreate.result?.start_date || "").match(/(?:T|\s)?(\d{2}:\d{2})/)?.[1];
+        // Todos os códigos/nomes já reservados com sucesso no turno — um combo já
+        // reservado ("01. Cabelo & Barba") cobre "Cabelo" e "Barba" avulsos.
+        const _abBookedCodes = new Set<number>();
+        for (const tc of logToolCalls || []) {
+          if (!tc || tc.blocked || !_mbBookingNames.has(tc.name) || tc?.result?.ok !== true) continue;
+          for (const raw of [
+            tc.args?.service_code,
+            tc.result?.service_code,
+            ...(Array.isArray(tc.result?.service_codes) ? tc.result.service_codes : []),
+            ...(Array.isArray(tc.args?.services) ? tc.args.services.map((s: any) => s?.service_code) : []),
+          ]) {
+            const code = Number(raw);
+            if (Number.isFinite(code) && code > 0) _abBookedCodes.add(code);
+          }
+        }
+        const _abCatalog = ((sessionState as any)?.appbarberServiceCatalog || []) as Array<{ service_code: number; name: string }>;
+        const _abBookedNames = [
+          ...bookedServiceNames,
+          ..._abCatalog.filter((s) => _abBookedCodes.has(Number(s?.service_code))).map((s) => String(s?.name || "")),
+        ].filter(Boolean);
         _appbarberPendingServices = appbarberFindsUnbookedServicesInSlots(
           (sessionState as any)?.appbarberSlotOptions,
           toPositiveInteger(args.service_code ?? successfulCreate.result?.service_code) ?? undefined,
@@ -8203,6 +8256,8 @@ async function callAIAgent(
           bookedStartTime,
           toPositiveInteger(args.service_duration_minutes ?? args.services?.[0]?.duration) ?? undefined,
           _visibleConversationText,
+          _abBookedNames,
+          _abBookedCodes,
         );
         if (_appbarberPendingServices.length > 0) {
           prometidos = Math.max(prometidos, bookedExecutionCount + _appbarberPendingServices.length);
