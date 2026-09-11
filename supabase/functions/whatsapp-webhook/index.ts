@@ -4315,6 +4315,19 @@ function appbarberIsClearlySingleBooking(params: {
     return { single: false, reason: "nome próprio distinto do customer_name usado" };
   }
 
+  const userText = allMsgs
+    .filter((m: any) => m.role === "user")
+    .map((m: any) => String(m.content))
+    .join("\n");
+  const unbookedCatalogService = appbarberFindsUnbookedCatalogService(
+    sessionState?.appbarberServiceCatalog,
+    bookedServiceCodes,
+    userText,
+  );
+  if (unbookedCatalogService) {
+    return { single: false, reason: `serviço do catálogo citado pelo cliente e não agendado: ${unbookedCatalogService.serviceName}` };
+  }
+
   return { single: true, reason: "1 tentativa, sem services[] múltiplo, sem service_code pendente, sem marca textual, sem nome distinto (janela completa)" };
 }
 
