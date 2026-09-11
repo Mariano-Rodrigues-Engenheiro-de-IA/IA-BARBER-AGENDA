@@ -60,6 +60,13 @@ export function buildDossier(
     "",
     "=== RESPOSTA FINAL ENVIADA AO CLIENTE ===",
     trim(log.ai_response, 2000) || "(nenhuma resposta enviada)",
+    "",
+    "=== O QUE O CLIENTE DISSE DEPOIS (reação real) ===",
+    ...(afterMessages.length
+      ? afterMessages
+          .filter((m) => m?.role === "user" || m?.role === "assistant")
+          .map((m) => `${m.role === "user" ? "CLIENTE" : "IA"}: ${trim(m.content, 500)}`)
+      : ["(nada depois)"]),
   ].join("\n");
 
   const toolLines = (toolCalls ?? [])
