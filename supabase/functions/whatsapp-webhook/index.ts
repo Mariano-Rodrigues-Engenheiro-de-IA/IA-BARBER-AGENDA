@@ -8596,9 +8596,19 @@ async function callAIAgent(
       if (current.count >= prometidos) {
         const allSummaries = current.breakdown.map((b) => b.summary).filter(Boolean);
         const detConfirm = buildDeterministicBookingConfirmation(logToolCalls);
+        // ⚠️ Melhorado (10/09): a lista era juntada com "; " (ex: "14/09 às
+        // 13:30; 14/09 às 14:15") — soava como lista técnica, destoando do
+        // tom natural do resto das respostas da Carol. Agora usa formato de
+        // lista natural em português: vírgula entre os itens, "e" antes do
+        // último (ex: "14/09 às 13:30 e 14/09 às 14:15", ou com 3+: "X, Y e Z").
+        const naturalJoin = (items: string[]): string => {
+          if (items.length <= 1) return items.join("");
+          if (items.length === 2) return `${items[0]} e ${items[1]}`;
+          return `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}`;
+        };
         finalResponse = allSummaries.length > 0
-          ? `Prontinho! Consegui confirmar: ${allSummaries.join("; ")}. Te esperamos!`
-          : (detConfirm || `Prontinho! Consegui confirmar os ${prometidos} agendamentos. Te esperamos!`);
+          ? `Prontinho! Ficou tudo certo: ${naturalJoin(allSummaries)}. Te esperamos! 🤝😁`
+          : (detConfirm || `Prontinho! Ficou tudo certo, ${prometidos} agendamentos confirmados. Te esperamos! 🤝😁`);
         guardOverrideResponse = true;
         guardLog("recovery_completed");
       } else {
