@@ -8221,6 +8221,26 @@ async function callAIAgent(
       if (successfulCreate) {
         const args = successfulCreate.args || {};
         const bookedStartTime = String(args.start_time || successfulCreate.result?.start_date || "").match(/(?:T|\s)?(\d{2}:\d{2})/)?.[1];
+        // Todos os códigos/nomes já reservados com sucesso no turno — um combo já
+        // reservado ("01. Cabelo & Barba") cobre "Cabelo" e "Barba" avulsos.
+        const _abBookedCodes = new Set<number>();
+        for (const tc of logToolCalls || []) {
+          if (!tc || tc.blocked || !_mbBookingNames.has(tc.name) || tc?.result?.ok !== true) continue;
+          for (const raw of [
+            tc.args?.service_code,
+            tc.result?.service_code,
+            ...(Array.isArray(tc.result?.service_codes) ? tc.result.service_codes : []),
+            ...(Array.isArray(tc.args?.services) ? tc.args.services.map((s: any) => s?.service_code) : []),
+          ]) {
+            const code = Number(raw);
+            if (Number.isFinite(code) && code > 0) _abBookedCodes.add(code);
+          }
+        }
+        const _abCatalog = ((sessionState as any)?.appbarberServiceCatalog || []) as Array<{ service_code: number; name: string }>;
+        const _abBookedNames = [
+          ...bookedServiceNames,
+          ..._abCatalog.filter((s) => _abBookedCodes.has(Number(s?.service_code))).map((s) => String(s?.name || "")),
+        ].filter(Boolean);
         _appbarberPendingServices = appbarberFindsUnbookedServicesInSlots(
           (sessionState as any)?.appbarberSlotOptions,
           toPositiveInteger(args.service_code ?? successfulCreate.result?.service_code) ?? undefined,
@@ -8229,6 +8249,8 @@ async function callAIAgent(
           bookedStartTime,
           toPositiveInteger(args.service_duration_minutes ?? args.services?.[0]?.duration) ?? undefined,
           _visibleConversationText,
+          _abBookedNames,
+          _abBookedCodes,
         );
         if (_appbarberPendingServices.length > 0) {
           prometidos = Math.max(prometidos, bookedExecutionCount + _appbarberPendingServices.length);
