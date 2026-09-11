@@ -9035,7 +9035,21 @@ async function callAIAgent(
     if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
   }
 
-  await maybeAutoPersistClientSummary(finalResponse);
+  // LATÊNCIA: o extrator de resumo é uma chamada de IA completa (~5s medidos em
+  // produção) + HTTP para o CRM, e NÃO influencia nada do texto que o cliente
+  // recebe. Roda em segundo plano via EdgeRuntime.waitUntil para não atrasar o
+  // envio ao WhatsApp. Sem waitUntil (simulador/webchat/local) mantém o await,
+  // garantindo que o resumo nunca se perde.
+  {
+    const summaryWork = maybeAutoPersistClientSummary(finalResponse)
+      .catch((e: any) => console.warn(`[SummaryAuto] background falhou:`, e?.message || e));
+    const waitUntil = (globalThis as any).EdgeRuntime?.waitUntil;
+    if (!simulatorMode && typeof waitUntil === "function") {
+      waitUntil.call((globalThis as any).EdgeRuntime, summaryWork);
+    } else {
+      await summaryWork;
+    }
+  }
   return { response: finalResponse, toolCalls: logToolCalls, errors: logErrors, model: modelUsed, durationMs: Date.now() - startTime, sessionBlocked };
 }
 
