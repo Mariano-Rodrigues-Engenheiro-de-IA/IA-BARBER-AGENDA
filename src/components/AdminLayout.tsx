@@ -5,7 +5,7 @@ import { useTenants } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck, FileText, Users } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck, FileText, Users, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoZaylo from "@/assets/logo-zaylo.png";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -16,6 +16,7 @@ const navItems: NavItem[] = [
   { to: "/tenants", icon: Building2, label: "Empresas", countKey: "tenants" },
   { to: "/follow-ups", icon: Clock, label: "Follow-ups", module: "follow-ups" },
   { to: "/agent-logs", icon: Activity, label: "Monitor IA", module: "agent-logs" },
+  { to: "/ai-monitor", icon: Radar, label: "Monitor da IA (24h)", module: "ai-monitor" },
   { to: "/prompts", icon: FileText, label: "Prompts", module: "prompts" },
   { to: "/staff", icon: Users, label: "Colaboradores", module: "staff" },
   { to: "/audit", icon: ShieldCheck, label: "Auditoria", module: "audit" },
