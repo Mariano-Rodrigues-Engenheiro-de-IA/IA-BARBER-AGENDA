@@ -7552,11 +7552,18 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  // A mensagem que abriu este turno é automação/menu do próprio estabelecimento?
-  // Nesse caso não regeneramos nem avisamos nada: silêncio é a resposta correta.
+  // Silêncio LEGÍTIMO em dois casos determinísticos:
+  // 1) o texto que abriu o turno é automação/menu do próprio estabelecimento;
+  // 2) a transferência para humano rodou em modo silencioso (decisão da casa).
   const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
+  const silentEscalationRan = (logToolCalls || []).some((tc: any) => {
+    const r = tc?.result;
+    return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
+  });
+  const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
 
-  if (!finalResponse && !turnIsAutomationEcho) {
+  if (!finalResponse && !silenceAllowed) {
+
     const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
     const recoveredResponse = stripInternalPrefixes(recoveredResponseRaw || "");
     if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
