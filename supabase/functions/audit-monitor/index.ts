@@ -138,8 +138,22 @@ Deno.serve(async (req) => {
     });
     const { data: userData } = await asUser.auth.getUser();
     if (userData?.user) {
-      const { data: isAdmin } = await asUser.rpc("has_role", { _user_id: userData.user.id, _role: "admin" });
-      if (isAdmin === true) authorized = true;
+      const userId = userData.user.id;
+      const asService = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+      const { data: roleRows } = await asService.from("user_roles").select("role").eq("user_id", userId);
+      const roles = new Set((roleRows || []).map((r: any) => r.role));
+      if (roles.has("admin")) {
+        authorized = true;
+      } else if (roles.has("staff")) {
+        // Colaborador só entra se tiver o módulo "ai-monitor" liberado
+        const { data: mod } = await asService
+          .from("staff_module_access")
+          .select("module")
+          .eq("user_id", userId)
+          .eq("module", "ai-monitor")
+          .maybeSingle();
+        if (mod) authorized = true;
+      }
     }
   }
   if (!authorized) return json({ error: "Unauthorized" }, 401);
