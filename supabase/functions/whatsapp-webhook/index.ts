@@ -7585,12 +7585,15 @@ async function callAIAgent(
       console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
       logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
-    } else if (turnIsAutomationEcho) {
-      // ✅ SILÊNCIO LEGÍTIMO: o texto recebido era automação/menu do próprio
-      // estabelecimento, não um pedido de cliente. Responder aqui faria a IA
-      // conversar com o robô da barbearia.
-      console.log(`[NoSilence] Silêncio permitido: mensagem era automação do próprio estabelecimento.`);
-      logErrors.push({ message: `Sem resposta (correto): mensagem recebida era automação/menu do próprio estabelecimento, não pedido do cliente.`, level: "info" });
+    } else if (silenceAllowed) {
+      // ✅ SILÊNCIO LEGÍTIMO: automação do próprio estabelecimento ou
+      // transferência silenciosa configurada pela casa.
+      const motivo = turnIsAutomationEcho
+        ? "mensagem recebida era automação/menu do próprio estabelecimento, não pedido do cliente"
+        : "transferência para atendente humano em modo silencioso (configuração da barbearia)";
+      console.log(`[NoSilence] Silêncio permitido: ${motivo}.`);
+      logErrors.push({ message: `Sem resposta (correto): ${motivo}.`, level: "info" });
+
     } else {
       // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
       // produziu texto (rounds estourados, resposta vazia, leak descartado),
