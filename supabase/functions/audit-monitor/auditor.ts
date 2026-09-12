@@ -208,17 +208,24 @@ const ACTION_TOOLS = new Set([
 ]);
 
 
+const MIN_PROOF_CHARS = 12;
+
 const NO_DIVERGENCE_SUMMARY_PATTERNS = [
   /\bsem diverg[eê]ncia\b/i,
   /\bsem inconsist[eê]ncia\b/i,
+  /\bn[ãa]o hou?ve (?:diverg[eê]ncia|inconsist[eê]ncia|erro|falha|problema)\b/i,
+  /\bn[ãa]o h[áa] (?:diverg[eê]ncia|inconsist[eê]ncia|erro|falha|problema)\b/i,
   /\bde forma compat[ií]vel\b/i,
+  /\b(?:coerente|consistente|compat[ií]vel)\s+com\s+(?:o\s+)?(?:retorno|dado|hor[áa]rio|resultado)/i,
   /\b(?:resposta|confirma[cç][aã]o).{0,80}\bcompat[ií]vel com (?:o )?retorno\b/i,
-  /\b(?:as tr[eê]s coisas|pedido.{0,30}resposta.{0,30}(?:ferramenta|retorno)).{0,80}\b(?:batem|coincidem)\b/i,
+  /\b(?:as tr[eê]s coisas|pedido.{0,30}resposta.{0,30}(?:ferramenta|retorno)).{0,80}\b(?:batem|coincidem|correspondem|conferem)\b/i,
+  /\b(?:conferem|batem|coincidem|correspondem)\s+(?:com|entre)\b.{0,60}\b(?:retorno|api|ferramenta)\b/i,
 ];
 
 function summaryExplicitlySaysThereIsNoDivergence(summary: string): boolean {
   return NO_DIVERGENCE_SUMMARY_PATTERNS.some((pattern) => pattern.test(summary));
 }
+
 
 function quoteAppears(quote: string, haystack: string): boolean {
   const q = normalizeForProof(quote);
