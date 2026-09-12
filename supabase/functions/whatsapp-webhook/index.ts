@@ -5287,86 +5287,83 @@ async function callAIAgent(
       return;
     }
 
-    try {
+    // ⚠️ Prompt refinado (12/09): formato de lista curta de fatos (não
+    // narrativa), com status de plano/assinatura explicitamente incluindo
+    // MUDANÇA de status (ativou/cancelou) — antes só mencionava "plano" de
+    // forma genérica. Reaproveitado também na chamada de retry abaixo.
+    const summarySystemPrompt =
+      "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
+      "Responda APENAS JSON válido (sem markdown) no formato " +
+      "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
+      "REGRA PRINCIPAL: o resumo é uma LISTA CURTA de fatos duráveis sobre o cliente — nunca uma narrativa corrida. Cada fato deve ajudar a próxima conversa a ser mais rápida ou mais personalizada. Se um fato não muda em nada o próximo atendimento, não inclua. Formato: frases curtas separadas por ponto, uma ideia por frase, máximo 5-6 fatos.\n\n" +
+      "Só inclua fatos destes tipos:\n" +
+      "- Serviço(s) que costuma pedir (ex: 'Costuma pedir corte e barba')\n" +
+      "- Profissional preferido (ex: 'Prefere o Nícollas')\n" +
+      "- Janela de horário TÍPICA e GENÉRICA (ex: 'Prefere manhãs', 'Costuma vir aos sábados')\n" +
+      "- Status de plano/clube/assinatura/pacote — incluindo MUDANÇA de status (ex: 'É assinante do Clube ND', 'Cancelou o plano de assinatura')\n" +
+      "- Restrição, alergia, observação útil (ex: 'Alérgico a X', 'Cabelo cacheado')\n\n" +
+      "🚫 PROIBIDO no summary (nunca inclua, mesmo que apareça no histórico):\n" +
+      "- Agendamentos específicos (passados, presentes ou futuros)\n" +
+      "- Datas de qualquer formato (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'ontem', 'sexta que vem')\n" +
+      "- Horários específicos (15h, 15:00, 15h30, 'às 10')\n" +
+      "- Qualquer verbo de ação de agendamento: agendou, marcou, confirmou, reservou, cancelou, desmarcou, remarcou\n" +
+      "- A palavra 'agendamento' em si\n" +
+      "- Status de confirmação de qualquer atendimento concreto\n" +
+      "- Valor pago, quantas vezes já veio, ou nome do último serviço realizado isolado (sem ser preferência declarada)\n\n" +
+      "Motivo: esses dados mudam a cada atendimento e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA.\n\n" +
+      "Se a única coisa relevante da interação for algo com data/hora ou agendamento (ex: 'agendou corte pra amanhã às 15h com Vinícius'), extraia SÓ a parte durável (ex: 'Gosta de corte. Prefere o Vinícius.') e descarte a parte temporal/transacional. Se não sobrar nada durável, responda should_update=false.\n\n" +
+      "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
+      "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil. Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.";
+
+    // Extraída para função reaproveitável — usada na chamada normal e no retry
+    // (ver "Retry quando a trava bloqueia" abaixo).
+    const callSummaryExtractor = async (userPayload: any) => {
       const summaryBody: any = {
         model: modelUsed,
         messages: [
-          {
-            role: "system",
-            content:
-              "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
-              "Responda APENAS JSON válido (sem markdown) no formato " +
-              "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
-              "REGRA PRINCIPAL: o resumo é ESTRITAMENTE um PERFIL DURÁVEL do cliente. Contém APENAS:\n" +
-              "- Nome do cliente\n" +
-              "- Serviço(s) que costuma pedir (ex: 'costuma fazer corte e barba') — nunca associado a data/hora\n" +
-              "- Profissional preferido (só o nome, sem dia/hora)\n" +
-              "- Janela de horário TÍPICA e GENÉRICA (ex: 'prefere manhãs', 'costuma vir aos sábados') — nunca dia/hora específicos\n" +
-              "- Plano, clube, assinatura, pacote\n" +
-              "- Restrição, alergia, observação útil (ex: 'alérgico a X', 'cabelo cacheado')\n\n" +
-              "🚫 PROIBIDO no summary (nunca inclua, mesmo que apareça no histórico):\n" +
-              "- Agendamentos específicos (passados, presentes ou futuros)\n" +
-              "- Datas de qualquer formato (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'ontem', 'sexta que vem')\n" +
-              "- Horários específicos (15h, 15:00, 15h30, 'às 10')\n" +
-              "- Qualquer verbo de ação de agendamento: agendou, marcou, confirmou, reservou, cancelou, desmarcou, remarcou\n" +
-              "- A palavra 'agendamento' em si\n" +
-              "- Status de confirmação de qualquer atendimento concreto\n\n" +
-              "Motivo: esses dados mudam a cada atendimento e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA.\n\n" +
-              "Se a única coisa relevante da interação for algo com data/hora ou agendamento (ex: 'agendou corte pra amanhã às 15h com Vinícius'), extraia SÓ a parte durável (ex: 'gosta de corte, prefere o Vinícius') e descarte a parte temporal/transacional. Se não sobrar nada durável, responda should_update=false.\n\n" +
-              "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
-              "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil. Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.",
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              tenantName: tenant.name || "",
-              currentSummary,
-              lastUserMessage: userMessage || "",
-              assistantReply: assistantReply || "",
-              recentHistory: history.slice(-8),
-              toolCalls: logToolCalls.slice(-6).map((tool) => ({ name: tool.name, args: tool.args, result: tool.result })),
-            }),
-          },
+          { role: "system", content: summarySystemPrompt },
+          { role: "user", content: JSON.stringify(userPayload) },
         ],
         max_completion_tokens: 1200,
       };
-
-      if (modelUsed.includes("gpt-5")) {
-        summaryBody.reasoning_effort = "minimal";
+      if (modelUsed.includes("gpt-5")) summaryBody.reasoning_effort = "minimal";
+      const resp = await fetchAIWithRetry(JSON.stringify(summaryBody), "summary extractor");
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.warn(`[SummaryAuto] extractor failed ${resp.status}: ${errText.slice(0, 200)}`);
+        return null;
       }
-
-      const summaryResponse = await fetchAIWithRetry(JSON.stringify(summaryBody), "summary extractor");
-      if (!summaryResponse.ok) {
-        const errText = await summaryResponse.text();
-        console.warn(`[SummaryAuto] extractor failed ${summaryResponse.status}: ${errText.slice(0, 200)}`);
-        return;
-      }
-
-      const summaryJson = await summaryResponse.json();
-      const rawContent = String(summaryJson?.choices?.[0]?.message?.content || "").trim();
-      const finishReason = summaryJson?.choices?.[0]?.finish_reason;
+      const json = await resp.json();
+      const rawContent = String(json?.choices?.[0]?.message?.content || "").trim();
       const jsonBlock = rawContent.match(/\{[\s\S]*\}/)?.[0] || "";
       if (!jsonBlock) {
-        // ⚠️ Corrigido (12/09): resposta vazia (geralmente finish_reason
-        // "length" por estourar o teto de tokens só com reasoning) — achado
-        // real: 4 de 4 execuções examinadas vazias, mesmo padrão. Aumentado
-        // max_completion_tokens e reduzido reasoning_effort acima para
-        // resolver a causa. Mantido só console.warn aqui (não logErrors.push)
-        // porque esta função roda em segundo plano via EdgeRuntime.waitUntil,
-        // DEPOIS que { errors: logErrors } já foi retornado e provavelmente
-        // já persistido no banco — um push aqui não tem garantia de aparecer
-        // no agent_logs.errors real. Registrar isso de forma estruturada e
-        // visível no painel exigiria um UPDATE ao registro já inserido, não
-        // um push nesse array — mudança de arquitetura maior, fora do escopo
-        // desta correção pontual.
-        const reasoningTok = summaryJson?.usage?.completion_tokens_details?.reasoning_tokens;
-        const completionTok = summaryJson?.usage?.completion_tokens;
-        console.warn(`[SummaryAuto] invalid extractor payload for ${phoneNumber} (finish_reason=${finishReason}, completion_tokens=${completionTok}, reasoning_tokens=${reasoningTok}): ${rawContent.slice(0, 160)}`);
-        return;
+        const reasoningTok = json?.usage?.completion_tokens_details?.reasoning_tokens;
+        const completionTok = json?.usage?.completion_tokens;
+        console.warn(`[SummaryAuto] invalid extractor payload for ${phoneNumber} (finish_reason=${json?.choices?.[0]?.finish_reason}, completion_tokens=${completionTok}, reasoning_tokens=${reasoningTok}): ${rawContent.slice(0, 160)}`);
+        return null;
       }
+      try {
+        return JSON.parse(jsonBlock);
+      } catch {
+        console.warn(`[SummaryAuto] JSON.parse falhou para ${phoneNumber}: ${jsonBlock.slice(0, 160)}`);
+        return null;
+      }
+    };
 
-      const parsed = JSON.parse(jsonBlock);
-      const nextSummary = String(parsed?.summary || "").trim().slice(0, 1200);
+    try {
+      const basePayload = {
+        tenantName: tenant.name || "",
+        currentSummary,
+        lastUserMessage: userMessage || "",
+        assistantReply: assistantReply || "",
+        recentHistory: history.slice(-8),
+        toolCalls: logToolCalls.slice(-6).map((tool) => ({ name: tool.name, args: tool.args, result: tool.result })),
+      };
+
+      let parsed = await callSummaryExtractor(basePayload);
+      if (!parsed) return;
+
+      let nextSummary = String(parsed?.summary || "").trim().slice(0, 1200);
       const shouldUpdate = Boolean(parsed?.should_update) && !!nextSummary;
 
       if (!shouldUpdate) {
@@ -5377,6 +5374,34 @@ async function callAIAgent(
       if (nextSummary === currentSummary) {
         console.log(`[SummaryAuto] unchanged for ${phoneNumber}`);
         return;
+      }
+
+      // ⚠️ Retry adicionado (12/09): antes, se a trava (findForbiddenSummaryContent)
+      // bloqueasse o resumo gerado, o caminho automático desistia
+      // silenciosamente até o PRÓXIMO turno — podendo deixar o resumo do
+      // cliente travado na versão antiga por várias conversas seguidas. O
+      // caminho manual (tool atualizar_resumo_cliente) já tinha uma segunda
+      // chance embutida (a IA recebe o motivo e reescreve); agora o
+      // automático ganha a mesma chance, com 1 única tentativa de correção.
+      let violation = findForbiddenSummaryContent(nextSummary);
+      if (violation) {
+        console.warn(`[SummaryAuto] resumo gerado violou a trava (${violation.label}) para ${phoneNumber} — tentando 1x reescrever sem essa informação`);
+        const retryParsed = await callSummaryExtractor({
+          ...basePayload,
+          currentSummary: nextSummary,
+          correcaoNecessaria: `O resumo que você acabou de gerar contém ${violation.label}, que é proibido. Reescreva removendo essa informação — mantenha só os fatos duráveis permitidos (serviço, profissional preferido, janela de horário genérica, status de plano, restrição/observação).`,
+        });
+        if (retryParsed && Boolean(retryParsed?.should_update)) {
+          const retrySummary = String(retryParsed?.summary || "").trim().slice(0, 1200);
+          if (retrySummary) {
+            nextSummary = retrySummary;
+            violation = findForbiddenSummaryContent(nextSummary);
+          }
+        }
+        if (violation) {
+          console.warn(`[SummaryAuto] retry ainda violou a trava (${violation.label}) para ${phoneNumber} — desistindo neste turno`);
+          return;
+        }
       }
 
       await persistClientSummary(nextSummary);
