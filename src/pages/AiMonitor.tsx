@@ -357,7 +357,7 @@ export default function AiMonitorPage() {
       </section>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl sm:max-w-4xl lg:max-w-5xl w-[95vw] max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-destructive" />
@@ -365,7 +365,7 @@ export default function AiMonitorPage() {
             </DialogTitle>
           </DialogHeader>
           {selected && (
-            <ScrollArea className="max-h-[65vh] pr-4">
+            <ScrollArea className="flex-1 max-h-[calc(90vh-6rem)] pr-4">
               <div className="space-y-4">
                 <div className="text-sm text-muted-foreground">
                   {tenantName(selected.tenant_id)} · {selected.phone_number} ·{" "}
@@ -377,14 +377,14 @@ export default function AiMonitorPage() {
                   <p className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
                     <MessageSquare className="w-3 h-3" /> Prova na conversa
                   </p>
-                  <pre className="text-xs whitespace-pre-wrap bg-muted/50 rounded-lg p-3">{selected.evidence_conversation}</pre>
+                  <pre className="text-xs whitespace-pre-wrap break-words bg-muted/50 rounded-lg p-3">{selected.evidence_conversation}</pre>
                 </div>
 
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1">
                     <Wrench className="w-3 h-3" /> Prova no retorno da ferramenta
                   </p>
-                  <pre className="text-xs whitespace-pre-wrap bg-muted/50 rounded-lg p-3">{selected.evidence_tool}</pre>
+                  <pre className="text-xs whitespace-pre-wrap break-words bg-muted/50 rounded-lg p-3">{selected.evidence_tool}</pre>
                 </div>
 
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
