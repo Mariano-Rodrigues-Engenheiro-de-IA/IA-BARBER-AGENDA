@@ -7598,7 +7598,7 @@ async function callAIAgent(
         ? "mensagem recebida era automação/menu do próprio estabelecimento, não pedido do cliente"
         : "transferência para atendente humano em modo silencioso (configuração da barbearia)";
       console.log(`[NoSilence] Silêncio permitido: ${motivo}.`);
-      logErrors.push({ message: `Sem resposta (correto): ${motivo}.`, level: "info" });
+      logErrors.push({ message: `Sem resposta (correto): ${motivo}.`, level: "warning" });
 
     } else {
       // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
