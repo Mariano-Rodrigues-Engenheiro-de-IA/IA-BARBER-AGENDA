@@ -8,9 +8,14 @@ export const AUDIT_CATEGORIES = [
   "cancelamento_remarcacao",
   "comunicacao",
   "erro_tecnico_mascarado",
+  // Novas camadas: qualquer vacilo da IA no uso da API de agenda.
+  "disponibilidade_inventada",
+  "dados_incorretos_api",
+  "uso_indevido_ferramenta",
 ] as const;
 
-// Ferramentas que tornam o atendimento auditável (agenda + cliente).
+// Ferramentas que tornam o atendimento auditável (agenda + cliente),
+// incluindo as consultas — é nelas que a IA inventa horário/profissional.
 export const RELEVANT_TOOLS: string[] = [
   // criação
   "criar_agendamento", "agendar",
@@ -19,20 +24,20 @@ export const RELEVANT_TOOLS: string[] = [
   // remarcação
   "editar_agendamento", "remarcar_agendamento",
   // cliente
-  "buscar_cliente", "cadastrar_cliente",
-  // consulta usada como prova de remarcação/cancelamento
-  "listar_agendamentos", "buscar_agendamento", "buscar_agendamentos_dia", "confirmar_agendamento",
+  "buscar_cliente", "cadastrar_cliente", "consultar_cliente",
+  // consulta de agendamentos existentes
+  "listar_agendamentos", "buscar_agendamento", "buscar_agendamentos", "buscar_agendamentos_dia", "confirmar_agendamento",
+  // disponibilidade, serviços, profissionais e unidades
+  "buscar_horarios", "buscar_horarios_disponiveis", "listar_horarios", "listar_horarios_geral",
+  "buscar_servicos", "listar_servicos", "listar_servicos_profissional",
+  "listar_profissionais", "buscar_barbeiros_por_servico", "listar_unidades",
 ];
 
-const CREATION_OR_CHANGE = new Set([
-  "criar_agendamento", "agendar",
-  "cancelar_agendamento", "desmarcar_agendamento",
-  "editar_agendamento", "remarcar_agendamento",
-  "buscar_cliente", "cadastrar_cliente",
-]);
+// Qualquer chamada real à API de agenda torna o turno auditável.
+const AUDITABLE_TOOLS = new Set(RELEVANT_TOOLS);
 
 export function hasRelevantTool(toolCalls: any[]): boolean {
-  return (toolCalls ?? []).some((tc) => CREATION_OR_CHANGE.has(String(tc?.name ?? "")));
+  return (toolCalls ?? []).some((tc) => AUDITABLE_TOOLS.has(String(tc?.name ?? "")));
 }
 
 function trim(value: unknown, max: number): string {

@@ -45,6 +45,9 @@ const CATEGORIES = [
   { key: "cancelamento_remarcacao", label: "Cancelamento / remarcação" },
   { key: "comunicacao", label: "Comunicação (disse ≠ fez)" },
   { key: "erro_tecnico_mascarado", label: "Erro técnico mascarado" },
+  { key: "disponibilidade_inventada", label: "Horário / profissional inventado" },
+  { key: "dados_incorretos_api", label: "Dado divergente da API" },
+  { key: "uso_indevido_ferramenta", label: "Uso indevido da ferramenta" },
 ] as const;
 
 const PERIODS = [
