@@ -7,6 +7,7 @@
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, findingSignature, normalizeForProof, SEVERITY_BY_CATEGORY, AUDIT_CATEGORIES } from "./auditor.ts";
+import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
