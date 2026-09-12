@@ -159,12 +159,18 @@ export default function AiMonitorPage() {
   }, [runs, findings]);
 
   const review = async (finding: Finding, review_status: string) => {
-    const { error } = await supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: updated, error } = await supabase
       .from("ai_audit_findings")
-      .update({ review_status, reviewed_at: new Date().toISOString() })
-      .eq("id", finding.id);
+      .update({ review_status, reviewed_at: new Date().toISOString(), reviewed_by: user?.id ?? null })
+      .eq("id", finding.id)
+      .select("id");
     if (error) {
       toast.error(error.message);
+      return;
+    }
+    if (!updated?.length) {
+      toast.error("Não consegui gravar a revisão — tente novamente.");
       return;
     }
     toast.success("Achado atualizado");
