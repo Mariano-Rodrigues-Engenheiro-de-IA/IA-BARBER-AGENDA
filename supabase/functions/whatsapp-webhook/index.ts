@@ -5328,11 +5328,11 @@ async function callAIAgent(
             }),
           },
         ],
-        max_completion_tokens: 280,
+        max_completion_tokens: 1200,
       };
 
       if (modelUsed.includes("gpt-5")) {
-        summaryBody.reasoning_effort = "low";
+        summaryBody.reasoning_effort = "minimal";
       }
 
       const summaryResponse = await fetchAIWithRetry(JSON.stringify(summaryBody), "summary extractor");
@@ -5344,9 +5344,24 @@ async function callAIAgent(
 
       const summaryJson = await summaryResponse.json();
       const rawContent = String(summaryJson?.choices?.[0]?.message?.content || "").trim();
+      const finishReason = summaryJson?.choices?.[0]?.finish_reason;
       const jsonBlock = rawContent.match(/\{[\s\S]*\}/)?.[0] || "";
       if (!jsonBlock) {
-        console.warn(`[SummaryAuto] invalid extractor payload for ${phoneNumber}: ${rawContent.slice(0, 160)}`);
+        // ⚠️ Corrigido (12/09): resposta vazia (geralmente finish_reason
+        // "length" por estourar o teto de tokens só com reasoning) — achado
+        // real: 4 de 4 execuções examinadas vazias, mesmo padrão. Aumentado
+        // max_completion_tokens e reduzido reasoning_effort acima para
+        // resolver a causa. Mantido só console.warn aqui (não logErrors.push)
+        // porque esta função roda em segundo plano via EdgeRuntime.waitUntil,
+        // DEPOIS que { errors: logErrors } já foi retornado e provavelmente
+        // já persistido no banco — um push aqui não tem garantia de aparecer
+        // no agent_logs.errors real. Registrar isso de forma estruturada e
+        // visível no painel exigiria um UPDATE ao registro já inserido, não
+        // um push nesse array — mudança de arquitetura maior, fora do escopo
+        // desta correção pontual.
+        const reasoningTok = summaryJson?.usage?.completion_tokens_details?.reasoning_tokens;
+        const completionTok = summaryJson?.usage?.completion_tokens;
+        console.warn(`[SummaryAuto] invalid extractor payload for ${phoneNumber} (finish_reason=${finishReason}, completion_tokens=${completionTok}, reasoning_tokens=${reasoningTok}): ${rawContent.slice(0, 160)}`);
         return;
       }
 
