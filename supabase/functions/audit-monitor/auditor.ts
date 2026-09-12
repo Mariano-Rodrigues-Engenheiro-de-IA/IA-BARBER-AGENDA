@@ -142,6 +142,38 @@ function quoteAppears(quote: string, haystack: string): boolean {
   return hits / windows.length >= 0.8;
 }
 
+// ============================================================================
+// DEDUPE DE ACHADOS — o mesmo problema não pode ser reportado duas vezes só
+// porque a conversa seguiu em outros turnos. A assinatura é determinística:
+// categoria + identificadores reais da API (agendamento/comanda) quando houver,
+// senão categoria + trecho da conversa citado.
+// ============================================================================
+function extractApiIds(toolEvidence: string, summary: string): string[] {
+  const source = `${toolEvidence}\n${summary}`;
+  const ids = new Set<string>();
+  const patterns = [
+    /"?(?:appointment_id|scheduling_code|invoice_code|confirmation_link_code)"?\s*[:=]\s*"?(\d{4,})/gi,
+    /\b(\d{8,})\b/g,
+  ];
+  for (const re of patterns) {
+    for (const m of source.matchAll(re)) ids.add(m[1]);
+  }
+  return [...ids].sort();
+}
+
+export function findingSignature(finding: {
+  category?: string;
+  summary?: string;
+  evidence_tool?: string;
+  evidence_conversation?: string;
+}): string {
+  const category = String(finding.category ?? "");
+  const ids = extractApiIds(String(finding.evidence_tool ?? ""), String(finding.summary ?? ""));
+  if (ids.length) return `${category}|ids:${ids.join(",")}`;
+  const conv = normalizeForProof(String(finding.evidence_conversation ?? "")).slice(0, 160);
+  return `${category}|conv:${conv}`;
+}
+
 export function validateFinding(
   finding: any,
   conversationText: string,
