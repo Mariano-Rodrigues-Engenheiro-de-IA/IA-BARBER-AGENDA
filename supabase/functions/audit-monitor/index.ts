@@ -142,6 +142,12 @@ Deno.serve(async (req) => {
   const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
   let authorized = Boolean(cronSecret && providedSecret && providedSecret === cronSecret);
   if (!authorized && bearer && bearer === serviceRoleKey) authorized = true;
+  // Token interno do agendador (guardado no banco, nunca exposto em código nem chat)
+  if (!authorized && providedSecret) {
+    const asService = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const { data: internalToken } = await asService.rpc("get_internal_cron_token");
+    if (typeof internalToken === "string" && providedSecret === internalToken) authorized = true;
+  }
   if (!authorized && bearer) {
     const asUser = createClient(supabaseUrl, Deno.env.get("SUPABASE_ANON_KEY")!, {
       global: { headers: { Authorization: authHeader } },
