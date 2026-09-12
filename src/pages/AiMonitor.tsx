@@ -352,8 +352,14 @@ export default function AiMonitorPage() {
         )}
 
         <div className="space-y-2">
-          {visibleFindings.map((f) => (
-            <Card key={f.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelected(f)}>
+          {visibleFindings.map((f) => {
+            const isViewed = viewed.includes(f.id);
+            return (
+            <Card
+              key={f.id}
+              className={`cursor-pointer hover:border-primary/50 transition-colors ${isViewed ? "opacity-55" : ""}`}
+              onClick={() => setSelected(f)}
+            >
               <CardContent className="p-4 space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant={SEVERITY_VARIANT[f.severity] ?? "secondary"}>{f.severity}</Badge>
@@ -368,11 +374,20 @@ export default function AiMonitorPage() {
                     {f.turn_at ? format(new Date(f.turn_at), "dd/MM HH:mm", { locale: ptBR }) : ""}
                   </span>
                   {f.review_status !== "open" && <Badge variant="secondary">{f.review_status}</Badge>}
+                  <button
+                    type="button"
+                    title={isViewed ? "Visualizado — clique para desmarcar" : "Não visualizado — clique para marcar"}
+                    className={`p-1 rounded hover:bg-muted ${isViewed ? "text-primary" : "text-muted-foreground"}`}
+                    onClick={(e) => { e.stopPropagation(); markViewed(f.id, !isViewed); }}
+                  >
+                    {isViewed ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                  </button>
                 </div>
                 <p className="text-sm">{f.summary}</p>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       </section>
 
