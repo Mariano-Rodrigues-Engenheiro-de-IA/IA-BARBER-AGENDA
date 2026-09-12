@@ -15,10 +15,11 @@ function buildCorsHeaders(origin: string | null) {
   };
 }
 
-const PROVIDERS = ["global", "trinks", "onebeleza", "frizzar", "bemp", "appbarber", "none"];
+const PROVIDERS = ["global", "auditor", "trinks", "onebeleza", "frizzar", "bemp", "appbarber", "none"];
 
 const PROVIDER_LABELS: Record<string, string> = {
   global: "🌐 Global (todas as IAs)",
+  auditor: "🕵️ Monitor 24h (IA auditora)",
   trinks: "Trinks",
   onebeleza: "One Beleza",
   frizzar: "Frizzar",
