@@ -50,7 +50,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
   const clear = () => { setMessages([]); inputRef.current?.focus(); };
 
   return (
-    <div className="conversas-panel mx-auto max-w-4xl p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 64px)" }}>
+    <div className="conversas-panel mx-auto max-w-6xl p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 64px)" }}>
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-card-foreground">Simulador da IA</h3>
         <button

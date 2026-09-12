@@ -394,30 +394,6 @@ export default function ClientConversations() {
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleConvPause(c.phone);
-                  }}
-                  className={`opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-muted ${
-                    pausedSet.has(c.phone) ? "text-amber-500" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title={pausedSet.has(c.phone) ? "Reativar IA nesta conversa" : "Pausar IA nesta conversa"}
-                  aria-label="Pausar IA"
-                >
-                  {pausedSet.has(c.phone) ? <BotOff className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirmDelete(c.phone);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-md hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
-                  title="Excluir conversa"
-                  aria-label="Excluir conversa"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
               </div>
             ))}
             {contacts.length === 0 && (
