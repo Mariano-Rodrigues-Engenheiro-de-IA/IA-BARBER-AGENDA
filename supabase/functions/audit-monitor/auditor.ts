@@ -275,11 +275,54 @@ export function findingSignature(finding: {
   return `${category}|conv:${conv}`;
 }
 
+// Achado sobre fuso horário: se o horário citado na conversa é exatamente o
+// horário local já convertido do retorno da API, não existe divergência.
+function timesAllBackedByApi(finding: any, toolText: string, timeReference: string): boolean {
+  const summary = String(finding.summary ?? "");
+  // Alegação de negativa ("disse que não tem vaga") não é validada por igualdade
+  // de horários — ali o problema é justamente o que a IA negou.
+  if (/\bn[ãa]o (?:tem|h[áa]|havia|tinha)\b|\bnegou\b|\bsem vaga\b|\bindispon[íi]vel\b|\besgotad/i.test(summary)) return false;
+  const cited = extractTimes(`${finding.evidence_conversation ?? ""} ${summary}`);
+  if (!cited.length) return false;
+  const haystack = `${toolText}\n${timeReference}`;
+  const available = new Set(extractTimes(haystack));
+  return cited.every((t) => available.has(t));
+}
+
+// Dia da semana: a auditora não sabe calcular. Se o dia citado é o mesmo que a
+// referência de tempo traz para alguma data do retorno, não há divergência.
+function weekdayMatchesReference(finding: any, timeReference: string): boolean {
+  const claim = weekdayKey(`${finding.summary ?? ""} ${finding.evidence_conversation ?? ""}`);
+  const citedWeekday = WEEKDAY_WORDS.find((w) => claim.includes(w));
+  if (!citedWeekday) return false;
+  if (!/\b(?:dia da semana|dia errado|data errada|divergente)\b/i.test(String(finding.summary ?? ""))) return false;
+  return weekdayKey(timeReference).includes(citedWeekday);
+}
+
+// Turno ainda em andamento: nenhuma ação foi executada e a IA terminou
+// perguntando algo ao cliente. Falta dado que só o cliente pode dar.
+function turnStillWaitingOnClient(context?: AuditContext): boolean {
+  if (!context) return false;
+  const executedAction = (context.toolCalls ?? []).some((tc) => ACTION_TOOLS.has(String(tc?.name ?? "")));
+  if (executedAction) return false;
+  const response = String(context.aiResponse ?? "").trim();
+  if (!response) return false;
+  return /\?\s*$/.test(response) || /\?["')\]]*\s*$/.test(response);
+}
+
+export type AuditContext = {
+  aiResponse?: string | null;
+  toolCalls?: any[];
+  timeReference?: string;
+};
+
 export function validateFinding(
   finding: any,
   conversationText: string,
   toolText: string,
+  context?: AuditContext,
 ): boolean {
+
   if (!finding || typeof finding !== "object") return false;
   if (!AUDIT_CATEGORIES.includes(finding.category)) return false;
   if (typeof finding.summary !== "string" || finding.summary.trim().length < 8) return false;
