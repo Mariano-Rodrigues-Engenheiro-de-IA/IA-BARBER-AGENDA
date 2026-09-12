@@ -94,12 +94,16 @@ export function buildDossier(
     errorsBlock && errorsBlock !== "null" ? errorsBlock : "(nenhum)",
   ].join("\n");
 
+  const timeBlock = buildTimeReference(toolBlock, log.created_at);
+
   return {
-    dossier: `${conversationBlock}\n\n${toolBlock}\n\nAudite este atendimento seguindo suas regras.`,
+    dossier: `${conversationBlock}\n\n${toolBlock}\n\n${timeBlock}\n\nAudite este atendimento seguindo suas regras.`,
     conversationText: conversationBlock,
     toolText: toolBlock,
+    timeReference: timeBlock,
   };
 }
+
 
 // Normaliza para comparar citação x texto original sem depender de acento,
 // caixa, pontuação ou espaçamento.
