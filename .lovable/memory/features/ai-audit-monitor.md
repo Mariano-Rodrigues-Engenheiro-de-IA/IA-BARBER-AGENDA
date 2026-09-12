@@ -14,3 +14,5 @@ type: feature
 - Ativação por tenant: `tenants.agent_settings.ai_monitor_enabled = true`. Hoje só 9Cinco (AppBarber).
 - Tela `/ai-monitor` (módulo staff `ai-monitor`): semáforos por categoria por empresa, filtros de período/empresa/categoria/status, botão "Auditar agora", detalhe com as duas provas.
 - A auditora NÃO corrige nada e não sugere causa raiz — só aponta divergência com prova.
+- Prompt da auditora vive em `_shared/provider-prompts.ts` (`buildAuditorPromptSection`, provider `auditor`) e é editável na aba Prompts; override em `provider_prompts` (>200 chars) vence o padrão.
+- Escopo do julgamento: só erro concreto e provado na agenda/API (disse-e-não-fez sem ID real, dado errado, incompleto, erro de ferramenta mascarado, disponibilidade inventada, ferramenta não chamada). Qualidade/tom nunca é achado; em dúvida, não reporta.

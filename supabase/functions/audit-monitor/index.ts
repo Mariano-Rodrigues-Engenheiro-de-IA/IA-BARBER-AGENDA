@@ -7,6 +7,7 @@
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, findingSignature, normalizeForProof, SEVERITY_BY_CATEGORY, AUDIT_CATEGORIES } from "./auditor.ts";
+import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,38 +19,9 @@ const json = (body: unknown, status = 200) =>
 
 const AUDITOR_MODEL = "openai/gpt-5.4-mini";
 
-const SYSTEM_PROMPT = `Você é AUDITOR de atendimentos de barbearias. Você NÃO corrige nada, NÃO sugere causa raiz e NÃO lê código-fonte.
-
-Sua única tarefa: comparar TRÊS coisas e apontar quando não batem.
-1. O QUE O CLIENTE PEDIU (mensagens do cliente na conversa)
-2. O QUE A IA DISSE QUE FEZ (resposta final enviada ao cliente)
-3. O QUE A FERRAMENTA REALMENTE RETORNOU (resultado real das chamadas)
-
-Categorias possíveis:
-- completude_agendamento: cliente pediu 2+ serviços ou 2+ pessoas e menos foram criados de verdade.
-- cancelamento_remarcacao: cancelamento/remarcação anunciado sem execução real, ou com a ferramenta retornando erro.
-- comunicacao: a resposta final afirma algo que os retornos reais não sustentam (ex: "agendei" sem appointment_id real).
-- erro_tecnico_mascarado: alguma ferramenta falhou (429, 422, limite de agendamentos, falta de pagamento, erro de rede) e a resposta seguiu como se nada tivesse acontecido, ou tratou falha técnica como "sem vaga".
-- disponibilidade_inventada: a IA ofereceu, confirmou ou negou algo que os retornos das consultas não sustentam — horário que não estava na lista de disponíveis, dia/turno que não foi consultado, profissional que não aparece no retorno, serviço/unidade que não existe no catálogo, ou disse "não tem vaga" quando o retorno mostrava horários.
-- dados_incorretos_api: a IA usou dado diferente do que a API devolveu — código de serviço/profissional/agendamento trocado, data ou hora divergente do horário realmente reservado, duração/preço/nome errado, ou repassou ao cliente informação que não confere com o retorno real.
-- uso_indevido_ferramenta: falha no uso da própria API — afirmou algo sem nunca ter chamado a ferramenta necessária, insistiu em repetir a mesma chamada já falhada sem consultar, ignorou o erro de argumento devolvido pela ferramenta, ou chamou a ferramenta errada para o que o cliente pediu.
-
-Qualquer vacilo da IA envolvendo a API de agenda deve ser apontado em uma dessas categorias — inclusive em turnos que só consultaram (sem criar nada).
-
-USE A REAÇÃO POSTERIOR DO CLIENTE COMO PROVA: se logo depois o cliente cobra algo que faltou ("e o corte?", "e do meu filho?", "não foi cancelado"), isso é evidência forte de que o atendimento ficou incompleto — aponte, citando essa fala.
-
-REGRAS DURAS:
-- Só aponte problema com PROVA. Para cada achado, copie LITERALMENTE (sem parafrasear, sem reticências) um trecho da conversa/resposta em "evidence_conversation" e um trecho do bloco de FERRAMENTAS em "evidence_tool". Trechos inventados invalidam o achado.
-- Sucesso de agendamento só existe com identificador real retornado (appointment_id / scheduling_code / ok:true).
-- Se as três coisas batem, retorne findings vazio. Não invente problema para parecer útil.
-- Não aponte como problema a IA pedir esclarecimento, oferecer horários ou transferir para atendente humano avisando o cliente.
-- Não aponte como problema o uso do primeiro nome ou apelido de profissional/cliente (ex: dizer "Victor" quando a API traz "Victor Hugo Amaral"), nem formatação de hora ("9h" vs "09:00") ou de data ("amanhã" vs a data real correspondente.)
-- FUSO E DIA DA SEMANA: use SOMENTE o bloco "REFERÊNCIA DE TEMPO" do dossiê. Nunca converta fuso nem calcule dia da semana por conta própria. Horário em UTC (Z ou +00:00) no retorno da API não é divergência.
-- Não culpe a IA por limitação da API: retorno vazio, agenda sem vaga, cliente sem cadastro possível, limite do estabelecimento. Só é problema se a IA tiver escondido isso ou mentido sobre o resultado.
-- Não aponte "cancelamento/remarcação anunciado sem execução" quando faltar um dado que SÓ o cliente pode dar (nova data/horário, confirmação de qual agendamento). Nesse caso o correto é a IA confirmar/oferecer opções — e executar só depois da escolha do cliente. Só aponte se o cliente JÁ deu tudo que a execução exige (ex: escolheu o novo horário) e mesmo assim a ferramenta não foi chamada.
-- Antes de apontar algo como incompleto, verifique a reação posterior do cliente: se o cliente simplesmente não respondeu mais, o fluxo parou por falta de resposta dele, não por falha da IA.
-- UM FATO = UM ACHADO: nunca repita o mesmo problema em duas categorias. Escolha a categoria que melhor descreve e reporte uma vez só.
-- Português do Brasil, resumo curto e factual.`;
+// Prompt padrão vive em _shared/provider-prompts.ts (provider "auditor") e é
+// editável na aba Prompts do painel (tabela provider_prompts).
+const DEFAULT_SYSTEM_PROMPT = getDefaultProviderPrompt("auditor");
 
 
 const RESPONSE_SCHEMA = {
@@ -75,7 +47,7 @@ const RESPONSE_SCHEMA = {
   required: ["findings"],
 };
 
-async function auditOneTurn(dossier: string, apiKey: string) {
+async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: string) {
   const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
     method: "POST",
     headers: {
@@ -85,7 +57,7 @@ async function auditOneTurn(dossier: string, apiKey: string) {
     },
     body: JSON.stringify({
       model: AUDITOR_MODEL,
-      instructions: SYSTEM_PROMPT,
+      instructions: systemPrompt,
       input: dossier,
       stream: true,
       text: { format: { type: "json_schema", name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
@@ -186,6 +158,18 @@ Deno.serve(async (req) => {
   const limit = Number.isFinite(body?.limit) ? Math.min(Math.max(Number(body.limit), 1), 40) : 15;
   const dryRun = body?.dry_run === true;
 
+  // Prompt editado na aba Prompts (provider "auditor") vence o padrão do código.
+  let systemPrompt = DEFAULT_SYSTEM_PROMPT;
+  {
+    const { data: promptRow } = await supabase
+      .from("provider_prompts")
+      .select("content")
+      .eq("provider", "auditor")
+      .maybeSingle();
+    const override = typeof promptRow?.content === "string" ? promptRow.content.trim() : "";
+    if (override.length > 200) systemPrompt = override;
+  }
+
   try {
     // ===== Tenants elegíveis =====
     let tenantQuery = supabase
@@ -282,7 +266,7 @@ Deno.serve(async (req) => {
       let rawFindings: any[] = [];
       let errorMessage: string | null = null;
       try {
-        rawFindings = await auditOneTurn(dossier, apiKey);
+        rawFindings = await auditOneTurn(dossier, apiKey, systemPrompt);
       } catch (e) {
         errorMessage = String((e as Error).message ?? e).slice(0, 500);
       }
