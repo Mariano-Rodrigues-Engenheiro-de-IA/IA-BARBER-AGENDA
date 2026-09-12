@@ -2741,13 +2741,19 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do cliente pode terminar
-      // sem resposta enviada no WhatsApp. Se por qualquer caminho a resposta
-      // chegou vazia aqui, mandamos uma linha transparente em vez de calar.
+      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do CLIENTE pode terminar
+      // sem resposta enviada no WhatsApp. Exceção legítima: quando o texto que
+      // entrou era automação/menu do próprio estabelecimento — aí calar é o
+      // comportamento correto (a IA não deve conversar com o robô da casa).
       if (!String(aiResponse || "").trim()) {
-        console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
-        aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
+        if (isBusinessAutomationEcho(messageContent || "")) {
+          console.log(`[NoSilence] Nada enviado para ${phoneNumber}: mensagem recebida era automação do próprio estabelecimento.`);
+        } else {
+          console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
+          aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
+        }
       }
+
 
       const messageParts = splitIntoMessages(aiResponse);
 
