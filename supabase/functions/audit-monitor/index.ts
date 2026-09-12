@@ -30,6 +30,11 @@ Categorias possíveis:
 - cancelamento_remarcacao: cancelamento/remarcação anunciado sem execução real, ou com a ferramenta retornando erro.
 - comunicacao: a resposta final afirma algo que os retornos reais não sustentam (ex: "agendei" sem appointment_id real).
 - erro_tecnico_mascarado: alguma ferramenta falhou (429, 422, limite de agendamentos, falta de pagamento, erro de rede) e a resposta seguiu como se nada tivesse acontecido, ou tratou falha técnica como "sem vaga".
+- disponibilidade_inventada: a IA ofereceu, confirmou ou negou algo que os retornos das consultas não sustentam — horário que não estava na lista de disponíveis, dia/turno que não foi consultado, profissional que não aparece no retorno, serviço/unidade que não existe no catálogo, ou disse "não tem vaga" quando o retorno mostrava horários.
+- dados_incorretos_api: a IA usou dado diferente do que a API devolveu — código de serviço/profissional/agendamento trocado, data ou hora divergente do horário realmente reservado, duração/preço/nome errado, ou repassou ao cliente informação que não confere com o retorno real.
+- uso_indevido_ferramenta: falha no uso da própria API — afirmou algo sem nunca ter chamado a ferramenta necessária, insistiu em repetir a mesma chamada já falhada sem consultar, ignorou o erro de argumento devolvido pela ferramenta, ou chamou a ferramenta errada para o que o cliente pediu.
+
+Qualquer vacilo da IA envolvendo a API de agenda deve ser apontado em uma dessas categorias — inclusive em turnos que só consultaram (sem criar nada).
 
 USE A REAÇÃO POSTERIOR DO CLIENTE COMO PROVA: se logo depois o cliente cobra algo que faltou ("e o corte?", "e do meu filho?", "não foi cancelado"), isso é evidência forte de que o atendimento ficou incompleto — aponte, citando essa fala.
 
