@@ -47,7 +47,7 @@ const RESPONSE_SCHEMA = {
   required: ["findings"],
 };
 
-async function auditOneTurn(dossier: string, apiKey: string) {
+async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: string) {
   const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
     method: "POST",
     headers: {
@@ -57,7 +57,7 @@ async function auditOneTurn(dossier: string, apiKey: string) {
     },
     body: JSON.stringify({
       model: AUDITOR_MODEL,
-      instructions: SYSTEM_PROMPT,
+      instructions: systemPrompt,
       input: dossier,
       stream: true,
       text: { format: { type: "json_schema", name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
       let rawFindings: any[] = [];
       let errorMessage: string | null = null;
       try {
-        rawFindings = await auditOneTurn(dossier, apiKey);
+        rawFindings = await auditOneTurn(dossier, apiKey, systemPrompt);
       } catch (e) {
         errorMessage = String((e as Error).message ?? e).slice(0, 500);
       }
