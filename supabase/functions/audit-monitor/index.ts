@@ -44,6 +44,8 @@ REGRAS DURAS:
 - Se as três coisas batem, retorne findings vazio. Não invente problema para parecer útil.
 - Não aponte como problema a IA pedir esclarecimento, oferecer horários ou transferir para atendente humano avisando o cliente.
 - Não aponte como problema o uso do primeiro nome ou apelido de profissional/cliente (ex: dizer "Victor" quando a API traz "Victor Hugo Amaral"), nem formatação de hora ("9h" vs "09:00") ou de data ("amanhã" vs a data real correspondente.)
+- Não aponte "cancelamento/remarcação anunciado sem execução" quando faltar um dado que SÓ o cliente pode dar (nova data/horário, confirmação de qual agendamento). Nesse caso o correto é a IA confirmar/oferecer opções — e executar só depois da escolha do cliente. Só aponte se o cliente JÁ deu tudo que a execução exige (ex: escolheu o novo horário) e mesmo assim a ferramenta não foi chamada.
+- Antes de apontar algo como incompleto, verifique a reação posterior do cliente: se o cliente simplesmente não respondeu mais, o fluxo parou por falta de resposta dele, não por falha da IA.
 - Português do Brasil, resumo curto e factual.`;
 
 const RESPONSE_SCHEMA = {
