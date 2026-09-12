@@ -5313,7 +5313,10 @@ async function callAIAgent(
       "Motivo: esses dados mudam a cada atendimento e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA.\n\n" +
       "Se a única coisa relevante da interação for algo com data/hora ou agendamento (ex: 'agendou corte pra amanhã às 15h com Vinícius'), extraia SÓ a parte durável (ex: 'Gosta de corte. Prefere o Vinícius.') e descarte a parte temporal/transacional. Se não sobrar nada durável, responda should_update=false.\n\n" +
       "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
-      "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil. Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.";
+      "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil só porque não foi mencionada de novo neste turno.\n\n" +
+      "SE UM FATO NOVO CONTRADIZ UM FATO ANTIGO — SUBSTITUA, não acumule os dois. Exemplos: currentSummary diz 'Prefere o Nícollas' e o cliente agora diz que prefere outro profissional (ou 'não gosto mais dele') → o resumo devolvido deve ter só a preferência NOVA, sem menção à antiga. CurrentSummary diz 'É assinante do Clube ND' e o cliente diz que cancelou → o resumo devolvido deve dizer 'Cancelou o plano de assinatura', não manter as duas informações juntas.\n\n" +
+      "SE JÁ HOUVER 5-6 FATOS E SURGIR UM FATO NOVO IMPORTANTE (ex: mudança de status de plano, nova restrição) — descarte o fato mais genérico/menos específico do resumo atual para abrir espaço, nunca ignore o fato novo.\n\n" +
+      "Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.";
 
     // Extraída para função reaproveitável — usada na chamada normal e no retry
     // (ver "Retry quando a trava bloqueia" abaixo).
@@ -10984,9 +10987,18 @@ Regras de uso do nome:
 
   // ===== PERSISTENT CLIENT SUMMARY (cross-conversation memory) =====
   const summaryText = (aiSummary || "").trim();
-  const summaryAgeStr = aiSummaryUpdatedAt ? formatGapMinutes(Math.round((Date.now() - new Date(aiSummaryUpdatedAt).getTime()) / 60000)) : null;
+  const summaryAgeMinutes = aiSummaryUpdatedAt ? Math.round((Date.now() - new Date(aiSummaryUpdatedAt).getTime()) / 60000) : null;
+  const summaryAgeStr = summaryAgeMinutes !== null ? formatGapMinutes(summaryAgeMinutes) : null;
+  // ⚠️ Adicionado (12/09): a idade do resumo já era mostrada, mas sem
+  // nenhuma instrução de como tratá-la — preferência/plano registrados há
+  // muito tempo podem ter mudado. Acima de 30 dias, pede confirmação em vez
+  // de assumir automaticamente.
+  const summaryIsStale = summaryAgeMinutes !== null && summaryAgeMinutes > 30 * 24 * 60;
+  const staleSummaryNote = summaryIsStale
+    ? `\n⚠️ Este resumo tem mais de 30 dias — trate como pista, não como certeza. Se for usar algo dele para agir (ex: assumir que ainda é assinante do plano, ou que ainda prefere aquele profissional), confirme antes com o cliente em vez de assumir direto.\n`
+    : "";
   const summaryBlock = summaryText
-    ? `\n## 🗂️ RESUMO/JORNADA DESTE CLIENTE (memória persistente)\n${summaryText}\nAtualizado há: ${summaryAgeStr || "—"}\n\nUse este resumo ATIVAMENTE para personalizar o atendimento (ex: "Vai querer o de sempre?", "Como cliente do clube..."). Mas NUNCA leia em voz alta o resumo nem cite que existe um "perfil" — é só conhecimento seu.\n→ Quando o cliente revelar algo NOVO e duradouro (serviço favorito, plano, profissional preferido, frequência, restrição, observação útil), chame a ferramenta \`atualizar_resumo_cliente\` com o resumo INTEIRO reescrito (curto, até ~600 chars). NÃO acumule; consolide.\n`
+    ? `\n## 🗂️ RESUMO/JORNADA DESTE CLIENTE (memória persistente)\n${summaryText}\nAtualizado há: ${summaryAgeStr || "—"}\n${staleSummaryNote}\nUse este resumo ATIVAMENTE para personalizar o atendimento (ex: "Vai querer o de sempre?", "Como cliente do clube..."). Mas NUNCA leia em voz alta o resumo nem cite que existe um "perfil" — é só conhecimento seu.\n→ Quando o cliente revelar algo NOVO e duradouro (serviço favorito, plano, profissional preferido, frequência, restrição, observação útil), chame a ferramenta \`atualizar_resumo_cliente\` com o resumo INTEIRO reescrito (curto, até ~600 chars). NÃO acumule; consolide.\n`
     : `\n## 🗂️ RESUMO/JORNADA DESTE CLIENTE (memória persistente)\n(cliente novo / ainda sem resumo — colete informações naturalmente ao longo da conversa)\n\nQuando perceber algo relevante e duradouro sobre o cliente (serviço favorito, plano/assinatura, profissional preferido, frequência típica, restrições, observações úteis para futuros atendimentos), chame a ferramenta \`atualizar_resumo_cliente\` com um resumo CURTO em PT-BR (até ~600 caracteres). NUNCA cite ao cliente que está montando um perfil.\n`;
 
   const simulatorBlock = simulatorMode
