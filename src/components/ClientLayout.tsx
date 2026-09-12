@@ -159,13 +159,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           <button
             onClick={togglePause}
             className={cn(
-              "flex w-full items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium text-white shadow-sm transition-colors",
+              "flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
               tenant?.agent_paused
-                ? "bg-red-600 border-red-500/60 hover:bg-red-600/90"
-                : "bg-green-600 border-green-500/60 hover:bg-green-600/90",
+                ? "bg-red-500/10 border-red-500/20 text-red-600 hover:bg-red-500/15"
+                : "bg-green-500/10 border-green-500/20 text-green-600 hover:bg-green-500/15",
             )}
           >
-            {tenant?.agent_paused ? <PowerOff className="h-5 w-5 shrink-0" /> : <Power className="h-5 w-5 shrink-0" />}
+            {tenant?.agent_paused ? <PowerOff className="h-3.5 w-3.5 shrink-0" /> : <Power className="h-3.5 w-3.5 shrink-0" />}
             <span>{tenant?.agent_paused ? "IA Pausada" : "IA Ativa"}</span>
           </button>
         </div>

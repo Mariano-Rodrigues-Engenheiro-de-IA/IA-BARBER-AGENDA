@@ -56,7 +56,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
         <button
           onClick={clear}
           disabled={loading || messages.length === 0}
-          className="flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
+          className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white shadow-sm transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           <Trash2 className="w-4 h-4" />Limpar
         </button>
