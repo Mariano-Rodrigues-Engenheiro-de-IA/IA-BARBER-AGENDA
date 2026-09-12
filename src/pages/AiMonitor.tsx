@@ -317,9 +317,11 @@ export default function AiMonitorPage() {
               <SelectTrigger className="w-[190px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas as empresas</SelectItem>
-                {(tenants ?? []).map((t: any) => (
-                  <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
-                ))}
+                {(tenants ?? [])
+                  .filter((t: any) => t.api_provider && t.api_provider !== "none")
+                  .map((t: any) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+                  ))}
               </SelectContent>
             </Select>
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
