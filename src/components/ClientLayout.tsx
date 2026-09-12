@@ -12,12 +12,12 @@ import { postLogoutRedirect, cameFromCrm } from "@/lib/crm-origin";
 
 interface NavItem { to: string; icon: any; label: string; module: AppModule }
 const NAV: NavItem[] = [
-  { to: "/app", icon: LayoutDashboard, label: "Visão Geral", module: "overview" },
+  { to: "/app", icon: LayoutDashboard, label: "Painel", module: "overview" },
   { to: "/app/conversations", icon: MessageCircle, label: "Conversas", module: "conversations" },
   { to: "/app/ai", icon: Bot, label: "Prompt", module: "ai_prompt" },
-  { to: "/app/tools", icon: Wrench, label: "Ferramentas da IA", module: "tools" },
+  { to: "/app/tools", icon: Wrench, label: "Ferramentas", module: "tools" },
   { to: "/app/simulator", icon: TestTube2, label: "Simulador", module: "simulator" },
-  { to: "/app/connection", icon: Smartphone, label: "Conexão WhatsApp", module: "connection" },
+  { to: "/app/connection", icon: Smartphone, label: "Conexão", module: "connection" },
 ];
 
 function SidebarNavItem({ item }: { item: NavItem }) {
@@ -127,8 +127,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
       {/* Sidebar — fixa, sempre aberta (com texto), a pedido do usuário
           (mudou de ideia em relação à versão recolhida-com-tooltip). */}
-      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
-        <div className="flex items-center px-6 py-5">
+      <aside className="sticky top-0 flex h-screen w-44 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
+        <div className="flex items-center px-4 py-5">
           {isFrizzar ? (
             <img
               src="/frizzar/frizzar-logo-horizontal-white.png"
@@ -139,7 +139,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             <img
               src="/brand/zaylo-ia-logo-uploaded.png"
               alt="Zaylo IA"
-              className="h-8 w-auto object-contain"
+              className="h-8 w-auto max-w-full object-contain"
             />
           )}
         </div>
@@ -150,20 +150,23 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
         </nav>
 
-        {/* Botão de Pausar/Ativar IA — embaixo, longe da navegação, para
-            não competir visualmente com as abas (pedido do usuário). */}
+        {/* Indicador de status da IA — mostra o estado ATUAL (não a ação),
+            com cor universal de status (verde=ativa, vermelho=pausada) em
+            vez da cor de tema, para não ficar ambíguo com "ativar" sendo
+            azul mesmo quando a IA já está pausada (confusão relatada pelo
+            usuário). Clicar continua alternando o estado. */}
         <div className="px-3 pb-2">
           <button
             onClick={togglePause}
             className={cn(
-              "flex w-full items-center gap-2 rounded-lg border border-sidebar-primary/60 px-3 py-2.5 text-sm font-medium shadow-sm transition-colors",
+              "flex w-full items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium text-white shadow-sm transition-colors",
               tenant?.agent_paused
-                ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                : "bg-sidebar-primary/15 text-sidebar-primary hover:bg-sidebar-primary/25",
+                ? "bg-red-600 border-red-500/60 hover:bg-red-600/90"
+                : "bg-green-600 border-green-500/60 hover:bg-green-600/90",
             )}
           >
-            {tenant?.agent_paused ? <Power className="h-5 w-5 shrink-0" /> : <PowerOff className="h-5 w-5 shrink-0" />}
-            <span>{tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}</span>
+            {tenant?.agent_paused ? <PowerOff className="h-5 w-5 shrink-0" /> : <Power className="h-5 w-5 shrink-0" />}
+            <span>{tenant?.agent_paused ? "IA Pausada" : "IA Ativa"}</span>
           </button>
         </div>
 

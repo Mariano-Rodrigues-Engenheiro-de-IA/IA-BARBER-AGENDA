@@ -323,25 +323,6 @@
     color: hsl(var(--foreground));
   }
 
-  /* Fundo e cor de texto do campo de prompt iguais ao painel admin
-     (--background/--foreground padrão, sem tema customizado) — pedido
-     do Mariano, "lá funciona bem". Escopo fora do Frizzar, que já tem
-     sua regra própria abaixo. */
-  .ia-prompt-textarea {
-    background-color: hsl(222 47% 6%);
-    color: hsl(210 40% 96%);
-  }
-
-  /* Fundo azulado do campo de prompt — só para clientes Frizzar. Antes
-     estava aplicado direto no componente (sem esse escopo), vazando
-     para TODOS os outros clientes: no modo escuro deles, o texto
-     (herdando a cor clara padrão do tema escuro) ficava invisível
-     sobre esse fundo claro. */
-  .theme-frizzar .ia-prompt-textarea {
-    background-color: hsl(210 45% 95%);
-    color: hsl(222 30% 16%);
-  }
-
   .gradient-text {
     @apply bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent;
   }

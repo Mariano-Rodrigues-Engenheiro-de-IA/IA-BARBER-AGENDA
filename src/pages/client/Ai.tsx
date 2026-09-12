@@ -116,7 +116,7 @@ export default function ClientAi() {
 
   return (
     <div className="space-y-6">
-      <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 260px)" }}>
+      <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 100px)" }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <Label>Personalidade e instruções da IA</Label>
           <div className="flex items-center gap-2">
@@ -139,7 +139,12 @@ export default function ClientAi() {
 
         <Textarea
           disabled={!ai.editable}
-          className="ia-prompt-textarea flex-1 min-h-[500px] resize-none font-mono text-sm disabled:opacity-100 disabled:text-foreground"
+          className="flex-1 min-h-[500px] resize-none font-mono text-sm disabled:opacity-100"
+          style={
+            tenant?.api_provider === "frizzar"
+              ? { backgroundColor: "hsl(210 45% 95%)", color: "hsl(222 30% 16%)" }
+              : { backgroundColor: "hsl(222 47% 6%)", color: "hsl(210 40% 96%)" }
+          }
           value={form.agent_system_prompt ?? ""}
           onChange={(e) => setForm({ ...form, agent_system_prompt: e.target.value })}
         />

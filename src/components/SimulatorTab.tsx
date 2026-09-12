@@ -52,7 +52,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
   return (
     <div className="conversas-panel p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 100px)" }}>
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Simulador da IA</h3>
+        <h3 className="font-semibold text-card-foreground">Simulador da IA</h3>
         <Button variant="outline" size="sm" onClick={clear} disabled={loading || messages.length === 0}>
           <Trash2 className="w-4 h-4 mr-2" />Limpar
         </Button>
