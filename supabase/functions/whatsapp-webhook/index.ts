@@ -2742,17 +2742,23 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
       // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do CLIENTE pode terminar
-      // sem resposta enviada no WhatsApp. Exceção legítima: quando o texto que
-      // entrou era automação/menu do próprio estabelecimento — aí calar é o
-      // comportamento correto (a IA não deve conversar com o robô da casa).
+      // sem resposta enviada no WhatsApp. Duas exceções legítimas:
+      // 1) o texto que entrou era automação/menu do próprio estabelecimento
+      //    (calar é o certo — a IA não deve conversar com o robô da casa);
+      // 2) a transferência para humano rodou em modo silencioso.
       if (!String(aiResponse || "").trim()) {
-        if (isBusinessAutomationEcho(messageContent || "")) {
-          console.log(`[NoSilence] Nada enviado para ${phoneNumber}: mensagem recebida era automação do próprio estabelecimento.`);
+        const silentEscalation = (agentResult?.toolCalls || []).some((tc: any) => {
+          const r = tc?.result;
+          return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
+        });
+        if (isBusinessAutomationEcho(messageContent || "") || silentEscalation) {
+          console.log(`[NoSilence] Nada enviado para ${phoneNumber}: silêncio legítimo (automação do estabelecimento ou transferência silenciosa).`);
         } else {
           console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
           aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
         }
       }
+
 
 
       const messageParts = splitIntoMessages(aiResponse);
