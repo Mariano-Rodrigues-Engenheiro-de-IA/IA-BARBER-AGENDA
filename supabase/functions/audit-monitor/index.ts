@@ -16,7 +16,7 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const AUDITOR_MODEL = "google/gemini-3.8-flash";
+const AUDITOR_MODEL = "openai/gpt-5.4-mini";
 
 const SYSTEM_PROMPT = `Você é AUDITOR de atendimentos de barbearias. Você NÃO corrige nada, NÃO sugere causa raiz e NÃO lê código-fonte.
 
@@ -64,7 +64,7 @@ const RESPONSE_SCHEMA = {
 };
 
 async function auditOneTurn(dossier: string, apiKey: string) {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -73,11 +73,10 @@ async function auditOneTurn(dossier: string, apiKey: string) {
     },
     body: JSON.stringify({
       model: AUDITOR_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: dossier },
-      ],
-      response_format: { type: "json_schema", json_schema: { name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
+      instructions: SYSTEM_PROMPT,
+      input: dossier,
+      stream: true,
+      text: { format: { type: "json_schema", name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
     }),
   });
 
@@ -85,11 +84,44 @@ async function auditOneTurn(dossier: string, apiKey: string) {
     const body = await res.text();
     throw new Error(`gateway ${res.status}: ${body.slice(0, 400)}`);
   }
-  const data = await res.json();
-  const raw = data?.choices?.[0]?.message?.content ?? "{}";
+
+  // SSE: acumula o texto final (resposta de uma chamada só, sem render progressivo).
+  let text = "";
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() ?? "";
+    for (const evt of events) {
+      const dataLines = evt.split("\n").filter((l) => l.startsWith("data:"));
+      for (const line of dataLines) {
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed?.type === "response.output_text.delta" && typeof parsed.delta === "string") {
+            text += parsed.delta;
+          } else if (parsed?.type === "response.completed") {
+            const outputText = parsed?.response?.output_text;
+            if (typeof outputText === "string" && outputText) text = outputText;
+          } else if (parsed?.type === "response.failed" || parsed?.type === "error") {
+            throw new Error(`resposta falhou: ${JSON.stringify(parsed).slice(0, 300)}`);
+          }
+        } catch (e) {
+          if (e instanceof SyntaxError) continue;
+          throw e;
+        }
+      }
+    }
+  }
+
   let parsed: any = {};
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(text || "{}");
   } catch {
     throw new Error("resposta da auditora não era JSON válido");
   }
