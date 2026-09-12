@@ -53,8 +53,8 @@
 
     /* WhatsApp-like chat colors */
     --wa-chat-bg: 210 20% 12%;
-    --wa-bubble-out: 142 47% 28%;
-    --wa-bubble-out-fg: 210 40% 98%;
+    --wa-bubble-out: 116 91% 91%;
+    --wa-bubble-out-fg: 0 0% 0%;
     --wa-bubble-in: 215 25% 18%;
     --wa-bubble-in-fg: 210 40% 96%;
     --wa-panel: 222 47% 9%;
@@ -97,8 +97,8 @@
 
     /* WhatsApp Web light theme */
     --wa-chat-bg: 42 35% 91%;
-    --wa-bubble-out: 142 46% 84%;
-    --wa-bubble-out-fg: 222 30% 16%;
+    --wa-bubble-out: 116 91% 91%;
+    --wa-bubble-out-fg: 0 0% 0%;
     --wa-bubble-in: 0 0% 100%;
     --wa-bubble-in-fg: 222 30% 16%;
     --wa-panel: 210 20% 99%;
@@ -153,8 +153,8 @@
        abaixo) — wa-chat-bg fica só como cor de fallback antes da
        imagem carregar. Bolha azul de saída mantida como estava. */
     --wa-chat-bg: 0 0% 88%;
-    --wa-bubble-out: 217 56% 88%;
-    --wa-bubble-out-fg: 217 40% 15%;
+    --wa-bubble-out: 116 91% 91%;
+    --wa-bubble-out-fg: 0 0% 0%;
     --wa-bubble-in: 0 0% 98%;
     --wa-bubble-in-fg: 222 30% 16%;
     --wa-panel: 0 0% 100%;
