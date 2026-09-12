@@ -2751,22 +2751,20 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do CLIENTE pode terminar
-      // sem resposta enviada no WhatsApp. Duas exceções legítimas:
-      // 1) o texto que entrou era automação/menu do próprio estabelecimento
-      //    (calar é o certo — a IA não deve conversar com o robô da casa);
-      // 2) a transferência para humano rodou em modo silencioso.
+      // Rede final de envio: resposta vazia permanece em silêncio. O fallback
+      // determinístico de agendamento já é aplicado dentro de callAIAgent; aqui
+      // nunca inventamos uma falha técnica para preencher uma resposta vazia.
       if (!String(aiResponse || "").trim()) {
         const silentEscalation = (agentResult?.toolCalls || []).some((tc: any) => {
           const r = tc?.result;
           return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
         });
-        if (isBusinessAutomationEcho(messageContent || "") || silentEscalation) {
-          console.log(`[NoSilence] Nada enviado para ${phoneNumber}: silêncio legítimo (automação do estabelecimento ou transferência silenciosa).`);
-        } else {
-          console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
-          aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
-        }
+        const reason = isBusinessAutomationEcho(combinedContent || messageContent || "")
+          ? "automação do estabelecimento"
+          : silentEscalation
+            ? "transferência silenciosa"
+            : "resposta vazia sem ação confirmada";
+        console.log(`[SilentResponse] Nada enviado para ${phoneNumber}: ${reason}.`);
       }
 
 
@@ -7624,9 +7622,8 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  // Silêncio LEGÍTIMO em dois casos determinísticos:
-  // 1) o texto que abriu o turno é automação/menu do próprio estabelecimento;
-  // 2) a transferência para humano rodou em modo silencioso (decisão da casa).
+  // O silêncio é obrigatório para automações da casa e transferências silenciosas.
+  // Nos demais casos, ainda tentamos uma recuperação natural uma vez.
   const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
   const silentEscalationRan = (logToolCalls || []).some((tc: any) => {
     const r = tc?.result;
@@ -7667,12 +7664,11 @@ async function callAIAgent(
       logErrors.push({ message: `Sem resposta (correto): ${motivo}.`, level: "warning" });
 
     } else {
-      // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
-      // produziu texto (rounds estourados, resposta vazia, leak descartado),
-      // enviamos uma linha transparente reconhecendo o atraso em vez de calar.
-      console.warn(`[NoSilence] Resposta vazia sem agendamento criado — enviando aviso transparente ao cliente.`);
-      logErrors.push({ message: `Resposta vazia — enviado aviso transparente (política anti-silêncio).`, level: "warning" });
-      finalResponse = "Desculpa, tive uma instabilidade aqui e não consegui finalizar sua resposta agora. Pode me confirmar o que você precisa? Se preferir, já chamo um atendente 🙏";
+      // Sem ação confirmada e sem texto seguro: ficar em silêncio é melhor do
+      // que inventar uma instabilidade e reabrir uma conversa já encerrada.
+      console.warn(`[SilentResponse] Resposta vazia sem ação confirmada — nada será enviado ao cliente.`);
+      logErrors.push({ message: `Resposta vazia — mantido silêncio; nenhum aviso genérico foi enviado.`, level: "warning" });
+      finalResponse = "";
     }
   }
 
