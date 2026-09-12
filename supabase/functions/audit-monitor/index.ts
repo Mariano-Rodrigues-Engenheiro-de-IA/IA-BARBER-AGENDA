@@ -6,7 +6,7 @@
 // trecho da conversa + trecho do retorno da ferramenta. Sem prova, descarta.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, AUDIT_CATEGORIES } from "./auditor.ts";
+import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, findingSignature, AUDIT_CATEGORIES } from "./auditor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
