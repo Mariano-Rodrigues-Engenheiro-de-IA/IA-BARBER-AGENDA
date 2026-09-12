@@ -109,6 +109,18 @@ export function normalizeForProof(text: string): string {
 
 const MIN_PROOF_CHARS = 12;
 
+const NO_DIVERGENCE_SUMMARY_PATTERNS = [
+  /\bsem diverg[eê]ncia\b/i,
+  /\bsem inconsist[eê]ncia\b/i,
+  /\bde forma compat[ií]vel\b/i,
+  /\b(?:resposta|confirma[cç][aã]o).{0,80}\bcompat[ií]vel com (?:o )?retorno\b/i,
+  /\b(?:as tr[eê]s coisas|pedido.{0,30}resposta.{0,30}(?:ferramenta|retorno)).{0,80}\b(?:batem|coincidem)\b/i,
+];
+
+function summaryExplicitlySaysThereIsNoDivergence(summary: string): boolean {
+  return NO_DIVERGENCE_SUMMARY_PATTERNS.some((pattern) => pattern.test(summary));
+}
+
 function quoteAppears(quote: string, haystack: string): boolean {
   const q = normalizeForProof(quote);
   if (q.length < MIN_PROOF_CHARS) return false;
@@ -133,6 +145,10 @@ export function validateFinding(
   if (!finding || typeof finding !== "object") return false;
   if (!AUDIT_CATEGORIES.includes(finding.category)) return false;
   if (typeof finding.summary !== "string" || finding.summary.trim().length < 8) return false;
+  // Um achado não pode afirmar, no próprio resumo, que o atendimento foi
+  // compatível ou não teve divergência. Isso é uma contradição do classificador,
+  // não um problema real do atendimento.
+  if (summaryExplicitlySaysThereIsNoDivergence(finding.summary)) return false;
   const conv = typeof finding.evidence_conversation === "string" ? finding.evidence_conversation : "";
   const tool = typeof finding.evidence_tool === "string" ? finding.evidence_tool : "";
   if (!quoteAppears(conv, conversationText)) return false;
