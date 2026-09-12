@@ -10,7 +10,7 @@ type Brand = "zaylo" | "frizzar";
 const BRAND = {
   zaylo: {
     themeClass: "theme-zaylo-login",
-    logo: "/brand/zaylo-ia-logo-login.png",
+    logo: "/brand/zaylo-ia-logo-uploaded.png",
     alt: "Zaylo IA",
     logoClass: "h-auto w-full max-w-[300px] object-contain",
     tagline: "Painel de controle da sua IA",

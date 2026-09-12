@@ -49,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="p-6 border-b border-border">
         <div className="space-y-2">
           <img
-            src="/brand/zaylo-ia-logo-login.png"
+            src="/brand/zaylo-ia-logo-uploaded.png"
             alt="Zaylo IA"
             width={958}
             height={230}
@@ -147,7 +147,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Menu className="w-5 h-5" />
           </Button>
           <img
-            src="/brand/zaylo-ia-logo-login.png"
+            src="/brand/zaylo-ia-logo-uploaded.png"
             alt="Zaylo IA"
             width={958}
             height={230}
