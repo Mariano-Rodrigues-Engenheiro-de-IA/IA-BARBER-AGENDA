@@ -150,9 +150,18 @@ Deno.serve(async (req) => {
   const allowedColumns = new Set(spec.columns.split(","));
   const limit = Math.min(Math.max(Number(param("limit") ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 1), MAX_LIMIT);
   const offset = Math.max(Number(param("offset") ?? 0) || 0, 0);
-  const orderColumn = param("order") ?? spec.order;
-  if (!allowedColumns.has(orderColumn)) return json({ error: `Coluna de ordenação inválida: ${orderColumn}` }, 400);
-  const ascending = (param("dir") ?? "desc").toLowerCase() === "asc";
+  // Tolerante: "order=desc"/"order=asc" é tratado como direção, não como coluna.
+  const rawOrder = (param("order") ?? "").trim();
+  const orderIsDirection = /^(asc|desc)$/i.test(rawOrder);
+  const orderColumn = orderIsDirection || !rawOrder ? spec.order : rawOrder;
+  if (!allowedColumns.has(orderColumn)) {
+    return json(
+      { error: `Coluna de ordenação inválida: ${orderColumn}`, allowed: [...allowedColumns] },
+      400,
+    );
+  }
+  const rawDir = orderIsDirection ? rawOrder : (param("dir") ?? "desc");
+  const ascending = rawDir.toLowerCase() === "asc";
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
