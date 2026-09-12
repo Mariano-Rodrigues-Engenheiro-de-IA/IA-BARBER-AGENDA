@@ -158,6 +158,18 @@ Deno.serve(async (req) => {
   const limit = Number.isFinite(body?.limit) ? Math.min(Math.max(Number(body.limit), 1), 40) : 15;
   const dryRun = body?.dry_run === true;
 
+  // Prompt editado na aba Prompts (provider "auditor") vence o padrão do código.
+  let systemPrompt = DEFAULT_SYSTEM_PROMPT;
+  {
+    const { data: promptRow } = await supabase
+      .from("provider_prompts")
+      .select("content")
+      .eq("provider", "auditor")
+      .maybeSingle();
+    const override = typeof promptRow?.content === "string" ? promptRow.content.trim() : "";
+    if (override.length > 200) systemPrompt = override;
+  }
+
   try {
     // ===== Tenants elegíveis =====
     let tenantQuery = supabase
