@@ -2741,13 +2741,25 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
 
-      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do cliente pode terminar
-      // sem resposta enviada no WhatsApp. Se por qualquer caminho a resposta
-      // chegou vazia aqui, mandamos uma linha transparente em vez de calar.
+      // 🚫 REDE FINAL ANTI-SILÊNCIO: nenhuma mensagem do CLIENTE pode terminar
+      // sem resposta enviada no WhatsApp. Duas exceções legítimas:
+      // 1) o texto que entrou era automação/menu do próprio estabelecimento
+      //    (calar é o certo — a IA não deve conversar com o robô da casa);
+      // 2) a transferência para humano rodou em modo silencioso.
       if (!String(aiResponse || "").trim()) {
-        console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
-        aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
+        const silentEscalation = (agentResult?.toolCalls || []).some((tc: any) => {
+          const r = tc?.result;
+          return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
+        });
+        if (isBusinessAutomationEcho(messageContent || "") || silentEscalation) {
+          console.log(`[NoSilence] Nada enviado para ${phoneNumber}: silêncio legítimo (automação do estabelecimento ou transferência silenciosa).`);
+        } else {
+          console.warn(`[NoSilence] aiResponse vazia para ${phoneNumber} — enviando aviso transparente.`);
+          aiResponse = "Desculpa, tive uma instabilidade aqui e não consegui te responder direito agora. Pode repetir o que você precisa? Se preferir, já chamo um atendente 🙏";
+        }
       }
+
+
 
       const messageParts = splitIntoMessages(aiResponse);
 
@@ -3802,6 +3814,43 @@ function pickShortAckReply(state: AgentSessionState): string {
   }
   return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
 }
+
+// 🤖 EXCEÇÃO LEGÍTIMA DA POLÍTICA ANTI-SILÊNCIO
+// A política anti-silêncio existe para o CLIENTE nunca ficar sem resposta. Ela
+// NÃO deve valer quando o texto que entrou na conversa não é um pedido de
+// cliente, e sim uma automação/menu do próprio estabelecimento que voltou para
+// dentro do fluxo (ex: "Nosso horário de atendimento é...", "Clique no botão
+// abaixo para ver as opções", "VER OPÇÕES"). Nesses casos responder é pior que
+// calar: a IA fala sozinha com o robô da barbearia.
+//
+// Detecção determinística: exige pelo menos DOIS marcadores independentes de
+// automação. Um único marcador (ex: cliente perguntando "qual o horário de
+// atendimento?") nunca silencia.
+const BUSINESS_AUTOMATION_MARKERS: RegExp[] = [
+  /hor[aá]rio\s+de\s+atendimento\s*(é|e)?\s*:/i,
+  /clique\s+no\s+bot[aã]o/i,
+  /\bver\s+op[cç][oõ]es\b/i,
+  /de\s+segunda\s+a\s+(sexta|s[aá]bado)/i,
+  /agradecemos\s+pela\s+sua\s+(paci[eê]ncia|compreens[aã]o)/i,
+  /em\s+que\s+(iremos|podemos)\s+te?\s*ajudar/i,
+  /que\s+bom\s+ter\s+voc[eê]\s+(aqui\s+)?novamente/i,
+  /escolha\s+uma\s+das\s+op[cç][oõ]es/i,
+  /digite\s+o\s+n[uú]mero\s+da\s+op[cç][aã]o/i,
+  /menu\s+principal/i,
+];
+
+export function isBusinessAutomationEcho(text: string): boolean {
+  const t = String(text || "").trim();
+  if (t.length < 40) return false;
+  let hits = 0;
+  for (const re of BUSINESS_AUTOMATION_MARKERS) {
+    if (re.test(t)) hits++;
+    if (hits >= 2) return true;
+  }
+  return false;
+}
+
+
 
 
 // Constrói uma mensagem determinística de confirmação de agendamento a partir
@@ -7509,7 +7558,18 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  if (!finalResponse) {
+  // Silêncio LEGÍTIMO em dois casos determinísticos:
+  // 1) o texto que abriu o turno é automação/menu do próprio estabelecimento;
+  // 2) a transferência para humano rodou em modo silencioso (decisão da casa).
+  const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
+  const silentEscalationRan = (logToolCalls || []).some((tc: any) => {
+    const r = tc?.result;
+    return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
+  });
+  const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
+
+  if (!finalResponse && !silenceAllowed) {
+
     const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
     const recoveredResponse = stripInternalPrefixes(recoveredResponseRaw || "");
     if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
@@ -7531,6 +7591,15 @@ async function callAIAgent(
       console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
       logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
+    } else if (silenceAllowed) {
+      // ✅ SILÊNCIO LEGÍTIMO: automação do próprio estabelecimento ou
+      // transferência silenciosa configurada pela casa.
+      const motivo = turnIsAutomationEcho
+        ? "mensagem recebida era automação/menu do próprio estabelecimento, não pedido do cliente"
+        : "transferência para atendente humano em modo silencioso (configuração da barbearia)";
+      console.log(`[NoSilence] Silêncio permitido: ${motivo}.`);
+      logErrors.push({ message: `Sem resposta (correto): ${motivo}.`, level: "warning" });
+
     } else {
       // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
       // produziu texto (rounds estourados, resposta vazia, leak descartado),
@@ -7540,6 +7609,7 @@ async function callAIAgent(
       finalResponse = "Desculpa, tive uma instabilidade aqui e não consegui finalizar sua resposta agora. Pode me confirmar o que você precisa? Se preferir, já chamo um atendente 🙏";
     }
   }
+
 
   // ============================================================================
   // 🛡️ PHANTOM CONFIRMATION GUARD
@@ -10072,14 +10142,17 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           return payload?.messageid || payload?.id || payload?.message?.id || payload?.messages?.[0]?.id || null;
         };
 
-        // 🚫 SILÊNCIO PROIBIDO: transferência para humano SEMPRE avisa o cliente.
-        // `silent_mode` foi desativado — antes o cliente ficava sem nenhuma resposta
-        // e a conversa morria sem ele saber que havia sido transferido.
-        if (config.silent_mode === true) {
-          console.warn(`[EscalateHuman] silent_mode ignorado (política anti-silêncio) — avisando o cliente.`);
-        }
-        {
-          const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
+        // 🙋 TRANSFERÊNCIA PARA HUMANO
+        // Duas decisões da barbearia são respeitadas aqui:
+        // 1) `silent_mode`: quando ligado, a ferramenta NÃO envia nada ao cliente
+        //    (o botão/etiqueta continua funcionando e a equipe é avisada).
+        // 2) Sem `text` configurado, a ferramenta também não envia texto próprio:
+        //    quem escreve a mensagem é a própria IA, com o contexto da conversa.
+        //    Não existe mais mensagem padrão fixa.
+        const escalateSilent = config.silent_mode === true;
+        const escalateText = String(config.text || "").trim();
+        if (!escalateSilent && escalateText) {
+          const clientText = escalateText;
           try {
             const delay = typingDelayMs(clientText);
             await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
@@ -10106,7 +10179,10 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           } catch (e: any) {
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
+        } else {
+          console.log(`[EscalateHuman] Nenhum texto fixo enviado (silent_mode=${escalateSilent}, texto_configurado=${Boolean(escalateText)}).`);
         }
+
 
         const humanNumber = config.human_number;
         if (humanNumber) {
@@ -10182,7 +10258,22 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           }
         }
 
-        return { success: true, message: `Atendimento escalado para humano`, type: toolType };
+        // O retorno diz explicitamente à IA quem fala com o cliente agora:
+        // - silent_mode: ninguém fala (a equipe assume a conversa)
+        // - texto fixo já enviado: não repetir
+        // - sem texto fixo: a IA escreve a mensagem de transferência com o contexto real
+        return {
+          success: true,
+          message: escalateSilent
+            ? "Atendimento escalado para humano em modo silencioso. NÃO envie nenhuma mensagem ao cliente."
+            : escalateText
+              ? "Atendimento escalado para humano. A mensagem de aviso já foi enviada ao cliente — não repita."
+              : "Atendimento escalado para humano. Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso de transferência, curto e natural, usando o contexto da conversa.",
+          client_notified: !escalateSilent && Boolean(escalateText),
+          silent_mode: escalateSilent,
+          type: toolType,
+        };
+
       }
 
       case "add_label": {

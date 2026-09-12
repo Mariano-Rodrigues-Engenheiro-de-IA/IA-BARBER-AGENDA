@@ -1182,6 +1182,7 @@ export type Database = {
         Args: { _module: string; _tenant_id: string; _user_id: string }
         Returns: boolean
       }
+      get_internal_cron_token: { Args: never; Returns: string }
       get_user_tenant_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
