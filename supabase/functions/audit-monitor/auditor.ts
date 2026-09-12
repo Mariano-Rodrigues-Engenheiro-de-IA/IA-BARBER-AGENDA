@@ -334,5 +334,20 @@ export function validateFinding(
   const tool = typeof finding.evidence_tool === "string" ? finding.evidence_tool : "";
   if (!quoteAppears(conv, conversationText)) return false;
   if (!quoteAppears(tool, toolText)) return false;
+
+  const timeReference = context?.timeReference ?? "";
+  // Fuso horário / formatação de hora idêntica ao retorno real.
+  if (
+    (finding.category === "dados_incorretos_api" || finding.category === "disponibilidade_inventada") &&
+    timesAllBackedByApi(finding, toolText, timeReference)
+  ) return false;
+  // Dia da semana já calculado na referência de tempo.
+  if (weekdayMatchesReference(finding, timeReference)) return false;
+  // Fluxo aguardando escolha do cliente não é atendimento incompleto.
+  if (
+    (finding.category === "completude_agendamento" || finding.category === "cancelamento_remarcacao") &&
+    turnStillWaitingOnClient(context)
+  ) return false;
+
   return true;
 }
