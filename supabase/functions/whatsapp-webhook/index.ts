@@ -10528,8 +10528,30 @@ function splitIntoMessages(text: string): string[] {
     }
     if (current.trim().length > 0) parts.push(current.trim());
   }
-  
-  return parts.length > 0 ? parts : [text];
+
+  // ⚠️ Corrigido (11/09): quando uma sentença já longa (>120 chars) empurra o
+  // resto da divisão, um emoji final (ex: "Te esperamos! 🤝😁") podia sobrar
+  // sozinho como a próxima "parte" — chegando ao WhatsApp como um balão só
+  // com emoji, que renderiza gigante. Em vez de confiar numa regra de prompt
+  // (frágil — depende do modelo lembrar sempre), o emoji nunca fica separado
+  // da frase: qualquer parte que seja só emoji/pontuação mínima (sem letra
+  // nem número) é fundida com a parte anterior (ou, se for a primeira, com a
+  // seguinte).
+  const EMOJI_ONLY_RE = /^[\s\p{Emoji_Presentation}\p{Extended_Pictographic}\u200d\ufe0f.,!?;:()]+$/u;
+  const merged: string[] = [];
+  for (const part of parts) {
+    if (EMOJI_ONLY_RE.test(part) && merged.length > 0) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${part}`;
+    } else if (EMOJI_ONLY_RE.test(part) && merged.length === 0) {
+      // é a primeira parte inteira — não há anterior para grudar; deixa como
+      // está (caso raro: resposta é só emoji).
+      merged.push(part);
+    } else {
+      merged.push(part);
+    }
+  }
+
+  return merged.length > 0 ? merged : [text];
 }
 
 // ===================== PHONE HELPERS =====================
