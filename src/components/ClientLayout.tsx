@@ -20,37 +20,25 @@ const NAV: NavItem[] = [
   { to: "/app/connection", icon: Smartphone, label: "Conexão WhatsApp", module: "connection" },
 ];
 
-// Tooltip padrão (ícone -> nome ao passar o mouse) — reaproveitado pelos
-// itens de navegação e pelos botões de Ativar IA / Sair.
-function IconTooltip({ label }: { label: string }) {
-  return (
-    <span className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg bg-sidebar-primary px-2.5 py-1.5 text-xs font-semibold text-sidebar-primary-foreground opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100">
-      {label}
-    </span>
-  );
-}
-
 function SidebarNavItem({ item }: { item: NavItem }) {
   const location = useLocation();
   const { visible } = useModulePermission(item.module);
   if (!visible) return null;
   const isActive = location.pathname === item.to;
   return (
-    <div className="group relative">
-      <Link
-        to={item.to}
-        aria-label={item.label}
-        className={cn(
-          "flex items-center justify-center rounded-lg px-0 py-2.5 transition-colors",
-          isActive
-            ? "bg-sidebar-accent text-sidebar-primary"
-            : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
-        )}
-      >
-        <item.icon className="h-5 w-5 shrink-0" />
-      </Link>
-      <IconTooltip label={item.label} />
-    </div>
+    <Link
+      to={item.to}
+      aria-label={item.label}
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors",
+        isActive
+          ? "bg-sidebar-accent text-sidebar-primary"
+          : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+      )}
+    >
+      <item.icon className={cn("h-5 w-5 shrink-0", isActive && "text-sidebar-primary")} />
+      <span className="truncate">{item.label}</span>
+    </Link>
   );
 }
 
@@ -137,74 +125,62 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     <div className={cn("flex min-h-screen bg-background", "theme-frizzar", !isFrizzar && "theme-zaylo", !isFrizzar && "ai-panel-bg")}>
       {!isFrizzar && <div className="ai-topbar-glow" />}
 
-      {/* Sidebar — sempre recolhida (só ícones), a pedido do usuário.
-          Fina o suficiente (68px) para ficar visível em qualquer
-          tamanho de tela, sem precisar de versão separada para mobile. */}
-      <aside className="sticky top-0 flex h-screen w-[68px] shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
-        {/* Logo — recortada para mostrar só o símbolo (a barra sempre
-            recolhida não tem espaço para o nome por extenso). */}
-        <div className="flex items-center justify-center py-5">
+      {/* Sidebar — fixa, sempre aberta (com texto), a pedido do usuário
+          (mudou de ideia em relação à versão recolhida-com-tooltip). */}
+      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col overflow-y-auto border-r border-sidebar-border bg-sidebar">
+        <div className="flex items-center px-6 py-5">
           {isFrizzar ? (
             <img
-              src="/frizzar/frizzar-logo-circle-white.png"
+              src="/frizzar/frizzar-logo-horizontal-white.png"
               alt="Frizzar"
-              className="h-8 w-8 object-contain"
+              className="h-6 w-auto object-contain"
             />
           ) : (
-            <div className="h-8 w-8 overflow-hidden">
-              <img
-                src="/brand/zaylo-ia-logo-uploaded.png"
-                alt="Zaylo IA"
-                // Mesma logo da tela de login, recortada para mostrar só o
-                // símbolo (canto esquerdo da imagem) — a imagem completa
-                // tem o símbolo + "ZAYLO AI" por extenso.
-                className="h-8 w-auto max-w-none object-cover object-left"
-                style={{ width: "32px", objectPosition: "0% center" }}
-              />
-            </div>
+            <img
+              src="/brand/zaylo-ia-logo-uploaded.png"
+              alt="Zaylo IA"
+              className="h-8 w-auto object-contain"
+            />
           )}
         </div>
 
         <div className="mx-3 mb-2 h-px bg-sidebar-border" />
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-2 py-1">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-1">
           {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
         </nav>
 
         {/* Botão de Pausar/Ativar IA — embaixo, longe da navegação, para
             não competir visualmente com as abas (pedido do usuário). */}
-        <div className="px-2 pb-2">
-          <div className="group relative">
-            <button
-              onClick={togglePause}
-              className={cn(
-                "flex w-full items-center justify-center rounded-lg border border-sidebar-primary/60 py-2.5 shadow-sm transition-colors",
-                tenant?.agent_paused
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
-                  : "bg-sidebar-primary/15 text-sidebar-primary hover:bg-sidebar-primary/25",
-              )}
-            >
-              {tenant?.agent_paused ? <Power className="h-5 w-5" /> : <PowerOff className="h-5 w-5" />}
-            </button>
-            <IconTooltip label={tenant?.agent_paused ? "Ativar IA" : "Pausar IA"} />
-          </div>
+        <div className="px-3 pb-2">
+          <button
+            onClick={togglePause}
+            className={cn(
+              "flex w-full items-center gap-2 rounded-lg border border-sidebar-primary/60 px-3 py-2.5 text-sm font-medium shadow-sm transition-colors",
+              tenant?.agent_paused
+                ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                : "bg-sidebar-primary/15 text-sidebar-primary hover:bg-sidebar-primary/25",
+            )}
+          >
+            {tenant?.agent_paused ? <Power className="h-5 w-5 shrink-0" /> : <PowerOff className="h-5 w-5 shrink-0" />}
+            <span>{tenant?.agent_paused ? "Ativar IA" : "Pausar IA"}</span>
+          </button>
         </div>
 
-        <div className="flex flex-col items-center gap-2 border-t border-sidebar-border py-4">
+        <div className="flex items-center gap-3 border-t border-sidebar-border px-4 py-4">
           <Avatar className="h-8 w-8 shrink-0">
             {tenant?.logo_url && <AvatarImage src={tenant.logo_url} alt={tenant?.name ?? "Logo"} className="object-contain bg-background" />}
             <AvatarFallback className="text-xs bg-primary/10 text-primary">{initials}</AvatarFallback>
           </Avatar>
+          <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/80">{tenant?.name ?? ""}</span>
           {!cameFromCrm() && (
-            <div className="group relative">
-              <button
-                onClick={handleSignOut}
-                className="rounded-lg p-1.5 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              >
-                <LogOut className="h-5 w-5" />
-              </button>
-              <IconTooltip label="Sair" />
-            </div>
+            <button
+              onClick={handleSignOut}
+              title="Sair"
+              className="shrink-0 rounded-lg p-1.5 text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <LogOut className="h-5 w-5" />
+            </button>
           )}
         </div>
       </aside>
