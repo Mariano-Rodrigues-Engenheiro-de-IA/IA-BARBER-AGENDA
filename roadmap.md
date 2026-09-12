@@ -13,3 +13,4 @@
 - [ ] Ampliar testes fim a fim dos dispatchers legados ainda presos ao handler principal
 - [x] Corrigir falso MultiBooking do AppBarber causado por slots antigos em pedido único
 - [x] Remover aviso genérico de instabilidade em respostas vazias e preservar silêncio seguro
+- [x] Atualizar a logo Zaylo na tela de login e nos painéis administrativo e de colaboradores
