@@ -43,6 +43,7 @@ REGRAS DURAS:
 - Sucesso de agendamento só existe com identificador real retornado (appointment_id / scheduling_code / ok:true).
 - Se as três coisas batem, retorne findings vazio. Não invente problema para parecer útil.
 - Não aponte como problema a IA pedir esclarecimento, oferecer horários ou transferir para atendente humano avisando o cliente.
+- Não aponte como problema o uso do primeiro nome ou apelido de profissional/cliente (ex: dizer "Victor" quando a API traz "Victor Hugo Amaral"), nem formatação de hora ("9h" vs "09:00") ou de data ("amanhã" vs a data real correspondente.)
 - Português do Brasil, resumo curto e factual.`;
 
 const RESPONSE_SCHEMA = {
