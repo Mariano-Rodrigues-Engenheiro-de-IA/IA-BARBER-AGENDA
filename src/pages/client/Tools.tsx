@@ -36,7 +36,7 @@ export default function ClientTools() {
   if (!tenant) return <p className="text-muted-foreground">Carregando...</p>;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <CustomToolsTab
         tools={customTools}
         onChange={perm.editable ? saveTools : () => {}}
