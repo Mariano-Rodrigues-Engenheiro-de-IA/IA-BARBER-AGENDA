@@ -112,7 +112,97 @@ export function normalizeForProof(text: string): string {
     .trim();
 }
 
-const MIN_PROOF_CHARS = 12;
+// ============================================================================
+// REFERÊNCIA DE TEMPO — a auditora não pode deduzir fuso nem dia da semana.
+// Toda data/hora encontrada no retorno das ferramentas é convertida para o
+// horário local (America/Sao_Paulo) com o dia da semana já calculado.
+// ============================================================================
+const SP_TZ = "America/Sao_Paulo";
+const WEEKDAY_WORDS = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+
+function spParts(d: Date): { date: string; time: string; weekday: string } | null {
+  if (Number.isNaN(d.getTime())) return null;
+  const fmt = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: SP_TZ,
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(d).map((p) => [p.type, p.value]));
+  return {
+    date: `${parts.day}/${parts.month}/${parts.year}`,
+    time: `${parts.hour}:${parts.minute}`,
+    weekday: String(parts.weekday ?? "").replace(/-feira$/, ""),
+  };
+}
+
+const ISO_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
+
+export function buildTimeReference(toolText: string, turnAt?: string): string {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of toolText.match(ISO_RE) ?? []) {
+    if (seen.has(raw) || seen.size >= 25) continue;
+    seen.add(raw);
+    const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+    const p = spParts(new Date(hasZone ? raw.replace(" ", "T") : `${raw.replace(" ", "T")}-03:00`));
+    if (!p) continue;
+    lines.push(`${raw} = ${p.weekday}, ${p.date} ${p.time} (horário local de Brasília)`);
+  }
+  const now = turnAt ? spParts(new Date(turnAt)) : null;
+  return [
+    "=== REFERÊNCIA DE TEMPO (já convertida — use SOMENTE estes valores) ===",
+    now ? `Momento do atendimento: ${now.weekday}, ${now.date} ${now.time}` : "",
+    ...(lines.length ? lines : ["(nenhuma data/hora ISO no retorno das ferramentas)"]),
+    "Datas com Z ou +00:00 estão em UTC: o horário local é 3 horas menor. Diferença de fuso NÃO é divergência.",
+    "Nunca calcule dia da semana por conta própria — use o que está acima.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function weekdayKey(text: string): string {
+  return String(text ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+// Horários citados, normalizados para HH:MM ("13h10", "13h", "9h", "13:10").
+function extractTimes(text: string): string[] {
+  const out = new Set<string>();
+  const src = String(text ?? "");
+  for (const m of src.matchAll(/\b(\d{1,2})\s*[:h]\s*(\d{2})\b/g)) {
+    out.add(`${m[1].padStart(2, "0")}:${m[2]}`);
+  }
+  for (const m of src.matchAll(/\b(\d{1,2})\s*h(?!\d)/g)) {
+    out.add(`${m[1].padStart(2, "0")}:00`);
+  }
+  return [...out];
+}
+
+// Severidade determinística por tipo de impacto — sem julgamento do modelo.
+export const SEVERITY_BY_CATEGORY: Record<string, "baixa" | "media" | "alta"> = {
+  completude_agendamento: "alta",
+  cancelamento_remarcacao: "alta",
+  erro_tecnico_mascarado: "alta",
+  disponibilidade_inventada: "media",
+  dados_incorretos_api: "media",
+  uso_indevido_ferramenta: "media",
+  comunicacao: "media",
+};
+
+// Ferramentas que de fato executam ação (criam/alteram algo na agenda).
+const ACTION_TOOLS = new Set([
+  "criar_agendamento", "agendar",
+  "cancelar_agendamento", "desmarcar_agendamento",
+  "editar_agendamento", "remarcar_agendamento",
+]);
+
 
 const NO_DIVERGENCE_SUMMARY_PATTERNS = [
   /\bsem diverg[eê]ncia\b/i,
