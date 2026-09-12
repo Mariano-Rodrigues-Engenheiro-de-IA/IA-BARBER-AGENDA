@@ -56,7 +56,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             fetchPriority="high"
             decoding="sync"
             loading="eager"
-            className="h-auto w-full max-w-[184px] object-contain object-left"
+            className="h-auto w-full max-w-[140px] object-contain object-left"
           />
           <p className="text-xs text-muted-foreground">{roleLabel}</p>
         </div>
@@ -154,7 +154,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             fetchPriority="high"
             decoding="sync"
             loading="eager"
-            className="h-auto w-[132px] object-contain"
+            className="h-auto w-[100px] object-contain"
           />
         </div>
         <div className="p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">
