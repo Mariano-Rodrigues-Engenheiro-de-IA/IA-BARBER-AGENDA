@@ -5,9 +5,9 @@ import { useTenants } from "@/hooks/useTenants";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, X, Clock, ShieldCheck, FileText, Users, Radar } from "lucide-react";
+import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, Clock, ShieldCheck, FileText, Users, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
-import logoZaylo from "@/assets/logo-zaylo.png";
+import zayloLogo from "@/assets/zaylo-ia-logo-blue.png.asset.json";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; module?: string };
@@ -48,12 +48,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const sidebarContent = (
     <>
       <div className="p-6 border-b border-border">
-        <div className="flex items-center gap-3">
-          <img src={logoZaylo} alt="IA Barber Pro" width={96} height={96} fetchPriority="high" decoding="sync" loading="eager" className="w-12 h-12 rounded-xl object-contain" />
-          <div>
-            <h1 className="font-bold text-foreground text-lg leading-tight">IA Barber Pro</h1>
-            <p className="text-xs text-muted-foreground">{roleLabel}</p>
-          </div>
+        <div className="space-y-2">
+          <img
+            src={zayloLogo.url}
+            alt="Zaylo IA"
+            width={958}
+            height={230}
+            fetchPriority="high"
+            decoding="sync"
+            loading="eager"
+            className="h-auto w-full max-w-[184px] object-contain object-left"
+          />
+          <p className="text-xs text-muted-foreground">{roleLabel}</p>
         </div>
       </div>
 
@@ -141,8 +147,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)}>
             <Menu className="w-5 h-5" />
           </Button>
-          <img src={logoZaylo} alt="IA Barber Pro" width={96} height={96} fetchPriority="high" decoding="sync" loading="eager" className="w-7 h-7 rounded-lg object-contain" />
-          <span className="font-semibold text-foreground">IA Barber Pro</span>
+          <img
+            src={zayloLogo.url}
+            alt="Zaylo IA"
+            width={958}
+            height={230}
+            fetchPriority="high"
+            decoding="sync"
+            loading="eager"
+            className="h-auto w-[132px] object-contain"
+          />
         </div>
         <div className="p-4 sm:p-8 max-w-6xl mx-auto animate-fade-in">
           {children}
