@@ -6,7 +6,7 @@
 // trecho da conversa + trecho do retorno da ferramenta. Sem prova, descarta.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, AUDIT_CATEGORIES } from "./auditor.ts";
+import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, findingSignature, AUDIT_CATEGORIES } from "./auditor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,6 +43,7 @@ REGRAS DURAS:
 - Sucesso de agendamento só existe com identificador real retornado (appointment_id / scheduling_code / ok:true).
 - Se as três coisas batem, retorne findings vazio. Não invente problema para parecer útil.
 - Não aponte como problema a IA pedir esclarecimento, oferecer horários ou transferir para atendente humano avisando o cliente.
+- Não aponte como problema o uso do primeiro nome ou apelido de profissional/cliente (ex: dizer "Victor" quando a API traz "Victor Hugo Amaral"), nem formatação de hora ("9h" vs "09:00") ou de data ("amanhã" vs a data real correspondente.)
 - Português do Brasil, resumo curto e factual.`;
 
 const RESPONSE_SCHEMA = {
@@ -280,13 +281,28 @@ Deno.serve(async (req) => {
         errorMessage = String((e as Error).message ?? e).slice(0, 500);
       }
 
+      // Achados já reportados nesta conversa (14 dias) — não repetir o mesmo
+      // problema só porque a conversa seguiu em outros turnos.
+      const { data: priorFindings } = await supabase
+        .from("ai_audit_findings")
+        .select("category, summary, evidence_tool, evidence_conversation")
+        .eq("tenant_id", log.tenant_id)
+        .eq("phone_number", log.phone_number)
+        .gte("created_at", new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString())
+        .limit(200);
+      const seenSignatures = new Set((priorFindings ?? []).map((f: any) => findingSignature(f)));
+
       const accepted: any[] = [];
       let discarded = 0;
       for (const f of rawFindings) {
         const ok = validateFinding(f, conversationText, toolText);
-        if (ok) accepted.push(f);
-        else discarded++;
+        if (!ok) { discarded++; continue; }
+        const sig = findingSignature(f);
+        if (seenSignatures.has(sig)) { discarded++; continue; }
+        seenSignatures.add(sig);
+        accepted.push(f);
       }
+
 
       audited++;
       issues += accepted.length;
