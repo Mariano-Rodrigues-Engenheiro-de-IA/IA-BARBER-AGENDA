@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useTenants } from "@/hooks/useTenants";
@@ -84,6 +84,26 @@ export default function AiMonitorPage() {
   const [statusFilter, setStatusFilter] = useState("open");
   const [selected, setSelected] = useState<Finding | null>(null);
   const [running, setRunning] = useState(false);
+  const [viewed, setViewed] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("ai-monitor-viewed") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
+
+  const markViewed = (id: string, isViewed: boolean) => {
+    setViewed((prev) => {
+      const next = isViewed ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id);
+      localStorage.setItem("ai-monitor-viewed", JSON.stringify(next.slice(-5000)));
+      return next;
+    });
+  };
+
+  // Abrir o detalhe já marca o caso como visualizado.
+  useEffect(() => {
+    if (selected) markViewed(selected.id, true);
+  }, [selected?.id]);
 
   const since = useMemo(
     () => new Date(Date.now() - Number(period) * 86400000).toISOString(),
