@@ -113,10 +113,6 @@ Deno.serve(async (req) => {
     return url.searchParams.get(name);
   };
 
-  if (param("table") === null && url.searchParams.get("schema") !== null) {
-    // deixado por compatibilidade; ver /?help=1
-  }
-
   const table = param("table");
   if (!table) {
     return json({
