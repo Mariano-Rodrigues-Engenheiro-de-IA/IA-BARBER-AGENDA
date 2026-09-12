@@ -272,7 +272,7 @@ Deno.serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(4);
 
-      const { dossier, conversationText, toolText } = buildDossier(
+      const { dossier, conversationText, toolText, timeReference } = buildDossier(
         log,
         (history ?? []).slice().reverse(),
         toolCalls,
@@ -298,16 +298,33 @@ Deno.serve(async (req) => {
         .limit(200);
       const seenSignatures = new Set((priorFindings ?? []).map((f: any) => findingSignature(f)));
 
+      const auditContext = { aiResponse: log.ai_response, toolCalls, timeReference };
       const accepted: any[] = [];
       let discarded = 0;
+      // Mesmo fato (mesmo trecho de conversa) não pode virar dois achados em
+      // categorias diferentes: fica só o de maior severidade.
+      const factRank: Record<string, number> = { alta: 3, media: 2, baixa: 1 };
+      const byFact = new Map<string, any>();
       for (const f of rawFindings) {
-        const ok = validateFinding(f, conversationText, toolText);
+        const ok = validateFinding(f, conversationText, toolText, auditContext);
         if (!ok) { discarded++; continue; }
         const sig = findingSignature(f);
         if (seenSignatures.has(sig)) { discarded++; continue; }
         seenSignatures.add(sig);
-        accepted.push(f);
+        // Severidade determinística por categoria (o modelo não decide).
+        f.severity = SEVERITY_BY_CATEGORY[String(f.category)] ?? f.severity ?? "media";
+        const fact = normalizeForProof(String(f.evidence_conversation ?? "")).slice(0, 120);
+        const current = byFact.get(fact);
+        if (current) {
+          discarded++;
+          if ((factRank[f.severity] ?? 0) > (factRank[current.severity] ?? 0)) byFact.set(fact, f);
+          continue;
+        }
+        byFact.set(fact, f);
       }
+      accepted.push(...byFact.values());
+
+
 
 
       audited++;
