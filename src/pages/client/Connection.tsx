@@ -124,7 +124,7 @@ export default function ClientConnection() {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-lg space-y-6">
       <div className="glass-card p-6 space-y-4">
         <div className="flex items-center gap-3">
           <Smartphone className="w-5 h-5 text-muted-foreground" />

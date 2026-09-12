@@ -134,25 +134,20 @@ export default function ClientAi() {
               userId={user?.id}
               onRestored={() => { refetch(); refetchVersions(); }}
             />
+            {ai.editable && (
+              <Button size="sm" onClick={() => setConfirmOpen(true)}>
+                <Save className="w-4 h-4 mr-2" />Salvar
+              </Button>
+            )}
           </div>
         </div>
 
         <Textarea
           disabled={!ai.editable}
           className="flex-1 min-h-[500px] resize-none font-mono text-sm disabled:opacity-100"
-          style={
-            tenant?.api_provider === "frizzar"
-              ? { backgroundColor: "hsl(210 45% 95%)", color: "hsl(222 30% 16%)" }
-              : { backgroundColor: "hsl(222 47% 6%)", color: "hsl(210 40% 96%)" }
-          }
           value={form.agent_system_prompt ?? ""}
           onChange={(e) => setForm({ ...form, agent_system_prompt: e.target.value })}
         />
-        {ai.editable && (
-          <Button className="w-fit" onClick={() => setConfirmOpen(true)}>
-            <Save className="w-4 h-4 mr-2" />Salvar
-          </Button>
-        )}
       </div>
 
       <AlertDialog open={confirmOpen} onOpenChange={(o) => { setConfirmOpen(o); if (!o) setChangeSummary(""); }}>
