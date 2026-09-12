@@ -353,7 +353,7 @@ export default function ClientConversations() {
 
   return (
     <div className="space-y-4">
-      <div className="conversas-panel grid grid-cols-1 md:grid-cols-[360px_minmax(0,1fr)] gap-0 h-[88vh] min-h-0 rounded-xl overflow-hidden border border-border shadow-lg bg-card">
+      <div className="conversas-panel grid grid-cols-1 md:grid-cols-[360px_minmax(0,1fr)] gap-0 h-[calc(100vh-64px)] min-h-0 rounded-xl overflow-hidden border border-border shadow-lg bg-card">
         {/* Sidebar — contact list (WhatsApp-style panel) */}
         <div className="flex min-h-0 flex-col border-r border-border bg-[hsl(var(--wa-panel))]">
           <div className="p-3 border-b border-border">

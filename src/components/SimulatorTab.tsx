@@ -50,7 +50,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
   const clear = () => { setMessages([]); inputRef.current?.focus(); };
 
   return (
-    <div className="conversas-panel p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 100px)" }}>
+    <div className="conversas-panel p-5 flex flex-col gap-3 rounded-xl border border-border shadow-lg bg-card" style={{ height: "calc(100vh - 64px)" }}>
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-card-foreground">Simulador da IA</h3>
         <Button variant="secondary" size="sm" onClick={clear} disabled={loading || messages.length === 0}>
@@ -76,7 +76,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
                 {m.toolCalls && m.toolCalls.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
                     {m.toolCalls.map((tc: any, j: number) => (
-                      <div key={j} className="text-[11px] flex items-center gap-1 opacity-80">
+                      <div key={j} className="text-[11px] flex items-center gap-1 opacity-95">
                         <Wrench className="w-3 h-3" />
                         <span className="font-mono">{tc.name || tc.tool || "tool"}</span>
                         {tc.simulated && <span className="text-amber-500">(simulada)</span>}
@@ -109,7 +109,7 @@ export function SimulatorTab({ tenantId }: { tenantId: string }) {
               }}
               placeholder="Digite uma mensagem"
               rows={1}
-              className="min-h-0 max-h-32 h-auto resize-none border-none bg-transparent shadow-none px-0 py-1.5 text-[13px] leading-tight focus-visible:ring-0 focus-visible:ring-offset-0"
+              className="min-h-0 max-h-32 h-auto resize-none border-none bg-transparent shadow-none px-0 py-1.5 text-[13px] leading-tight text-neutral-900 placeholder:text-neutral-500 focus-visible:ring-0 focus-visible:ring-offset-0"
               disabled={loading}
             />
           </div>

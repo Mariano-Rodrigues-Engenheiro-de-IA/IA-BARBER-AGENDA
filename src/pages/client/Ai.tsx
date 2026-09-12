@@ -116,7 +116,7 @@ export default function ClientAi() {
 
   return (
     <div className="space-y-6">
-      <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 100px)" }}>
+      <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 64px)" }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <Label>Personalidade e instruções da IA</Label>
           <div className="flex items-center gap-2">
