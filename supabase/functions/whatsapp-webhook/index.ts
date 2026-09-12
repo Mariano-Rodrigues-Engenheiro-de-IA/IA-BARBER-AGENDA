@@ -7546,7 +7546,11 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  if (!finalResponse) {
+  // A mensagem que abriu este turno é automação/menu do próprio estabelecimento?
+  // Nesse caso não regeneramos nem avisamos nada: silêncio é a resposta correta.
+  const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
+
+  if (!finalResponse && !turnIsAutomationEcho) {
     const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
     const recoveredResponse = stripInternalPrefixes(recoveredResponseRaw || "");
     if (recoveredResponse && !isLeakedReasoningResponse(recoveredResponse)) {
@@ -7568,6 +7572,12 @@ async function callAIAgent(
       console.warn(`[BookingFallback] AI response empty after successful booking — sending deterministic confirmation.`);
       logErrors.push({ message: `Resposta vazia após agendamento bem-sucedido — usado fallback determinístico.`, level: "warning" });
       finalResponse = bookingFallback;
+    } else if (turnIsAutomationEcho) {
+      // ✅ SILÊNCIO LEGÍTIMO: o texto recebido era automação/menu do próprio
+      // estabelecimento, não um pedido de cliente. Responder aqui faria a IA
+      // conversar com o robô da barbearia.
+      console.log(`[NoSilence] Silêncio permitido: mensagem era automação do próprio estabelecimento.`);
+      logErrors.push({ message: `Sem resposta (correto): mensagem recebida era automação/menu do próprio estabelecimento, não pedido do cliente.`, level: "info" });
     } else {
       // 🚫 SILÊNCIO PROIBIDO: nunca deixar o cliente sem retorno. Se a IA não
       // produziu texto (rounds estourados, resposta vazia, leak descartado),
@@ -7577,6 +7587,7 @@ async function callAIAgent(
       finalResponse = "Desculpa, tive uma instabilidade aqui e não consegui finalizar sua resposta agora. Pode me confirmar o que você precisa? Se preferir, já chamo um atendente 🙏";
     }
   }
+
 
   // ============================================================================
   // 🛡️ PHANTOM CONFIRMATION GUARD
