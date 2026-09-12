@@ -12,3 +12,4 @@
 - [ ] Revisar divergências reais do extrator estruturado antes de torná-lo bloqueante em todos os guards
 - [ ] Ampliar testes fim a fim dos dispatchers legados ainda presos ao handler principal
 - [x] Corrigir falso MultiBooking do AppBarber causado por slots antigos em pedido único
+- [x] Remover aviso genérico de instabilidade em respostas vazias e preservar silêncio seguro
