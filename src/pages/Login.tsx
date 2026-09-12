@@ -12,7 +12,7 @@ const BRAND = {
     themeClass: "theme-zaylo-login",
     logo: "/brand/zaylo-ia-logo-uploaded.png",
     alt: "Zaylo IA",
-    logoClass: "h-auto w-full max-w-[300px] object-contain",
+    logoClass: "h-10 w-auto max-w-[58%] object-contain",
     tagline: "Painel de controle da sua IA",
   },
   frizzar: {
