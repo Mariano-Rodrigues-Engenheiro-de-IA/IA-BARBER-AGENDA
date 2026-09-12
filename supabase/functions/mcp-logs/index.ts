@@ -230,18 +230,15 @@ Deno.serve(async (req) => {
   // Notificações não têm resposta.
   if (method.startsWith("notifications/")) return new Response(null, { status: 202 });
 
-  // Handshake/metadados são públicos (não expõem dado nenhum) — o conector do Claude
-  // valida a URL com initialize ANTES de o usuário informar o token na etapa 2.
-  // Auth Bearer é exigida apenas em tools/call, que é o único método que lê o banco.
-  const isPublicMethod = method === "initialize" || method === "ping" || method === "tools/list";
-  if (!isPublicMethod) {
-    const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    if (!bearer || !timingSafeEqual(bearer, LOGS_READER_KEY)) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "WWW-Authenticate": "Bearer", "Content-Type": "application/json" },
-      });
-    }
+  // Exige Bearer em TODAS as chamadas MCP (inclusive initialize). Isso força o
+  // conector do Claude a apresentar a etapa de autenticação, em vez de concluir
+  // o handshake sem token e omitir a etapa seguinte.
+  const bearer = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  if (!bearer || !timingSafeEqual(bearer, LOGS_READER_KEY)) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      status: 401,
+      headers: { "WWW-Authenticate": "Bearer", "Content-Type": "application/json" },
+    });
   }
 
   if (method === "initialize") {
