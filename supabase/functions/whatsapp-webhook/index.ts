@@ -3803,6 +3803,43 @@ function pickShortAckReply(state: AgentSessionState): string {
   return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
 }
 
+// 🤖 EXCEÇÃO LEGÍTIMA DA POLÍTICA ANTI-SILÊNCIO
+// A política anti-silêncio existe para o CLIENTE nunca ficar sem resposta. Ela
+// NÃO deve valer quando o texto que entrou na conversa não é um pedido de
+// cliente, e sim uma automação/menu do próprio estabelecimento que voltou para
+// dentro do fluxo (ex: "Nosso horário de atendimento é...", "Clique no botão
+// abaixo para ver as opções", "VER OPÇÕES"). Nesses casos responder é pior que
+// calar: a IA fala sozinha com o robô da barbearia.
+//
+// Detecção determinística: exige pelo menos DOIS marcadores independentes de
+// automação. Um único marcador (ex: cliente perguntando "qual o horário de
+// atendimento?") nunca silencia.
+const BUSINESS_AUTOMATION_MARKERS: RegExp[] = [
+  /hor[aá]rio\s+de\s+atendimento\s*(é|e)?\s*:/i,
+  /clique\s+no\s+bot[aã]o/i,
+  /\bver\s+op[cç][oõ]es\b/i,
+  /de\s+segunda\s+a\s+(sexta|s[aá]bado)/i,
+  /agradecemos\s+pela\s+sua\s+(paci[eê]ncia|compreens[aã]o)/i,
+  /em\s+que\s+(iremos|podemos)\s+te?\s*ajudar/i,
+  /que\s+bom\s+ter\s+voc[eê]\s+(aqui\s+)?novamente/i,
+  /escolha\s+uma\s+das\s+op[cç][oõ]es/i,
+  /digite\s+o\s+n[uú]mero\s+da\s+op[cç][aã]o/i,
+  /menu\s+principal/i,
+];
+
+export function isBusinessAutomationEcho(text: string): boolean {
+  const t = String(text || "").trim();
+  if (t.length < 40) return false;
+  let hits = 0;
+  for (const re of BUSINESS_AUTOMATION_MARKERS) {
+    if (re.test(t)) hits++;
+    if (hits >= 2) return true;
+  }
+  return false;
+}
+
+
+
 
 // Constrói uma mensagem determinística de confirmação de agendamento a partir
 // dos tool_calls da rodada. Usada como rede de segurança quando a IA cria a
