@@ -13,11 +13,6 @@ export default function ClientSimulator() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Simulador</h1>
-        <p className="text-muted-foreground">Converse como se fosse um cliente, sem afetar o WhatsApp real</p>
-      </div>
-
       {tenantId && <SimulatorTab tenantId={tenantId} />}
     </div>
   );

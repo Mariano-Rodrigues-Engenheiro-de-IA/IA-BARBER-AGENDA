@@ -16,11 +16,6 @@ export default function ClientCompany() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Dados da empresa</h1>
-        <p className="text-muted-foreground">Informações do seu negócio usadas no atendimento</p>
-      </div>
-
       <div className="glass-card p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label>Nome</Label>

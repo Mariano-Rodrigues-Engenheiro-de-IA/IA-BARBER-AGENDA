@@ -353,11 +353,6 @@ export default function ClientConversations() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Conversas</h1>
-        <p className="text-muted-foreground">Histórico completo de mensagens</p>
-      </div>
-
       <div className="conversas-panel grid grid-cols-1 md:grid-cols-[360px_minmax(0,1fr)] gap-0 h-[78vh] min-h-0 rounded-xl overflow-hidden border border-border shadow-lg bg-card">
         {/* Sidebar — contact list (WhatsApp-style panel) */}
         <div className="flex min-h-0 flex-col border-r border-border bg-[hsl(var(--wa-panel))]">

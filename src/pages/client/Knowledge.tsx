@@ -16,13 +16,6 @@ export default function ClientKnowledge() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Base de conhecimento</h1>
-        <p className="text-muted-foreground">
-          Informações da sua empresa que a IA consulta para responder (serviços, políticas, avisos)
-        </p>
-      </div>
-
       <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 260px)" }}>
         <Label>Conteúdo da base de conhecimento</Label>
         <Textarea

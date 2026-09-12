@@ -245,11 +245,7 @@ export default function ClientOverview() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Desempenho da IA</h1>
-          <p className="text-muted-foreground">Análises do período selecionado</p>
-        </div>
+      <div className="flex items-center justify-end flex-wrap gap-3">
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
             <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>

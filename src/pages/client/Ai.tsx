@@ -116,11 +116,6 @@ export default function ClientAi() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Prompt</h1>
-        <p className="text-muted-foreground">Personalidade, instruções e comportamento da sua IA</p>
-      </div>
-
       <div className="glass-card p-5 flex flex-col gap-3" style={{ minHeight: "calc(100vh - 260px)" }}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <Label>Personalidade e instruções da IA</Label>

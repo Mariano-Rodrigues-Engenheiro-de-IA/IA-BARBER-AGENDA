@@ -16,11 +16,6 @@ export default function ClientIntegrations() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Integrações</h1>
-        <p className="text-muted-foreground">Credenciais das integrações utilizadas pelo atendimento</p>
-      </div>
-
       <div className="glass-card p-5 space-y-3">
         <p className="text-sm text-muted-foreground">
           {!perm.editable && "Somente leitura — peça ao administrador para alterar."}

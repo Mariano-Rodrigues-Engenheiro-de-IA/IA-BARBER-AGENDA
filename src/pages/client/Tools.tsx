@@ -37,10 +37,6 @@ export default function ClientTools() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Ferramentas da IA</h1>
-        <p className="text-muted-foreground">Ações que a IA pode executar durante o atendimento</p>
-      </div>
       <CustomToolsTab
         tools={customTools}
         onChange={perm.editable ? saveTools : () => {}}
