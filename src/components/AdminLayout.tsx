@@ -7,7 +7,6 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, Clock, ShieldCheck, FileText, Users, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
-import zayloLogo from "@/assets/zaylo-ia-logo-blue.png.asset.json";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; module?: string };
@@ -50,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="p-6 border-b border-border">
         <div className="space-y-2">
           <img
-            src={zayloLogo.url}
+            src="/brand/zaylo-ia-logo-login.png"
             alt="Zaylo IA"
             width={958}
             height={230}
@@ -148,7 +147,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Menu className="w-5 h-5" />
           </Button>
           <img
-            src={zayloLogo.url}
+            src="/brand/zaylo-ia-logo-login.png"
             alt="Zaylo IA"
             width={958}
             height={230}
