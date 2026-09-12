@@ -10126,14 +10126,17 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           return payload?.messageid || payload?.id || payload?.message?.id || payload?.messages?.[0]?.id || null;
         };
 
-        // 🚫 SILÊNCIO PROIBIDO: transferência para humano SEMPRE avisa o cliente.
-        // `silent_mode` foi desativado — antes o cliente ficava sem nenhuma resposta
-        // e a conversa morria sem ele saber que havia sido transferido.
-        if (config.silent_mode === true) {
-          console.warn(`[EscalateHuman] silent_mode ignorado (política anti-silêncio) — avisando o cliente.`);
-        }
-        {
-          const clientText = config.text || "Vou transferir você para um atendente. Aguarde um momento! 🙋";
+        // 🙋 TRANSFERÊNCIA PARA HUMANO
+        // Duas decisões da barbearia são respeitadas aqui:
+        // 1) `silent_mode`: quando ligado, a ferramenta NÃO envia nada ao cliente
+        //    (o botão/etiqueta continua funcionando e a equipe é avisada).
+        // 2) Sem `text` configurado, a ferramenta também não envia texto próprio:
+        //    quem escreve a mensagem é a própria IA, com o contexto da conversa.
+        //    Não existe mais mensagem padrão fixa.
+        const escalateSilent = config.silent_mode === true;
+        const escalateText = String(config.text || "").trim();
+        if (!escalateSilent && escalateText) {
+          const clientText = escalateText;
           try {
             const delay = typingDelayMs(clientText);
             await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
@@ -10160,7 +10163,10 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           } catch (e: any) {
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
+        } else {
+          console.log(`[EscalateHuman] Nenhum texto fixo enviado (silent_mode=${escalateSilent}, texto_configurado=${Boolean(escalateText)}).`);
         }
+
 
         const humanNumber = config.human_number;
         if (humanNumber) {
