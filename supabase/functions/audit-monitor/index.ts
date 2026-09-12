@@ -281,13 +281,28 @@ Deno.serve(async (req) => {
         errorMessage = String((e as Error).message ?? e).slice(0, 500);
       }
 
+      // Achados já reportados nesta conversa (14 dias) — não repetir o mesmo
+      // problema só porque a conversa seguiu em outros turnos.
+      const { data: priorFindings } = await supabase
+        .from("ai_audit_findings")
+        .select("category, summary, evidence_tool, evidence_conversation")
+        .eq("tenant_id", log.tenant_id)
+        .eq("phone_number", log.phone_number)
+        .gte("created_at", new Date(Date.now() - 14 * 24 * 60 * 60_000).toISOString())
+        .limit(200);
+      const seenSignatures = new Set((priorFindings ?? []).map((f: any) => findingSignature(f)));
+
       const accepted: any[] = [];
       let discarded = 0;
       for (const f of rawFindings) {
         const ok = validateFinding(f, conversationText, toolText);
-        if (ok) accepted.push(f);
-        else discarded++;
+        if (!ok) { discarded++; continue; }
+        const sig = findingSignature(f);
+        if (seenSignatures.has(sig)) { discarded++; continue; }
+        seenSignatures.add(sig);
+        accepted.push(f);
       }
+
 
       audited++;
       issues += accepted.length;
