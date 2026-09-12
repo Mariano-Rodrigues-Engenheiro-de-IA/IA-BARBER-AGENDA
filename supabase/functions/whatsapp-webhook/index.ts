@@ -911,7 +911,17 @@ const SUMMARY_FORBIDDEN_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/, label: "data no formato dd/mm" },
   { re: /\b(hoje|amanh[ãa]|depois\s+de\s+amanh[ãa]|ontem)(?![a-záéíóúâêôãõç])/i, label: "referência relativa de dia (hoje/amanhã/ontem)" },
   { re: /\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(?:-feira)?\s+(que\s+vem|pr[óo]xima?|passad[ao])\b/i, label: "dia da semana relativo (ex: sexta que vem)" },
-  { re: /\b(confirmad[oa]|confirmei|confirmou|agendad[oa]|agendei|agendou|marcad[oa]|marquei|marcou|reservad[oa]|reservei|reservou|desmarc\w+|cancel\w+|remarc\w+)\b/i, label: "linguagem de confirmação/agendamento (agendou/marcou/confirmou/cancelou)" },
+  {
+    // ⚠️ Corrigido (12/09): "cancel\w+" sozinho bloqueava também "cancelou o
+    // plano de assinatura" — exatamente o tipo de fato que o resumo DEVE
+    // capturar (mudança de status de plano). Corrigido com exceção: só
+    // bloqueia "cancel..." quando NÃO for seguido de plano/assinatura/
+    // clube/pacote. "desmarc"/"remarc" não têm esse uso duplo em português
+    // (não existe "desmarcou o plano" como expressão natural), mantidos
+    // como estavam.
+    re: /\b(confirmad[oa]|confirmei|confirmou|agendad[oa]|agendei|agendou|marcad[oa]|marquei|marcou|reservad[oa]|reservei|reservou|desmarc\w+|remarc\w+|cancel\w+(?!\s+(o\s+|a\s+)?(plano|assinatura|clube|pacote)))\b/i,
+    label: "linguagem de confirmação/agendamento (agendou/marcou/confirmou/cancelou)",
+  },
   { re: /\bagendamento(s)?\b/i, label: "menção a agendamento específico" },
   { re: /\b(hor[áa]rio\s+(marcado|reservado|confirmado|agendado))\b/i, label: "horário marcado/reservado" },
 ];
@@ -5291,17 +5301,29 @@ async function callAIAgent(
     // narrativa), com status de plano/assinatura explicitamente incluindo
     // MUDANÇA de status (ativou/cancelou) — antes só mencionava "plano" de
     // forma genérica. Reaproveitado também na chamada de retry abaixo.
+    // ⚠️ Prompt v3 (12/09) — princípio aberto com exemplos, não lista fechada.
+    // Versão anterior (lista de 5 categorias fixas) foi apontada como
+    // "muito restrita" — coisas úteis fora dessas 5 gavetas ficavam de fora.
+    // Agora: qualquer fato durável de preferência/hábito/relação com a
+    // barbearia vale, desde que não seja proibido (a lista de proibições
+    // continua igual — é o que protege contra o bug original).
     const summarySystemPrompt =
       "Você é um extrator de memória persistente de CRM para um salão/barbearia. " +
       "Responda APENAS JSON válido (sem markdown) no formato " +
       "{\"should_update\": boolean, \"summary\": string, \"reason\": string}.\n\n" +
-      "REGRA PRINCIPAL: o resumo é uma LISTA CURTA de fatos duráveis sobre o cliente — nunca uma narrativa corrida. Cada fato deve ajudar a próxima conversa a ser mais rápida ou mais personalizada. Se um fato não muda em nada o próximo atendimento, não inclua. Formato: frases curtas separadas por ponto, uma ideia por frase, máximo 5-6 fatos.\n\n" +
-      "Só inclua fatos destes tipos:\n" +
+      "REGRA PRINCIPAL: o resumo é uma LISTA CURTA de fatos duráveis sobre o cliente — nunca uma narrativa corrida. Um fato entra se ele ajudar a próxima conversa a ser mais rápida, mais personalizada, ou evitar que a Carol pergunte algo que o cliente já disse antes. Formato: frases curtas separadas por ponto, uma ideia por frase, máximo 6-7 fatos.\n\n" +
+      "Exemplos do tipo de coisa que vale registrar (não é lista fechada — use julgamento para casos parecidos):\n" +
       "- Serviço(s) que costuma pedir (ex: 'Costuma pedir corte e barba')\n" +
+      "- Detalhe específico de preferência de corte/serviço (ex: 'Gosta de degradê baixo', 'Não gosta de máquina muito baixa')\n" +
       "- Profissional preferido (ex: 'Prefere o Nícollas')\n" +
       "- Janela de horário TÍPICA e GENÉRICA (ex: 'Prefere manhãs', 'Costuma vir aos sábados')\n" +
       "- Status de plano/clube/assinatura/pacote — incluindo MUDANÇA de status (ex: 'É assinante do Clube ND', 'Cancelou o plano de assinatura')\n" +
-      "- Restrição, alergia, observação útil (ex: 'Alérgico a X', 'Cabelo cacheado')\n\n" +
+      "- Restrição, alergia, observação útil (ex: 'Alérgico a X', 'Cabelo cacheado')\n" +
+      "- Costuma vir acompanhado (ex: 'Costuma trazer o filho junto')\n" +
+      "- Jeito de se comunicar ou preferência de tratamento (ex: 'Prefere respostas diretas', 'Gosta de ser chamado de [apelido]')\n" +
+      "- Sensibilidade a preço ou interesse em promoção (ex: 'Costuma perguntar sobre desconto')\n" +
+      "- Padrão de comportamento no agendamento, sem ser sobre um atendimento específico (ex: 'Às vezes atrasa um pouco')\n" +
+      "- Cliente novo ou fiel/antigo (sem data exata)\n\n" +
       "🚫 PROIBIDO no summary (nunca inclua, mesmo que apareça no histórico):\n" +
       "- Agendamentos específicos (passados, presentes ou futuros)\n" +
       "- Datas de qualquer formato (dd/mm, yyyy-MM-dd, 'hoje', 'amanhã', 'ontem', 'sexta que vem')\n" +
@@ -5309,13 +5331,14 @@ async function callAIAgent(
       "- Qualquer verbo de ação de agendamento: agendou, marcou, confirmou, reservou, cancelou, desmarcou, remarcou\n" +
       "- A palavra 'agendamento' em si\n" +
       "- Status de confirmação de qualquer atendimento concreto\n" +
-      "- Valor pago, quantas vezes já veio, ou nome do último serviço realizado isolado (sem ser preferência declarada)\n\n" +
-      "Motivo: esses dados mudam a cada atendimento e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA.\n\n" +
+      "- Valor pago, quantas vezes já veio, ou nome do último serviço realizado isolado (sem ser preferência declarada)\n" +
+      "- Reclamação, motivo de cancelamento, ou qualquer fato que só faz sentido explicado no contexto de UM atendimento específico\n\n" +
+      "Motivo: dados presos a UM atendimento específico mudam a cada visita e pertencem ao sistema de agendamento, não ao perfil. Incluí-los aqui já causou bug real (resumo antigo sendo reafirmado como se fosse confirmação de um pedido novo) e confunde a IA. Já um padrão de comportamento (não um evento único) é durável e vale registrar.\n\n" +
       "Se a única coisa relevante da interação for algo com data/hora ou agendamento (ex: 'agendou corte pra amanhã às 15h com Vinícius'), extraia SÓ a parte durável (ex: 'Gosta de corte. Prefere o Vinícius.') e descarte a parte temporal/transacional. Se não sobrar nada durável, responda should_update=false.\n\n" +
       "Só responda should_update=false quando a mensagem for puramente social (oi/tchau/ok/obrigado) E não existir currentSummary.\n\n" +
       "REGRA DE MERGE: receba currentSummary e devolva uma versão ATUALIZADA que PRESERVE o que já era verdade e adicione/refine o novo. Não apague info anterior de perfil só porque não foi mencionada de novo neste turno.\n\n" +
       "SE UM FATO NOVO CONTRADIZ UM FATO ANTIGO — SUBSTITUA, não acumule os dois. Exemplos: currentSummary diz 'Prefere o Nícollas' e o cliente agora diz que prefere outro profissional (ou 'não gosto mais dele') → o resumo devolvido deve ter só a preferência NOVA, sem menção à antiga. CurrentSummary diz 'É assinante do Clube ND' e o cliente diz que cancelou → o resumo devolvido deve dizer 'Cancelou o plano de assinatura', não manter as duas informações juntas.\n\n" +
-      "SE JÁ HOUVER 5-6 FATOS E SURGIR UM FATO NOVO IMPORTANTE (ex: mudança de status de plano, nova restrição) — descarte o fato mais genérico/menos específico do resumo atual para abrir espaço, nunca ignore o fato novo.\n\n" +
+      "SE JÁ HOUVER 6-7 FATOS E SURGIR UM FATO NOVO IMPORTANTE (ex: mudança de status de plano, nova restrição) — descarte o fato mais genérico/menos específico do resumo atual para abrir espaço, nunca ignore o fato novo.\n\n" +
       "Se o currentSummary recebido contiver conteúdo proibido (datas, horários, palavras 'agendou/marcou/confirmou/agendamento'), REMOVA essa parte ao reescrever — o resumo devolvido deve estar 100% limpo dessas menções. Consolide; máximo 600 caracteres, PT-BR, factual, sem floreio, sem citar 'cliente disse'.";
 
     // Extraída para função reaproveitável — usada na chamada normal e no retry
