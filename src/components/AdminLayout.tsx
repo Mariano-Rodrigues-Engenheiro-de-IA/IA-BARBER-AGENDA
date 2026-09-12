@@ -8,7 +8,6 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LayoutDashboard, Building2, LogOut, Settings, Activity, Menu, Clock, ShieldCheck, FileText, Users, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import zayloLogoAsset from "@/assets/zaylo-ia-logo-2026.png.asset.json";
 
 type NavItem = { to: string; icon: any; label: string; countKey?: "tenants"; module?: string };
 const navItems: NavItem[] = [
@@ -50,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="p-6 border-b border-border">
         <div className="space-y-2">
           <img
-            src={zayloLogoAsset.url}
+            src="/brand/zaylo-ia-logo-uploaded.png"
             alt="Zaylo IA"
             width={958}
             height={230}
@@ -148,7 +147,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <Menu className="w-5 h-5" />
           </Button>
           <img
-            src={zayloLogoAsset.url}
+            src="/brand/zaylo-ia-logo-uploaded.png"
             alt="Zaylo IA"
             width={958}
             height={230}
