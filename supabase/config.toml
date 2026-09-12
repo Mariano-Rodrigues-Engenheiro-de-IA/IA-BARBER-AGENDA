@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.provider-prompts]
 verify_jwt = false
+
+[functions.audit-monitor]
+verify_jwt = false

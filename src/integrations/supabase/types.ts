@@ -70,6 +70,127 @@ export type Database = {
           },
         ]
       }
+      ai_audit_findings: {
+        Row: {
+          agent_log_id: string
+          category: string
+          created_at: string
+          evidence_conversation: string
+          evidence_tool: string
+          id: string
+          model_used: string | null
+          phone_number: string | null
+          provider: string | null
+          review_status: string
+          reviewed_at: string | null
+          reviewed_by: string | null
+          severity: string
+          summary: string
+          tenant_id: string
+          tool_names: string[]
+          turn_at: string | null
+        }
+        Insert: {
+          agent_log_id: string
+          category: string
+          created_at?: string
+          evidence_conversation: string
+          evidence_tool: string
+          id?: string
+          model_used?: string | null
+          phone_number?: string | null
+          provider?: string | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          severity?: string
+          summary: string
+          tenant_id: string
+          tool_names?: string[]
+          turn_at?: string | null
+        }
+        Update: {
+          agent_log_id?: string
+          category?: string
+          created_at?: string
+          evidence_conversation?: string
+          evidence_tool?: string
+          id?: string
+          model_used?: string | null
+          phone_number?: string | null
+          provider?: string | null
+          review_status?: string
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          severity?: string
+          summary?: string
+          tenant_id?: string
+          tool_names?: string[]
+          turn_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_audit_findings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_audit_runs: {
+        Row: {
+          agent_log_id: string
+          created_at: string
+          discarded_count: number
+          error_message: string | null
+          id: string
+          issues_count: number
+          model_used: string | null
+          phone_number: string | null
+          provider: string | null
+          status: string
+          tenant_id: string
+          turn_at: string | null
+        }
+        Insert: {
+          agent_log_id: string
+          created_at?: string
+          discarded_count?: number
+          error_message?: string | null
+          id?: string
+          issues_count?: number
+          model_used?: string | null
+          phone_number?: string | null
+          provider?: string | null
+          status?: string
+          tenant_id: string
+          turn_at?: string | null
+        }
+        Update: {
+          agent_log_id?: string
+          created_at?: string
+          discarded_count?: number
+          error_message?: string | null
+          id?: string
+          issues_count?: number
+          model_used?: string | null
+          phone_number?: string | null
+          provider?: string | null
+          status?: string
+          tenant_id?: string
+          turn_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_audit_runs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_prompt_versions: {
         Row: {
           change_summary: string | null

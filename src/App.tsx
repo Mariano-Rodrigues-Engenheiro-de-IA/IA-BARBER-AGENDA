@@ -15,6 +15,7 @@ import TenantFormPage from "@/pages/TenantForm";
 import TenantAccessPage from "@/pages/TenantAccess";
 import SettingsPage from "@/pages/Settings";
 import AgentLogsPage from "@/pages/AgentLogs";
+import AiMonitorPage from "@/pages/AiMonitor";
 import FollowUpsDashboardPage from "@/pages/FollowUpsDashboard";
 import TenantDashboardPage from "@/pages/TenantDashboard";
 import TenantKanbanPage from "@/pages/TenantKanban";
@@ -99,6 +100,7 @@ function AppRoutes() {
       <Route path="/prompts" element={<AdminRoute module="prompts"><PromptsPage /></AdminRoute>} />
       <Route path="/staff" element={<AdminRoute adminOnly module="staff"><StaffPage /></AdminRoute>} />
       <Route path="/agent-logs" element={<AdminRoute module="agent-logs"><AgentLogsPage /></AdminRoute>} />
+      <Route path="/ai-monitor" element={<AdminRoute module="ai-monitor"><AiMonitorPage /></AdminRoute>} />
 
       {/* Client */}
       <Route path="/app" element={<ClientRoute><ClientOverview /></ClientRoute>} />
