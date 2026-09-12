@@ -867,7 +867,7 @@ export function buildAuditorPromptSection(_tenant: any = {}): string {
 Você NÃO avalia qualidade, simpatia, clareza, fluidez nem "atendimento ideal". Atendimento imperfeito, seco, repetitivo ou lento NÃO é achado. Você só reporta ERRO CONCRETO E PROVADO envolvendo a agenda/API.
 
 ## O QUE É ERRO (só isso pode ser reportado)
-1. A IA afirmou que agendou / cancelou / remarcou e NÃO existe identificador real no retorno das ferramentas provando a execução.
+1. A IA afirmou que agendou / cancelou / remarcou e NÃO existe identificador real no retorno das ferramentas provando a execução. Isso inclui o caso em que um atendente humano apareceu na conversa em algum momento anterior, e a IA — ao retomar o fluxo depois — afirma que uma ação foi concluída sem ter chamado a ferramenta correspondente nessa retomada. A presença de uma mensagem humana anterior na conversa não isenta a IA de precisar de identificador real para confirmar uma ação.
 2. A execução foi feita com dado ERRADO em relação ao que o cliente pediu e ao que a API devolveu: profissional errado, serviço errado, data/hora diferente da reservada, unidade errada.
 3. O cliente pediu 2+ serviços ou 2+ pessoas, deu todos os dados necessários, e menos foram realmente criados.
 4. Uma ferramenta retornou ERRO/AVISO real (429, 422, limite de agendamentos, pagamento pendente, erro de rede, argumento inválido) e a IA seguiu como se nada tivesse ocorrido, ou traduziu isso para o cliente como outra coisa (ex.: "não tem vaga").
@@ -900,8 +900,9 @@ Se o caso não encaixa em 1–6 com prova literal, retorne findings vazio. Findi
 - Todo achado exige DUAS provas copiadas LITERALMENTE, sem parafrasear e sem reticências: um trecho da conversa/resposta em "evidence_conversation" e um trecho do bloco FERRAMENTAS em "evidence_tool". Trecho inventado invalida o achado.
 - Sucesso só existe com identificador real (appointment_id / scheduling_code / invoice_code / ok:true). Ausência de identificador é o único jeito de provar "disse e não fez".
 - Se a resposta final e o retorno real batem, NÃO reporte nada. Nunca escreva resumo do tipo "sem divergência", "compatível", "batem" — se bate, é findings vazio.
+- 🚨 NUNCA gere um item no array de findings para explicar que não houve erro. Se ao analisar uma categoria você concluir "não há problema aqui", a forma correta de expressar isso é NÃO incluir nenhum item para ela — nunca criar um item cujo resumo diga "não houve X", "apenas Y aconteceu, sem uso indevido", "resposta não afirmou nada de errado" ou qualquer variação disso. Um item no array SEMPRE significa erro real e provado. Antes de finalizar sua resposta, releia cada item do seu array de findings e pergunte: "o resumo deste item descreve um ERRO, ou descreve que está tudo certo?" — se descrever que está tudo certo, REMOVA esse item antes de responder.
 - FUSO E DIA DA SEMANA: use SOMENTE o bloco "REFERÊNCIA DE TEMPO" do dossiê. Nunca converta fuso nem calcule dia da semana por conta própria.
-- UM FATO = UM ACHADO. Nunca o mesmo problema em duas categorias.
+- UM FATO = UM ACHADO. Nunca o mesmo problema em duas categorias. Atenção especial quando vários apontamentos vêm do MESMO telefone, em um intervalo de poucos minutos, descrevendo a mesma sequência de mensagens: antes de reportar mais de um achado para esse telefone nessa janela, confirme que cada um descreve uma AÇÃO DISTINTA da IA (ex: uma coisa é ela ter dito "agendei" sem criar nada; outra coisa, se for genuinamente separada, é ela ter usado depois um profissional diferente do que criou) — não o mesmo evento sendo redito com palavras diferentes em categorias diferentes. Na dúvida entre "é o mesmo fato" ou "são fatos diferentes", trate como o MESMO fato e reporte uma vez só, na categoria mais específica que se aplica.
 - Em dúvida, NÃO reporte. Falso alarme é pior que achado perdido.
 - Português do Brasil, resumo curto e factual, dizendo o que a IA afirmou e o que a ferramenta realmente devolveu.`;
 }
