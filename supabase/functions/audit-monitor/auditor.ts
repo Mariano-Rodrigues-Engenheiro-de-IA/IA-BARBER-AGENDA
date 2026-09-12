@@ -94,12 +94,16 @@ export function buildDossier(
     errorsBlock && errorsBlock !== "null" ? errorsBlock : "(nenhum)",
   ].join("\n");
 
+  const timeBlock = buildTimeReference(toolBlock, log.created_at);
+
   return {
-    dossier: `${conversationBlock}\n\n${toolBlock}\n\nAudite este atendimento seguindo suas regras.`,
+    dossier: `${conversationBlock}\n\n${toolBlock}\n\n${timeBlock}\n\nAudite este atendimento seguindo suas regras.`,
     conversationText: conversationBlock,
     toolText: toolBlock,
+    timeReference: timeBlock,
   };
 }
+
 
 // Normaliza para comparar citação x texto original sem depender de acento,
 // caixa, pontuação ou espaçamento.
@@ -112,19 +116,116 @@ export function normalizeForProof(text: string): string {
     .trim();
 }
 
+// ============================================================================
+// REFERÊNCIA DE TEMPO — a auditora não pode deduzir fuso nem dia da semana.
+// Toda data/hora encontrada no retorno das ferramentas é convertida para o
+// horário local (America/Sao_Paulo) com o dia da semana já calculado.
+// ============================================================================
+const SP_TZ = "America/Sao_Paulo";
+const WEEKDAY_WORDS = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+
+function spParts(d: Date): { date: string; time: string; weekday: string } | null {
+  if (Number.isNaN(d.getTime())) return null;
+  const fmt = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: SP_TZ,
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(d).map((p) => [p.type, p.value]));
+  return {
+    date: `${parts.day}/${parts.month}/${parts.year}`,
+    time: `${parts.hour}:${parts.minute}`,
+    weekday: String(parts.weekday ?? "").replace(/-feira$/, ""),
+  };
+}
+
+const ISO_RE = /\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
+
+export function buildTimeReference(toolText: string, turnAt?: string): string {
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of toolText.match(ISO_RE) ?? []) {
+    if (seen.has(raw) || seen.size >= 25) continue;
+    seen.add(raw);
+    const hasZone = /(?:Z|[+-]\d{2}:\d{2})$/.test(raw);
+    const p = spParts(new Date(hasZone ? raw.replace(" ", "T") : `${raw.replace(" ", "T")}-03:00`));
+    if (!p) continue;
+    lines.push(`${raw} = ${p.weekday}, ${p.date} ${p.time} (horário local de Brasília)`);
+  }
+  const now = turnAt ? spParts(new Date(turnAt)) : null;
+  return [
+    "=== REFERÊNCIA DE TEMPO (já convertida — use SOMENTE estes valores) ===",
+    now ? `Momento do atendimento: ${now.weekday}, ${now.date} ${now.time}` : "",
+    ...(lines.length ? lines : ["(nenhuma data/hora ISO no retorno das ferramentas)"]),
+    "Datas com Z ou +00:00 estão em UTC: o horário local é 3 horas menor. Diferença de fuso NÃO é divergência.",
+    "Nunca calcule dia da semana por conta própria — use o que está acima.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function weekdayKey(text: string): string {
+  return String(text ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+// Horários citados, normalizados para HH:MM ("13h10", "13h", "9h", "13:10").
+function extractTimes(text: string): string[] {
+  const out = new Set<string>();
+  const src = String(text ?? "");
+  for (const m of src.matchAll(/\b(\d{1,2})\s*[:h]\s*(\d{2})\b/g)) {
+    out.add(`${m[1].padStart(2, "0")}:${m[2]}`);
+  }
+  for (const m of src.matchAll(/\b(\d{1,2})\s*h(?!\d)/g)) {
+    out.add(`${m[1].padStart(2, "0")}:00`);
+  }
+  return [...out];
+}
+
+// Severidade determinística por tipo de impacto — sem julgamento do modelo.
+export const SEVERITY_BY_CATEGORY: Record<string, "baixa" | "media" | "alta"> = {
+  completude_agendamento: "alta",
+  cancelamento_remarcacao: "alta",
+  erro_tecnico_mascarado: "alta",
+  disponibilidade_inventada: "media",
+  dados_incorretos_api: "media",
+  uso_indevido_ferramenta: "media",
+  comunicacao: "media",
+};
+
+// Ferramentas que de fato executam ação (criam/alteram algo na agenda).
+const ACTION_TOOLS = new Set([
+  "criar_agendamento", "agendar",
+  "cancelar_agendamento", "desmarcar_agendamento",
+  "editar_agendamento", "remarcar_agendamento",
+]);
+
+
 const MIN_PROOF_CHARS = 12;
 
 const NO_DIVERGENCE_SUMMARY_PATTERNS = [
   /\bsem diverg[eê]ncia\b/i,
   /\bsem inconsist[eê]ncia\b/i,
+  /\bn[ãa]o hou?ve (?:diverg[eê]ncia|inconsist[eê]ncia|erro|falha|problema)\b/i,
+  /\bn[ãa]o h[áa] (?:diverg[eê]ncia|inconsist[eê]ncia|erro|falha|problema)\b/i,
   /\bde forma compat[ií]vel\b/i,
+  /\b(?:coerente|consistente|compat[ií]vel)\s+com\s+(?:o\s+)?(?:retorno|dado|hor[áa]rio|resultado)/i,
   /\b(?:resposta|confirma[cç][aã]o).{0,80}\bcompat[ií]vel com (?:o )?retorno\b/i,
-  /\b(?:as tr[eê]s coisas|pedido.{0,30}resposta.{0,30}(?:ferramenta|retorno)).{0,80}\b(?:batem|coincidem)\b/i,
+  /\b(?:as tr[eê]s coisas|pedido.{0,30}resposta.{0,30}(?:ferramenta|retorno)).{0,80}\b(?:batem|coincidem|correspondem|conferem)\b/i,
+  /\b(?:conferem|batem|coincidem|correspondem)\s+(?:com|entre)\b.{0,60}\b(?:retorno|api|ferramenta)\b/i,
 ];
 
 function summaryExplicitlySaysThereIsNoDivergence(summary: string): boolean {
   return NO_DIVERGENCE_SUMMARY_PATTERNS.some((pattern) => pattern.test(summary));
 }
+
 
 function quoteAppears(quote: string, haystack: string): boolean {
   const q = normalizeForProof(quote);
@@ -174,11 +275,54 @@ export function findingSignature(finding: {
   return `${category}|conv:${conv}`;
 }
 
+// Achado sobre fuso horário: se o horário citado na conversa é exatamente o
+// horário local já convertido do retorno da API, não existe divergência.
+function timesAllBackedByApi(finding: any, toolText: string, timeReference: string): boolean {
+  const summary = String(finding.summary ?? "");
+  // Alegação de negativa ("disse que não tem vaga") não é validada por igualdade
+  // de horários — ali o problema é justamente o que a IA negou.
+  if (/\bn[ãa]o (?:tem|h[áa]|havia|tinha)\b|\bnegou\b|\bsem vaga\b|\bindispon[íi]vel\b|\besgotad/i.test(summary)) return false;
+  const cited = extractTimes(`${finding.evidence_conversation ?? ""} ${summary}`);
+  if (!cited.length) return false;
+  const haystack = `${toolText}\n${timeReference}`;
+  const available = new Set(extractTimes(haystack));
+  return cited.every((t) => available.has(t));
+}
+
+// Dia da semana: a auditora não sabe calcular. Se o dia citado é o mesmo que a
+// referência de tempo traz para alguma data do retorno, não há divergência.
+function weekdayMatchesReference(finding: any, timeReference: string): boolean {
+  const claim = weekdayKey(`${finding.summary ?? ""} ${finding.evidence_conversation ?? ""}`);
+  const citedWeekday = WEEKDAY_WORDS.find((w) => claim.includes(w));
+  if (!citedWeekday) return false;
+  if (!/\b(?:dia da semana|dia errado|data errada|divergente)\b/i.test(String(finding.summary ?? ""))) return false;
+  return weekdayKey(timeReference).includes(citedWeekday);
+}
+
+// Turno ainda em andamento: nenhuma ação foi executada e a IA terminou
+// perguntando algo ao cliente. Falta dado que só o cliente pode dar.
+function turnStillWaitingOnClient(context?: AuditContext): boolean {
+  if (!context) return false;
+  const executedAction = (context.toolCalls ?? []).some((tc) => ACTION_TOOLS.has(String(tc?.name ?? "")));
+  if (executedAction) return false;
+  const response = String(context.aiResponse ?? "").trim();
+  if (!response) return false;
+  return /\?\s*$/.test(response) || /\?["')\]]*\s*$/.test(response);
+}
+
+export type AuditContext = {
+  aiResponse?: string | null;
+  toolCalls?: any[];
+  timeReference?: string;
+};
+
 export function validateFinding(
   finding: any,
   conversationText: string,
   toolText: string,
+  context?: AuditContext,
 ): boolean {
+
   if (!finding || typeof finding !== "object") return false;
   if (!AUDIT_CATEGORIES.includes(finding.category)) return false;
   if (typeof finding.summary !== "string" || finding.summary.trim().length < 8) return false;
@@ -190,5 +334,20 @@ export function validateFinding(
   const tool = typeof finding.evidence_tool === "string" ? finding.evidence_tool : "";
   if (!quoteAppears(conv, conversationText)) return false;
   if (!quoteAppears(tool, toolText)) return false;
+
+  const timeReference = context?.timeReference ?? "";
+  // Fuso horário / formatação de hora idêntica ao retorno real.
+  if (
+    (finding.category === "dados_incorretos_api" || finding.category === "disponibilidade_inventada") &&
+    timesAllBackedByApi(finding, toolText, timeReference)
+  ) return false;
+  // Dia da semana já calculado na referência de tempo.
+  if (weekdayMatchesReference(finding, timeReference)) return false;
+  // Fluxo aguardando escolha do cliente não é atendimento incompleto.
+  if (
+    (finding.category === "completude_agendamento" || finding.category === "cancelamento_remarcacao") &&
+    turnStillWaitingOnClient(context)
+  ) return false;
+
   return true;
 }
