@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.audit-monitor]
 verify_jwt = false
+
+[functions.logs-reader]
+verify_jwt = false
+
+[functions.mcp-logs]
+verify_jwt = false
