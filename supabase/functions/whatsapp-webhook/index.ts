@@ -10604,13 +10604,19 @@ function splitIntoMessages(text: string): string[] {
   for (const part of parts) {
     if (EMOJI_ONLY_RE.test(part) && merged.length > 0) {
       merged[merged.length - 1] = `${merged[merged.length - 1]} ${part}`;
-    } else if (EMOJI_ONLY_RE.test(part) && merged.length === 0) {
-      // é a primeira parte inteira — não há anterior para grudar; deixa como
-      // está (caso raro: resposta é só emoji).
-      merged.push(part);
     } else {
       merged.push(part);
     }
+  }
+  // ⚠️ Corrigido (13/09): o caso "emoji é a PRIMEIRA parte" nunca foi
+  // implementado de verdade (só comentado) — a resposta real de hoje veio
+  // com "😊" sozinho no início, seguido do texto, e ficou intacto como
+  // balão isolado. Segunda passada: se a primeira posição ainda for só
+  // emoji e existir uma parte seguinte, gruda com ELA (na frente do texto,
+  // não atrás — preserva a ordem em que o emoji apareceu).
+  while (merged.length > 1 && EMOJI_ONLY_RE.test(merged[0])) {
+    merged[1] = `${merged[0]} ${merged[1]}`;
+    merged.shift();
   }
 
   return merged.length > 0 ? merged : [text];
