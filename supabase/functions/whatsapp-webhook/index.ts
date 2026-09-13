@@ -4317,6 +4317,86 @@ function appbarberFindsUnbookedServicesInSlots(
   return [...candidates.values()];
 }
 
+/**
+ * ⚠️ Quinta checagem independente (13/09) — detecta múltiplos serviços pela
+ * ESTRUTURA das buscas, mesmo quando a transcrição de áudio ou a mensagem do
+ * cliente não cita o segundo serviço explicitamente. Caso real: cliente pediu
+ * "corte e sobrancelha", a IA pesquisou ambos (1131457 e 1131448) para a mesma
+ * data e profissional, criou só o corte às 14h; o slot de sobrancelha às 14:45
+ * existia, mas o filtro barato liberou como único porque o texto não continha
+ * "sobrancelha".
+ *
+ * Regras para não gerar falso positivo:
+ *  - Só dispara com 1 tentativa de agendamento (já garantido pelo caller).
+ *  - Exige pelo menos 2 service_codes DIFERENTES pesquisados na mesma data e
+ *    mesmo profissional (ou profissional não informado → 0).
+ *  - O segundo serviço deve ter um slot no horário imediatamente posterior ao
+ *    agendamento criado (indica que a IA calculou encadeamento, não opções).
+ *  - O cliente não pode ter restringido explicitamente a um único serviço
+ *    ("só o corte", "apenas corte", "somente corte", etc.).
+ *
+ * Quando dispara, força o classificador LLM a decidir — não executa ações
+ * sozinho.
+ */
+function appbarberFindsStructuralMultiServiceEvidence(
+  slotOptions: Array<{ service_code: number; service_name: string; duration_minutes: number | null; professional_code: number; start_date: string; start_time: string }> | undefined,
+  bookedServiceCode: number | undefined,
+  bookedDate: string | undefined,
+  bookedProfessionalCode: number | undefined,
+  bookedStartTime: string | undefined,
+  bookedDurationMinutes: number | undefined,
+  userText: string,
+  bookedServiceNames: string[] = [],
+  bookedServiceCodes: Set<number> = new Set(),
+): AppBarberPendingServiceEvidence[] {
+  if (!Array.isArray(slotOptions) || slotOptions.length === 0) return [];
+  if (!bookedServiceCode || !bookedDate || !bookedStartTime) return [];
+
+  const [hour, minute] = bookedStartTime.slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return [];
+  const duration = Number.isFinite(bookedDurationMinutes) && Number(bookedDurationMinutes) > 0
+    ? Number(bookedDurationMinutes)
+    : 0;
+  const pendingMinute = hour * 60 + minute + duration;
+  const suggestedStartTime = `${String(Math.floor(pendingMinute / 60) % 24).padStart(2, "0")}:${String(pendingMinute % 60).padStart(2, "0")}`;
+
+  // Restrição explícita a um único serviço no texto do cliente.
+  const normalizedUser = normalizeServiceText(userText);
+  const restrictedToSingle = /\b(s[oó]\s+|apenas\s+|somente\s+|s[oó]\s*o\s+|apenas\s*o\s+|somente\s*o\s+)/i.test(normalizedUser)
+    && /\b(cabelo|barba|sobrancelha|hidrata|depila|pezinho|maquina|navalha|bigode)\b/i.test(normalizedUser);
+  if (restrictedToSingle) return [];
+
+  const researchedServiceCodes = new Set<number>();
+  for (const raw of slotOptions) {
+    const serviceCode = Number(raw?.service_code);
+    if (!Number.isFinite(serviceCode) || serviceCode <= 0) continue;
+    researchedServiceCodes.add(serviceCode);
+  }
+  // Precisa de pelo menos 2 service_codes distintos pesquisados nesta conversa.
+  if (researchedServiceCodes.size < 2) return [];
+
+  const candidates = new Map<number, AppBarberPendingServiceEvidence>();
+  for (const raw of slotOptions) {
+    const serviceCode = Number(raw?.service_code);
+    const professionalCode = Number(raw?.professional_code);
+    const startTime = String(raw?.start_time || "").slice(0, 5);
+    const serviceName = String(raw?.service_name || `Serviço ${serviceCode}`);
+    if (!Number.isFinite(serviceCode) || serviceCode <= 0 || serviceCode === bookedServiceCode) continue;
+    if (bookedServiceCodes.has(serviceCode)) continue;
+    if (String(raw?.start_date || "").slice(0, 10) !== bookedDate) continue;
+    if (professionalCode !== bookedProfessionalCode && professionalCode !== 0) continue;
+    if (startTime !== suggestedStartTime) continue;
+    if (appbarberServiceCoveredByBooked(bookedServiceNames, serviceName)) continue;
+    candidates.set(serviceCode, {
+      serviceCode,
+      serviceName,
+      durationMinutes: toPositiveInteger(raw?.duration_minutes),
+      suggestedStartTime,
+    });
+  }
+  return [...candidates.values()];
+}
+
 function appbarberIsClearlySingleBooking(params: {
   logToolCalls: any[];
   bookingToolNames: Set<string>;
@@ -4384,6 +4464,23 @@ function appbarberIsClearlySingleBooking(params: {
     bookedServiceCodes,
   ).length > 0) {
     return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
+  }
+
+  // ⚠️ Quinta checagem independente (13/09): mesmo sem menção textual explícita,
+  // se a estrutura de buscas mostra 2+ serviços na mesma data/profissional e
+  // só 1 foi criado no horário consecutivo, força o classificador LLM a decidir.
+  if (appbarberFindsStructuralMultiServiceEvidence(
+    sessionState?.appbarberSlotOptions,
+    bookedServiceCode,
+    bookedDate,
+    bookedProfessionalCode,
+    bookedStartTime,
+    bookedDurationMinutes,
+    currentRequestEvidence,
+    bookedNamesFromCatalog,
+    bookedServiceCodes,
+  ).length > 0) {
+    return { single: false, reason: "evidência estrutural de múltiplos serviços pesquisados, mesmo horário/profissional" };
   }
 
   // ⚠️ Janela ampliada (10/09): usa todo o histórico já carregado da conversa em
