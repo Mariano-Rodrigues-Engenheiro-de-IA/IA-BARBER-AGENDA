@@ -93,10 +93,26 @@ export function classifyAppBarberFailure(
         "Vi aqui que você já tem um agendamento ativo com a gente. "
         + "Quer que eu troque para esse novo horário, ou prefere manter o atual?",
       // AUDIÊNCIA: modelo. Nunca chega ao cliente.
+      // ⚠️ Reforçado (13/09): bug real em teste (9Cinco) — a IA chamou
+      // listar_agendamentos como instruído, mas a pergunta final repetiu a
+      // estrutura genérica ("quer trocar ou manter?") sem citar os dados
+      // reais do agendamento encontrado (dia, hora, profissional, serviço),
+      // deixando o cliente sem saber do que exatamente está abrindo mão.
+      // Reforçado de novo, a pedido do usuário: a pergunta também precisa
+      // EXPLICAR o motivo (o sistema só permite 1 agendamento ativo por
+      // vez) — sem isso, o cliente pode achar que a restrição é arbitrária
+      // e não entender por que não pode simplesmente ter os dois.
       recoveryDirective:
         "O cliente já tem um agendamento futuro ativo e a API não permite um segundo. " +
         "Chame listar_agendamentos para localizar o agendamento atual e pergunte ao cliente se ele quer TROCAR " +
-        "(cancelar o atual e criar o novo) ou MANTER o que já existe. Só depois da resposta dele, se for trocar, " +
+        "(cancelar o atual e criar o novo) ou MANTER o que já existe. " +
+        "A pergunta final ao cliente é OBRIGADA a: (1) citar os dados reais do agendamento atual encontrado — " +
+        "serviço, dia (hoje/amanhã/dia da semana), horário e profissional; (2) explicar o motivo da pergunta — " +
+        "que o sistema só permite 1 agendamento ativo por vez, então não dá pra ter os dois juntos. " +
+        "Nunca pergunte 'trocar ou manter' de forma genérica sem esses dois elementos: exemplo correto — " +
+        "'Vi que você já tem [SERVIÇO] marcado com o [PROFISSIONAL] para [DIA] às [HORA]. Como só é possível ter " +
+        "1 agendamento ativo por vez, quer que eu troque para esse novo horário, ou prefere manter o atual?' " +
+        "Só depois da resposta dele, se for trocar, " +
         "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto.",
     };
   }
