@@ -112,6 +112,11 @@ export function classifyAppBarberFailure(
         "Nunca pergunte 'trocar ou manter' de forma genérica sem esses dois elementos: exemplo correto — " +
         "'Vi que você já tem [SERVIÇO] marcado com o [PROFISSIONAL] para [DIA] às [HORA]. Como só é possível ter " +
         "1 agendamento ativo por vez, quer que eu troque para esse novo horário, ou prefere manter o atual?' " +
+        "⚠️ SE A COMANDA EXISTENTE TIVER 2+ ITENS (ex: cabelo + sobrancelha na mesma visita): cite CADA item com " +
+        "o horário DELE especificamente — nunca junte serviços diferentes sob um horário só. A explicação do " +
+        "motivo continua obrigatória do mesmo jeito. Exemplo: 'Vi que você já tem cabelo às 14h e sobrancelha às " +
+        "14h45 com o [PROFISSIONAL], marcados para amanhã. Como só é possível ter 1 agendamento ativo por vez, " +
+        "prefere remarcar os dois para [DIA/HORA NOVO] ou manter como está?' " +
         "Só depois da resposta dele, se for trocar, " +
         "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto.",
     };
