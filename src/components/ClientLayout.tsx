@@ -4,7 +4,8 @@ import { useAuth, useModulePermission, type AppModule } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { LayoutDashboard, MessageCircle, LogOut, Power, PowerOff, Smartphone, Bot, TestTube2, Wrench } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { LayoutDashboard, MessageCircle, LogOut, Smartphone, Bot, TestTube2, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { postLogoutRedirect, cameFromCrm } from "@/lib/crm-origin";
@@ -150,24 +151,17 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
         </nav>
 
-        {/* Indicador de status da IA — mostra o estado ATUAL (não a ação),
-            com cor universal de status (verde=ativa, vermelho=pausada) em
-            vez da cor de tema, para não ficar ambíguo com "ativar" sendo
-            azul mesmo quando a IA já está pausada (confusão relatada pelo
-            usuário). Clicar continua alternando o estado. */}
-        <div className="px-3 pb-2">
-          <button
-            onClick={togglePause}
-            className={cn(
-              "flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors",
-              tenant?.agent_paused
-                ? "bg-red-500/10 border-red-500/20 text-red-600 hover:bg-red-500/15"
-                : "bg-green-500/10 border-green-500/20 text-green-600 hover:bg-green-500/15",
-            )}
-          >
-            {tenant?.agent_paused ? <PowerOff className="h-3.5 w-3.5 shrink-0" /> : <Power className="h-3.5 w-3.5 shrink-0" />}
-            <span>{tenant?.agent_paused ? "IA Pausada" : "IA Ativa"}</span>
-          </button>
+        {/* Indicador de status da IA — interruptor discreto em vez de botão
+            com fundo colorido (que sempre chamava atenção demais na
+            sidebar, mesmo em versão suave). Texto neutro, só a bolinha do
+            switch indica o estado (verde=ativa, cinza=pausada). */}
+        <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-sidebar-foreground/80">
+          <span>IA {tenant?.agent_paused ? "pausada" : "ativa"}</span>
+          <Switch
+            checked={!tenant?.agent_paused}
+            onCheckedChange={togglePause}
+            className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-red-500/40"
+          />
         </div>
 
         <div className="flex items-center gap-3 border-t border-sidebar-border px-4 py-4">
