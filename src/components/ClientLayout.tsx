@@ -151,16 +151,20 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
         </nav>
 
-        {/* Indicador de status da IA — interruptor discreto em vez de botão
-            com fundo colorido (que sempre chamava atenção demais na
-            sidebar, mesmo em versão suave). Texto neutro, só a bolinha do
-            switch indica o estado (verde=ativa, cinza=pausada). */}
-        <div className="flex items-center justify-between px-3 py-2 text-xs font-medium text-sidebar-foreground/80">
-          <span>IA {tenant?.agent_paused ? "pausada" : "ativa"}</span>
+        {/* Indicador de status da IA — interruptor discreto. Label fixo
+            "IA" (não muda de tamanho conforme o estado) + gap fixo em vez
+            de justify-between, para o switch não parecer "deslocado"
+            quando o texto ao lado muda de comprimento. Vermelho mais
+            visível quando pausada (antes ficava escuro/apagado). */}
+        <div
+          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-sidebar-foreground/80"
+          title={tenant?.agent_paused ? "IA pausada" : "IA ativa"}
+        >
+          <span>IA</span>
           <Switch
             checked={!tenant?.agent_paused}
             onCheckedChange={togglePause}
-            className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-red-500/40"
+            className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-red-500"
           />
         </div>
 
