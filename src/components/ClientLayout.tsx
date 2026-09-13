@@ -153,12 +153,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
 
         {/* Indicador de status da IA — interruptor discreto, texto completo
             ("IA ativa"/"IA pausada") próximo do switch (gap reduzido). */}
-        <div className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-sidebar-foreground/80">
+        <div className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-sidebar-foreground/80">
           <span>IA {tenant?.agent_paused ? "pausada" : "ativa"}</span>
           <Switch
             checked={!tenant?.agent_paused}
             onCheckedChange={togglePause}
-            className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-red-500"
+            className="data-[state=checked]:bg-green-500 data-[state=unchecked]:bg-red-600"
           />
         </div>
 
