@@ -4466,6 +4466,23 @@ function appbarberIsClearlySingleBooking(params: {
     return { single: false, reason: "service_code diferente pesquisado nesta conversa, mesma data, não criado" };
   }
 
+  // ⚠️ Quinta checagem independente (13/09): mesmo sem menção textual explícita,
+  // se a estrutura de buscas mostra 2+ serviços na mesma data/profissional e
+  // só 1 foi criado no horário consecutivo, força o classificador LLM a decidir.
+  if (appbarberFindsStructuralMultiServiceEvidence(
+    sessionState?.appbarberSlotOptions,
+    bookedServiceCode,
+    bookedDate,
+    bookedProfessionalCode,
+    bookedStartTime,
+    bookedDurationMinutes,
+    currentRequestEvidence,
+    bookedNamesFromCatalog,
+    bookedServiceCodes,
+  ).length > 0) {
+    return { single: false, reason: "evidência estrutural de múltiplos serviços pesquisados, mesmo horário/profissional" };
+  }
+
   // ⚠️ Janela ampliada (10/09): usa todo o histórico já carregado da conversa em
   // vez de só as últimas 5 mensagens — a janela de 5 se mostrou curta demais
   // (a IA quebra respostas em 2-3 mensagens, então 5 vagas cobrem menos de 2
