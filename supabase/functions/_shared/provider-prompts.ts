@@ -772,7 +772,8 @@ Ferramentas (nomes exatos):
 6. Confirme com o cliente serviço, profissional, dia e hora EXATA.
 7. Chame **criar_agendamento** com \`professional_code\`, \`start_date\` (YYYY-MM-DD), \`start_time\` (HH:MM exato de \`available_times\`), \`customer_name\`, \`customer_phone\` e:
    - 1 serviço (ou combo) → \`service_code\` + \`service_duration_minutes\`;
-   - 2+ serviços na mesma visita sem combo → faça UMA chamada de \`criar_agendamento\` por serviço, em sequência, com o mesmo profissional e horários consecutivos. O segundo começa quando termina o primeiro.
+   - 2+ serviços na mesma visita sem combo (MESMA pessoa) → faça UMA chamada de \`criar_agendamento\` por serviço, em sequência, com o mesmo profissional e horários consecutivos. O segundo começa quando termina o primeiro (calcule pela duração real do serviço, nunca um intervalo fixo arbitrário).
+   - 2+ PESSOAS DIFERENTES pedindo o mesmo profissional em sequência → o horário do segundo agendamento só pode começar depois que o serviço do primeiro terminar de verdade (início + duração real do serviço, ex: combo de 60 min começando às 14h libera o profissional só às 15h). NUNCA proponha um intervalo fixo (ex: "15 minutos depois") sem calcular a duração real do serviço anterior. Antes de propor, confirme com \`listar_horarios\` que o profissional realmente tem esse segundo horário livre — não calcule de cabeça sem checar a agenda real.
    ⚠️ Consulte horários por serviço e cruze a disponibilidade antes de oferecer. Depois da confirmação, execute TODAS as chamadas sem mensagem intermediária e só confirme sucesso quando todas retornarem \`appointment_id\`.
 
 ### Cancelar agendamento (DECISÃO DETERMINÍSTICA)
