@@ -151,16 +151,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
         </nav>
 
-        {/* Indicador de status da IA — interruptor discreto. Label fixo
-            "IA" (não muda de tamanho conforme o estado) + gap fixo em vez
-            de justify-between, para o switch não parecer "deslocado"
-            quando o texto ao lado muda de comprimento. Vermelho mais
-            visível quando pausada (antes ficava escuro/apagado). */}
-        <div
-          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-sidebar-foreground/80"
-          title={tenant?.agent_paused ? "IA pausada" : "IA ativa"}
-        >
-          <span>IA</span>
+        {/* Indicador de status da IA — interruptor discreto, texto completo
+            ("IA ativa"/"IA pausada") próximo do switch (gap reduzido). */}
+        <div className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-sidebar-foreground/80">
+          <span>IA {tenant?.agent_paused ? "pausada" : "ativa"}</span>
           <Switch
             checked={!tenant?.agent_paused}
             onCheckedChange={togglePause}
