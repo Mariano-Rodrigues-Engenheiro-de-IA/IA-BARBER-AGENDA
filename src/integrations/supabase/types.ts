@@ -141,12 +141,16 @@ export type Database = {
       ai_audit_runs: {
         Row: {
           agent_log_id: string
+          attempts: number
           created_at: string
           discarded_count: number
+          discarded_details: Json | null
           error_message: string | null
+          http_trace: Json | null
           id: string
           issues_count: number
           model_used: string | null
+          next_retry_at: string | null
           phone_number: string | null
           provider: string | null
           status: string
@@ -155,12 +159,16 @@ export type Database = {
         }
         Insert: {
           agent_log_id: string
+          attempts?: number
           created_at?: string
           discarded_count?: number
+          discarded_details?: Json | null
           error_message?: string | null
+          http_trace?: Json | null
           id?: string
           issues_count?: number
           model_used?: string | null
+          next_retry_at?: string | null
           phone_number?: string | null
           provider?: string | null
           status?: string
@@ -169,12 +177,16 @@ export type Database = {
         }
         Update: {
           agent_log_id?: string
+          attempts?: number
           created_at?: string
           discarded_count?: number
+          discarded_details?: Json | null
           error_message?: string | null
+          http_trace?: Json | null
           id?: string
           issues_count?: number
           model_used?: string | null
+          next_retry_at?: string | null
           phone_number?: string | null
           provider?: string | null
           status?: string

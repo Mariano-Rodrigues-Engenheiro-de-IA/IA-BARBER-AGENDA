@@ -36,8 +36,25 @@ type Run = {
   agent_log_id: string;
   status: string;
   issues_count: number;
+  discarded_count: number | null;
+  discarded_details: { category: string | null; summary: string; reason: string }[] | null;
+  error_message: string | null;
   turn_at: string | null;
   created_at: string;
+};
+
+// Motivos de descarte da auditora, traduzidos para exibição.
+const DISCARD_REASONS: Record<string, string> = {
+  categoria_invalida: "Categoria fora da lista permitida",
+  resumo_curto: "Resumo curto demais",
+  resumo_contraditorio: "Resumo dizia que não houve divergência",
+  evidencia_conversa_ausente: "Evidência da conversa não consta no registro",
+  evidencia_ferramenta_ausente: "Evidência da ferramenta não consta no retorno",
+  equivalencia_temporal: "Equivalência de horário com o retorno da agenda",
+  dia_semana_confere: "Dia da semana conferia com a referência",
+  aguardando_cliente: "Conversa aguardava resposta do cliente",
+  duplicado: "Achado já reportado nesta conversa",
+  mesmo_fato: "Mesmo fato já apontado em outra categoria",
 };
 
 const CATEGORIES = [
@@ -48,6 +65,10 @@ const CATEGORIES = [
   { key: "disponibilidade_inventada", label: "Horário / profissional inventado" },
   { key: "dados_incorretos_api", label: "Dado divergente da API" },
   { key: "uso_indevido_ferramenta", label: "Uso indevido da ferramenta" },
+  { key: "duplicidade_agendamento", label: "Agendamento duplicado" },
+  { key: "violacao_silent_mode", label: "Respondeu em modo silencioso" },
+  { key: "acao_afirmada_nao_executada", label: "Ação afirmada não executada" },
+  { key: "profissional_inventado", label: "Profissional inventado" },
 ] as const;
 
 const PERIODS = [
@@ -115,12 +136,12 @@ export default function AiMonitorPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("ai_audit_runs")
-        .select("id, tenant_id, agent_log_id, status, issues_count, turn_at, created_at")
+        .select("id, tenant_id, agent_log_id, status, issues_count, discarded_count, discarded_details, error_message, turn_at, created_at")
         .gte("created_at", since)
         .order("created_at", { ascending: false })
         .limit(5000);
       if (error) throw error;
-      return (data ?? []) as Run[];
+      return (data ?? []) as unknown as Run[];
     },
   });
 
@@ -265,6 +286,43 @@ export default function AiMonitorPage() {
         </CardContent></Card>
       </div>
 
+      {/* Saúde do próprio monitor: erro seguido ou monitor parado */}
+      {(() => {
+        const sorted = [...(runs ?? [])].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+        let consecutiveErrors = 0;
+        for (const r of sorted) {
+          if (r.status === "error") consecutiveErrors++;
+          else break;
+        }
+        const lastRunAt = sorted[0]?.created_at ?? null;
+        const stale = lastRunAt ? Date.now() - new Date(lastRunAt).getTime() > 30 * 60_000 : true;
+        const alert = consecutiveErrors >= 3 || (stale && (runs ?? []).length > 0);
+        return (
+          <Card className={alert ? "border-destructive" : "border-emerald-600/40"}>
+            <CardContent className="p-4 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm">
+              <span className="flex items-center gap-2 font-medium">
+                {alert
+                  ? <AlertTriangle className="w-4 h-4 text-destructive" />
+                  : <ShieldCheck className="w-4 h-4 text-emerald-500" />}
+                Saúde do monitor
+              </span>
+              <span className="text-muted-foreground">
+                Última execução: {lastRunAt ? format(new Date(lastRunAt), "dd/MM HH:mm", { locale: ptBR }) : "nunca"}
+              </span>
+              <span className={consecutiveErrors > 0 ? "text-destructive" : "text-muted-foreground"}>
+                Erros seguidos: {consecutiveErrors}
+              </span>
+              {stale && lastRunAt && (
+                <span className="text-amber-500">Sem execução há mais de 30 minutos — verifique o agendador.</span>
+              )}
+              {consecutiveErrors >= 3 && (
+                <span className="text-destructive">Monitor falhando — incidente registrado e o dono foi avisado.</span>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Saúde por empresa</h2>
         {!perTenant.length && (
@@ -308,6 +366,50 @@ export default function AiMonitorPage() {
           ))}
         </div>
       </section>
+
+      {/* Descartes e erros da auditora: tudo fica consultável, nada some em silêncio */}
+      {(() => {
+        const withDiscards = (runs ?? []).filter(
+          (r) => (r.discarded_count ?? 0) > 0 || r.status === "error",
+        );
+        if (!withDiscards.length) return null;
+        return (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Descartes e erros da auditora</h2>
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                {withDiscards.slice(0, 30).map((r) => (
+                  <div key={r.id} className="text-sm border-b border-border/40 pb-3 last:border-0 last:pb-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">{tenantName(r.tenant_id)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(r.turn_at ?? r.created_at), "dd/MM HH:mm", { locale: ptBR })}
+                      </span>
+                      {r.status === "error" && (
+                        <Badge variant="destructive">erro na auditoria</Badge>
+                      )}
+                      {(r.discarded_count ?? 0) > 0 && (
+                        <Badge variant="outline">{r.discarded_count} descartado(s)</Badge>
+                      )}
+                    </div>
+                    {r.status === "error" && r.error_message && (
+                      <p className="mt-1 text-xs text-destructive break-all">{r.error_message}</p>
+                    )}
+                    {(r.discarded_details ?? []).map((d, i) => (
+                      <p key={i} className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {DISCARD_REASONS[d.reason] ?? d.reason}:
+                        </span>{" "}
+                        {d.summary}
+                      </p>
+                    ))}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </section>
+        );
+      })()}
 
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">

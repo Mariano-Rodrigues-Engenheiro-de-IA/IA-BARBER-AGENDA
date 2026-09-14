@@ -4,9 +4,25 @@
 // pedido do cliente x resposta final x retorno real das ferramentas e grava
 // achados em ai_audit_findings. Todo achado precisa citar evidência real:
 // trecho da conversa + trecho do retorno da ferramenta. Sem prova, descarta.
+//
+// Modelo fixo (gpt-5-mini) via OpenAI direta — mesmo padrão do atendente.
+// Sem fallback entre providers: falha vira erro registrado e o turno volta
+// para a fila de reprocessamento, nunca troca de modelo em silêncio.
 // ============================================================================
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
-import { buildDossier, RELEVANT_TOOLS, hasRelevantTool, validateFinding, findingSignature, normalizeForProof, SEVERITY_BY_CATEGORY, AUDIT_CATEGORIES } from "./auditor.ts";
+import {
+  buildDossier,
+  RELEVANT_TOOLS,
+  hasRelevantTool,
+  hasDetectedGuardSignal,
+  claimsCompletedAction,
+  silentModeViolation,
+  validateFinding,
+  findingSignature,
+  normalizeForProof,
+  SEVERITY_BY_CATEGORY,
+  AUDIT_CATEGORIES,
+} from "./auditor.ts";
 import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 const corsHeaders = {
@@ -17,12 +33,14 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const AUDITOR_MODEL = "openai/gpt-5.4-mini";
+// Modelo fixo aprovado: o mesmo do agente de atendimento.
+const AUDITOR_MODEL = "gpt-5-mini";
+const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+const MAX_ATTEMPTS = 6;
 
 // Prompt padrão vive em _shared/provider-prompts.ts (provider "auditor") e é
 // editável na aba Prompts do painel (tabela provider_prompts).
 const DEFAULT_SYSTEM_PROMPT = getDefaultProviderPrompt("auditor");
-
 
 const RESPONSE_SCHEMA = {
   type: "object",
@@ -47,30 +65,85 @@ const RESPONSE_SCHEMA = {
   required: ["findings"],
 };
 
-async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: string) {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": apiKey,
-      "X-Lovable-AIG-SDK": "fetch",
-    },
-    body: JSON.stringify({
-      model: AUDITOR_MODEL,
-      instructions: systemPrompt,
-      input: dossier,
-      stream: true,
-      text: { format: { type: "json_schema", name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
-    }),
-  });
+type AuditTrace = {
+  endpoint: string;
+  model_requested: string;
+  model_returned?: string | null;
+  http_status?: number | null;
+  request_id?: string | null;
+  duration_ms?: number;
+  usage?: unknown;
+  attempts?: number;
+};
+
+class AuditCallError extends Error {
+  status: number;
+  retryable: boolean;
+  circuitBreaker: boolean;
+  trace: AuditTrace;
+  constructor(message: string, opts: { status: number; retryable: boolean; circuitBreaker: boolean; trace: AuditTrace }) {
+    super(message);
+    this.status = opts.status;
+    this.retryable = opts.retryable;
+    this.circuitBreaker = opts.circuitBreaker;
+    this.trace = opts.trace;
+  }
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function callOpenAIOnce(dossier: string, apiKey: string, systemPrompt: string, attempt: number) {
+  const started = Date.now();
+  const trace: AuditTrace = { endpoint: OPENAI_ENDPOINT, model_requested: AUDITOR_MODEL, attempts: attempt };
+  let res: Response;
+  try {
+    res = await fetch(OPENAI_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: AUDITOR_MODEL,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: dossier },
+        ],
+        response_format: { type: "json_schema", json_schema: { name: "auditoria", strict: true, schema: RESPONSE_SCHEMA } },
+        reasoning_effort: "low",
+        max_completion_tokens: 4000,
+        stream: true,
+        stream_options: { include_usage: true },
+      }),
+    });
+  } catch (e) {
+    trace.duration_ms = Date.now() - started;
+    throw new AuditCallError(`rede: ${String((e as Error).message ?? e).slice(0, 300)}`, {
+      status: 0, retryable: true, circuitBreaker: false, trace,
+    });
+  }
+
+  trace.http_status = res.status;
+  trace.request_id = res.headers.get("x-request-id");
+  trace.duration_ms = Date.now() - started;
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`gateway ${res.status}: ${body.slice(0, 400)}`);
+    const retryable = res.status >= 500 || res.status === 408 || res.status === 429;
+    // 401/402/403 = crédito/configuração: para a cadeia inteira, não adianta
+    // tentar o próximo turno — o mesmo erro se repetiria.
+    const circuitBreaker = res.status === 401 || res.status === 402 || res.status === 403;
+    const retryAfter = res.headers.get("retry-after");
+    throw new AuditCallError(`openai ${res.status}: ${body.slice(0, 400)}`, {
+      status: res.status, retryable, circuitBreaker,
+      trace: { ...trace, retry_after: retryAfter } as AuditTrace,
+    });
   }
 
-  // SSE: acumula o texto final (resposta de uma chamada só, sem render progressivo).
+  // SSE (chat completions): acumula o texto final; resposta de uma chamada só.
   let text = "";
+  let modelReturned: string | null = null;
+  let usage: unknown = null;
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -81,20 +154,17 @@ async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: strin
     const events = buffer.split("\n\n");
     buffer = events.pop() ?? "";
     for (const evt of events) {
-      const dataLines = evt.split("\n").filter((l) => l.startsWith("data:"));
-      for (const line of dataLines) {
+      for (const line of evt.split("\n").filter((l) => l.startsWith("data:"))) {
         const payload = line.slice(5).trim();
         if (!payload || payload === "[DONE]") continue;
         try {
           const parsed = JSON.parse(payload);
-          if (parsed?.type === "response.output_text.delta" && typeof parsed.delta === "string") {
-            text += parsed.delta;
-          } else if (parsed?.type === "response.completed") {
-            const outputText = parsed?.response?.output_text;
-            if (typeof outputText === "string" && outputText) text = outputText;
-          } else if (parsed?.type === "response.failed" || parsed?.type === "error") {
-            throw new Error(`resposta falhou: ${JSON.stringify(parsed).slice(0, 300)}`);
-          }
+          if (typeof parsed?.model === "string") modelReturned = parsed.model;
+          if (parsed?.usage) usage = parsed.usage;
+          const delta = parsed?.choices?.[0]?.delta?.content;
+          if (typeof delta === "string") text += delta;
+          const finish = parsed?.choices?.[0]?.finish_reason;
+          if (finish === "length") throw new Error("resposta truncada por limite de tokens");
         } catch (e) {
           if (e instanceof SyntaxError) continue;
           throw e;
@@ -102,14 +172,54 @@ async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: strin
       }
     }
   }
+  trace.model_returned = modelReturned;
+  trace.usage = usage;
+  trace.duration_ms = Date.now() - started;
+
+  // Resposta vazia não é "sem achados": é falha da chamada e deve ir para a fila.
+  if (!text.trim()) {
+    throw new AuditCallError("resposta vazia da auditora (stream sem conteúdo)", {
+      status: 200, retryable: true, circuitBreaker: false, trace,
+    });
+  }
 
   let parsed: any = {};
   try {
-    parsed = JSON.parse(text || "{}");
+    parsed = JSON.parse(text);
   } catch {
-    throw new Error("resposta da auditora não era JSON válido");
+    throw new AuditCallError("resposta da auditora não era JSON válido", {
+      status: 200, retryable: true, circuitBreaker: false, trace,
+    });
   }
-  return Array.isArray(parsed.findings) ? parsed.findings : [];
+  if (!Array.isArray(parsed.findings)) {
+    throw new AuditCallError("resposta da auditora sem o campo findings", {
+      status: 200, retryable: true, circuitBreaker: false, trace,
+    });
+  }
+  return { findings: parsed.findings as any[], trace };
+}
+
+async function auditOneTurn(dossier: string, apiKey: string, systemPrompt: string) {
+  const maxAttempts = 3;
+  let lastError: AuditCallError | null = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callOpenAIOnce(dossier, apiKey, systemPrompt, attempt);
+    } catch (e) {
+      if (!(e instanceof AuditCallError)) throw e;
+      lastError = e;
+      if (e.circuitBreaker || !e.retryable || attempt === maxAttempts) break;
+      const retryAfterSec = Number((e.trace as any)?.retry_after ?? 0);
+      const waitMs = retryAfterSec > 0 ? retryAfterSec * 1000 : Math.min(2000 * 2 ** (attempt - 1), 15000);
+      await sleep(waitMs);
+    }
+  }
+  throw lastError;
+}
+
+function nextRetryDelayMs(attempts: number, circuitBreaker: boolean): number {
+  if (circuitBreaker) return 30 * 60_000; // crédito/config: re-tenta em 30 min
+  return Math.min(2 ** attempts * 60_000, 60 * 60_000); // backoff exponencial, teto 1h
 }
 
 Deno.serve(async (req) => {
@@ -118,7 +228,7 @@ Deno.serve(async (req) => {
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const cronSecret = Deno.env.get("CRON_SECRET");
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
+  const apiKey = Deno.env.get("OPENAI_API_KEY");
 
   // ===== Auth fail-closed: cron secret, service-role, ou admin autenticado =====
   const providedSecret = req.headers.get("x-cron-secret");
@@ -157,7 +267,7 @@ Deno.serve(async (req) => {
     }
   }
   if (!authorized) return json({ error: "Unauthorized" }, 401);
-  if (!apiKey) return json({ error: "LOVABLE_API_KEY ausente" }, 500);
+  if (!apiKey) return json({ error: "OPENAI_API_KEY ausente" }, 500);
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
 
@@ -204,48 +314,110 @@ Deno.serve(async (req) => {
     const providerById = new Map(eligible.map((t: any) => [t.id, t.api_provider]));
     const tenantIds = eligible.map((t: any) => t.id);
 
-    // ===== Atendimentos candidatos =====
-    let logQuery = supabase
-      .from("agent_logs")
-      .select("id, tenant_id, phone_number, user_message, ai_response, tool_calls, errors, created_at")
-      .in("tenant_id", tenantIds)
-      .order("created_at", { ascending: false })
-      .limit(limit * 6);
-    if (explicitLogIds.length) {
-      logQuery = logQuery.in("id", explicitLogIds);
-    } else {
-      logQuery = logQuery.gte("created_at", new Date(Date.now() - lookbackMinutes * 60_000).toISOString());
+    // ===== Fila de reprocessamento: erros anteriores voltam primeiro =====
+    const nowIso = new Date().toISOString();
+    const previousAttempts = new Map<string, number>();
+    let retryIds: string[] = [];
+    if (!explicitLogIds.length) {
+      const { data: errored } = await supabase
+        .from("ai_audit_runs")
+        .select("agent_log_id, attempts")
+        .in("tenant_id", tenantIds)
+        .eq("status", "error")
+        .lt("attempts", MAX_ATTEMPTS)
+        .or(`next_retry_at.is.null,next_retry_at.lte.${nowIso}`)
+        .order("created_at", { ascending: true })
+        .limit(limit);
+      retryIds = (errored ?? []).map((r: any) => r.agent_log_id);
+      for (const r of errored ?? []) previousAttempts.set(r.agent_log_id, Number(r.attempts ?? 1));
     }
-    const { data: logs, error: lErr } = await logQuery;
-    if (lErr) throw lErr;
 
-    const candidateIds = (logs ?? []).map((l: any) => l.id);
+    // ===== Atendimentos candidatos =====
+    let logs: any[] = [];
+    if (explicitLogIds.length) {
+      const { data, error } = await supabase
+        .from("agent_logs")
+        .select("id, tenant_id, phone_number, user_message, ai_response, tool_calls, errors, created_at")
+        .in("id", explicitLogIds);
+      if (error) throw error;
+      logs = data ?? [];
+    } else {
+      const byId = new Map<string, any>();
+      if (retryIds.length) {
+        const { data: retryLogs, error: rErr } = await supabase
+          .from("agent_logs")
+          .select("id, tenant_id, phone_number, user_message, ai_response, tool_calls, errors, created_at")
+          .in("id", retryIds);
+        if (rErr) throw rErr;
+        for (const l of retryLogs ?? []) byId.set(l.id, l);
+      }
+      const { data: freshLogs, error: lErr } = await supabase
+        .from("agent_logs")
+        .select("id, tenant_id, phone_number, user_message, ai_response, tool_calls, errors, created_at")
+        .in("tenant_id", tenantIds)
+        .gte("created_at", new Date(Date.now() - lookbackMinutes * 60_000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(limit * 6);
+      if (lErr) throw lErr;
+      for (const l of freshLogs ?? []) if (!byId.has(l.id)) byId.set(l.id, l);
+      // Reprocessa os mais antigos primeiro (fila), depois os frescos.
+      logs = [...byId.values()].sort((a, b) => {
+        const ar = previousAttempts.has(a.id) ? 0 : 1;
+        const br = previousAttempts.has(b.id) ? 0 : 1;
+        if (ar !== br) return ar - br;
+        return String(a.created_at).localeCompare(String(b.created_at));
+      });
+    }
+
+    const candidateIds = logs.map((l: any) => l.id);
     const { data: alreadyRun } = candidateIds.length
-      ? await supabase.from("ai_audit_runs").select("agent_log_id").in("agent_log_id", candidateIds)
+      ? await supabase.from("ai_audit_runs").select("agent_log_id, status").in("agent_log_id", candidateIds)
       : { data: [] as any[] };
-    const done = new Set((alreadyRun ?? []).map((r: any) => r.agent_log_id));
+    // Só "error" volta para a fila; audited/skipped não reprocessam sozinhos.
+    // Execução manual por IDs força nova auditoria mesmo de turnos já concluídos.
+    const done = new Set(
+      explicitLogIds.length
+        ? []
+        : (alreadyRun ?? [])
+            .filter((r: any) => r.status !== "error")
+            .map((r: any) => r.agent_log_id),
+    );
 
     let audited = 0;
     let skipped = 0;
     let issues = 0;
+    let circuitTripped = false;
     const results: any[] = [];
 
-    for (const log of logs ?? []) {
+    for (const log of logs) {
       if (audited >= limit) break;
-      if (done.has(log.id) && !explicitLogIds.length) continue;
+      if (circuitTripped) break;
+      if (done.has(log.id)) continue;
 
       const toolCalls = Array.isArray(log.tool_calls) ? log.tool_calls : [];
-      if (!hasRelevantTool(toolCalls)) {
+
+      // R1 (determinística, sem LLM): escalação silenciosa + resposta ao cliente.
+      const silent = silentModeViolation(toolCalls, log.ai_response);
+
+      const mustAudit =
+        hasRelevantTool(toolCalls) ||
+        hasDetectedGuardSignal(toolCalls) || // R3: guard "detected_*" nunca é pulado
+        claimsCompletedAction(log.ai_response); // R2: afirmou ação concluída
+
+      if (!mustAudit && !silent.violated) {
         skipped++;
-        if (!dryRun && !done.has(log.id)) {
-          await supabase.from("ai_audit_runs").insert({
-            tenant_id: log.tenant_id,
-            agent_log_id: log.id,
-            provider: providerById.get(log.tenant_id) ?? null,
-            phone_number: log.phone_number,
-            status: "skipped_no_tools",
-            turn_at: log.created_at,
-          });
+        if (!dryRun) {
+          await supabase.from("ai_audit_runs").upsert(
+            {
+              tenant_id: log.tenant_id,
+              agent_log_id: log.id,
+              provider: providerById.get(log.tenant_id) ?? null,
+              phone_number: log.phone_number,
+              status: "skipped_no_tools",
+              turn_at: log.created_at,
+            },
+            { onConflict: "agent_log_id" },
+          );
         }
         continue;
       }
@@ -277,14 +449,6 @@ Deno.serve(async (req) => {
         afterRaw ?? [],
       );
 
-      let rawFindings: any[] = [];
-      let errorMessage: string | null = null;
-      try {
-        rawFindings = await auditOneTurn(dossier, apiKey, systemPrompt);
-      } catch (e) {
-        errorMessage = String((e as Error).message ?? e).slice(0, 500);
-      }
-
       // Achados já reportados nesta conversa (14 dias) — não repetir o mesmo
       // problema só porque a conversa seguiu em outros turnos.
       const { data: priorFindings } = await supabase
@@ -296,18 +460,63 @@ Deno.serve(async (req) => {
         .limit(200);
       const seenSignatures = new Set((priorFindings ?? []).map((f: any) => findingSignature(f)));
 
+      const deterministicFindings: any[] = [];
+      if (silent.violated) {
+        const det = {
+          category: "violacao_silent_mode",
+          severity: SEVERITY_BY_CATEGORY["violacao_silent_mode"],
+          summary: "A ferramenta de escalação retornou modo silencioso (proibido enviar mensagem) e a IA respondeu ao cliente mesmo assim.",
+          evidence_conversation: String(log.ai_response ?? "").slice(0, 2000),
+          evidence_tool: silent.evidence,
+        };
+        const sig = findingSignature(det);
+        if (!seenSignatures.has(sig)) {
+          seenSignatures.add(sig);
+          deterministicFindings.push(det);
+        }
+      }
+
+      let rawFindings: any[] = [];
+      let errorMessage: string | null = null;
+      let trace: AuditTrace | null = null;
+      // Turno resolvido 100% em código (só violação de silent_mode, sem nada
+      // mais a auditar) não gasta chamada de modelo.
+      const needsModel = mustAudit;
+      if (needsModel) {
+        try {
+          const out = await auditOneTurn(dossier, apiKey, systemPrompt);
+          rawFindings = out.findings;
+          trace = out.trace;
+        } catch (e) {
+          if (e instanceof AuditCallError) {
+            trace = e.trace;
+            if (e.circuitBreaker) circuitTripped = true;
+          }
+          errorMessage = String((e as Error).message ?? e).slice(0, 500);
+        }
+      }
+
       const auditContext = { aiResponse: log.ai_response, toolCalls, timeReference };
-      const accepted: any[] = [];
+      const accepted: any[] = [...deterministicFindings];
       let discarded = 0;
+      const discardedDetails: any[] = [];
       // Mesmo fato (mesmo trecho de conversa) não pode virar dois achados em
       // categorias diferentes: fica só o de maior severidade.
       const factRank: Record<string, number> = { alta: 3, media: 2, baixa: 1 };
       const byFact = new Map<string, any>();
       for (const f of rawFindings) {
-        const ok = validateFinding(f, conversationText, toolText, auditContext);
-        if (!ok) { discarded++; continue; }
+        const reason = validateFinding(f, conversationText, toolText, auditContext);
+        if (reason) {
+          discarded++;
+          discardedDetails.push({ category: f?.category ?? null, summary: String(f?.summary ?? "").slice(0, 300), reason });
+          continue;
+        }
         const sig = findingSignature(f);
-        if (seenSignatures.has(sig)) { discarded++; continue; }
+        if (seenSignatures.has(sig)) {
+          discarded++;
+          discardedDetails.push({ category: f.category, summary: String(f.summary).slice(0, 300), reason: "duplicado" });
+          continue;
+        }
         seenSignatures.add(sig);
         // Severidade determinística por categoria (o modelo não decide).
         f.severity = SEVERITY_BY_CATEGORY[String(f.category)] ?? f.severity ?? "media";
@@ -315,15 +524,13 @@ Deno.serve(async (req) => {
         const current = byFact.get(fact);
         if (current) {
           discarded++;
+          discardedDetails.push({ category: f.category, summary: String(f.summary).slice(0, 300), reason: "mesmo_fato" });
           if ((factRank[f.severity] ?? 0) > (factRank[current.severity] ?? 0)) byFact.set(fact, f);
           continue;
         }
         byFact.set(fact, f);
       }
       accepted.push(...byFact.values());
-
-
-
 
       audited++;
       issues += accepted.length;
@@ -333,13 +540,15 @@ Deno.serve(async (req) => {
         phone_number: log.phone_number,
         at: log.created_at,
         error: errorMessage,
+        deterministic: deterministicFindings.length,
         accepted: accepted.map((f) => ({ category: f.category, severity: f.severity, summary: f.summary })),
         discarded,
       });
 
       if (dryRun) continue;
 
-      if (accepted.length) {
+      // ===== Persistência: falha ao gravar achados NÃO pode marcar "audited" =====
+      if (!errorMessage && accepted.length) {
         const { error: fErr } = await supabase.from("ai_audit_findings").insert(
           accepted.map((f) => ({
             tenant_id: log.tenant_id,
@@ -352,13 +561,14 @@ Deno.serve(async (req) => {
             evidence_conversation: String(f.evidence_conversation).slice(0, 2000),
             evidence_tool: String(f.evidence_tool).slice(0, 2000),
             tool_names: toolCalls.map((tc: any) => String(tc?.name ?? "")).filter((n: string) => RELEVANT_TOOLS.includes(n)),
-            model_used: AUDITOR_MODEL,
+            model_used: needsModel ? AUDITOR_MODEL : null,
             turn_at: log.created_at,
           })),
         );
-        if (fErr) console.error("[audit-monitor] falha ao gravar achados", fErr);
+        if (fErr) errorMessage = `falha ao gravar achados: ${String(fErr.message ?? fErr).slice(0, 300)}`;
       }
 
+      const attempts = (previousAttempts.get(log.id) ?? 0) + 1;
       const { error: rErr } = await supabase.from("ai_audit_runs").upsert(
         {
           tenant_id: log.tenant_id,
@@ -368,8 +578,12 @@ Deno.serve(async (req) => {
           status: errorMessage ? "error" : "audited",
           issues_count: accepted.length,
           discarded_count: discarded,
-          model_used: AUDITOR_MODEL,
+          discarded_details: discardedDetails.length ? discardedDetails : null,
+          model_used: needsModel ? AUDITOR_MODEL : null,
           error_message: errorMessage,
+          http_trace: trace ?? (needsModel ? null : { deterministic: true }),
+          attempts,
+          next_retry_at: errorMessage ? new Date(Date.now() + nextRetryDelayMs(attempts, circuitTripped)).toISOString() : null,
           turn_at: log.created_at,
         },
         { onConflict: "agent_log_id" },
@@ -377,7 +591,41 @@ Deno.serve(async (req) => {
       if (rErr) console.error("[audit-monitor] falha ao gravar execução", rErr);
     }
 
-    return json({ audited, skipped, issues, dry_run: dryRun, results });
+    // ===== Saúde do próprio monitor: 3 erros seguidos geram incidente =====
+    let healthAlert = false;
+    try {
+      const { data: lastRuns } = await supabase
+        .from("ai_audit_runs")
+        .select("status")
+        .order("created_at", { ascending: false })
+        .limit(3);
+      const threeErrors = (lastRuns ?? []).length === 3 && (lastRuns ?? []).every((r: any) => r.status === "error");
+      if (threeErrors && !dryRun) {
+        const { data: recentIncident } = await supabase
+          .from("audit_logs")
+          .select("id")
+          .eq("action", "ai_monitor_health_incident")
+          .gte("created_at", new Date(Date.now() - 6 * 60 * 60_000).toISOString())
+          .limit(1);
+        if (!recentIncident?.length) {
+          healthAlert = true;
+          await supabase.from("audit_logs").insert({
+            tenant_id: null,
+            user_id: null,
+            actor_role: "system",
+            action: "ai_monitor_health_incident",
+            entity: "ai_audit_runs",
+            entity_id: null,
+            before: null,
+            after: { motivo: "3 execuções consecutivas com erro", ultima_verificacao: nowIso },
+          });
+        }
+      }
+    } catch (e) {
+      console.error("[audit-monitor] falha ao registrar saúde", e);
+    }
+
+    return json({ audited, skipped, issues, retried: retryIds.length, circuit_tripped: circuitTripped, health_alert: healthAlert, dry_run: dryRun, results });
   } catch (e) {
     console.error("[audit-monitor] erro", e);
     return json({ error: String((e as Error).message ?? e) }, 500);

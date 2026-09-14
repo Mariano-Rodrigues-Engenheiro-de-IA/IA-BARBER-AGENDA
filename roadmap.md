@@ -20,4 +20,8 @@
 - [x] Conferir A1–A7 no código, histórico e registros reais
 - [x] Apresentar diagnóstico próprio antes de alterar produção
 - [x] Preparar plano de correção com custo e critérios de validação
-- [ ] Implementar e validar após aprovação do plano, orçamento e destino de alerta
+- [x] Plano aprovado pelo usuário; modelo do monitor definido: gpt-5-mini via OpenAI direta
+- [x] Implementar correções do monitor: OpenAI direta gpt-5-mini, fila de reprocessamento, triagem determinística (silent_mode, guard detected_, ação afirmada), calendário de 14 dias no dossiê, descartes com motivo, alerta de saúde (3 erros seguidos), prompt atualizado no código e no painel
+- [x] Validar casos de aceite: 555ef6cb auditado e sinalizado como acao_afirmada_nao_executada; 10 casos de falso alarme de data reprocessados sem reabrir; 53 turnos de modo silencioso devolvidos à fila
+- [~] Reprocessamento dos 77 erros de 14/09: automático pela fila nos próximos ciclos do agendador (~1-2h para drenar)
+- [ ] Acompanhar um dia completo: status=error <1%, zero credit_limit_reached, custo diário dentro do teto

@@ -883,18 +883,21 @@ Se o caso não encaixa em 1–8 com prova literal, retorne findings vazio. Findi
 - completude_agendamento (caso 3)
 - cancelamento_remarcacao (casos 1, 2 e 7 quando envolvem cancelar/remarcar)
 - comunicacao (caso 1 em agendamento)
+- acao_afirmada_nao_executada (caso 1: afirmou ação concluída sem identificador real)
 - erro_tecnico_mascarado (caso 4)
 - disponibilidade_inventada (caso 5)
 - dados_incorretos_api (caso 2)
 - uso_indevido_ferramenta (caso 6)
 - duplicidade_agendamento (caso 8)
+- profissional_inventado (casos 2 e 5 quando envolvem profissional)
+- violacao_silent_mode (respondeu ao cliente com escalação em modo silencioso ativo)
 
 ## NUNCA É ERRO (não reporte, em nenhuma hipótese)
 - IA pedindo esclarecimento, confirmando qual agendamento, oferecendo horários, ou aguardando escolha do cliente.
 - Fluxo que parou porque o CLIENTE não respondeu mais.
 - Cancelamento/remarcação não executado porque falta um dado que só o cliente pode dar (nova data/hora, qual agendamento).
 - Primeiro nome ou apelido de profissional/cliente ("Victor" para "Victor Hugo Amaral").
-- Formatação de hora ("9h" vs "09:00"), de data ("amanhã" vs a data real) ou horário em UTC (Z / +00:00) no retorno da API.
+- Formatação de hora ("9h" vs "09:00"), de data ("amanhã" vs a data real) ou horário em UTC (Z / +00:00) no retorno da API. Antes de apontar divergência de data, converta a referência relativa ou o dia da semana para a data ISO usando o calendário da REFERÊNCIA DE TEMPO — falar "quinta às 15h" quando quinta corresponde à data reservada está CORRETO, não é erro.
 - Limitação real da API ou do estabelecimento: agenda sem vaga, retorno vazio, limite de agendamentos futuros, cliente sem cadastro possível — só é erro se a IA escondeu ou mentiu sobre isso.
 - Falha de cadastro de cliente quando o agendamento foi criado com identificador real.
 - Transferência para atendente humano avisando o cliente.
@@ -903,7 +906,10 @@ Se o caso não encaixa em 1–8 com prova literal, retorne findings vazio. Findi
 
 ## REGRAS DURAS
 - Todo achado exige DUAS provas copiadas LITERALMENTE, sem parafrasear e sem reticências: um trecho da conversa/resposta em "evidence_conversation" e um trecho do bloco FERRAMENTAS em "evidence_tool". Trecho inventado invalida o achado.
-- Sucesso só existe com identificador real (appointment_id / scheduling_code / invoice_code / ok:true). Ausência de identificador é o único jeito de provar "disse e não fez".
+- Sucesso só existe com identificador real (appointment_id / scheduling_code / invoice_code / ok:true / success:true). Ausência de identificador é o único jeito de provar "disse e não fez".
+- EDIÇÃO/REMARCAÇÃO: um retorno com "success": true de uma ferramenta de edição/remarcação (ex.: PUT de agendamento) É sucesso real — nunca trate edição com success:true como falta de identificador.
+- Antes de concluir que um agendamento "não existe", confira se a resposta não está CONFIRMANDO um agendamento criado em turno anterior: verifique no HISTÓRICO se houve criação bem-sucedida antes. Confirmar reserva já existente não é "disse e não fez".
+- Listas longas de retorno podem estar cortadas ao final: ausência de um item no trecho visível NÃO prova que o item não existia — só reporte quando o trecho mostrado sustenta a conclusão.
 - Se a resposta final e o retorno real batem, NÃO reporte nada. Nunca escreva resumo do tipo "sem divergência", "compatível", "batem" — se bate, é findings vazio.
 - 🚨 NUNCA gere um item no array de findings para explicar que não houve erro. Se ao analisar uma categoria você concluir "não há problema aqui", a forma correta de expressar isso é NÃO incluir nenhum item para ela — nunca criar um item cujo resumo diga "não houve X", "apenas Y aconteceu, sem uso indevido", "resposta não afirmou nada de errado" ou qualquer variação disso. Um item no array SEMPRE significa erro real e provado. Antes de finalizar sua resposta, releia cada item do seu array de findings e pergunte: "o resumo deste item descreve um ERRO, ou descreve que está tudo certo?" — se descrever que está tudo certo, REMOVA esse item antes de responder.
 - FUSO E DIA DA SEMANA: use SOMENTE o bloco "REFERÊNCIA DE TEMPO" do dossiê. Nunca converta fuso nem calcule dia da semana por conta própria.
