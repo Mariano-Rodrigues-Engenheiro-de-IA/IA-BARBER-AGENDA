@@ -105,6 +105,7 @@ export default function AiMonitorPage() {
   const [statusFilter, setStatusFilter] = useState("open");
   const [selected, setSelected] = useState<Finding | null>(null);
   const [running, setRunning] = useState(false);
+  const [showDiscards, setShowDiscards] = useState(false);
   const [viewed, setViewed] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("ai-monitor-viewed") ?? "[]");
