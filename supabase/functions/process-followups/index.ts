@@ -121,6 +121,45 @@ Deno.serve(async (req) => {
 
     let sent = 0, errors = 0, skipped = 0, chained = 0;
 
+    // 🔒 Anti-loop: números de instâncias da própria plataforma nunca recebem
+    // follow-up (senão duas IAs nossas conversam entre si).
+    const { data: allTenantsRaw } = await supabase
+      .from("tenants")
+      .select("id, name, whatsapp_number");
+    const instanceNumbers: Array<{ name: string; number: string }> = (allTenantsRaw ?? [])
+      .filter((t: any) => t.whatsapp_number)
+      .map((t: any) => ({ name: t.name, number: String(t.whatsapp_number) }));
+
+    // Cache dos IDs de etiqueta "IA OFF" por tenant (mesma fonte usada pelo webhook:
+    // crm_boards.columns com type="flag", com fallback pro kanban_columns legado).
+    const iaOffCache = new Map<string, string[]>();
+    async function loadIaOffLabelIds(tenantId: string, legacyCols: any): Promise<string[]> {
+      if (iaOffCache.has(tenantId)) return iaOffCache.get(tenantId)!;
+      const cols: any[] = [];
+      const { data: boards } = await supabase
+        .from("crm_boards")
+        .select("columns")
+        .eq("tenant_id", tenantId);
+      for (const b of boards ?? []) if (Array.isArray(b.columns)) cols.push(...b.columns);
+      if (cols.length === 0 && Array.isArray(legacyCols)) cols.push(...legacyCols);
+      const ids = cols
+        .filter((c: any) => c?.type === "flag" && /ia\s*off/i.test(String(c?.name ?? "")))
+        .map((c: any) => String(c.label_id));
+      iaOffCache.set(tenantId, ids);
+      return ids;
+    }
+
+    /** Cancela o follow-up registrando o motivo (nunca descartar em silêncio). */
+    async function cancelFollowUp(id: string, reason: string, logLine: string) {
+      console.log(logLine);
+      await supabase.from("follow_ups").update({
+        status: "expired",
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: reason,
+      }).eq("id", id);
+      skipped++;
+    }
+
     for (const followUp of pendingFollowUps) {
       const tenant = followUp.tenants;
       if (!tenant) { errors++; continue; }
