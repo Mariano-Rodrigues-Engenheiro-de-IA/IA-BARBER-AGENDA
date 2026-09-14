@@ -368,45 +368,69 @@ export default function AiMonitorPage() {
         </div>
       </section>
 
-      {/* Descartes e erros da auditora: tudo fica consultável, nada some em silêncio */}
+      {/* Descartes e erros da auditora: consultável, mas colapsado por padrão para não poluir a tela */}
       {(() => {
         const withDiscards = (runs ?? []).filter(
           (r) => (r.discarded_count ?? 0) > 0 || r.status === "error",
         );
         if (!withDiscards.length) return null;
+        const totalDiscards = withDiscards.reduce((sum, r) => sum + (r.discarded_count ?? 0), 0);
+        const totalErrors = withDiscards.filter((r) => r.status === "error").length;
         return (
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold">Descartes e erros da auditora</h2>
             <Card>
-              <CardContent className="p-4 space-y-4">
-                {withDiscards.slice(0, 30).map((r) => (
-                  <div key={r.id} className="text-sm border-b border-border/40 pb-3 last:border-0 last:pb-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">{tenantName(r.tenant_id)}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {format(new Date(r.turn_at ?? r.created_at), "dd/MM HH:mm", { locale: ptBR })}
-                      </span>
-                      {r.status === "error" && (
-                        <Badge variant="destructive">erro na auditoria</Badge>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center justify-between gap-2">
+                  <span>Descartes e erros da auditora</span>
+                  <div className="flex items-center gap-2">
+                    {totalErrors > 0 && <Badge variant="destructive">{totalErrors} erro(s)</Badge>}
+                    {totalDiscards > 0 && <Badge variant="outline">{totalDiscards} descartado(s)</Badge>}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowDiscards((s) => !s)}
+                      className="gap-1"
+                    >
+                      {showDiscards ? (
+                        <><ChevronUp className="w-4 h-4" /> Recolher</>
+                      ) : (
+                        <><ChevronDown className="w-4 h-4" /> Abrir</>
                       )}
-                      {(r.discarded_count ?? 0) > 0 && (
-                        <Badge variant="outline">{r.discarded_count} descartado(s)</Badge>
-                      )}
-                    </div>
-                    {r.status === "error" && r.error_message && (
-                      <p className="mt-1 text-xs text-destructive break-all">{r.error_message}</p>
-                    )}
-                    {(r.discarded_details ?? []).map((d, i) => (
-                      <p key={i} className="mt-1 text-xs text-muted-foreground">
-                        <span className="font-medium text-foreground">
-                          {DISCARD_REASONS[d.reason] ?? d.reason}:
-                        </span>{" "}
-                        {d.summary}
-                      </p>
-                    ))}
+                    </Button>
                   </div>
-                ))}
-              </CardContent>
+                </CardTitle>
+              </CardHeader>
+              {showDiscards && (
+                <CardContent className="p-4 pt-0 space-y-4">
+                  {withDiscards.slice(0, 30).map((r) => (
+                    <div key={r.id} className="text-sm border-b border-border/40 pb-3 last:border-0 last:pb-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{tenantName(r.tenant_id)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(r.turn_at ?? r.created_at), "dd/MM HH:mm", { locale: ptBR })}
+                        </span>
+                        {r.status === "error" && (
+                          <Badge variant="destructive">erro na auditoria</Badge>
+                        )}
+                        {(r.discarded_count ?? 0) > 0 && (
+                          <Badge variant="outline">{r.discarded_count} descartado(s)</Badge>
+                        )}
+                      </div>
+                      {r.status === "error" && r.error_message && (
+                        <p className="mt-1 text-xs text-destructive break-all">{r.error_message}</p>
+                      )}
+                      {(r.discarded_details ?? []).map((d, i) => (
+                        <p key={i} className="mt-1 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">
+                            {DISCARD_REASONS[d.reason] ?? d.reason}:
+                          </span>{" "}
+                          {d.summary}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                </CardContent>
+              )}
             </Card>
           </section>
         );
