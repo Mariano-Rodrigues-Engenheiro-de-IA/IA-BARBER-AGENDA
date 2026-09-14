@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { AlertTriangle, CheckCircle2, RefreshCw, ShieldCheck, Phone, Wrench, MessageSquare, Bot, Eye, EyeOff, ChevronDown, ChevronUp } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, ShieldCheck, Phone, Wrench, MessageSquare, Bot, Eye, EyeOff, ChevronDown, ChevronUp, FileText } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { toast } from "sonner";
@@ -161,6 +161,12 @@ export default function AiMonitorPage() {
   });
 
   const tenantName = (id: string) => tenants?.find((t: any) => t.id === id)?.name ?? "Empresa";
+
+  const logUrl = (f: { tenant_id: string; phone_number: string | null; agent_log_id: string }) => {
+    const params = new URLSearchParams({ tenant: f.tenant_id, log: f.agent_log_id });
+    if (f.phone_number) params.set("phone", f.phone_number);
+    return `/agent-logs?${params.toString()}`;
+  };
 
   const perTenant = useMemo(() => {
     const auditedByTenant = new Map<string, number>();
@@ -503,6 +509,14 @@ export default function AiMonitorPage() {
                     {f.turn_at ? format(new Date(f.turn_at), "dd/MM HH:mm", { locale: ptBR }) : ""}
                   </span>
                   {f.review_status !== "open" && <Badge variant="secondary">{f.review_status}</Badge>}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={(e) => { e.stopPropagation(); window.open(logUrl(f), "_blank", "noopener"); }}
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> Abrir log
+                  </Button>
                   <button
                     type="button"
                     title={isViewed ? "Visualizado — clique para desmarcar" : "Não visualizado — clique para marcar"}
@@ -559,6 +573,13 @@ export default function AiMonitorPage() {
                   <Button size="sm" onClick={() => review(selected, "valid")}>Procede</Button>
                   <Button size="sm" variant="outline" onClick={() => review(selected, "false_alarm")}>Falso alarme</Button>
                   <Button size="sm" variant="secondary" onClick={() => review(selected, "resolved")}>Resolvido</Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => window.open(logUrl(selected), "_blank", "noopener")}
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> Abrir log da conversa
+                  </Button>
                 </div>
               </div>
             </ScrollArea>
