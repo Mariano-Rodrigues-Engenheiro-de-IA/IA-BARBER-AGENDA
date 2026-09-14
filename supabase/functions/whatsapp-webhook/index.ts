@@ -853,6 +853,18 @@ const exactDigitsMatch = (a: unknown, b: unknown) => {
   const right = digitsOnly(b);
   return Boolean(left && right && left === right);
 };
+// ⚠️ Adicionado (14/09): exactDigitsMatch falha quando um dos dois números vem
+// com DDI (55) e o outro sem — mesmo sendo o mesmo número na prática. Usado
+// para comparações de "é o mesmo número de telefone" onde a origem pode
+// divergir em formato (payload da UAZAPI vs. whatsapp_number cadastrado no
+// tenant). Compara também os últimos 8 dígitos (DDD+número, sem DDI nem o
+// 9 extra) como fallback tolerante.
+const tolerantDigitsMatch = (a: unknown, b: unknown) => {
+  const left = digitsOnly(a);
+  const right = digitsOnly(b);
+  if (!left || !right) return false;
+  return left === right || left.slice(-8) === right.slice(-8);
+};
 const normalizeUserFacingText = (value: unknown) => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
@@ -1471,9 +1483,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       const inferredFromMeByMessageId = Boolean(
         ownerNumberForRouting &&
         messagePeerPhone &&
-        !exactDigitsMatch(messagePeerPhone, ownerNumberForRouting) &&
+        !tolerantDigitsMatch(messagePeerPhone, ownerNumberForRouting) &&
         initiallyResolvedPhone &&
-        exactDigitsMatch(initiallyResolvedPhone, ownerNumberForRouting),
+        tolerantDigitsMatch(initiallyResolvedPhone, ownerNumberForRouting),
       );
       const fromMe = explicitFromMe || inferredFromMeByMessageId;
       const phoneNumber = fromMe
@@ -1530,7 +1542,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // diferentes, relatado pelo Mariano.
         const tenantForReset = ownerDigitsReset
           ? (activeTenantsReset || []).find((t: any) =>
-              t.whatsapp_number ? exactDigitsMatch(ownerDigitsReset, t.whatsapp_number) : false,
+              t.whatsapp_number ? tolerantDigitsMatch(ownerDigitsReset, t.whatsapp_number) : false,
             )
           : undefined;
 
@@ -1595,10 +1607,21 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
             .eq("status", "active");
 
           const ownerNumStore = digitsOnly(payload.chat?.owner || payload.owner || payload.to || "");
-          const tenantForStore = (tenantsForStore || []).find((t: any) => {
-            if (!t.whatsapp_number) return false;
-            return exactDigitsMatch(ownerNumStore, t.whatsapp_number);
-          });
+          // ⚠️ Corrigido (14/09): exactDigitsMatch exigia igualdade EXATA de
+          // dígitos — se o payload vier com DDI (55) e o whatsapp_number
+          // cadastrado estiver sem (ou vice-versa), a comparação falhava
+          // mesmo sendo o mesmo número, e a mensagem manual do atendente se
+          // perdia silenciosamente (sem log nenhum, sem gravar nada — só
+          // retornava "skipped_fromMe_stored" como se tivesse funcionado).
+          // Bug real relatado: mensagem manual da 9Cinco (IA TESTE ZAYLO)
+          // nunca apareceu em chat_messages, e a IA nunca percebeu o takeover
+          // humano, respondendo por cima dele 3 vezes na mesma noite.
+          const tenantForStore = (tenantsForStore || []).find((t: any) =>
+            t.whatsapp_number ? tolerantDigitsMatch(ownerNumStore, t.whatsapp_number) : false
+          );
+          if (!tenantForStore) {
+            console.warn(`[HumanTakeover] Não foi possível identificar o tenant dono da mensagem manual — ownerNumStore="${ownerNumStore}" não bateu com nenhum whatsapp_number cadastrado. Mensagem NÃO foi gravada em chat_messages (perda silenciosa antes desta correção).`);
+          }
 
           if (tenantForStore) {
             const storeMessageId = messageId;
@@ -1717,7 +1740,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         const allOwnerMatches = allTenantsRaw.filter((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
-          return exactDigitsMatch(ownerDigits, normalized);
+          return tolerantDigitsMatch(ownerDigits, normalized);
         });
 
         const activeOwnerMatches = allOwnerMatches.filter((t: any) => t.status === "active");
@@ -1772,7 +1795,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         tenant = activeTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
           const normalized = t.whatsapp_number.replace(/\D/g, "");
-          return exactDigitsMatch(phoneNumber, normalized);
+          return tolerantDigitsMatch(phoneNumber, normalized);
         }) || null;
       }
 
@@ -1796,7 +1819,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // Aqui nunca respondemos — só registramos o descarte, de forma visível.
       const selfInstanceMatch = allTenantsRaw.find((t: any) => {
         if (!t.whatsapp_number) return false;
-        return exactDigitsMatch(phoneNumber, String(t.whatsapp_number).replace(/\D/g, ""));
+        return tolerantDigitsMatch(phoneNumber, String(t.whatsapp_number).replace(/\D/g, ""));
       });
       if (selfInstanceMatch) {
         console.warn(
@@ -2895,7 +2918,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       if (ownerDigits && allTenants) {
         syncTenant = allTenants.find((t: any) => {
           if (!t.whatsapp_number) return false;
-          return exactDigitsMatch(ownerDigits, t.whatsapp_number);
+          return tolerantDigitsMatch(ownerDigits, t.whatsapp_number);
         });
         if (syncTenant) matchReason = "owner_number";
       }
@@ -10750,7 +10773,7 @@ function extractPeerPhoneFromMessageId(messageId: unknown, ownerNumber: string):
   const separator = messageId.indexOf(":");
   if (separator <= 0) return null;
   const candidate = normalizePhoneNumber(messageId.slice(0, separator));
-  if (!candidate || (ownerNumber && exactDigitsMatch(candidate, ownerNumber))) return null;
+  if (!candidate || (ownerNumber && tolerantDigitsMatch(candidate, ownerNumber))) return null;
   return candidate;
 }
 
@@ -10764,7 +10787,7 @@ function extractOutboundPeerPhone(payload: any, msg: any, ownerNumber: string): 
   ];
   for (const candidate of candidates) {
     const normalized = normalizePhoneNumber(candidate);
-    if (normalized && (!ownerNumber || !exactDigitsMatch(normalized, ownerNumber))) return normalized;
+    if (normalized && (!ownerNumber || !tolerantDigitsMatch(normalized, ownerNumber))) return normalized;
   }
   return null;
 }
