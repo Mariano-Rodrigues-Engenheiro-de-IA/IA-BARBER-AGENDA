@@ -145,7 +145,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     resetProfile();
   };
 
-  const authReady = !loading && (!user || (!profileLoading && role !== null));
+  // ACHADO DE BUG REAL: antes, exigia role !== null pra considerar
+  // "pronto" - se o usuário logado não tem NENHUM papel atribuído
+  // (admin/staff/client), profileLoading termina mas role continua null
+  // pra sempre, e authReady nunca vira true. As três telas que checam
+  // authReady (App.tsx) ficam mostrando "Carregando..." pra sempre,
+  // mesmo com o login funcionando certinho. Agora authReady só depende
+  // de ter TERMINADO de carregar, não de ter encontrado um papel
+  // específico - usuário sem papel é um resultado válido (mesmo que
+  // precise de tela de acesso negado depois), não "ainda carregando".
+  const authReady = !loading && (!user || !profileLoading);
 
   return (
     <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
