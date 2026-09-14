@@ -175,6 +175,54 @@ Deno.serve(async (req) => {
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
       if (!uazapiUrl || !uazapiToken) { errors++; continue; }
 
+      // 🔒 Anti-loop: nunca mandar follow-up pro número de outra instância nossa.
+      const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(followUp.phone_number, t.number));
+      if (selfInstance) {
+        await cancelFollowUp(
+          followUp.id,
+          "self_instance_loop",
+          `[AntiLoop] Follow-up ${followUp.id} cancelado: ${followUp.phone_number} é o número da instância "${selfInstance.name}".`,
+        );
+        continue;
+      }
+
+      // 🔒 IA OFF: se o contato está etiquetado como IA OFF, a IA não fala com ele
+      // — inclusive em follow-up automático.
+      const iaOffLabelIds = await loadIaOffLabelIds(followUp.tenant_id, tenant.kanban_columns);
+      const { data: leadRow } = await supabase
+        .from("crm_leads")
+        .select("flag_labels")
+        .eq("tenant_id", followUp.tenant_id)
+        .eq("phone_number", followUp.phone_number)
+        .limit(1);
+      const leadFlags: string[] = (leadRow?.[0]?.flag_labels ?? []).map((f: any) => String(f));
+      const hasIaOff = leadFlags.some((f) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
+      if (hasIaOff) {
+        await cancelFollowUp(
+          followUp.id,
+          "ia_off",
+          `[IA OFF] Follow-up ${followUp.id} cancelado: ${followUp.phone_number} está com etiqueta IA OFF (flags=${JSON.stringify(leadFlags)}).`,
+        );
+        continue;
+      }
+
+      // 🔒 Conversa pausada manualmente (atendimento humano em andamento).
+      const { data: pauseRow } = await supabase
+        .from("conversation_pauses")
+        .select("paused")
+        .eq("tenant_id", followUp.tenant_id)
+        .eq("phone_number", followUp.phone_number)
+        .maybeSingle();
+      if (pauseRow?.paused) {
+        await cancelFollowUp(
+          followUp.id,
+          "conversation_paused",
+          `[Paused] Follow-up ${followUp.id} cancelado: conversa com ${followUp.phone_number} está pausada.`,
+        );
+        continue;
+      }
+
+
       // Check if client replied since this follow-up was created
       const { data: recentMessages } = await supabase
         .from("chat_messages")
