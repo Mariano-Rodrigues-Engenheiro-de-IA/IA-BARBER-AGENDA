@@ -635,6 +635,42 @@ async function loadTenantKanbanColumns(supabase: any, tenantId: string, legacyCo
   return (Array.isArray(legacyCols) ? legacyCols : []).map((c: any) => ({ ...c, board_id: null }));
 }
 
+async function hasIaOffInDatabaseAtSendTime(
+  supabase: any,
+  tenant: any,
+  phoneNumber: string,
+): Promise<boolean> {
+  const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
+  const iaOffLabelIds = kanbanCols
+    .filter((column: any) => column.type === "flag" && /ia\s*off/i.test(column.name || ""))
+    .map((column: any) => String(column.label_id));
+
+  if (iaOffLabelIds.length === 0) {
+    const fallbackIds = await resolveIaOffLabelIdsFromUazapi(
+      tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+      tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+    );
+    for (const id of fallbackIds) if (!iaOffLabelIds.includes(id)) iaOffLabelIds.push(id);
+  }
+
+  if (iaOffLabelIds.length === 0) return false;
+
+  const { data: leadData, error } = await supabase
+    .from("crm_leads")
+    .select("flag_labels")
+    .eq("tenant_id", tenant.id)
+    .eq("phone_number", phoneNumber)
+    .limit(1);
+
+  if (error) {
+    console.error(`[Outbound IA OFF Guard] DB check failed for ${phoneNumber}: ${error.message}`);
+    throw error;
+  }
+
+  const flags: string[] = leadData?.[0]?.flag_labels || [];
+  return flags.some((flag: string) => iaOffLabelIds.includes(String(flag)) || /ia\s*off/i.test(String(flag)));
+}
+
 function normalizeWhatsAppLabelId(value: any): string | null {
   if (value == null) return null;
 
@@ -2829,6 +2865,65 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       let tFirstSend = 0;
       let firstSendError: string | null = null;
+
+      // Última barreira imediatamente antes da saída. A etiqueta pode ser aplicada
+      // enquanto a IA está pensando, depois do recheck pós-debounce. Sem esta trava,
+      // uma execução já iniciada ainda conseguia responder alguns segundos depois.
+      if (messageParts.length > 0) {
+        try {
+          if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
+            console.log(`[Outbound IA OFF Guard] Envio cancelado para ${phoneNumber}: IA OFF aplicada durante o processamento.`);
+            await insertAgentLogResilient(supabase, {
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              user_message: combinedContent,
+              ai_response: "",
+              tool_calls: [
+                {
+                  name: "__outbound_ia_off_guard__",
+                  args: { phase: "before_send" },
+                  result: { blocked: true, reason: "ia_off_applied_during_processing" },
+                  blocked: true,
+                },
+                ...(agentResult?.toolCalls || []),
+              ],
+              errors: [{ message: "Resposta cancelada antes do envio: etiqueta IA OFF aplicada durante o processamento.", level: "warning" }],
+              model_used: agentResult?.model || "direct_handler",
+              duration_ms: Date.now() - tDebounceEnd,
+              session_blocked: true,
+              http_trace: getHttpTraceCapped(),
+            });
+            return new Response(JSON.stringify({ status: "ia_off_before_send" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        } catch (guardError: any) {
+          // Fail closed: se não conseguimos provar que o envio está liberado,
+          // não arriscamos responder um contato possivelmente pausado.
+          const guardMessage = guardError?.message || String(guardError);
+          console.error(`[Outbound IA OFF Guard] Envio cancelado por falha na validação para ${phoneNumber}: ${guardMessage}`);
+          await insertAgentLogResilient(supabase, {
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: combinedContent,
+            ai_response: "",
+            tool_calls: [{
+              name: "__outbound_ia_off_guard__",
+              args: { phase: "before_send" },
+              result: { blocked: true, reason: "ia_off_validation_failed" },
+              blocked: true,
+            }],
+            errors: [{ message: `Resposta cancelada: falha ao validar IA OFF antes do envio (${guardMessage}).`, level: "error" }],
+            model_used: agentResult?.model || "direct_handler",
+            duration_ms: Date.now() - tDebounceEnd,
+            session_blocked: true,
+            http_trace: getHttpTraceCapped(),
+          });
+          return new Response(JSON.stringify({ status: "ia_off_guard_unavailable" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
 
       for (let i = 0; i < messageParts.length; i++) {
         const part = messageParts[i].trim();
