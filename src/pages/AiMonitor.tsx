@@ -573,6 +573,13 @@ export default function AiMonitorPage() {
                   <Button size="sm" onClick={() => review(selected, "valid")}>Procede</Button>
                   <Button size="sm" variant="outline" onClick={() => review(selected, "false_alarm")}>Falso alarme</Button>
                   <Button size="sm" variant="secondary" onClick={() => review(selected, "resolved")}>Resolvido</Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => window.open(logUrl(selected), "_blank", "noopener")}
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> Abrir log da conversa
+                  </Button>
                 </div>
               </div>
             </ScrollArea>
