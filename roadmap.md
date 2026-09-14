@@ -15,3 +15,9 @@
 - [x] Corrigir falso MultiBooking do AppBarber causado por slots antigos em pedido único
 - [x] Remover aviso genérico de instabilidade em respostas vazias e preservar silêncio seguro
 - [x] Atualizar a logo Zaylo na tela de login e nos painéis administrativo e de colaboradores
+
+## Monitor 24h — investigação solicitada em 14/09
+- [x] Conferir A1–A7 no código, histórico e registros reais
+- [x] Apresentar diagnóstico próprio antes de alterar produção
+- [x] Preparar plano de correção com custo e critérios de validação
+- [ ] Implementar e validar após aprovação do plano, orçamento e destino de alerta
