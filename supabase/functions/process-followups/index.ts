@@ -24,6 +24,17 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
   }
 }
 
+/** Compara dois telefones brasileiros tolerando o "9" extra do celular
+ * (5561983012868 vs 556183012868), mesma regra usada no webhook. */
+function tolerantPhoneMatch(a: string, b: string): boolean {
+  const da = String(a ?? "").replace(/\D/g, "");
+  const db = String(b ?? "").replace(/\D/g, "");
+  if (!da || !db) return false;
+  if (da === db) return true;
+  const strip9 = (v: string) => (v.length === 13 && v.startsWith("55") ? v.slice(0, 4) + v.slice(5) : v);
+  return strip9(da) === strip9(db);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
