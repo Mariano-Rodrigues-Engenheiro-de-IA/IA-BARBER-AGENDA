@@ -2296,6 +2296,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // Unknown labels (e.g. funnel labels) are ignored here.
         if (waLabelsKnown && allConfiguredFlagIds.length > 0) {
           const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
+          // Nunca remover IA OFF por ausência em uma única leitura da UAZAPI.
+          // Essa fonte pode ficar temporariamente atrasada; a remoção legítima já
+          // atualiza o CRM diretamente e será observada na próxima mensagem.
+          if (dbHasIaOff && !waHasIaOff) {
+            for (const flag of flagLabels) {
+              if ((iaOffLabelIds.includes(flag) || /ia\s*off/i.test(flag)) && !desiredFlags.includes(flag)) {
+                desiredFlags.push(flag);
+              }
+            }
+          }
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
 
@@ -2329,22 +2339,6 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // ainda estava presente no DB quando a mensagem chegou.
         if (waHasIaOff || dbHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
-
-          // Se o WhatsApp confirmou que a etiqueta foi removida, limpamos o estado
-          // antigo para a PRÓXIMA mensagem. A mensagem atual continua bloqueada.
-          if (waLabelsKnown && dbHasIaOff && !waHasIaOff && leadData?.[0]) {
-            try {
-              const cleaned = flagLabels.filter(
-                (f: string) => !iaOffLabelIds.includes(f) && !/ia\s*off/i.test(f),
-              );
-              await supabase.from("crm_leads")
-                .update({ flag_labels: cleaned, updated_at: new Date().toISOString() })
-                .eq("id", leadData[0].id);
-              console.log(`[IA OFF Check] Divergência reconciliada para ${phoneNumber}; liberação valerá apenas na próxima mensagem.`);
-            } catch (e) {
-              console.error("[IA OFF Check] Failed to reconcile removed IA OFF flag:", e);
-            }
-          }
 
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
