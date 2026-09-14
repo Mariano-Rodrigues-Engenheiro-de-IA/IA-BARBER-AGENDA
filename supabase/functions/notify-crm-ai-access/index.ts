@@ -82,6 +82,7 @@ Deno.serve(async (req) => {
     });
     if (!crmRes.ok) {
       const text = await crmRes.text().catch(() => "");
+      console.log(`[notify-crm] CRM rejeitou: status=${crmRes.status} body=${text.slice(0, 300)}`);
       return new Response(JSON.stringify({ error: `CRM respondeu ${crmRes.status}: ${text.slice(0, 200)}` }), {
         status: 502,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
