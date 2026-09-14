@@ -2323,36 +2323,32 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           }
         }
 
-        // Final decision: WhatsApp state wins quando conhecemos as etiquetas ao vivo.
-        // Se NÃO conseguimos ler o estado do WhatsApp, o DB manda (fail-safe: pausa).
-        if (waHasIaOff || (!waLabelsKnown && dbHasIaOff)) {
+        // Final decision: IA OFF encontrada em qualquer uma das fontes bloqueia esta
+        // mensagem. A UAZAPI pode demorar alguns segundos para refletir uma etiqueta;
+        // por isso uma leitura live vazia nunca libera, no mesmo request, uma flag que
+        // ainda estava presente no DB quando a mensagem chegou.
+        if (waHasIaOff || dbHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
-          return new Response(JSON.stringify({ status: "ia_off" }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
 
-        if (waLabelsKnown && dbHasIaOff && !waHasIaOff) {
-
-          console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — clearing stale flag and releasing AI`);
-          // ⚠️ CRÍTICO: precisa REMOVER a flag do DB, senão o recheck pós-debounce
-          // lê o DB, ainda encontra a IA OFF antiga e bloqueia a resposta pra sempre.
-          // Isso é especialmente importante pra tenants que não têm coluna IA OFF
-          // configurada no Kanban (allConfiguredFlagIds não inclui o ID vindo do
-          // fallback UAZAPI, então a reconciliação bidirecional acima não limpa).
-          try {
-            if (leadData?.[0]) {
+          // Se o WhatsApp confirmou que a etiqueta foi removida, limpamos o estado
+          // antigo para a PRÓXIMA mensagem. A mensagem atual continua bloqueada.
+          if (waLabelsKnown && dbHasIaOff && !waHasIaOff && leadData?.[0]) {
+            try {
               const cleaned = flagLabels.filter(
                 (f: string) => !iaOffLabelIds.includes(f) && !/ia\s*off/i.test(f),
               );
               await supabase.from("crm_leads")
                 .update({ flag_labels: cleaned, updated_at: new Date().toISOString() })
                 .eq("id", leadData[0].id);
-              console.log(`[IA OFF Check] Cleared stale IA OFF flag for ${phoneNumber} in DB`);
+              console.log(`[IA OFF Check] Divergência reconciliada para ${phoneNumber}; liberação valerá apenas na próxima mensagem.`);
+            } catch (e) {
+              console.error("[IA OFF Check] Failed to reconcile removed IA OFF flag:", e);
             }
-          } catch (e) {
-            console.error("[IA OFF Check] Failed to clear stale IA OFF flag:", e);
           }
+
+          return new Response(JSON.stringify({ status: "ia_off" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
 
         const configuredFunnelIds = kanbanCols
@@ -10427,6 +10423,39 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
 
   if (!phoneNumber) {
     return { error: "Número do cliente ausente para executar a ferramenta." };
+  }
+
+  // Ferramentas de envio executam durante o raciocínio da IA, antes da barreira
+  // final do handler. Revalidar IA OFF aqui fecha essa saída lateral caso a
+  // etiqueta seja aplicada enquanto a resposta está sendo processada.
+  const outboundToolTypes = new Set([
+    "send_text", "send_link", "escalate_human", "send_image", "send_audio",
+    "send_video", "send_document", "send_location", "send_pix", "send_contact", "send_combo",
+  ]);
+  if (outboundToolTypes.has(normalizedToolType)) {
+    try {
+      const sbGuard = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      if (await hasIaOffInDatabaseAtSendTime(sbGuard, tenant, phoneNumber)) {
+        console.log(`[CustomTool IA OFF Guard] ${toolDef.name} bloqueada para ${phoneNumber}: IA OFF ativa.`);
+        return {
+          success: false,
+          blocked: true,
+          reason: "ia_off",
+          error: "A ação foi bloqueada porque a etiqueta IA OFF está ativa. Não envie nada ao cliente.",
+          type: toolType,
+        };
+      }
+    } catch (guardError: any) {
+      const guardMessage = guardError?.message || String(guardError);
+      console.error(`[CustomTool IA OFF Guard] ${toolDef.name} bloqueada por falha na validação: ${guardMessage}`);
+      return {
+        success: false,
+        blocked: true,
+        reason: "ia_off_validation_failed",
+        error: "A ação foi bloqueada porque não foi possível validar com segurança o estado da IA OFF. Não envie nada ao cliente.",
+        type: toolType,
+      };
+    }
   }
 
   try {
