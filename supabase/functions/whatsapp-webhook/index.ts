@@ -5337,10 +5337,14 @@ async function callAIAgent(
   const aiAuthKey = OPENAI_API_KEY;
   console.log(`AI provider: OpenAI direct, model: ${modelUsed}`);
 
-  // Retry transient upstream errors (502/503/504) up to 3 attempts with exponential backoff.
+  // Retry transient upstream errors com backoff exponencial.
+  // Caso real 14/09 (554484015099): a borda respondeu 520 (erro de Cloudflare,
+  // corpo em HTML) e, por não estar na lista, a IA nem tentou de novo — o
+  // atendimento foi escalado pra humano de graça. Qualquer 5xx (inclusive a
+  // faixa 520-527 da Cloudflare) é transitório: tratar todos como retryable.
+  const isTransientAIStatus = (status: number) => status >= 500 || status === 408 || status === 429;
   const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
-    const transientStatuses = new Set([500, 502, 503, 504, 408, 429]);
-    const maxAttempts = 3;
+    const maxAttempts = 4;
     let lastResp: Response | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
