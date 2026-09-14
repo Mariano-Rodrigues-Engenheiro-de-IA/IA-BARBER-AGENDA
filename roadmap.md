@@ -7,6 +7,7 @@
 - [x] Adicionar matriz inicial de testes com múltiplas pessoas, dedupe, incerteza e precedência
 - [x] Validar e publicar somente whatsapp-webhook em modo sombra
 - [x] Corrigir roteamento e anti-eco de mensagens manuais da barbearia
+- [x] Fechar corrida da IA OFF antes do envio final e em ferramentas de saída
 
 ## Próxima etapa condicionada aos dados de sombra
 - [ ] Revisar divergências reais do extrator estruturado antes de torná-lo bloqueante em todos os guards

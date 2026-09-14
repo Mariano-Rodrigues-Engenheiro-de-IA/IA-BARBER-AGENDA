@@ -635,6 +635,42 @@ async function loadTenantKanbanColumns(supabase: any, tenantId: string, legacyCo
   return (Array.isArray(legacyCols) ? legacyCols : []).map((c: any) => ({ ...c, board_id: null }));
 }
 
+async function hasIaOffInDatabaseAtSendTime(
+  supabase: any,
+  tenant: any,
+  phoneNumber: string,
+): Promise<boolean> {
+  const kanbanCols: any[] = await loadTenantKanbanColumns(supabase, tenant.id, tenant.kanban_columns);
+  const iaOffLabelIds = kanbanCols
+    .filter((column: any) => column.type === "flag" && /ia\s*off/i.test(column.name || ""))
+    .map((column: any) => String(column.label_id));
+
+  if (iaOffLabelIds.length === 0) {
+    const fallbackIds = await resolveIaOffLabelIdsFromUazapi(
+      tenant.uazapi_url || Deno.env.get("UAZAPI_URL"),
+      tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN"),
+    );
+    for (const id of fallbackIds) if (!iaOffLabelIds.includes(id)) iaOffLabelIds.push(id);
+  }
+
+  if (iaOffLabelIds.length === 0) return false;
+
+  const { data: leadData, error } = await supabase
+    .from("crm_leads")
+    .select("flag_labels")
+    .eq("tenant_id", tenant.id)
+    .eq("phone_number", phoneNumber)
+    .limit(1);
+
+  if (error) {
+    console.error(`[Outbound IA OFF Guard] DB check failed for ${phoneNumber}: ${error.message}`);
+    throw error;
+  }
+
+  const flags: string[] = leadData?.[0]?.flag_labels || [];
+  return flags.some((flag: string) => iaOffLabelIds.includes(String(flag)) || /ia\s*off/i.test(String(flag)));
+}
+
 function normalizeWhatsAppLabelId(value: any): string | null {
   if (value == null) return null;
 
@@ -2260,6 +2296,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // Unknown labels (e.g. funnel labels) are ignored here.
         if (waLabelsKnown && allConfiguredFlagIds.length > 0) {
           const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
+          // Nunca remover IA OFF por ausência em uma única leitura da UAZAPI.
+          // Essa fonte pode ficar temporariamente atrasada; a remoção legítima já
+          // atualiza o CRM diretamente e será observada na próxima mensagem.
+          if (dbHasIaOff && !waHasIaOff) {
+            for (const flag of flagLabels) {
+              if ((iaOffLabelIds.includes(flag) || /ia\s*off/i.test(flag)) && !desiredFlags.includes(flag)) {
+                desiredFlags.push(flag);
+              }
+            }
+          }
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
 
@@ -2287,36 +2333,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           }
         }
 
-        // Final decision: WhatsApp state wins quando conhecemos as etiquetas ao vivo.
-        // Se NÃO conseguimos ler o estado do WhatsApp, o DB manda (fail-safe: pausa).
-        if (waHasIaOff || (!waLabelsKnown && dbHasIaOff)) {
+        // Final decision: IA OFF encontrada em qualquer uma das fontes bloqueia esta
+        // mensagem. A UAZAPI pode demorar alguns segundos para refletir uma etiqueta;
+        // por isso uma leitura live vazia nunca libera, no mesmo request, uma flag que
+        // ainda estava presente no DB quando a mensagem chegou.
+        if (waHasIaOff || dbHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
+
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
-        }
-
-        if (waLabelsKnown && dbHasIaOff && !waHasIaOff) {
-
-          console.log(`[IA OFF Check] DB had stale IA OFF flag for ${phoneNumber} but WhatsApp does not — clearing stale flag and releasing AI`);
-          // ⚠️ CRÍTICO: precisa REMOVER a flag do DB, senão o recheck pós-debounce
-          // lê o DB, ainda encontra a IA OFF antiga e bloqueia a resposta pra sempre.
-          // Isso é especialmente importante pra tenants que não têm coluna IA OFF
-          // configurada no Kanban (allConfiguredFlagIds não inclui o ID vindo do
-          // fallback UAZAPI, então a reconciliação bidirecional acima não limpa).
-          try {
-            if (leadData?.[0]) {
-              const cleaned = flagLabels.filter(
-                (f: string) => !iaOffLabelIds.includes(f) && !/ia\s*off/i.test(f),
-              );
-              await supabase.from("crm_leads")
-                .update({ flag_labels: cleaned, updated_at: new Date().toISOString() })
-                .eq("id", leadData[0].id);
-              console.log(`[IA OFF Check] Cleared stale IA OFF flag for ${phoneNumber} in DB`);
-            }
-          } catch (e) {
-            console.error("[IA OFF Check] Failed to clear stale IA OFF flag:", e);
-          }
         }
 
         const configuredFunnelIds = kanbanCols
@@ -2829,6 +2855,65 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       let tFirstSend = 0;
       let firstSendError: string | null = null;
+
+      // Última barreira imediatamente antes da saída. A etiqueta pode ser aplicada
+      // enquanto a IA está pensando, depois do recheck pós-debounce. Sem esta trava,
+      // uma execução já iniciada ainda conseguia responder alguns segundos depois.
+      if (messageParts.length > 0) {
+        try {
+          if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
+            console.log(`[Outbound IA OFF Guard] Envio cancelado para ${phoneNumber}: IA OFF aplicada durante o processamento.`);
+            await insertAgentLogResilient(supabase, {
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              user_message: combinedContent,
+              ai_response: "",
+              tool_calls: [
+                {
+                  name: "__outbound_ia_off_guard__",
+                  args: { phase: "before_send" },
+                  result: { blocked: true, reason: "ia_off_applied_during_processing" },
+                  blocked: true,
+                },
+                ...(agentResult?.toolCalls || []),
+              ],
+              errors: [{ message: "Resposta cancelada antes do envio: etiqueta IA OFF aplicada durante o processamento.", level: "warning" }],
+              model_used: agentResult?.model || "direct_handler",
+              duration_ms: Date.now() - tDebounceEnd,
+              session_blocked: true,
+              http_trace: getHttpTraceCapped(),
+            });
+            return new Response(JSON.stringify({ status: "ia_off_before_send" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        } catch (guardError: any) {
+          // Fail closed: se não conseguimos provar que o envio está liberado,
+          // não arriscamos responder um contato possivelmente pausado.
+          const guardMessage = guardError?.message || String(guardError);
+          console.error(`[Outbound IA OFF Guard] Envio cancelado por falha na validação para ${phoneNumber}: ${guardMessage}`);
+          await insertAgentLogResilient(supabase, {
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: combinedContent,
+            ai_response: "",
+            tool_calls: [{
+              name: "__outbound_ia_off_guard__",
+              args: { phase: "before_send" },
+              result: { blocked: true, reason: "ia_off_validation_failed" },
+              blocked: true,
+            }],
+            errors: [{ message: `Resposta cancelada: falha ao validar IA OFF antes do envio (${guardMessage}).`, level: "error" }],
+            model_used: agentResult?.model || "direct_handler",
+            duration_ms: Date.now() - tDebounceEnd,
+            session_blocked: true,
+            http_trace: getHttpTraceCapped(),
+          });
+          return new Response(JSON.stringify({ status: "ia_off_guard_unavailable" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
 
       for (let i = 0; i < messageParts.length; i++) {
         const part = messageParts[i].trim();
@@ -10332,6 +10417,44 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
 
   if (!phoneNumber) {
     return { error: "Número do cliente ausente para executar a ferramenta." };
+  }
+
+  // Ferramentas de envio executam durante o raciocínio da IA, antes da barreira
+  // final do handler. Revalidar IA OFF aqui fecha essa saída lateral caso a
+  // etiqueta seja aplicada enquanto a resposta está sendo processada.
+  const outboundToolTypes = new Set([
+    "send_text", "send_link", "escalate_human", "send_image", "send_audio",
+    "send_video", "send_document", "send_location", "send_pix", "send_contact", "send_combo",
+  ]);
+  if (outboundToolTypes.has(normalizedToolType)) {
+    try {
+      const guardUrl = Deno.env.get("SUPABASE_URL");
+      const guardKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!guardUrl || !guardKey) {
+        throw new Error("Credenciais internas indisponíveis para validar IA OFF");
+      }
+      const sbGuard = createClient(guardUrl, guardKey);
+      if (await hasIaOffInDatabaseAtSendTime(sbGuard, tenant, phoneNumber)) {
+        console.log(`[CustomTool IA OFF Guard] ${toolDef.name} bloqueada para ${phoneNumber}: IA OFF ativa.`);
+        return {
+          success: false,
+          blocked: true,
+          reason: "ia_off",
+          error: "A ação foi bloqueada porque a etiqueta IA OFF está ativa. Não envie nada ao cliente.",
+          type: toolType,
+        };
+      }
+    } catch (guardError: any) {
+      const guardMessage = guardError?.message || String(guardError);
+      console.error(`[CustomTool IA OFF Guard] ${toolDef.name} bloqueada por falha na validação: ${guardMessage}`);
+      return {
+        success: false,
+        blocked: true,
+        reason: "ia_off_validation_failed",
+        error: "A ação foi bloqueada porque não foi possível validar com segurança o estado da IA OFF. Não envie nada ao cliente.",
+        type: toolType,
+      };
+    }
   }
 
   try {
