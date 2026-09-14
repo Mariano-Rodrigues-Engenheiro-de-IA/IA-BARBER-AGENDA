@@ -10434,7 +10434,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
   ]);
   if (outboundToolTypes.has(normalizedToolType)) {
     try {
-      const sbGuard = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const guardUrl = Deno.env.get("SUPABASE_URL");
+      const guardKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (!guardUrl || !guardKey) {
+        throw new Error("Credenciais internas indisponíveis para validar IA OFF");
+      }
+      const sbGuard = createClient(guardUrl, guardKey);
       if (await hasIaOffInDatabaseAtSendTime(sbGuard, tenant, phoneNumber)) {
         console.log(`[CustomTool IA OFF Guard] ${toolDef.name} bloqueada para ${phoneNumber}: IA OFF ativa.`);
         return {
