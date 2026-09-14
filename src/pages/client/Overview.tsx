@@ -1,4 +1,5 @@
 import { useAuth } from "@/hooks/useAuth";
+import { useClientTenant } from "@/hooks/useClientTenant";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -48,6 +49,7 @@ function endOfDay(d: Date) {
 
 export default function ClientOverview() {
   const { tenantId } = useAuth();
+  const { tenant } = useClientTenant();
   const [period, setPeriod] = useState<Period>("30d");
   const [customRange, setCustomRange] = useState<DateRange | undefined>();
 
@@ -245,7 +247,11 @@ export default function ClientOverview() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-end flex-wrap gap-3">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Olá, {tenant?.name} 👋</h1>
+          <p className="text-sm text-muted-foreground">Visão geral dos {periodLabel}.</p>
+        </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
             <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
