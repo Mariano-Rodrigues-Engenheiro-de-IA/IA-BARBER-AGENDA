@@ -453,7 +453,7 @@ export default function AgentLogsPage() {
     },
   });
 
-  const [selectedTenant, setSelectedTenant] = useState<string>("all");
+  const [selectedTenant, setSelectedTenant] = useState<string>(initialTenant);
 
   const { data: logs, isLoading } = useQuery({
     queryKey: ["agent-logs", selectedTenant, filterPhone, filterStatus, page],
