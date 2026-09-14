@@ -1599,7 +1599,12 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       // Store owner messages in chat history for context, then skip AI processing
       if (fromMe) {
-        if (messageContent) {
+        // ⚠️ Corrigido (14/09): antes só entrava aqui com messageContent
+        // (texto). Áudio puro do atendente (sem legenda) tem messageContent
+        // vazio — a mensagem inteira era descartada, sem transcrição, sem
+        // marcador, sem log. Bug real confirmado: 13 dias de silêncio numa
+        // conversa real, cliente respondendo a um áudio que a IA nunca viu.
+        if (messageContent || isAudioMessage) {
           // Find tenant to store the message
           const { data: tenantsForStore } = await supabase
             .from("tenants")
@@ -1624,6 +1629,34 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           }
 
           if (tenantForStore) {
+            // ⚠️ Adicionado (14/09): reaproveita a MESMA função de
+            // transcrição já usada no caminho do cliente (resolveIncomingMedia
+            // + transcribeAudioViaGemini) — nada novo, só chamado também
+            // aqui. Fallback obrigatório: se a transcrição falhar (ou o
+            // áudio não puder ser baixado), grava um marcador em vez de
+            // silêncio — a IA ao menos sabe que existiu uma mensagem e pode
+            // perguntar, em vez de se reapresentar do zero.
+            let contentToStore = messageContent;
+            if (isAudioMessage && !messageContent) {
+              try {
+                const resolvedOwnerMedia = await resolveIncomingMedia({
+                  payload,
+                  msg,
+                  messageId,
+                  uazapiUrl: tenantForStore.uazapi_url || Deno.env.get("UAZAPI_URL") || "",
+                  uazapiToken: tenantForStore.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "",
+                  isAudioMessage,
+                  isImageMessage: false,
+                });
+                const ownerTranscript = resolvedOwnerMedia.base64 && resolvedOwnerMedia.mimeType?.startsWith("audio/")
+                  ? await transcribeAudioViaGemini(resolvedOwnerMedia.base64, resolvedOwnerMedia.mimeType)
+                  : null;
+                contentToStore = ownerTranscript ? `🎙️ ${ownerTranscript}` : "🎙️ (áudio não transcrito)";
+              } catch (e: any) {
+                console.warn(`[HumanTakeover] Falha ao transcrever áudio do atendente: ${e?.message || e}`);
+                contentToStore = "🎙️ (áudio não transcrito)";
+              }
+            }
             const storeMessageId = messageId;
             // Check for duplicate by message_id
             const { data: existingMsg } = storeMessageId
@@ -1645,7 +1678,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
                 .limit(5);
 
               const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
-              const incoming = normalize(messageContent);
+              const incoming = normalize(contentToStore);
               // A new UAZAPI message id is evidence of a distinct manual send.
               // Text comparison is only a fallback for legacy payloads without id,
               // and must be exact: substring matching swallowed real confirmations.
@@ -1664,11 +1697,11 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
                     .update({ message_id: storeMessageId, processed: true })
                     .eq("id", recentAssistant[0].id);
                 }
-                console.log(`Skipped owner echo (matches AI reply): ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+                console.log(`Skipped owner echo (matches AI reply): ${phoneNumber} -> "${contentToStore.slice(0, 80)}"`);
               } else {
                 // Real message sent manually by the human attendant (via app or WhatsApp).
                 // Tag with prefix so the AI clearly sees it was a human, not itself.
-                const taggedContent = `[ATENDENTE HUMANO]: ${messageContent}`;
+                const taggedContent = `[ATENDENTE HUMANO]: ${contentToStore}`;
                 await supabase.from("chat_messages").insert({
                   tenant_id: tenantForStore.id,
                   phone_number: phoneNumber,
@@ -1677,7 +1710,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
                   message_id: storeMessageId || null,
                   processed: true,
                 });
-                console.log(`Stored HUMAN attendant message: ${phoneNumber} -> "${messageContent.slice(0, 80)}"`);
+                console.log(`Stored HUMAN attendant message: ${phoneNumber} -> "${contentToStore.slice(0, 80)}"`);
               }
             }
           }
