@@ -5345,7 +5345,8 @@ async function callAIAgent(
   const isTransientAIStatus = (status: number) => status >= 500 || status === 408 || status === 429;
   const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
     const maxAttempts = 4;
-    let lastResp: Response | null = null;
+    let lastStatus = 0;
+    let lastBody = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const resp = await fetch(aiEndpoint, {
@@ -5357,9 +5358,9 @@ async function callAIAgent(
           body,
         });
         if (resp.ok || !isTransientAIStatus(resp.status)) return resp;
-        lastResp = resp;
-        // Drain body to free socket
-        try { await resp.text(); } catch {}
+        lastStatus = resp.status;
+        // Drain body to free socket (guardamos o texto pro log final)
+        try { lastBody = await resp.text(); } catch { lastBody = ""; }
         if (attempt === maxAttempts) break;
         const delayMs = 500 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 250);
         console.warn(`AI gateway transient ${resp.status} on ${label}, attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms`);
@@ -5370,11 +5371,11 @@ async function callAIAgent(
         await new Promise((r) => setTimeout(r, 600 * attempt));
       }
     }
-    // Re-issue one last time to return a Response object (already drained above)
-    return lastResp ?? await fetch(aiEndpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiAuthKey}`, "Content-Type": "application/json" },
-      body,
+    // Todas as tentativas falharam com status transitório: devolve a última
+    // resposta reconstruída (sem re-disparar a chamada, que seria cobrada).
+    return new Response(lastBody || `AI gateway transient failure after ${maxAttempts} attempts`, {
+      status: lastStatus || 503,
+      headers: { "Content-Type": "text/plain" },
     });
   };
 
