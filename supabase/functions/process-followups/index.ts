@@ -24,6 +24,17 @@ function adjustToBusinessHours(at: Date, start: string, end: string, timezone: s
   }
 }
 
+/** Compara dois telefones brasileiros tolerando o "9" extra do celular
+ * (5561983012868 vs 556183012868), mesma regra usada no webhook. */
+function tolerantPhoneMatch(a: string, b: string): boolean {
+  const da = String(a ?? "").replace(/\D/g, "");
+  const db = String(b ?? "").replace(/\D/g, "");
+  if (!da || !db) return false;
+  if (da === db) return true;
+  const strip9 = (v: string) => (v.length === 13 && v.startsWith("55") ? v.slice(0, 4) + v.slice(5) : v);
+  return strip9(da) === strip9(db);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -110,6 +121,45 @@ Deno.serve(async (req) => {
 
     let sent = 0, errors = 0, skipped = 0, chained = 0;
 
+    // 🔒 Anti-loop: números de instâncias da própria plataforma nunca recebem
+    // follow-up (senão duas IAs nossas conversam entre si).
+    const { data: allTenantsRaw } = await supabase
+      .from("tenants")
+      .select("id, name, whatsapp_number");
+    const instanceNumbers: Array<{ name: string; number: string }> = (allTenantsRaw ?? [])
+      .filter((t: any) => t.whatsapp_number)
+      .map((t: any) => ({ name: t.name, number: String(t.whatsapp_number) }));
+
+    // Cache dos IDs de etiqueta "IA OFF" por tenant (mesma fonte usada pelo webhook:
+    // crm_boards.columns com type="flag", com fallback pro kanban_columns legado).
+    const iaOffCache = new Map<string, string[]>();
+    async function loadIaOffLabelIds(tenantId: string, legacyCols: any): Promise<string[]> {
+      if (iaOffCache.has(tenantId)) return iaOffCache.get(tenantId)!;
+      const cols: any[] = [];
+      const { data: boards } = await supabase
+        .from("crm_boards")
+        .select("columns")
+        .eq("tenant_id", tenantId);
+      for (const b of boards ?? []) if (Array.isArray(b.columns)) cols.push(...b.columns);
+      if (cols.length === 0 && Array.isArray(legacyCols)) cols.push(...legacyCols);
+      const ids = cols
+        .filter((c: any) => c?.type === "flag" && /ia\s*off/i.test(String(c?.name ?? "")))
+        .map((c: any) => String(c.label_id));
+      iaOffCache.set(tenantId, ids);
+      return ids;
+    }
+
+    /** Cancela o follow-up registrando o motivo (nunca descartar em silêncio). */
+    async function cancelFollowUp(id: string, reason: string, logLine: string) {
+      console.log(logLine);
+      await supabase.from("follow_ups").update({
+        status: "expired",
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: reason,
+      }).eq("id", id);
+      skipped++;
+    }
+
     for (const followUp of pendingFollowUps) {
       const tenant = followUp.tenants;
       if (!tenant) { errors++; continue; }
@@ -124,6 +174,54 @@ Deno.serve(async (req) => {
       const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
       if (!uazapiUrl || !uazapiToken) { errors++; continue; }
+
+      // 🔒 Anti-loop: nunca mandar follow-up pro número de outra instância nossa.
+      const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(followUp.phone_number, t.number));
+      if (selfInstance) {
+        await cancelFollowUp(
+          followUp.id,
+          "self_instance_loop",
+          `[AntiLoop] Follow-up ${followUp.id} cancelado: ${followUp.phone_number} é o número da instância "${selfInstance.name}".`,
+        );
+        continue;
+      }
+
+      // 🔒 IA OFF: se o contato está etiquetado como IA OFF, a IA não fala com ele
+      // — inclusive em follow-up automático.
+      const iaOffLabelIds = await loadIaOffLabelIds(followUp.tenant_id, tenant.kanban_columns);
+      const { data: leadRow } = await supabase
+        .from("crm_leads")
+        .select("flag_labels")
+        .eq("tenant_id", followUp.tenant_id)
+        .eq("phone_number", followUp.phone_number)
+        .limit(1);
+      const leadFlags: string[] = (leadRow?.[0]?.flag_labels ?? []).map((f: any) => String(f));
+      const hasIaOff = leadFlags.some((f) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
+      if (hasIaOff) {
+        await cancelFollowUp(
+          followUp.id,
+          "ia_off",
+          `[IA OFF] Follow-up ${followUp.id} cancelado: ${followUp.phone_number} está com etiqueta IA OFF (flags=${JSON.stringify(leadFlags)}).`,
+        );
+        continue;
+      }
+
+      // 🔒 Conversa pausada manualmente (atendimento humano em andamento).
+      const { data: pauseRow } = await supabase
+        .from("conversation_pauses")
+        .select("paused")
+        .eq("tenant_id", followUp.tenant_id)
+        .eq("phone_number", followUp.phone_number)
+        .maybeSingle();
+      if (pauseRow?.paused) {
+        await cancelFollowUp(
+          followUp.id,
+          "conversation_paused",
+          `[Paused] Follow-up ${followUp.id} cancelado: conversa com ${followUp.phone_number} está pausada.`,
+        );
+        continue;
+      }
+
 
       // Check if client replied since this follow-up was created
       const { data: recentMessages } = await supabase
