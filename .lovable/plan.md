@@ -9,7 +9,7 @@ Confirmado: 77 erros de crédito no dia de Brasília; erros excluídos das próx
 ## 1. Integração direta e falhas visíveis
 
 - Migrar somente o auditor para OpenAI direta, usando o segredo `OPENAI_API_KEY` já utilizado pelo atendente, sem expor seu valor ou presumir quem paga essa conta.
-- Reutilizar o padrão de integração existente; fixar um modelo OpenAI sem fallback entre modelos/providers. Não mudar o atendente nem criar módulo compartilhado/refatoração estrutural.
+- Reutilizar o padrão de integração existente; modelo fixo aprovado pelo usuário: `gpt-5-mini` (o mesmo do atendente), sem fallback entre modelos/providers. Não mudar o atendente nem criar módulo compartilhado/refatoração estrutural.
 - Preservar saída estruturada e leitura incremental. Exigir conclusão válida: resposta vazia, stream interrompido e schema inválido são erros, nunca auditoria limpa.
 - Registrar endpoint, modelo solicitado e retornado, duração, status HTTP, uso de tokens e identificador de requisição. Traces sem cabeçalhos de autenticação, com acesso restrito e dados pessoais minimizados.
 - Repetir apenas falhas transitórias, com espera crescente, respeito a Retry-After e limite de tentativas. Crédito/configuração bloqueiam a cadeia; retomada explícita ou verificação controlada, não insistência por turno.

@@ -20,4 +20,6 @@
 - [x] Conferir A1–A7 no código, histórico e registros reais
 - [x] Apresentar diagnóstico próprio antes de alterar produção
 - [x] Preparar plano de correção com custo e critérios de validação
-- [ ] Implementar e validar após aprovação do plano, orçamento e destino de alerta
+- [x] Plano aprovado pelo usuário; modelo do monitor definido: gpt-5-mini via OpenAI direta
+- [ ] Implementar correções do monitor (integração, saúde, fila, seleção, datas, descartes)
+- [ ] Validar casos de aceite e reprocessar os 77 erros de 14/09
