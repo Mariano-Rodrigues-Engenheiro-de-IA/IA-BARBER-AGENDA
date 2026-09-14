@@ -5356,11 +5356,12 @@ async function callAIAgent(
           },
           body,
         });
-        if (resp.ok || !transientStatuses.has(resp.status)) return resp;
+        if (resp.ok || !isTransientAIStatus(resp.status)) return resp;
         lastResp = resp;
         // Drain body to free socket
         try { await resp.text(); } catch {}
-        const delayMs = 600 * attempt;
+        if (attempt === maxAttempts) break;
+        const delayMs = 500 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 250);
         console.warn(`AI gateway transient ${resp.status} on ${label}, attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms`);
         await new Promise((r) => setTimeout(r, delayMs));
       } catch (err) {
