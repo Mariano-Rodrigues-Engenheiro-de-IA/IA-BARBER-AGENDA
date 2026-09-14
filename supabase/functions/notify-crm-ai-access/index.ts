@@ -59,6 +59,17 @@ Deno.serve(async (req) => {
     // segredo nos três formatos que o CRM pode esperar — ele responde 401
     // quando não reconhece o cabeçalho.
     const safeSecret = bridgeSecret.replace(/[^\x21-\x7E]/g, "");
+    // Diagnóstico (nunca imprime o segredo): url usada + tamanho e impressão
+    // digital, para comparar com o valor configurado no CRM.
+    const fp = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(safeSecret))),
+    )
+      .slice(0, 4)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    console.log(
+      `[notify-crm] url=${crmUrl} secretLen=${safeSecret.length} secretFp=${fp} barbershop_id=${barbershop_id}`,
+    );
     const crmRes = await fetch(crmUrl, {
       method: "POST",
       headers: {
