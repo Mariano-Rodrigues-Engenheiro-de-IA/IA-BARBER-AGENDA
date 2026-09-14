@@ -5337,11 +5337,16 @@ async function callAIAgent(
   const aiAuthKey = OPENAI_API_KEY;
   console.log(`AI provider: OpenAI direct, model: ${modelUsed}`);
 
-  // Retry transient upstream errors (502/503/504) up to 3 attempts with exponential backoff.
+  // Retry transient upstream errors com backoff exponencial.
+  // Caso real 14/09 (554484015099): a borda respondeu 520 (erro de Cloudflare,
+  // corpo em HTML) e, por não estar na lista, a IA nem tentou de novo — o
+  // atendimento foi escalado pra humano de graça. Qualquer 5xx (inclusive a
+  // faixa 520-527 da Cloudflare) é transitório: tratar todos como retryable.
+  const isTransientAIStatus = (status: number) => status >= 500 || status === 408 || status === 429;
   const fetchAIWithRetry = async (body: string, label: string): Promise<Response> => {
-    const transientStatuses = new Set([500, 502, 503, 504, 408, 429]);
-    const maxAttempts = 3;
-    let lastResp: Response | null = null;
+    const maxAttempts = 4;
+    let lastStatus = 0;
+    let lastBody = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const resp = await fetch(aiEndpoint, {
@@ -5352,11 +5357,12 @@ async function callAIAgent(
           },
           body,
         });
-        if (resp.ok || !transientStatuses.has(resp.status)) return resp;
-        lastResp = resp;
-        // Drain body to free socket
-        try { await resp.text(); } catch {}
-        const delayMs = 600 * attempt;
+        if (resp.ok || !isTransientAIStatus(resp.status)) return resp;
+        lastStatus = resp.status;
+        // Drain body to free socket (guardamos o texto pro log final)
+        try { lastBody = await resp.text(); } catch { lastBody = ""; }
+        if (attempt === maxAttempts) break;
+        const delayMs = 500 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 250);
         console.warn(`AI gateway transient ${resp.status} on ${label}, attempt ${attempt}/${maxAttempts}, retrying in ${delayMs}ms`);
         await new Promise((r) => setTimeout(r, delayMs));
       } catch (err) {
@@ -5365,11 +5371,11 @@ async function callAIAgent(
         await new Promise((r) => setTimeout(r, 600 * attempt));
       }
     }
-    // Re-issue one last time to return a Response object (already drained above)
-    return lastResp ?? await fetch(aiEndpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${aiAuthKey}`, "Content-Type": "application/json" },
-      body,
+    // Todas as tentativas falharam com status transitório: devolve a última
+    // resposta reconstruída (sem re-disparar a chamada, que seria cobrada).
+    return new Response(lastBody || `AI gateway transient failure after ${maxAttempts} attempts`, {
+      status: lastStatus || 503,
+      headers: { "Content-Type": "text/plain" },
     });
   };
 
