@@ -162,6 +162,12 @@ export default function AiMonitorPage() {
 
   const tenantName = (id: string) => tenants?.find((t: any) => t.id === id)?.name ?? "Empresa";
 
+  const logUrl = (f: { tenant_id: string; phone_number: string | null; agent_log_id: string }) => {
+    const params = new URLSearchParams({ tenant: f.tenant_id, log: f.agent_log_id });
+    if (f.phone_number) params.set("phone", f.phone_number);
+    return `/agent-logs?${params.toString()}`;
+  };
+
   const perTenant = useMemo(() => {
     const auditedByTenant = new Map<string, number>();
     (runs ?? []).forEach((r) => {
