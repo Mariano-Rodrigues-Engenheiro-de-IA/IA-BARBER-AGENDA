@@ -503,6 +503,14 @@ export default function AiMonitorPage() {
                     {f.turn_at ? format(new Date(f.turn_at), "dd/MM HH:mm", { locale: ptBR }) : ""}
                   </span>
                   {f.review_status !== "open" && <Badge variant="secondary">{f.review_status}</Badge>}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    onClick={(e) => { e.stopPropagation(); window.open(logUrl(f), "_blank", "noopener"); }}
+                  >
+                    <FileText className="w-3 h-3 mr-1" /> Abrir log
+                  </Button>
                   <button
                     type="button"
                     title={isViewed ? "Visualizado — clique para desmarcar" : "Não visualizado — clique para marcar"}
