@@ -8038,11 +8038,25 @@ async function callAIAgent(
     // Os casos fantasma que motivaram a tentativa (01/09 18:53 e 02/09 14:37)
     // seguem SEM cobertura — estão preservados como testes em
     // src/test/appbarber-failure.test.ts, no describe.skip correspondente.
-    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos))\b/i;
+    // ⚠️ Ampliado (14/09, casos reais confirmados via consulta direta a
+    // agent_logs — 5 casos em 30 dias, mesmo padrão): "já reservei"/"reservei"
+    // e "marquei"/"já marquei" nunca estavam na lista — só "agendei"/"criei"/
+    // "marcamos". Mantém a forma ATIVA/primeira pessoa apenas — a forma
+    // PASSIVA ("está confirmado para", "foi remarcado") continua de fora de
+    // propósito, é o que causou a regressão de 03/09 (ver nota acima).
+    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
     // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
-    const CANCEL_CONTEXT_RE = /\bcancel|desmarc/i;
+    // ⚠️ Corrigido (14/09, caso real João/1fa0aef2): o filtro amplo demais
+    // ("qualquer menção a cancel/desmarc") mascarava o caso onde a IA
+    // fabrica cancelamento E criação juntos na mesma frase ("cancelei seu
+    // atendimento e já reservei o horário das 15h30 para o João") — a
+    // sentença inteira era descartada por conter "cancelei", mesmo alegando
+    // a criação também. Agora só suprime quando é NEGAÇÃO de cancelamento
+    // ("não cancelei", "não foi cancelado" — onde a frase está dizendo que
+    // nada mudou, não confirmando uma ação).
+    const CANCEL_CONTEXT_RE = /\bn[ãa]o\s+(?:foi\s+)?(?:cancel\w*|desmarc\w*)\b/i;
     const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
     const hasExplicitCreationClaim = sentences.some((s: string) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
