@@ -248,12 +248,12 @@ export default function ClientOverview() {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">
-            Olá, {tenant?.name ?? <span className="inline-block h-6 w-32 animate-pulse rounded bg-muted align-middle" />} 👋
-          </h1>
-          <p className="text-sm text-muted-foreground">Visão geral dos {periodLabel}.</p>
-        </div>
+        {tenant?.name && (
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Olá, {tenant.name} 👋</h1>
+            <p className="text-sm text-muted-foreground">Visão geral dos {periodLabel}.</p>
+          </div>
+        )}
         <div className="flex items-center gap-2 flex-wrap">
           <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
             <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
