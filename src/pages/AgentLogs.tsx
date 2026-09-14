@@ -431,9 +431,14 @@ function LogSimple({ log, onJson }: { log: AgentLog; onJson: (d: { title: string
 
 
 export default function AgentLogsPage() {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const initialPhone = searchParams.get("phone") || "";
+  const initialTenant = searchParams.get("tenant") || "all";
+  const initialLog = searchParams.get("log");
+
+  const [expandedId, setExpandedId] = useState<string | null>(initialLog);
   const [mode, setMode] = useState<"simple" | "advanced">("simple");
-  const [filterPhone, setFilterPhone] = useState("");
+  const [filterPhone, setFilterPhone] = useState(initialPhone);
   const [filterStatus, setFilterStatus] = useState<"all" | "errors" | "blocked">("all");
   const [page, setPage] = useState(0);
   const [jsonDialog, setJsonDialog] = useState<{ title: string; data: any } | null>(null);
