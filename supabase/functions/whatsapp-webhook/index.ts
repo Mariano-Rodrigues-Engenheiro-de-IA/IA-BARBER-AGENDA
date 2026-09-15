@@ -1642,9 +1642,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // conversa real, cliente respondendo a um áudio que a IA nunca viu.
         if (messageContent || isAudioMessage) {
           // Find tenant to store the message
+          // ⚠️ Corrigido (15/09): faltava uazapi_url/uazapi_token no SELECT —
+          // a transcrição de áudio do atendente (adicionada em 14/09,
+          // commit e742c56) sempre caía no fallback de variável de ambiente
+          // global (Deno.env.get), nunca usava as credenciais reais deste
+          // tenant específico. Bug real confirmado: áudio da recepcionista
+          // da 9Cinco chegou mas a transcrição falhou, caindo sempre no
+          // marcador "(áudio não transcrito)".
           const { data: tenantsForStore } = await supabase
             .from("tenants")
-            .select("id, whatsapp_number")
+            .select("id, whatsapp_number, uazapi_url, uazapi_token")
             .eq("status", "active");
 
           const ownerNumStore = digitsOnly(payload.chat?.owner || payload.owner || payload.to || "");
