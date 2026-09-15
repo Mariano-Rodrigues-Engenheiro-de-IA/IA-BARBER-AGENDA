@@ -163,10 +163,10 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                   const daysOverdue = daysOverdueLabel(sub.next_due_date);
                   return (
                     <TableRow key={sub.id}>
-                      <TableCell className="font-medium">{sub.name || "—"}</TableCell>
-                      <TableCell>{sub.plan_name || "—"}</TableCell>
-                      <TableCell>{formatCents(sub.overdue_amount_cents)}</TableCell>
-                      <TableCell>
+                      <TableCell className="font-medium text-foreground">{sub.name || "—"}</TableCell>
+                      <TableCell className="text-foreground">{sub.plan_name || "—"}</TableCell>
+                      <TableCell className="text-foreground">{formatCents(sub.overdue_amount_cents)}</TableCell>
+                      <TableCell className="text-foreground">
                         {formatDate(sub.next_due_date)}
                         {daysOverdue != null && (
                           <Badge variant="destructive" className="ml-2">
@@ -174,8 +174,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell>{history ? formatDate(history.lastSentAt.slice(0, 10)) : "—"}</TableCell>
-                      <TableCell>{history?.count ?? 0}</TableCell>
+                      <TableCell className="text-foreground">{history ? formatDate(history.lastSentAt.slice(0, 10)) : "—"}</TableCell>
+                      <TableCell className="text-foreground">{history?.count ?? 0}</TableCell>
                     </TableRow>
                   );
                 })}

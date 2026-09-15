@@ -23,6 +23,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
+const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
+
 /** Compara dois telefones brasileiros tolerando o "9" extra do celular. */
 function tolerantPhoneMatch(a: string, b: string): boolean {
   const da = String(a ?? "").replace(/\D/g, "");
@@ -144,7 +146,7 @@ async function processTenant(
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: { "Access-Control-Allow-Origin": "*" } });
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const body = await req.json().catch(() => ({}));
   const requestedTenantId = typeof body.tenant_id === "string" ? body.tenant_id : null;
@@ -160,7 +162,7 @@ Deno.serve(async (req) => {
     const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
     if (!bearer) {
       return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-        status: 401, headers: { "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     const anonClient = createClient(
@@ -171,7 +173,7 @@ Deno.serve(async (req) => {
     const { data: { user } } = await anonClient.auth.getUser();
     if (!user) {
       return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-        status: 401, headers: { "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     const { data: isAdmin } = await supabase.rpc("has_role", { _user_id: user.id, _role: "admin" });
@@ -187,7 +189,7 @@ Deno.serve(async (req) => {
     }
     if (!allowed) {
       return new Response(JSON.stringify({ ok: false, error: "forbidden" }), {
-        status: 403, headers: { "Content-Type": "application/json" },
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -199,12 +201,12 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {
-        status: 500, headers: { "Content-Type": "application/json" },
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (!config) {
       return new Response(JSON.stringify({ ok: true, sent: 0, skipped: 0, errors: 0, note: "config_inactive_or_missing" }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -215,7 +217,7 @@ Deno.serve(async (req) => {
 
     const result = await processTenant(supabase, config, instanceNumbers);
     return new Response(JSON.stringify({ ok: true, ...result }), {
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
@@ -224,7 +226,7 @@ Deno.serve(async (req) => {
   const expected = Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
   if (!apikey || apikey !== expected) {
     return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-      status: 401, headers: { "Content-Type": "application/json" },
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
@@ -238,13 +240,13 @@ Deno.serve(async (req) => {
 
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {
-        status: 500, headers: { "Content-Type": "application/json" },
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     if (!configs?.length) {
       return new Response(JSON.stringify({ ok: true, sent: 0, skipped: 0, errors: 0, note: "no_active_configs" }), {
-        headers: { "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -261,12 +263,12 @@ Deno.serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ ok: true, sent, skipped, errors }), {
-      headers: { "Content-Type": "application/json" },
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
     console.error("[CelCashBilling] erro geral:", e);
     return new Response(JSON.stringify({ ok: false, error: e.message || String(e) }), {
-      status: 500, headers: { "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
