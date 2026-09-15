@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Save } from "lucide-react";
+import { CelcashBillingSection } from "@/components/client/CelcashBillingSection";
 
 /** Aba "Integrações" — tokens e credenciais usados pelo sistema e pela IA. */
 export default function ClientIntegrations() {
@@ -38,6 +39,9 @@ export default function ClientIntegrations() {
           </Button>
         )}
       </div>
+      {tenant.celcash_enabled && (
+        <CelcashBillingSection tenantId={tenant.id} editable={perm.editable} />
+      )}
     </div>
   );
 }
