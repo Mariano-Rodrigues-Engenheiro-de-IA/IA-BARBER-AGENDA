@@ -10638,7 +10638,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
         } else {
-          console.log(`[EscalateHuman] Nenhum texto fixo enviado (silent_mode=${escalateSilent}, texto_configurado=${Boolean(escalateText)}).`);
+          console.log(`[EscalateHuman] Nenhum texto fixo configurado — a IA escreve o aviso de transferência.`);
         }
 
 
