@@ -2844,15 +2844,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // determinístico de agendamento já é aplicado dentro de callAIAgent; aqui
       // nunca inventamos uma falha técnica para preencher uma resposta vazia.
       if (!String(aiResponse || "").trim()) {
-        const silentEscalation = (agentResult?.toolCalls || []).some((tc: any) => {
-          const r = tc?.result;
-          return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
-        });
         const reason = isBusinessAutomationEcho(combinedContent || messageContent || "")
           ? "automação do estabelecimento"
-          : silentEscalation
-            ? "transferência silenciosa"
-            : "resposta vazia sem ação confirmada";
+          : "resposta vazia sem ação confirmada";
         console.log(`[SilentResponse] Nada enviado para ${phoneNumber}: ${reason}.`);
       }
 
@@ -7879,14 +7873,10 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  // O silêncio é obrigatório para automações da casa e transferências silenciosas.
+  // O silêncio é obrigatório para automações da casa.
   // Nos demais casos, ainda tentamos uma recuperação natural uma vez.
   const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
-  const silentEscalationRan = (logToolCalls || []).some((tc: any) => {
-    const r = tc?.result;
-    return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
-  });
-  const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
+  const silenceAllowed = turnIsAutomationEcho;
 
   if (!finalResponse && !silenceAllowed) {
 
@@ -10615,15 +10605,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         };
 
         // 🙋 TRANSFERÊNCIA PARA HUMANO
-        // Duas decisões da barbearia são respeitadas aqui:
-        // 1) `silent_mode`: quando ligado, a ferramenta NÃO envia nada ao cliente
-        //    (o botão/etiqueta continua funcionando e a equipe é avisada).
-        // 2) Sem `text` configurado, a ferramenta também não envia texto próprio:
-        //    quem escreve a mensagem é a própria IA, com o contexto da conversa.
-        //    Não existe mais mensagem padrão fixa.
-        const escalateSilent = config.silent_mode === true;
+        // Sem `text` configurado, a ferramenta não envia texto próprio: quem
+        // escreve a mensagem é a própria IA, com o contexto da conversa.
+        // Não existe mensagem padrão fixa nem modo silencioso.
         const escalateText = String(config.text || "").trim();
-        if (!escalateSilent && escalateText) {
+        if (escalateText) {
           const clientText = escalateText;
           try {
             const delay = typingDelayMs(clientText);
@@ -10652,7 +10638,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             console.error("[EscalateHuman] send client msg error:", e?.message || e);
           }
         } else {
-          console.log(`[EscalateHuman] Nenhum texto fixo enviado (silent_mode=${escalateSilent}, texto_configurado=${Boolean(escalateText)}).`);
+          console.log(`[EscalateHuman] Nenhum texto fixo configurado — a IA escreve o aviso de transferência.`);
         }
 
 
@@ -10731,18 +10717,14 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         }
 
         // O retorno diz explicitamente à IA quem fala com o cliente agora:
-        // - silent_mode: ninguém fala (a equipe assume a conversa)
         // - texto fixo já enviado: não repetir
         // - sem texto fixo: a IA escreve a mensagem de transferência com o contexto real
         return {
           success: true,
-          message: escalateSilent
-            ? "Atendimento escalado para humano em modo silencioso. NÃO envie nenhuma mensagem ao cliente."
-            : escalateText
-              ? "Atendimento escalado para humano. A mensagem de aviso já foi enviada ao cliente — não repita."
-              : "Atendimento escalado para humano. Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso de transferência, curto e natural, usando o contexto da conversa.",
-          client_notified: !escalateSilent && Boolean(escalateText),
-          silent_mode: escalateSilent,
+          message: escalateText
+            ? "Atendimento escalado para humano. A mensagem de aviso já foi enviada ao cliente — não repita."
+            : "Atendimento escalado para humano. Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso de transferência, curto e natural, usando o contexto da conversa.",
+          client_notified: Boolean(escalateText),
           type: toolType,
         };
 
