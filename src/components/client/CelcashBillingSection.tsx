@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Save, Send } from "lucide-react";
+import { Save, Send, RefreshCw } from "lucide-react";
 import { useCelcashBilling } from "@/hooks/useCelcashBilling";
 
 function formatCents(cents: number | null | undefined) {
@@ -36,9 +36,10 @@ function daysOverdueLabel(dateStr: string | null) {
  * Configuração (mensagem, timing) + lista de quem está inadimplente com o
  * histórico de cobrança já enviada pra cada um. */
 export function CelcashBillingSection({ tenantId, editable }: { tenantId: string; editable: boolean }) {
-  const { config, overdueList, dispatchHistory, saveConfig, dispatchNow, error } = useCelcashBilling(tenantId);
+  const { config, overdueList, dispatchHistory, saveConfig, dispatchNow, syncNow, error } = useCelcashBilling(tenantId);
   const [form, setForm] = useState(config);
   const [dispatching, setDispatching] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     if (config) setForm(config);
@@ -141,7 +142,25 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
       )}
 
       <div className="space-y-2">
-        <h4 className="font-medium text-sm text-foreground">Inadimplentes ({overdueList.length})</h4>
+        <div className="flex items-center justify-between">
+          <h4 className="font-medium text-sm text-foreground">Inadimplentes ({overdueList.length})</h4>
+          {editable && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={syncing}
+              onClick={async () => {
+                setSyncing(true);
+                await syncNow();
+                setSyncing(false);
+              }}
+            >
+              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Sincronizando..." : "Sincronizar agora"}
+            </Button>
+          )}
+        </div>
         {overdueList.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum inadimplente encontrado no momento.</p>
         ) : (

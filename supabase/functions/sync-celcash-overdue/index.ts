@@ -261,15 +261,31 @@ Deno.serve(async (req) => {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const { data: isAdmin } = await supabase.rpc("has_role", { _user_id: user.id, _role: "admin" });
-      if (!isAdmin) {
-        return new Response(JSON.stringify({ error: "Forbidden" }), {
-          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
       if (!body.tenant_id) {
         return new Response(JSON.stringify({ error: "tenant_id is required" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      // ⚠️ Adicionado (16/09): antes só admin podia chamar essa sincronização
+      // sob demanda. Botão "Sincronizar agora" no painel do cliente precisa
+      // que o próprio dono do tenant também consiga, sem depender de acesso
+      // admin nem de credenciais do Supabase (que a Lovable gerencia, o
+      // cliente não tem acesso). Mesmo padrão já usado em
+      // evaluate-celcash-billing e lookup-celcash-subscriber.
+      const { data: isAdmin } = await supabase.rpc("has_role", { _user_id: user.id, _role: "admin" });
+      let allowed = !!isAdmin;
+      if (!allowed) {
+        const { data: membership } = await supabase
+          .from("tenant_users")
+          .select("tenant_id")
+          .eq("user_id", user.id)
+          .eq("tenant_id", body.tenant_id)
+          .maybeSingle();
+        allowed = !!membership;
+      }
+      if (!allowed) {
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const { data } = await supabase

@@ -131,6 +131,25 @@ export function useCelcashBilling(tenantId: string | undefined) {
     return data;
   };
 
+  const syncNow = async (): Promise<boolean> => {
+    if (!tenantId) return false;
+    const { data, error } = await supabase.functions.invoke("sync-celcash-overdue", {
+      body: { tenant_id: tenantId },
+    });
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    const result = data?.results?.[0];
+    if (result?.error) {
+      toast.error(result.error);
+      return false;
+    }
+    toast.success(`Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).`);
+    queryClient.invalidateQueries({ queryKey: ["celcash-overdue-subscribers", tenantId] });
+    return true;
+  };
+
   return {
     config,
     loadingConfig,
@@ -139,6 +158,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
     dispatchHistory,
     saveConfig,
     dispatchNow,
+    syncNow,
     error: (configError || overdueError) as Error | null,
   };
 }
