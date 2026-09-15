@@ -29,15 +29,21 @@ const DEFAULT_MESSAGE =
 export function useCelcashBilling(tenantId: string | undefined) {
   const queryClient = useQueryClient();
 
-  const { data: config, isLoading: loadingConfig } = useQuery({
+  const { data: config, isLoading: loadingConfig, error: configError } = useQuery({
     queryKey: ["celcash-billing-config", tenantId],
     enabled: !!tenantId,
     queryFn: async (): Promise<CelcashBillingConfig> => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("celcash_billing_config")
         .select("*")
         .eq("tenant_id", tenantId!)
         .maybeSingle();
+      // ⚠️ Corrigido (15/09): antes, um erro aqui (ex: tabela ainda não
+      // existia no banco) era silenciosamente ignorado — a query "dava
+      // certo" com data=undefined, e a seção inteira simplesmente
+      // desaparecia do painel, sem nenhuma pista do motivo. Agora o erro é
+      // lançado e exposto (configError), pro componente mostrar de verdade.
+      if (error) throw error;
       return (
         data ?? {
           tenant_id: tenantId!,
@@ -50,16 +56,17 @@ export function useCelcashBilling(tenantId: string | undefined) {
     },
   });
 
-  const { data: overdueList, isLoading: loadingOverdue } = useQuery({
+  const { data: overdueList, isLoading: loadingOverdue, error: overdueError } = useQuery({
     queryKey: ["celcash-overdue-subscribers", tenantId],
     enabled: !!tenantId,
     staleTime: 60 * 1000,
     queryFn: async (): Promise<CelcashOverdueSubscriber[]> => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("celcash_overdue_subscribers")
         .select("id, celcash_customer_id, name, phone_e164, plan_name, overdue_amount_cents, next_due_date")
         .eq("tenant_id", tenantId!)
         .order("next_due_date", { ascending: true });
+      if (error) throw error;
       return data ?? [];
     },
   });
@@ -69,12 +76,13 @@ export function useCelcashBilling(tenantId: string | undefined) {
     enabled: !!tenantId,
     staleTime: 60 * 1000,
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("celcash_billing_sent_log")
         .select("celcash_customer_id, sent_at")
         .eq("tenant_id", tenantId!)
         .order("sent_at", { ascending: false })
         .limit(2000);
+      if (error) throw error;
       return data ?? [];
     },
   });
@@ -112,5 +120,6 @@ export function useCelcashBilling(tenantId: string | undefined) {
     loadingOverdue,
     dispatchHistory,
     saveConfig,
+    error: (configError || overdueError) as Error | null,
   };
 }

@@ -36,12 +36,23 @@ function daysOverdueLabel(dateStr: string | null) {
  * Configuração (mensagem, timing) + lista de quem está inadimplente com o
  * histórico de cobrança já enviada pra cada um. */
 export function CelcashBillingSection({ tenantId, editable }: { tenantId: string; editable: boolean }) {
-  const { config, overdueList, dispatchHistory, saveConfig } = useCelcashBilling(tenantId);
+  const { config, overdueList, dispatchHistory, saveConfig, error } = useCelcashBilling(tenantId);
   const [form, setForm] = useState(config);
 
   useEffect(() => {
     if (config) setForm(config);
   }, [config]);
+
+  if (error) {
+    return (
+      <div className="glass-card p-5 space-y-2 border-destructive/40">
+        <h3 className="font-semibold text-destructive">Cobrança automática de inadimplentes</h3>
+        <p className="text-sm text-muted-foreground">
+          Não consegui carregar essa seção: {error.message}
+        </p>
+      </div>
+    );
+  }
 
   if (!form) return null;
 
