@@ -6,7 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Save } from "lucide-react";
+import { Save, Send } from "lucide-react";
 import { useCelcashBilling } from "@/hooks/useCelcashBilling";
 
 function formatCents(cents: number | null | undefined) {
@@ -36,8 +36,9 @@ function daysOverdueLabel(dateStr: string | null) {
  * Configuração (mensagem, timing) + lista de quem está inadimplente com o
  * histórico de cobrança já enviada pra cada um. */
 export function CelcashBillingSection({ tenantId, editable }: { tenantId: string; editable: boolean }) {
-  const { config, overdueList, dispatchHistory, saveConfig, error } = useCelcashBilling(tenantId);
+  const { config, overdueList, dispatchHistory, saveConfig, dispatchNow, error } = useCelcashBilling(tenantId);
   const [form, setForm] = useState(config);
+  const [dispatching, setDispatching] = useState(false);
 
   useEffect(() => {
     if (config) setForm(config);
@@ -60,7 +61,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
     <div className="glass-card p-5 space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-semibold">Cobrança automática de inadimplentes</h3>
+          <h3 className="font-semibold text-foreground">Cobrança automática de inadimplentes</h3>
           <p className="text-sm text-muted-foreground">
             Manda uma mensagem automática pelo WhatsApp pra quem está com a assinatura em atraso.
           </p>
@@ -108,23 +109,39 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
       </div>
 
       {editable && (
-        <Button
-          onClick={() =>
-            saveConfig({
-              active: form.active,
-              message_template: form.message_template,
-              days_after_due: form.days_after_due,
-              repeat_every_days: form.repeat_every_days,
-            })
-          }
-        >
-          <Save className="w-4 h-4 mr-2" />
-          Salvar
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            onClick={() =>
+              saveConfig({
+                active: form.active,
+                message_template: form.message_template,
+                days_after_due: form.days_after_due,
+                repeat_every_days: form.repeat_every_days,
+              })
+            }
+          >
+            <Save className="w-4 h-4 mr-2" />
+            Salvar
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={!form.active || dispatching}
+            title={!form.active ? "Ative e salve a cobrança antes de disparar" : undefined}
+            onClick={async () => {
+              setDispatching(true);
+              await dispatchNow();
+              setDispatching(false);
+            }}
+          >
+            <Send className="w-4 h-4 mr-2" />
+            {dispatching ? "Disparando..." : "Cobrar agora"}
+          </Button>
+        </div>
       )}
 
       <div className="space-y-2">
-        <h4 className="font-medium text-sm">Inadimplentes ({overdueList.length})</h4>
+        <h4 className="font-medium text-sm text-foreground">Inadimplentes ({overdueList.length})</h4>
         {overdueList.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum inadimplente encontrado no momento.</p>
         ) : (

@@ -113,6 +113,24 @@ export function useCelcashBilling(tenantId: string | undefined) {
     return true;
   };
 
+  const dispatchNow = async (): Promise<{ sent: number; skipped: number; errors: number } | null> => {
+    if (!tenantId) return null;
+    const { data, error } = await supabase.functions.invoke("evaluate-celcash-billing", {
+      body: { tenant_id: tenantId },
+    });
+    if (error) {
+      toast.error(error.message);
+      return null;
+    }
+    if (data?.note === "config_inactive_or_missing") {
+      toast.error("Ative a cobrança e salve antes de disparar.");
+      return null;
+    }
+    toast.success(`Disparo concluído: ${data.sent} enviada(s), ${data.skipped} pulada(s), ${data.errors} com erro.`);
+    queryClient.invalidateQueries({ queryKey: ["celcash-billing-sent-log", tenantId] });
+    return data;
+  };
+
   return {
     config,
     loadingConfig,
@@ -120,6 +138,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
     loadingOverdue,
     dispatchHistory,
     saveConfig,
+    dispatchNow,
     error: (configError || overdueError) as Error | null,
   };
 }
