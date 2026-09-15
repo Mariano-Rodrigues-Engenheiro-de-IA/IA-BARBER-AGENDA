@@ -6494,24 +6494,6 @@ async function callAIAgent(
       // escalate_human pode repetir: a IA pode precisar escalar de novo em outro
       // momento da conversa (ex.: nova falha ou novo pedido de atendimento humano).
       const isEscalateHumanTool = matchedCustomTool?.type === "escalate_human";
-      // A transferência não pode substituir uma ação de agenda que a própria IA
-      // declarou no motivo que ainda precisa executar. Devolvemos o bloqueio à IA
-      // para ela continuar o loop e chamar a ferramenta de agendamento adequada.
-      if (isEscalateHumanTool && escalationReasonIsBookingWork(parsedArgs?.motivo)) {
-        toolResult = {
-          success: false,
-          blocked: true,
-          reason: "booking_action_not_executed",
-          error: "Transferência bloqueada: o motivo informa que ainda é preciso confirmar ou criar o agendamento. Execute primeiro a ferramenta de agenda apropriada. Só escale se ela retornar uma falha real ou se o cliente pedir atendimento humano.",
-          type: "escalate_human",
-        };
-        wasBlocked = true;
-        sessionBlocked = true;
-        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
-        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
-        console.warn(`[EscalateHumanGuard] ${toolKey} bloqueada: motivo delegava a criação/confirmação do agendamento ao humano.`);
-        continue;
-      }
       // Ferramentas customizadas são informativas/reversíveis (enviar texto, imagem,
       // áudio, vídeo, documento, localização, link, combo, PIX, contato, etiquetas).
       // O cliente pode legitimamente pedir o mesmo conteúdo de novo mais tarde, então
