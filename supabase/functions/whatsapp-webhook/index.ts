@@ -671,6 +671,17 @@ async function hasIaOffInDatabaseAtSendTime(
   return flags.some((flag: string) => iaOffLabelIds.includes(String(flag)) || /ia\s*off/i.test(String(flag)));
 }
 
+function escalationReasonIsBookingWork(reason: unknown): boolean {
+  const normalized = String(reason || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  const asksForBookingWork = /\b(confirmar|concluir|criar|fazer|realizar)\b.{0,40}\bagendamento\b|\bagendamento\b.{0,40}\b(confirmar|concluir|criar|fazer|realizar)\b/i.test(normalized);
+  const reportsRealFailure = /\b(erro|falha|indispon[ií]vel|n[aã]o\s+foi\s+poss[ií]vel|n[aã]o\s+consegui|bloquead[oa])\b/i.test(normalized);
+  const clientAskedForHuman = /\b(cliente|usu[aá]rio)\b.{0,40}\b(pediu|solicitou|quer|deseja)\b.{0,30}\b(humano|atendente|pessoa)\b/i.test(normalized);
+
+  return asksForBookingWork && !reportsRealFailure && !clientAskedForHuman;
+}
+
 function normalizeWhatsAppLabelId(value: any): string | null {
   if (value == null) return null;
 
@@ -6494,6 +6505,24 @@ async function callAIAgent(
       // escalate_human pode repetir: a IA pode precisar escalar de novo em outro
       // momento da conversa (ex.: nova falha ou novo pedido de atendimento humano).
       const isEscalateHumanTool = matchedCustomTool?.type === "escalate_human";
+      // A transferência não pode substituir uma ação de agenda que a própria IA
+      // declarou no motivo que ainda precisa executar. Devolvemos o bloqueio à IA
+      // para ela continuar o loop e chamar a ferramenta de agendamento adequada.
+      if (isEscalateHumanTool && escalationReasonIsBookingWork(parsedArgs?.motivo)) {
+        toolResult = {
+          success: false,
+          blocked: true,
+          reason: "booking_action_not_executed",
+          error: "Transferência bloqueada: o motivo informa que ainda é preciso confirmar ou criar o agendamento. Execute primeiro a ferramenta de agenda apropriada. Só escale se ela retornar uma falha real ou se o cliente pedir atendimento humano.",
+          type: "escalate_human",
+        };
+        wasBlocked = true;
+        sessionBlocked = true;
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
+        console.warn(`[EscalateHumanGuard] ${toolKey} bloqueada: motivo delegava a criação/confirmação do agendamento ao humano.`);
+        continue;
+      }
       // Ferramentas customizadas são informativas/reversíveis (enviar texto, imagem,
       // áudio, vídeo, documento, localização, link, combo, PIX, contato, etiquetas).
       // O cliente pode legitimamente pedir o mesmo conteúdo de novo mais tarde, então
@@ -7887,6 +7916,14 @@ async function callAIAgent(
     return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
   });
   const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
+
+  // `escalar_humano` em modo silencioso aplica IA OFF durante esta própria
+  // execução. Zere qualquer texto que o modelo tenha produzido para que a
+  // barreira de saída não confunda essa etiqueta interna com intervenção humana.
+  if (silentEscalationRan && finalResponse) {
+    console.log(`[SilentEscalationGuard] Resposta descartada porque a transferência silenciosa já assumiu o atendimento.`);
+    finalResponse = "";
+  }
 
   if (!finalResponse && !silenceAllowed) {
 

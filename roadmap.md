@@ -25,3 +25,4 @@
 - [x] Validar casos de aceite: 555ef6cb auditado e sinalizado como acao_afirmada_nao_executada; 10 casos de falso alarme de data reprocessados sem reabrir; 53 turnos de modo silencioso devolvidos à fila
 - [~] Reprocessamento dos 77 erros de 14/09: automático pela fila nos próximos ciclos do agendador (~1-2h para drenar)
 - [ ] Acompanhar um dia completo: status=error <1%, zero credit_limit_reached, custo diário dentro do teto
+- [x] Corrigir corrida da IA OFF: impedir escalada que delega agendamento e distinguir etiqueta aplicada pela própria transferência silenciosa
