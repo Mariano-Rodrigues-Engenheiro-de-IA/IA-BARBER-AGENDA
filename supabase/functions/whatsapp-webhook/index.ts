@@ -7873,14 +7873,10 @@ async function callAIAgent(
     finalResponse = "";
   }
 
-  // O silêncio é obrigatório para automações da casa e transferências silenciosas.
+  // O silêncio é obrigatório para automações da casa.
   // Nos demais casos, ainda tentamos uma recuperação natural uma vez.
   const turnIsAutomationEcho = isBusinessAutomationEcho(userMessage || "");
-  const silentEscalationRan = (logToolCalls || []).some((tc: any) => {
-    const r = tc?.result;
-    return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
-  });
-  const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
+  const silenceAllowed = turnIsAutomationEcho;
 
   if (!finalResponse && !silenceAllowed) {
 
