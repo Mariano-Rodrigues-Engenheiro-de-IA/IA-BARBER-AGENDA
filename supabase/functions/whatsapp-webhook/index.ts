@@ -671,17 +671,6 @@ async function hasIaOffInDatabaseAtSendTime(
   return flags.some((flag: string) => iaOffLabelIds.includes(String(flag)) || /ia\s*off/i.test(String(flag)));
 }
 
-function escalationReasonIsBookingWork(reason: unknown): boolean {
-  const normalized = String(reason || "").trim().toLowerCase();
-  if (!normalized) return false;
-
-  const asksForBookingWork = /\b(confirmar|concluir|criar|fazer|realizar)\b.{0,40}\bagendamento\b|\bagendamento\b.{0,40}\b(confirmar|concluir|criar|fazer|realizar)\b/i.test(normalized);
-  const reportsRealFailure = /\b(erro|falha|indispon[ií]vel|n[aã]o\s+foi\s+poss[ií]vel|n[aã]o\s+consegui|bloquead[oa])\b/i.test(normalized);
-  const clientAskedForHuman = /\b(cliente|usu[aá]rio)\b.{0,40}\b(pediu|solicitou|quer|deseja)\b.{0,30}\b(humano|atendente|pessoa)\b/i.test(normalized);
-
-  return asksForBookingWork && !reportsRealFailure && !clientAskedForHuman;
-}
-
 function normalizeWhatsAppLabelId(value: any): string | null {
   if (value == null) return null;
 
