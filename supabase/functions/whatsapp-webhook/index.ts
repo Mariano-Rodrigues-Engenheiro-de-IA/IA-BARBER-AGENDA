@@ -3666,6 +3666,12 @@ function _extractTimesAndDatesFromPayload(payload: unknown): { times: string[]; 
     if (hn >= 0 && hn <= 23) timeSet.add(`${hh}:${m}`);
   };
   for (const m of json.matchAll(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/g)) pushTime(m[1], m[2]);
+  // AppBarber devolve "scheduling_start": "19/09/2026 16:45" (dd/mm/aaaa HH:MM).
+  // Sem esta linha a agenda real vinha SEM horários e o StaleConfirmationGuard
+  // marcava como "sem agenda pra comparar" turnos em que a IA citou exatamente
+  // o horário retornado pela API (falso positivo confirmado em 10 casos reais,
+  // 09–15/09/2026, ex.: 554491345070 citando 16h45 do invoice_search).
+  for (const m of json.matchAll(/\d{2}\/\d{2}\/\d{4}[T ](\d{1,2}):(\d{2})/g)) pushTime(m[1], m[2]);
   for (const m of json.matchAll(/"(?:hora|horario|hora_?inicio|hora_?fim|inicio|fim|time|hour|start|end)"\s*:\s*"(\d{1,2}):(\d{2})(?::\d{2})?"/gi)) pushTime(m[1], m[2]);
   for (const m of json.matchAll(/"(\d{1,2}):(\d{2})(?::\d{2})?"/g)) pushTime(m[1], m[2]);
   const times = Array.from(timeSet);
