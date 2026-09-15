@@ -3666,6 +3666,12 @@ function _extractTimesAndDatesFromPayload(payload: unknown): { times: string[]; 
     if (hn >= 0 && hn <= 23) timeSet.add(`${hh}:${m}`);
   };
   for (const m of json.matchAll(/\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/g)) pushTime(m[1], m[2]);
+  // AppBarber devolve "scheduling_start": "19/09/2026 16:45" (dd/mm/aaaa HH:MM).
+  // Sem esta linha a agenda real vinha SEM horários e o StaleConfirmationGuard
+  // marcava como "sem agenda pra comparar" turnos em que a IA citou exatamente
+  // o horário retornado pela API (falso positivo confirmado em 10 casos reais,
+  // 09–15/09/2026, ex.: 554491345070 citando 16h45 do invoice_search).
+  for (const m of json.matchAll(/\d{2}\/\d{2}\/\d{4}[T ](\d{1,2}):(\d{2})/g)) pushTime(m[1], m[2]);
   for (const m of json.matchAll(/"(?:hora|horario|hora_?inicio|hora_?fim|inicio|fim|time|hour|start|end)"\s*:\s*"(\d{1,2}):(\d{2})(?::\d{2})?"/gi)) pushTime(m[1], m[2]);
   for (const m of json.matchAll(/"(\d{1,2}):(\d{2})(?::\d{2})?"/g)) pushTime(m[1], m[2]);
   const times = Array.from(timeSet);
@@ -8360,11 +8366,12 @@ async function callAIAgent(
   }
 
   // ============================================================================
-  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE SOMBRA, SOMENTE APPBARBER
+  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE APPBARBER
   // A IA confirma um agendamento PRÉ-EXISTENTE sem reconsultar a agenda nesta
-  // interação. Se a barbearia mudou/cancelou pelo sistema deles, o horário
-  // confirmado pode não existir mais (~425-479 turnos/mês, ~78 divergências
-  // estimadas). Nesta fase só DETECTA e registra — não altera a resposta.
+  // interação. Desde 15/09/2026: evidência FORTE (agenda real conhecida e o
+  // horário citado não está nela) reinjeta o modelo; evidência FRACA (sem agenda
+  // pra comparar) continua só em sombra — 30 dias de dados mostraram 24 disparos
+  // fracos, 0 fortes, com falsos positivos vindos do extrator de horários.
   // ============================================================================
   if (finalResponse && provider === "appbarber") {
     const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
@@ -8407,17 +8414,117 @@ async function callAIAgent(
     );
 
     if (citesTime && confirmsExisting && !createdThisTurn && !citedMatchesRealAgenda) {
-      const acao = _agendaTimes.size > 0
+      // Evidência FORTE: já existe agenda real conhecida e o horário citado não
+      // está nela → reinjeta (mesma técnica do PhantomConfirmationGuard).
+      // Evidência FRACA (nenhuma agenda pra comparar) → segue só em sombra:
+      // medição 16/08–15/09/2026 no agent_logs mostrou 24 disparos, TODOS do
+      // tipo fraco e 0 do tipo forte, com falsos positivos comprovados vindos do
+      // extrator de horários (corrigido acima). Bloquear o tipo fraco agora
+      // penalizaria confirmações legítimas.
+      const isStrongEvidence = _agendaTimes.size > 0;
+      const acao = isStrongEvidence
         ? "detected_shadow_time_mismatch"   // agenda real conhecida e o horário citado NÃO está nela
         : "detected_shadow_no_agenda_data"; // nenhuma agenda real conhecida pra comparar
-      console.warn(`[StaleConfirmationGuard] SHADOW (${acao}): citados=[${Array.from(_citedTimes).join(",")}] agenda_real=[${Array.from(_agendaTimes).join(",")}] consultou_neste_turno=${lookedUpThisTurn}`);
+      console.warn(`[StaleConfirmationGuard] ${isStrongEvidence ? "REINJECT" : "SHADOW"} (${acao}): citados=[${Array.from(_citedTimes).join(",")}] agenda_real=[${Array.from(_agendaTimes).join(",")}] consultou_neste_turno=${lookedUpThisTurn}`);
+
+      let staleRecovered = false;
+      if (isStrongEvidence && !guardOverrideResponse) {
+        logErrors.push({
+          message: `Resposta confirmava horário (${Array.from(_citedTimes).join(",")}) que não existe na agenda real consultada (${Array.from(_agendaTimes).join(",")}) — tentando reinjeção antes de responder.`,
+          level: "warning",
+        });
+        try {
+          messages.push({
+            role: "system",
+            content:
+              "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você confirmou ao cliente o horário " +
+              Array.from(_citedTimes).join(" / ") +
+              ", mas a agenda real já consultada mostra " +
+              (Array.from(_agendaTimes).join(" / ") || "outros horários") +
+              ". Não afirme horário sem dado real.\n" +
+              "1) Chame listar_agendamentos agora e use SOMENTE o que voltar da ferramenta.\n" +
+              "2) Se existir agendamento ativo, confirme com o horário/data/profissional exatos retornados.\n" +
+              "3) Se não existir nenhum, diga isso com naturalidade e ofereça remarcar — nunca confirme um horário que a agenda não mostra.",
+          });
+          const _isGpt5Stale = modelUsed.includes("gpt-5");
+          let anyToolExecuted = false;
+          let assistantText = "";
+          for (let round = 0; round < 2; round++) {
+            const retryResp = await fetchAIWithRetry(
+              JSON.stringify({
+                model: modelUsed,
+                messages,
+                tools: buildToolsForProvider(provider, tenant),
+                tool_choice: "auto",
+                max_completion_tokens: _isGpt5Stale ? 1500 : 700,
+              }),
+              `stale-confirmation-reinject-r${round + 1}`,
+            );
+            if (!retryResp.ok) break;
+            const retryJson = await retryResp.json();
+            const retryMsg = retryJson?.choices?.[0]?.message;
+            const pendingToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+            assistantText = String(retryMsg?.content || "").trim();
+            if (pendingToolCalls.length === 0) break;
+            messages.push(retryMsg);
+            for (const tc of pendingToolCalls) {
+              let tResult: any;
+              try {
+                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+              } catch (e) {
+                tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+              }
+              messages.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+              });
+              anyToolExecuted = true;
+              if (tResult && !tResult.error && !tResult.blocked) {
+                logToolCalls.push({ name: tc?.function?.name, args: parseToolArguments(tc.function?.arguments), result: tResult });
+              }
+            }
+          }
+          if (anyToolExecuted) {
+            try {
+              const finalResp = await fetchAIWithRetry(
+                JSON.stringify({ model: modelUsed, messages, max_completion_tokens: 500 }),
+                "stale-confirmation-final-answer",
+              );
+              if (finalResp.ok) {
+                const finalJson = await finalResp.json();
+                const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
+                if (finalMsgText) {
+                  finalResponse = finalMsgText;
+                  guardOverrideResponse = true;
+                  staleRecovered = true;
+                }
+              }
+            } catch (e) {
+              console.error(`[StaleConfirmationGuard] final-answer exception: ${(e as Error)?.message}`);
+            }
+            if (!staleRecovered && assistantText) {
+              finalResponse = assistantText;
+              guardOverrideResponse = true;
+              staleRecovered = true;
+            }
+          }
+        } catch (e) {
+          console.error(`[StaleConfirmationGuard] reinject exception: ${(e as Error)?.message}`);
+        }
+        if (!staleRecovered) {
+          finalResponse = "Só um instante que eu confiro seu horário na agenda agora.";
+          guardOverrideResponse = true;
+        }
+      }
+
       logToolCalls.push({
         name: "__phantom_guard__",
         args: { phase: "response_guard" },
         result: {
           layer: "stale_confirmation_guard",
           provider,
-          acao,
+          acao: isStrongEvidence ? (staleRecovered ? "reinjected_time_mismatch" : "blocked_time_mismatch") : acao,
           claim: String(finalResponse).slice(0, 160),
           looked_up_this_turn: lookedUpThisTurn,
           cited_times: Array.from(_citedTimes),
