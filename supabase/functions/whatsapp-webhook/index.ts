@@ -10684,15 +10684,12 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           }
         }
 
-        // O retorno diz explicitamente à IA quem fala com o cliente agora:
-        // - texto fixo já enviado: não repetir
-        // - sem texto fixo: a IA escreve a mensagem de transferência com o contexto real
+        // A ferramenta nunca envia texto ao cliente: a IA escreve a mensagem
+        // normalmente, no fluxo de resposta.
         return {
           success: true,
-          message: escalateText
-            ? "Atendimento escalado para humano. A mensagem de aviso já foi enviada ao cliente — não repita."
-            : "Atendimento escalado para humano. Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso de transferência, curto e natural, usando o contexto da conversa.",
-          client_notified: Boolean(escalateText),
+          message: "Atendimento escalado para humano (etiqueta aplicada e atendente avisado). Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso, curto e natural, com o contexto da conversa.",
+          client_notified: false,
           type: toolType,
         };
 
