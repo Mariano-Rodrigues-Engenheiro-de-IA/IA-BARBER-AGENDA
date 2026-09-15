@@ -378,24 +378,15 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
     case "escalate_human":
       return (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label>Modo silencioso (não envia mensagem ao cliente)</Label>
-            <Switch
-              checked={config.silent_mode || false}
-              onCheckedChange={(checked) => onChange({ ...config, silent_mode: checked })}
+          <div className="space-y-2">
+            <Label>Mensagem para o cliente</Label>
+            <Textarea
+              rows={2}
+              value={config.text || ""}
+              onChange={(e) => onChange({ ...config, text: e.target.value })}
+              placeholder="Vou transferir você para um atendente. Aguarde um momento! 🙋"
             />
           </div>
-          {!config.silent_mode && (
-            <div className="space-y-2">
-              <Label>Mensagem para o cliente</Label>
-              <Textarea
-                rows={2}
-                value={config.text || ""}
-                onChange={(e) => onChange({ ...config, text: e.target.value })}
-                placeholder="Vou transferir você para um atendente. Aguarde um momento! 🙋"
-              />
-            </div>
-          )}
           <div className="space-y-2">
             <Label>Número do atendente humano</Label>
             <Input
