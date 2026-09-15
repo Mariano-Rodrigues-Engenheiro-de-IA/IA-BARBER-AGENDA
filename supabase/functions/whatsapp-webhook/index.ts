@@ -2844,15 +2844,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // determinístico de agendamento já é aplicado dentro de callAIAgent; aqui
       // nunca inventamos uma falha técnica para preencher uma resposta vazia.
       if (!String(aiResponse || "").trim()) {
-        const silentEscalation = (agentResult?.toolCalls || []).some((tc: any) => {
-          const r = tc?.result;
-          return !!r && typeof r === "object" && r.type === "escalate_human" && r.silent_mode === true;
-        });
         const reason = isBusinessAutomationEcho(combinedContent || messageContent || "")
           ? "automação do estabelecimento"
-          : silentEscalation
-            ? "transferência silenciosa"
-            : "resposta vazia sem ação confirmada";
+          : "resposta vazia sem ação confirmada";
         console.log(`[SilentResponse] Nada enviado para ${phoneNumber}: ${reason}.`);
       }
 
