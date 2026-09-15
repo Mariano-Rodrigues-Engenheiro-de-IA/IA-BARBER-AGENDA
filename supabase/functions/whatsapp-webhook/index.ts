@@ -10605,41 +10605,9 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         };
 
         // 🙋 TRANSFERÊNCIA PARA HUMANO
-        // Sem `text` configurado, a ferramenta não envia texto próprio: quem
-        // escreve a mensagem é a própria IA, com o contexto da conversa.
-        // Não existe mensagem padrão fixa nem modo silencioso.
-        const escalateText = String(config.text || "").trim();
-        if (escalateText) {
-          const clientText = escalateText;
-          try {
-            const delay = typingDelayMs(clientText);
-            await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
-            const clientRes = await fetch(`${uazapiUrl}/send/text`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-              body: JSON.stringify({ number: phoneNumber, text: clientText, delay, readchat: false }),
-            });
-            const clientData = await readResponsePayload(clientRes);
-            const clientMsgId = extractSentMessageId(clientData);
-            // Persistir mensagem enviada ao cliente (conta como saída da IA p/ métrica Meta)
-            try {
-              await sbEscalate.from("chat_messages").insert({
-                tenant_id: tenant.id,
-                phone_number: phoneNumber,
-                role: "assistant",
-                content: clientText,
-                message_id: clientMsgId,
-                processed: true,
-              });
-            } catch (persistErr: any) {
-              console.error("[EscalateHuman] persist client msg error:", persistErr?.message || persistErr);
-            }
-          } catch (e: any) {
-            console.error("[EscalateHuman] send client msg error:", e?.message || e);
-          }
-        } else {
-          console.log(`[EscalateHuman] Nenhum texto fixo configurado — a IA escreve o aviso de transferência.`);
-        }
+        // A ferramenta NÃO envia texto ao cliente: quem escreve é sempre a
+        // própria IA, no fluxo normal. Aqui só avisamos o atendente e
+        // aplicamos a etiqueta.
 
 
         const humanNumber = config.human_number;
