@@ -10605,15 +10605,11 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         };
 
         // 🙋 TRANSFERÊNCIA PARA HUMANO
-        // Duas decisões da barbearia são respeitadas aqui:
-        // 1) `silent_mode`: quando ligado, a ferramenta NÃO envia nada ao cliente
-        //    (o botão/etiqueta continua funcionando e a equipe é avisada).
-        // 2) Sem `text` configurado, a ferramenta também não envia texto próprio:
-        //    quem escreve a mensagem é a própria IA, com o contexto da conversa.
-        //    Não existe mais mensagem padrão fixa.
-        const escalateSilent = config.silent_mode === true;
+        // Sem `text` configurado, a ferramenta não envia texto próprio: quem
+        // escreve a mensagem é a própria IA, com o contexto da conversa.
+        // Não existe mensagem padrão fixa nem modo silencioso.
         const escalateText = String(config.text || "").trim();
-        if (!escalateSilent && escalateText) {
+        if (escalateText) {
           const clientText = escalateText;
           try {
             const delay = typingDelayMs(clientText);
