@@ -7888,14 +7888,6 @@ async function callAIAgent(
   });
   const silenceAllowed = turnIsAutomationEcho || silentEscalationRan;
 
-  // `escalar_humano` em modo silencioso aplica IA OFF durante esta própria
-  // execução. Zere qualquer texto que o modelo tenha produzido para que a
-  // barreira de saída não confunda essa etiqueta interna com intervenção humana.
-  if (silentEscalationRan && finalResponse) {
-    console.log(`[SilentEscalationGuard] Resposta descartada porque a transferência silenciosa já assumiu o atendimento.`);
-    finalResponse = "";
-  }
-
   if (!finalResponse && !silenceAllowed) {
 
     const recoveredResponseRaw = await requestFinalNaturalResponse(messages);
