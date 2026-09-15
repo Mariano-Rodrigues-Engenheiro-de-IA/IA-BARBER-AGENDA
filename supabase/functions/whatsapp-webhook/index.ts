@@ -8366,11 +8366,12 @@ async function callAIAgent(
   }
 
   // ============================================================================
-  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE SOMBRA, SOMENTE APPBARBER
+  // 👁️ STALE-CONFIRMATION GUARD (item 10) — SOMENTE APPBARBER
   // A IA confirma um agendamento PRÉ-EXISTENTE sem reconsultar a agenda nesta
-  // interação. Se a barbearia mudou/cancelou pelo sistema deles, o horário
-  // confirmado pode não existir mais (~425-479 turnos/mês, ~78 divergências
-  // estimadas). Nesta fase só DETECTA e registra — não altera a resposta.
+  // interação. Desde 15/09/2026: evidência FORTE (agenda real conhecida e o
+  // horário citado não está nela) reinjeta o modelo; evidência FRACA (sem agenda
+  // pra comparar) continua só em sombra — 30 dias de dados mostraram 24 disparos
+  // fracos, 0 fortes, com falsos positivos vindos do extrator de horários.
   // ============================================================================
   if (finalResponse && provider === "appbarber") {
     const citesTime = /\b\d{1,2}[:h]\d{2}\b/.test(finalResponse);
