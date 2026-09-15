@@ -106,7 +106,7 @@ const TOOL_TEMPLATES: Omit<CustomTool, "id">[] = [
     display_name: "Escalar para Humano",
     description: "Transfere o atendimento para um humano",
     type: "escalate_human",
-    config: { text: "Vou transferir você para um atendente. Aguarde um momento! 🙋" },
+    config: {},
     prompt_instruction: "Use quando o cliente pedir para falar com uma pessoa real, atendente humano, ou quando a situação for complexa demais para resolver automaticamente.",
     enabled: true,
   },
@@ -377,15 +377,6 @@ function ToolConfigFields({ tool, onChange, tenantId }: { tool: CustomTool; onCh
     case "escalate_human":
       return (
         <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>Mensagem para o cliente</Label>
-            <Textarea
-              rows={2}
-              value={config.text || ""}
-              onChange={(e) => onChange({ ...config, text: e.target.value })}
-              placeholder="Vou transferir você para um atendente. Aguarde um momento! 🙋"
-            />
-          </div>
           <div className="space-y-2">
             <Label>Número do atendente humano</Label>
             <Input
