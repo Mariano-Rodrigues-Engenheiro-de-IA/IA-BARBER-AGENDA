@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
-import { LayoutDashboard, MessageCircle, LogOut, Smartphone, Bot, TestTube2, Wrench } from "lucide-react";
+import { LayoutDashboard, MessageCircle, LogOut, Smartphone, Bot, TestTube2, Wrench, Wallet } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { postLogoutRedirect, cameFromCrm } from "@/lib/crm-origin";
@@ -19,12 +19,13 @@ const NAV: NavItem[] = [
   { to: "/app/tools", icon: Wrench, label: "Ferramentas", module: "tools" },
   { to: "/app/simulator", icon: TestTube2, label: "Simulador", module: "simulator" },
   { to: "/app/connection", icon: Smartphone, label: "Conexão", module: "connection" },
+  { to: "/app/billing", icon: Wallet, label: "Cobrança", module: "billing" },
 ];
 
-function SidebarNavItem({ item }: { item: NavItem }) {
+function SidebarNavItem({ item, extraVisible = true }: { item: NavItem; extraVisible?: boolean }) {
   const location = useLocation();
   const { visible } = useModulePermission(item.module);
-  if (!visible) return null;
+  if (!visible || !extraVisible) return null;
   const isActive = location.pathname === item.to;
   return (
     <Link
@@ -54,9 +55,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase.from("tenants")
-        .select("id,name,agent_paused,logo_url,api_provider")
+        .select("id,name,agent_paused,logo_url,api_provider,celcash_enabled")
         .eq("id", tenantId!).single();
-      return data as { id: string; name: string; agent_paused: boolean; logo_url: string | null; api_provider: string | null } | null;
+      return data as { id: string; name: string; agent_paused: boolean; logo_url: string | null; api_provider: string | null; celcash_enabled: boolean | null } | null;
     },
   });
 
@@ -148,7 +149,13 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         <div className="mx-3 mb-2 h-px bg-sidebar-border" />
 
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-1">
-          {NAV.map((i) => <SidebarNavItem key={i.to} item={i} />)}
+          {NAV.map((i) => (
+            <SidebarNavItem
+              key={i.to}
+              item={i}
+              extraVisible={i.module === "billing" ? !!tenant?.celcash_enabled : true}
+            />
+          ))}
         </nav>
 
         {/* Indicador de status da IA — interruptor discreto, texto completo
