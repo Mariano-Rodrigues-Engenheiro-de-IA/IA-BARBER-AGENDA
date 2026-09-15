@@ -37,7 +37,6 @@ export interface CustomToolConfig {
   combo_items?: ComboItem[];
   human_number?: string;
   label_id?: string;
-  silent_mode?: boolean;
   pix_type?: "CPF" | "CNPJ" | "PHONE" | "EMAIL" | "EVP";
   pix_key?: string;
   pix_name?: string;
