@@ -162,7 +162,12 @@ interface CelCashTransaction {
   value?: number | string;
 }
 
-async function fetchRecentTransactions(env: string, token: string, subscriptionIds: string[]) {
+async function fetchRecentTransactions(
+  env: string,
+  token: string,
+  subscriptionIds: string[],
+  deadlineAt: number,
+) {
   const ids = [...new Set(subscriptionIds)];
   const all: CelCashTransaction[] = [];
   const diagnostics = {
