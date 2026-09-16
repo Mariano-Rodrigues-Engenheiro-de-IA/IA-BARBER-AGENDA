@@ -265,12 +265,20 @@ async function fetchRecentTransactions(
           }
           added++;
           seen.add(id);
+          const subId = String(tx.subscriptionGalaxPayId ?? "");
+          seenSubs.add(subId);
+          if (tx.payday && String(tx.payday) < today) withPastDue.add(subId);
           all.push(tx);
         }
         console.info(`[CelCashOverdue] lote=${offset / batchSize + 1} startAt=${startAt} recebidas=${items.length} novas=${added}`);
         // Uma página cheia sem progresso não comprova que a busca terminou.
         if (items.length >= limit && added === 0) {
           throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
+        }
+        const lastPayday = String((items[items.length - 1] as CelCashTransaction | undefined)?.payday ?? "");
+        if (lastPayday && lastPayday < today && seenSubs.size > 0 && withPastDue.size >= seenSubs.size) {
+          diagnostics.stoppedReason = "past_due_covered";
+          break;
         }
         if (items.length < limit) break;
         startAt += items.length;
