@@ -2144,6 +2144,50 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         }
       }
 
+      // 🕰️ TRAVA ANTI-SINCRONIZAÇÃO DE HISTÓRICO (bug real 16/09/2026 — Future & Cut).
+      // Quando a instância do WhatsApp reconecta/re-sincroniza, a UAZAPI reentrega
+      // mensagens ANTIGAS como se fossem novas (dezenas no mesmo segundo). A IA
+      // respondia todas — clientes que não falaram nada naquele dia recebiam mensagem
+      // do nada, e nos chats identificados só por @lid o envio ainda falhava com
+      // "UAZAPI status 500". Aqui a mensagem antiga é gravada para contexto/painel,
+      // mas NUNCA gera resposta. Motivo registrado em agent_logs (nunca descartar
+      // em silêncio).
+      const STALE_INBOUND_MS = 15 * 60 * 1000;
+      const inboundAgeMs = getInboundMessageAgeMs(payload, msg);
+      if (inboundAgeMs !== null && inboundAgeMs > STALE_INBOUND_MS) {
+        const ageMin = Math.round(inboundAgeMs / 60000);
+        console.warn(`[StaleInbound] Mensagem de ${phoneNumber} tem ${ageMin} min (provável re-sincronização de histórico da UAZAPI) — gravada sem resposta da IA.`);
+        try {
+          await supabase.from("chat_messages").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            role: "user",
+            content: messageContent || (hasMedia ? "[Mídia recebida]" : ""),
+            message_id: messageId,
+            processed: true,
+          });
+        } catch (e) {
+          console.error("[StaleInbound] falha ao gravar mensagem antiga:", (e as Error)?.message);
+        }
+        try {
+          await supabase.from("agent_logs").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: (messageContent || "").slice(0, 500),
+            ai_response: "",
+            model_used: "discarded:stale_inbound",
+            errors: [{
+              level: "warning",
+              message: `Mensagem descartada por ter ${ageMin} min de idade (limite ${STALE_INBOUND_MS / 60000} min). Provável re-sincronização de histórico da UAZAPI após reconexão da instância — responder isso disparava mensagem para clientes que não escreveram.`,
+            }],
+          });
+        } catch (e) {
+          console.error("[StaleInbound] falha ao registrar descarte:", (e as Error)?.message);
+        }
+        return new Response(JSON.stringify({ status: "skipped_stale_inbound", age_minutes: ageMin }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
 
       const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
       const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
