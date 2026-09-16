@@ -288,14 +288,23 @@ async function fetchRecentTransactions(
   }
 
   // O endpoint não oferece filtro por vencimento. Como payday.asc é ordenado,
-  // localizamos a página de hoje por saltos exponenciais + busca binária, sem
-  // percorrer anos de histórico nem depender do status da assinatura.
+  // localizamos a página de "90 dias atrás" por saltos exponenciais + busca
+  // binária, sem percorrer anos de histórico nem depender do status da
+  // assinatura. A partir dali, paginamos pra frente até ultrapassar hoje —
+  // cobre toda a janela de inadimplência recente, não só o que couber numa
+  // única página de margem antes de hoje (correção de 16/09: buscar a
+  // fronteira de "hoje" e recuar 1 página só não é suficiente quando há
+  // muitas transações por dia — perdia vencidos de dias anteriores).
+  const cutoffDate90 = new Date();
+  cutoffDate90.setDate(cutoffDate90.getDate() - 90);
+  const cutoffStr90 = cutoffDate90.toISOString().slice(0, 10);
+
   let lowPage = 0;
   let highPage = 1;
   while (true) {
     const page = await fetchPage(highPage * limit);
     const lastPayday = String(page[page.length - 1]?.payday ?? "");
-    if (!page.length || lastPayday >= today) break;
+    if (!page.length || lastPayday >= cutoffStr90) break;
     lowPage = highPage;
     highPage *= 2;
   }
@@ -303,7 +312,7 @@ async function fetchRecentTransactions(
     const middlePage = Math.floor((lowPage + highPage) / 2);
     const page = await fetchPage(middlePage * limit);
     const lastPayday = String(page[page.length - 1]?.payday ?? "");
-    if (!page.length || lastPayday >= today) highPage = middlePage;
+    if (!page.length || lastPayday >= cutoffStr90) highPage = middlePage;
     else lowPage = middlePage;
   }
 
@@ -313,7 +322,7 @@ async function fetchRecentTransactions(
     for (const tx of items) {
       if (!tx || typeof tx !== "object") throw new Error("CelCash: transação inválida.");
       const payday = String(tx.payday ?? "");
-      if (payday !== today || !isOpenTransaction(tx)) continue;
+      if (payday > today || !isOpenTransaction(tx)) continue;
       const id = String(tx.galaxPayId ?? "");
       if (!id) throw new Error(`CelCash: transação sem galaxPayId (startAt ${startAt}); lista anterior preservada.`);
       if (seen.has(id)) diagnostics.duplicates++;
