@@ -149,33 +149,35 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
 // esse endpoint e junta com as já embutidas — usa o que for mais recente
 // das duas fontes por assinatura, pra não perder dado se uma das fontes
 // falhar ou vier incompleta.
-async function fetchRecentTransactions(env: string, token: string): Promise<any[]> {
+async function fetchRecentTransactions(env: string, token: string): Promise<{ transactions: any[]; diagnostics: any }> {
   const all: any[] = [];
   const limit = 100;
   let startAt = 0;
-  // Limite de segurança: até 20 páginas (2000 transações). Não filtra por
-  // data via query (schema exato dos filtros não pôde ser confirmado na
-  // documentação estática) — pega o volume recente disponível e filtra
-  // por data no código depois.
+  const diagnostics: any = { pages: 0, lastHttpStatus: null, lastRawSample: null, error: null };
   for (let i = 0; i < 20; i++) {
     const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}`;
     const resp = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     });
     const text = await resp.text();
+    diagnostics.pages++;
+    diagnostics.lastHttpStatus = resp.status;
     let json: any; try { json = JSON.parse(text); } catch { json = null; }
     if (!resp.ok) {
+      diagnostics.error = `HTTP ${resp.status}`;
+      diagnostics.lastRawSample = text.slice(0, 500);
       console.warn(`[CelCashOverdue] /transactions HTTP ${resp.status}: ${text.slice(0, 200)} — seguindo só com o array embutido em /subscriptions.`);
       break;
     }
     const items: any[] =
       json?.Transactions || json?.transactions || json?.data || json?.items || (Array.isArray(json) ? json : []);
-    if (!items.length) break;
+    if (i === 0) diagnostics.lastRawSample = text.slice(0, 500);
     all.push(...items);
     if (items.length < limit) break;
     startAt += items.length;
   }
-  return all;
+  diagnostics.total = all.length;
+  return { transactions: all, diagnostics };
 }
 
 function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
@@ -223,7 +225,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
     const planMap = await fetchPlansMap(env, token);
-    const recentTransactions = await fetchRecentTransactions(env, token);
+    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(env, token);
     const extraTransactionsBySubscription = new Map<string, any[]>();
     for (const t of recentTransactions) {
       const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
@@ -291,7 +293,13 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
       .select("id");
     const removed = removedRows?.length || 0;
 
-    return { tenant_id: tenant.id, fetched: subs.length, overdue_upserted: upserted, removed };
+    return {
+      tenant_id: tenant.id,
+      fetched: subs.length,
+      overdue_upserted: upserted,
+      removed,
+      transactions_endpoint: transactionsDiagnostics,
+    };
   } catch (e: any) {
     return { tenant_id: tenant.id, error: e.message || String(e) };
   }

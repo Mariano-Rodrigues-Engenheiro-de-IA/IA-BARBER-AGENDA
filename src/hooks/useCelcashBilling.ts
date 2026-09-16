@@ -145,7 +145,11 @@ export function useCelcashBilling(tenantId: string | undefined) {
       toast.error(result.error);
       return false;
     }
-    toast.success(`Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).`);
+    const diag = result?.transactions_endpoint;
+    const diagNote = diag?.error
+      ? ` (endpoint de transações falhou: ${diag.error})`
+      : ` (${diag?.total ?? 0} transações extras consultadas)`;
+    toast.success(`Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).${diagNote}`);
     queryClient.invalidateQueries({ queryKey: ["celcash-overdue-subscribers", tenantId] });
     return true;
   };
