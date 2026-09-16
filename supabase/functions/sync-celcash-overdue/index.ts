@@ -87,14 +87,41 @@ async function fetchAllSubscriptions(env: string, token: string) {
       status: "active,waitingPayment",
     });
     const url = `${baseUrl(env)}/subscriptions?${params}`;
-    const resp = await fetch(url, {
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    });
-    const text = await resp.text();
-    let json: any; try { json = JSON.parse(text); } catch { json = null; }
-    if (!resp.ok) {
-      throw new Error(`CelCash subscriptions HTTP ${resp.status}: ${text.slice(0, 200)}`);
+
+    // A CelCash devolve 5xx/429 esporádicos (às vezes página HTML do Cloudflare).
+    // Tentamos novamente com espera progressiva em vez de abortar a sincronização.
+    let resp!: Response;
+    let text = "";
+    let json: any = null;
+    let lastStatus = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      resp = await fetch(url, {
+        headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(20_000),
+      });
+      text = await resp.text();
+      try { json = JSON.parse(text); } catch { json = null; }
+      lastStatus = resp.status;
+      if (resp.ok) break;
+      const retryable = resp.status >= 500 || resp.status === 429 || resp.status === 403;
+      if (!retryable || attempt === 3) break;
+      const retryAfter = Number(resp.headers.get("retry-after")) * 1000;
+      const waitMs = Math.max(Number.isFinite(retryAfter) ? retryAfter : 0, 1500 * Math.pow(2, attempt));
+      console.warn(`[CelCashOverdue] /subscriptions HTTP ${resp.status}; nova tentativa em ${waitMs}ms (startAt ${startAt})`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
+    if (!resp.ok) {
+      // Não repassamos o corpo bruto: pode ser HTML de WAF e polui o painel.
+      const kind = lastStatus >= 500
+        ? "instabilidade na CelCash"
+        : lastStatus === 429
+        ? "limite de requisições"
+        : "acesso recusado";
+      throw new Error(
+        `CelCash assinaturas HTTP ${lastStatus} (${kind}) após 4 tentativas, página ${startAt}; lista anterior preservada.`,
+      );
+    }
+
     const items: any[] =
       json?.Subscriptions || json?.subscriptions || json?.data || json?.items || (Array.isArray(json) ? json : []);
     if (!items.length) break;
