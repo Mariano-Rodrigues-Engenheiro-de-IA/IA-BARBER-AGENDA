@@ -366,8 +366,6 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
       const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
-      const planNameFromMap = planIdStr ? planMap.get(planIdStr) : null;
-      const planNameFromMap2 = planMap.get(String(s.planMyId ?? "")) || planMap.get(String(s.planGalaxPayId ?? ""));
       return {
         tenant_id: tenant.id,
         celcash_customer_id: String(
