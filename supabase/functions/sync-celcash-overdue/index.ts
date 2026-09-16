@@ -118,23 +118,53 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
   return map;
 }
 
-function deriveStatus(sub: any): { status: string; isOverdue: boolean; overdueCents: number } {
-  const rawStatus = String(sub.status || sub.subscription_status || sub.situation || "").toLowerCase();
-  let status = "unknown";
-  if (rawStatus === "active" || /ativ/.test(rawStatus)) status = "active";
-  else if (rawStatus === "closed" || /cancel/.test(rawStatus)) status = "canceled";
-  else if (rawStatus === "waitingpayment" || /overdue|atras|inadimpl/.test(rawStatus)) status = "overdue";
-  else if (rawStatus === "notstarted") status = "pending";
-  else if (rawStatus === "dontbilled" || rawStatus === "outofbilling") status = "paused";
-  else if (/trial/.test(rawStatus)) status = "trial";
-  else if (/pend/.test(rawStatus)) status = "pending";
-  else if (rawStatus) status = rawStatus;
+// ⚠️ Reescrito (16/09): confirmado com dados reais (raw_payload de 2
+// assinantes + relatório de transações exportado do painel) que o status
+// da ASSINATURA ("active"/"waitingPayment") NÃO reflete corretamente quem
+// está em atraso — vistos casos reais de assinatura "active" com a
+// transação mais recente vencida há quase 2 meses, nunca reenviada pra
+// cobrança ("status": "notSend"). A CelCash só muda o status da
+// assinatura pra "waitingPayment" depois de bastante atraso acumulado —
+// só isso perdia todo mundo com atraso recente (visto: relatório real da
+// CelCash com 9 pessoas com transações negadas/com erro nos últimos 10
+// dias, nenhuma capturada pela lógica antiga).
+//
+// Lógica nova, baseada só na TRANSAÇÃO mais recente de cada assinatura
+// (campo Transactions[], já confirmado existir no payload real):
+//   - Acha a transação com o maior "payday" (a mais recente).
+//   - Se o status dela for "captured" (confirmado = pago com sucesso),
+//     a pessoa está em dia — não importa se há transações futuras.
+//   - Senão, se o "payday" dessa transação já passou, está inadimplente
+//     — usa o "value" e "payday" DELA (não um campo genérico da
+//     assinatura, que não existe no payload real).
+//   - Se o "payday" ainda não chegou, ainda não é inadimplente (cobrança
+//     futura normal).
+function deriveOverdueFromTransactions(sub: any): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
+  const rawStatus = String(sub.status || "").toLowerCase();
+  // Assinatura cancelada/encerrada nunca conta como pendência de cobrança.
+  if (rawStatus === "closed" || /cancel/.test(rawStatus)) {
+    return { isOverdue: false, overdueCents: 0, dueDate: null };
+  }
 
-  const overdueCents = Number(
-    sub.overdue_value || sub.overdueValue || sub.amount_overdue || sub.totalOverdue || 0
-  );
-  const isOverdue = status === "overdue" || overdueCents > 0;
-  return { status, isOverdue, overdueCents: Math.round(overdueCents) };
+  const transactions: any[] = Array.isArray(sub.Transactions) ? sub.Transactions : [];
+  if (!transactions.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  const withPayday = transactions.filter((t) => t && t.payday);
+  if (!withPayday.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  const mostRecent = withPayday.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
+  const txStatus = String(mostRecent.status || "").toLowerCase();
+  if (txStatus === "captured") return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  const today = new Date().toISOString().slice(0, 10);
+  const isPastDue = String(mostRecent.payday) < today;
+  if (!isPastDue) return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  return {
+    isOverdue: true,
+    overdueCents: Math.round(Number(mostRecent.value) || 0),
+    dueDate: mostRecent.payday,
+  };
 }
 
 async function syncTenantOverdue(supabase: any, tenant: any) {
@@ -151,7 +181,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
       const phoneRaw = pickPhone(customer) || pickPhone(s);
       const phoneE164 = normalizePhone(phoneRaw);
-      const { status, isOverdue, overdueCents } = deriveStatus(s);
+      const { isOverdue, overdueCents, dueDate } = deriveOverdueFromTransactions(s);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
       const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
@@ -170,7 +200,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
         plan_id: planIdStr,
         plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || planNameFromMap || planNameFromMap2 || null,
         overdue_amount_cents: overdueCents,
-        next_due_date: s.next_due_date || s.nextDueDate || s.firstPayDayDate || null,
+        next_due_date: dueDate,
         last_payment_date: s.last_payment_date || s.lastPaymentDate || null,
         raw_payload: s,
         synced_at: new Date().toISOString(),
