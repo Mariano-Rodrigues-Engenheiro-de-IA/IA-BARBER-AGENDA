@@ -174,7 +174,8 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
   const deadline = Date.now() + 90_000;
   const batchSize = 50;
   const limit = 100;
-  // Duas consultas simultâneas, com paginação independente por lote.
+  // A CelCash responde 403 sem corpo explicativo quando recebe páginas em
+  // paralelo. Mantém uma única fila e repete apenas 403/429 com espera curta.
   let nextBatch = 0;
   async function fetchBatches() {
     while (nextBatch < ids.length) {
@@ -192,12 +193,29 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
           limit: String(limit), startAt: String(startAt),
           order: "payday.desc", subscriptionGalaxPayIds: batch.join(","),
         });
-        const resp = await fetch(`${baseUrl(env)}/transactions?${params}`, {
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(Math.min(20_000, remaining)),
-        });
-        diagnostics.pages++;
-        diagnostics.lastHttpStatus = resp.status;
+        let resp: Response | null = null;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const requestRemaining = deadline - Date.now();
+          if (requestRemaining <= 0) throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
+          resp = await fetch(`${baseUrl(env)}/transactions?${params}`, {
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(Math.min(20_000, requestRemaining)),
+          });
+          diagnostics.pages++;
+          diagnostics.lastHttpStatus = resp.status;
+          if (resp.ok || (resp.status !== 403 && resp.status !== 429) || attempt === 3) break;
+
+          const retryAfter = resp.headers.get("retry-after");
+          const retryAfterMs = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : 0;
+          const waitMs = Math.max(retryAfterMs, 1500 * (2 ** attempt));
+          console.warn(`[CelCashOverdue] HTTP ${resp.status} temporário; nova tentativa ${attempt + 2}/4 em ${waitMs}ms; lote ${offset / batchSize + 1}, página ${startAt / limit + 1}`);
+          await resp.body?.cancel();
+          if (Date.now() + waitMs >= deadline) {
+            throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
+          }
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+        }
+        if (!resp) throw new Error("CelCash: resposta de transações ausente; lista anterior preservada.");
         if (!resp.ok) {
           // Classifica a resposta sem registrar corpo bruto (pode conter dados sensíveis).
           const errorBody = (await resp.text()).toLowerCase();
@@ -248,8 +266,9 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
       }
     }
   }
-  // Aguarda ambos os workers inclusive em falha; nunca persiste snapshot parcial.
-  const results = await Promise.allSettled([fetchBatches(), fetchBatches()]);
+  // Uma única fila evita o 403 intermitente observado com duas páginas simultâneas.
+  // O allSettled preserva a garantia de nunca persistir um snapshot parcial.
+  const results = await Promise.allSettled([fetchBatches()]);
   for (const result of results) if (result.status === "rejected") throw result.reason;
   diagnostics.total = all.length;
   return { transactions: all, diagnostics };
