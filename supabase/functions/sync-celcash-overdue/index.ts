@@ -298,16 +298,18 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   for (const t of fromEndpoint) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
   const transactions = Array.from(byTxId.values());
 
-  const withPayday = transactions.filter((t) => t && t.payday);
-  if (!withPayday.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
-
-  const mostRecent = withPayday.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
-  const txStatus = String(mostRecent.status || "").toLowerCase();
-  if (txStatus === "captured") return { isOverdue: false, overdueCents: 0, dueDate: null };
-
   const today = new Date().toISOString().slice(0, 10);
-  const isPastDue = String(mostRecent.payday) < today;
-  if (!isPastDue) return { isOverdue: false, overdueCents: 0, dueDate: null };
+  // A CelCash pré-cria parcelas futuras: elas nunca indicam inadimplência e
+  // não podem esconder uma cobrança vencida (bug anterior — a parcela futura
+  // era tomada como "mais recente" e o atrasado ficava de fora).
+  const pastDue = transactions.filter((t) => t && t.payday && String(t.payday) < today);
+  if (!pastDue.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  const mostRecent = pastDue.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
+  const txStatus = String(mostRecent.status || "").toLowerCase();
+  if (txStatus === "captured" || txStatus === "payexternal" || txStatus === "free") {
+    return { isOverdue: false, overdueCents: 0, dueDate: null };
+  }
 
   return {
     isOverdue: true,
