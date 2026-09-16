@@ -190,11 +190,10 @@ async function fetchRecentTransactions(
       const batch = ids.slice(offset, offset + batchSize);
       const allowedIds = new Set(batch);
       const seen = new Set<string>();
-      // Basta a cobrança vencida mais recente de cada assinatura: com
-      // order=payday.desc, quando toda assinatura vista do lote já tem uma
-      // cobrança anterior a hoje, o histórico antigo restante é inútil.
-      const seenSubs = new Set<string>();
-      const withPastDue = new Set<string>();
+      // A CelCash pré-cria muitas parcelas FUTURAS: com order=payday.desc era
+      // preciso paginar por todas elas antes de chegar nos vencimentos já
+      // passados (causa real do limite de tempo). Com payday.asc o histórico
+      // vencido vem primeiro e a busca para na primeira cobrança futura.
       let startAt = 0;
       diagnostics.batches++;
       while (true) {
@@ -202,7 +201,7 @@ async function fetchRecentTransactions(
         if (remaining <= 0) throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
         const params = new URLSearchParams({
           limit: String(limit), startAt: String(startAt),
-          order: "payday.desc", subscriptionGalaxPayIds: batch.join(","),
+          order: "payday.asc", subscriptionGalaxPayIds: batch.join(","),
         });
         let resp: Response | null = null;
         for (let attempt = 0; attempt < 4; attempt++) {
@@ -265,9 +264,6 @@ async function fetchRecentTransactions(
           }
           added++;
           seen.add(id);
-          const subId = String(tx.subscriptionGalaxPayId ?? "");
-          seenSubs.add(subId);
-          if (tx.payday && String(tx.payday) < today) withPastDue.add(subId);
           all.push(tx);
         }
         console.info(`[CelCashOverdue] lote=${offset / batchSize + 1} startAt=${startAt} recebidas=${items.length} novas=${added}`);
@@ -276,8 +272,9 @@ async function fetchRecentTransactions(
           throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
         }
         const lastPayday = String((items[items.length - 1] as CelCashTransaction | undefined)?.payday ?? "");
-        if (lastPayday && lastPayday < today && seenSubs.size > 0 && withPastDue.size >= seenSubs.size) {
-          diagnostics.stoppedReason = "past_due_covered";
+        // Daqui pra frente só há cobrança futura, que nunca indica atraso.
+        if (lastPayday && lastPayday >= today) {
+          diagnostics.stoppedReason = "future_charges_reached";
           break;
         }
         if (items.length < limit) break;
