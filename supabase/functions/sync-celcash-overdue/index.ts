@@ -176,9 +176,10 @@ async function fetchRecentTransactions(
     lastRawSample: null as string | null,
     error: null as string | null, stoppedReason: "all_batches_complete",
   };
-  const deadline = Date.now() + 90_000;
+  const deadline = deadlineAt;
   const batchSize = 50;
   const limit = 100;
+  const today = new Date().toISOString().slice(0, 10);
   // A CelCash responde 403 sem corpo explicativo quando recebe páginas em
   // paralelo. Mantém uma única fila e repete apenas 403/429 com espera curta.
   let nextBatch = 0;
