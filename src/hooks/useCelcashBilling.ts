@@ -150,6 +150,13 @@ export function useCelcashBilling(tenantId: string | undefined) {
       ? ` (endpoint de transações falhou: ${diag.error})`
       : ` (${diag?.total ?? 0} transações extras consultadas)`;
     toast.success(`Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).${diagNote}`);
+    // Log destacado com o diagnóstico completo — abrir o Console (F12) pra
+    // ver a amostra bruta do endpoint /transactions e confirmar os nomes
+    // reais dos campos, sem precisar de mais uma rodada de perguntas.
+    console.log("%c=== DIAGNÓSTICO SINCRONIZAÇÃO CELCASH ===", "background: #222; color: #6fae97; font-size: 14px; padding: 4px;");
+    console.log("Motivo da parada:", diag?.stoppedReason);
+    console.log("Total de transações buscadas:", diag?.total);
+    console.log("Amostra bruta da 1ª página (copia isso e manda pra Carol):", diag?.lastRawSample);
     queryClient.invalidateQueries({ queryKey: ["celcash-overdue-subscribers", tenantId] });
     return true;
   };
