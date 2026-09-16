@@ -69,7 +69,15 @@ async function fetchAllSubscriptions(env: string, token: string) {
   const limit = 100;
   let startAt = 0;
   for (let i = 0; i < 500; i++) {
-    const url = `${baseUrl(env)}/subscriptions?limit=${limit}&startAt=${startAt}`;
+    // Confirmado diretamente na API CelCash: `status` aceita uma lista
+    // separada por vírgula. Assinaturas encerradas/canceladas não podem gerar
+    // inadimplência e eram a maior parte das páginas (cerca de 90s desperdiçados).
+    const params = new URLSearchParams({
+      limit: String(limit),
+      startAt: String(startAt),
+      status: "active,waitingPayment",
+    });
+    const url = `${baseUrl(env)}/subscriptions?${params}`;
     const resp = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     });
@@ -340,8 +348,12 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     }
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
-    const subs = await fetchAllSubscriptions(env, token);
-    const planMap = await fetchPlansMap(env, token);
+    // As duas consultas são independentes. Rodá-las juntas deixa o orçamento
+    // do tenant disponível para a etapa que realmente decide a inadimplência.
+    const [subs, planMap] = await Promise.all([
+      fetchAllSubscriptions(env, token),
+      fetchPlansMap(env, token),
+    ]);
     const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
       env,
       token,
