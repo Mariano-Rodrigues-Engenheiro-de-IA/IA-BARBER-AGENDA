@@ -333,6 +333,10 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
 }
 
 async function syncTenantOverdue(supabase: any, tenant: any) {
+  // Orçamento total do tenant: a busca precisa terminar antes do limite de
+  // tempo da própria Edge Function, senão a chamada morre com 504 e o painel
+  // recebe "non-2xx" sem diagnóstico algum.
+  const tenantDeadline = Date.now() + 100_000;
   try {
     if (!tenant.celcash_galax_id || !tenant.celcash_galax_hash) {
       throw new Error("Credenciais CelCash ausentes");
