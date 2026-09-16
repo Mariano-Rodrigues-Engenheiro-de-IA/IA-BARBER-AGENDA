@@ -169,8 +169,15 @@ async function fetchRecentTransactions(env: string, token: string): Promise<{ tr
   cutoffDate.setDate(cutoffDate.getDate() - 90);
   const cutoffStr = cutoffDate.toISOString().slice(0, 10);
 
-  for (let i = 0; i < 6; i++) {
-    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}&order=createdAt.desc`;
+  // ⚠️ Corrigido (16/09, dado real confirmado via teste na documentação da
+  // CelCash): ordenar por "createdAt" (quando a transação foi CRIADA no
+  // sistema) não serve — visto na prática uma transação criada ontem
+  // (15/09) com vencimento em outubro (a CelCash cria cobranças futuras
+  // com antecedência). As primeiras páginas por createdAt.desc vinham
+  // cheias de cobranças FUTURAS, nunca chegando nas vencidas de verdade.
+  // Ordenar por "payday" (vencimento) é o critério certo.
+  for (let i = 0; i < 12; i++) {
+    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}&order=payday.desc`;
     const resp = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     });
@@ -190,10 +197,13 @@ async function fetchRecentTransactions(env: string, token: string): Promise<{ tr
     if (!items.length) { diagnostics.stoppedReason = "empty_page"; break; }
     all.push(...items);
 
-    // Já veio bem antigo? Como pedimos ordem decrescente, o resto só
-    // fica mais antigo ainda — não vale a pena continuar buscando.
-    const oldestInPage = items.reduce((min, t) => (t?.createdAt && t.createdAt < min ? t.createdAt : min), items[0]?.createdAt || "");
-    if (oldestInPage && oldestInPage.slice(0, 10) < cutoffStr) {
+    // Como agora ordenamos por payday.desc (vencimento, não criação), as
+    // primeiras páginas trazem cobranças FUTURAS (ainda não vencidas) —
+    // isso é esperado, continua buscando até o payday da página cair
+    // abaixo do corte de 90 dias atrás (aí sim já passou da zona que
+    // interessa, o resto só fica mais antigo ainda).
+    const oldestPaydayInPage = items.reduce((min, t) => (t?.payday && t.payday < min ? t.payday : min), items[0]?.payday || "9999-99-99");
+    if (oldestPaydayInPage && oldestPaydayInPage < cutoffStr) {
       diagnostics.stoppedReason = "past_cutoff_90_days";
       break;
     }
