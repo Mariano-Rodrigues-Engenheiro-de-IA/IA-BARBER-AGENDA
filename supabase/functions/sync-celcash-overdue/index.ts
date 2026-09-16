@@ -206,6 +206,14 @@ interface CelCashTransaction {
   value?: number | string;
 }
 
+function isOpenTransaction(transaction: CelCashTransaction): boolean {
+  const status = String(transaction.status ?? "").toLowerCase();
+  // Estados liquidados não representam pagamento em aberto. Os demais são
+  // preservados porque a CelCash possui estados de falha adicionais que o
+  // filtro do endpoint não aceitava e que estavam sumindo da lista.
+  return !["captured", "payexternal", "free", "reversed"].includes(status);
+}
+
 async function fetchRecentTransactions(
   env: string,
   token: string,
@@ -229,7 +237,6 @@ async function fetchRecentTransactions(
         const params = new URLSearchParams({
           limit: String(limit), startAt: String(startAt),
           order: "payday.asc",
-          status: "notSend,pendingBoleto,pendingPix,denied",
         });
         let resp: Response | null = null;
         for (let attempt = 0; attempt < 4; attempt++) {
@@ -306,9 +313,7 @@ async function fetchRecentTransactions(
     for (const tx of items) {
       if (!tx || typeof tx !== "object") throw new Error("CelCash: transação inválida.");
       const payday = String(tx.payday ?? "");
-      // "Em aberto hoje" inclui tudo que venceu até hoje e ainda está com
-      // status aberto; não apenas cobranças cujo vencimento é exatamente hoje.
-      if (!payday || payday > today) continue;
+      if (payday !== today || !isOpenTransaction(tx)) continue;
       const id = String(tx.galaxPayId ?? "");
       if (!id) throw new Error(`CelCash: transação sem galaxPayId (startAt ${startAt}); lista anterior preservada.`);
       if (seen.has(id)) diagnostics.duplicates++;
@@ -337,10 +342,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
   const fromEndpoint: any[] = extraTransactionsBySubscription.get(subId) || [];
   const today = todayInSaoPaulo();
-  const openToday = fromEndpoint.filter((t) => {
-    const payday = String(t?.payday ?? "");
-    return payday && payday <= today;
-  });
+  const openToday = fromEndpoint.filter((t) => t && String(t.payday ?? "") === today && isOpenTransaction(t));
   if (!openToday.length) {
     return { isOverdue: false, overdueCents: 0, dueDate: null };
   }
@@ -348,10 +350,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   return {
     isOverdue: true,
     overdueCents: openToday.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
-    dueDate: openToday.reduce((latest, t) => {
-      const payday = String(t.payday ?? "");
-      return payday > latest ? payday : latest;
-    }, ""),
+    dueDate: today,
   };
 }
 
