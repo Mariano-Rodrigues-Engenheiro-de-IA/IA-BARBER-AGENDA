@@ -190,6 +190,11 @@ async function fetchRecentTransactions(
       const batch = ids.slice(offset, offset + batchSize);
       const allowedIds = new Set(batch);
       const seen = new Set<string>();
+      // Basta a cobrança vencida mais recente de cada assinatura: com
+      // order=payday.desc, quando toda assinatura vista do lote já tem uma
+      // cobrança anterior a hoje, o histórico antigo restante é inútil.
+      const seenSubs = new Set<string>();
+      const withPastDue = new Set<string>();
       let startAt = 0;
       diagnostics.batches++;
       while (true) {
