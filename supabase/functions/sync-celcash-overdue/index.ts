@@ -206,47 +206,37 @@ interface CelCashTransaction {
   value?: number | string;
 }
 
+function isOpenTransaction(transaction: CelCashTransaction): boolean {
+  const status = String(transaction.status ?? "").toLowerCase();
+  // Estados liquidados não representam pagamento em aberto. Os demais são
+  // preservados porque a CelCash possui estados de falha adicionais que o
+  // filtro do endpoint não aceitava e que estavam sumindo da lista.
+  return !["captured", "payexternal", "free", "reversed"].includes(status);
+}
+
 async function fetchRecentTransactions(
   env: string,
   token: string,
-  subscriptionIds: string[],
   deadlineAt: number,
 ) {
-  const ids = [...new Set(subscriptionIds)];
   const all: CelCashTransaction[] = [];
   const diagnostics = {
-    pages: 0, batches: 0, subscriptions: ids.length, total: 0, duplicates: 0,
+    pages: 0, batches: 1, subscriptions: 0, total: 0, duplicates: 0,
     lastHttpStatus: null as number | null,
     lastRawSample: null as string | null,
     error: null as string | null, stoppedReason: "all_batches_complete",
   };
   const deadline = deadlineAt;
-  const batchSize = 50;
   const limit = 100;
   const today = todayInSaoPaulo();
-  // A CelCash responde 403 sem corpo explicativo quando recebe páginas em
-  // paralelo. Mantém uma única fila e repete apenas 403/429 com espera curta.
-  let nextBatch = 0;
-  async function fetchBatches() {
-    while (nextBatch < ids.length) {
-      const offset = nextBatch;
-      nextBatch += batchSize;
-      const batch = ids.slice(offset, offset + batchSize);
-      const allowedIds = new Set(batch);
-      const seen = new Set<string>();
-      // A CelCash pré-cria muitas parcelas FUTURAS: com order=payday.desc era
-      // preciso paginar por todas elas antes de chegar nos vencimentos já
-      // passados (causa real do limite de tempo). Com payday.asc o histórico
-      // vencido vem primeiro e a busca para na primeira cobrança futura.
-      let startAt = 0;
-      diagnostics.batches++;
-      while (true) {
+  const seen = new Set<string>();
+
+  async function fetchPage(startAt: number): Promise<CelCashTransaction[]> {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
         const params = new URLSearchParams({
           limit: String(limit), startAt: String(startAt),
-          order: "payday.asc", subscriptionGalaxPayIds: batch.join(","),
-          status: "notSend,pendingBoleto,pendingPix,denied",
+          order: "payday.asc",
         });
         let resp: Response | null = null;
         for (let attempt = 0; attempt < 4; attempt++) {
@@ -263,7 +253,7 @@ async function fetchRecentTransactions(
           const retryAfter = resp.headers.get("retry-after");
           const retryAfterMs = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : 0;
           const waitMs = Math.max(retryAfterMs, 1500 * (2 ** attempt));
-          console.warn(`[CelCashOverdue] HTTP ${resp.status} temporário; nova tentativa ${attempt + 2}/4 em ${waitMs}ms; lote ${offset / batchSize + 1}, página ${startAt / limit + 1}`);
+          console.warn(`[CelCashOverdue] HTTP ${resp.status} temporário; nova tentativa ${attempt + 2}/4 em ${waitMs}ms; página ${startAt / limit + 1}`);
           await resp.body?.cancel();
           if (Date.now() + waitMs >= deadline) {
             throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
@@ -285,7 +275,7 @@ async function fetchRecentTransactions(
             : "causa não identificada na resposta";
           const retryAfter = resp.headers.get("retry-after");
           const retrySeconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null;
-          const diagnostic = `HTTP ${resp.status}; ${reason}; lote ${offset / batchSize + 1}, página ${startAt / limit + 1}${retrySeconds !== null ? `; Retry-After ${retrySeconds}s` : ""}`;
+          const diagnostic = `HTTP ${resp.status}; ${reason}; página ${startAt / limit + 1}${retrySeconds !== null ? `; Retry-After ${retrySeconds}s` : ""}`;
           console.warn(`[CelCashOverdue] ${diagnostic}`);
           throw new Error(`CelCash transactions ${diagnostic}; lista anterior preservada.`);
         }
@@ -293,45 +283,50 @@ async function fetchRecentTransactions(
         const body = json && typeof json === "object" ? json as Record<string, unknown> : {};
         const items = Array.isArray(json) ? json : body.Transactions ?? body.transactions ?? body.data ?? body.items;
         if (!Array.isArray(items)) throw new Error("CelCash: resposta de transações inválida; lista anterior preservada.");
-        let added = 0;
-        for (const item of items) {
-          if (!item || typeof item !== "object") throw new Error("CelCash: transação inválida.");
-          const tx = item as CelCashTransaction;
-          if (!allowedIds.has(String(tx.subscriptionGalaxPayId ?? ""))) {
-            throw new Error("CelCash: resposta fora do lote de assinaturas; sincronização interrompida.");
-          }
-          const id = String(tx.galaxPayId ?? "");
-          if (!id) throw new Error(`CelCash: transação sem galaxPayId (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
-          // Páginas podem se sobrepor; a mesma transação conta só uma vez.
-          if (seen.has(id)) {
-            diagnostics.duplicates++;
-            continue;
-          }
-          added++;
-          seen.add(id);
-          all.push(tx);
-        }
-        console.info(`[CelCashOverdue] lote=${offset / batchSize + 1} startAt=${startAt} recebidas=${items.length} novas=${added}`);
-        // Uma página cheia sem progresso não comprova que a busca terminou.
-        if (items.length >= limit && added === 0) {
-          throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
-        }
-        const lastPayday = String((items[items.length - 1] as CelCashTransaction | undefined)?.payday ?? "");
-        // A página já contém hoje; depois que chega ao futuro não há mais
-        // pagamentos de hoje nas páginas seguintes.
-        if (lastPayday && lastPayday > today) {
-          diagnostics.stoppedReason = "future_charges_reached";
-          break;
-        }
-        if (items.length < limit) break;
-        startAt += items.length;
+        console.info(`[CelCashOverdue] startAt=${startAt} recebidas=${items.length}`);
+        return items as CelCashTransaction[];
+  }
+
+  // O endpoint não oferece filtro por vencimento. Como payday.asc é ordenado,
+  // localizamos a página de hoje por saltos exponenciais + busca binária, sem
+  // percorrer anos de histórico nem depender do status da assinatura.
+  let lowPage = 0;
+  let highPage = 1;
+  while (true) {
+    const page = await fetchPage(highPage * limit);
+    const lastPayday = String(page[page.length - 1]?.payday ?? "");
+    if (!page.length || lastPayday >= today) break;
+    lowPage = highPage;
+    highPage *= 2;
+  }
+  while (highPage - lowPage > 1) {
+    const middlePage = Math.floor((lowPage + highPage) / 2);
+    const page = await fetchPage(middlePage * limit);
+    const lastPayday = String(page[page.length - 1]?.payday ?? "");
+    if (!page.length || lastPayday >= today) highPage = middlePage;
+    else lowPage = middlePage;
+  }
+
+  let startAt = Math.max(0, (highPage - 1) * limit);
+  while (true) {
+    const items = await fetchPage(startAt);
+    for (const tx of items) {
+      if (!tx || typeof tx !== "object") throw new Error("CelCash: transação inválida.");
+      const payday = String(tx.payday ?? "");
+      if (payday !== today || !isOpenTransaction(tx)) continue;
+      const id = String(tx.galaxPayId ?? "");
+      if (!id) throw new Error(`CelCash: transação sem galaxPayId (startAt ${startAt}); lista anterior preservada.`);
+      if (seen.has(id)) diagnostics.duplicates++;
+      else {
+        seen.add(id);
+        all.push(tx);
       }
     }
+    const lastPayday = String(items[items.length - 1]?.payday ?? "");
+    if (items.length < limit || lastPayday > today) break;
+    startAt += items.length;
   }
-  // Uma única fila evita o 403 intermitente observado com duas páginas simultâneas.
-  // O allSettled preserva a garantia de nunca persistir um snapshot parcial.
-  const results = await Promise.allSettled([fetchBatches()]);
-  for (const result of results) if (result.status === "rejected") throw result.reason;
+  diagnostics.stoppedReason = "today_complete";
   diagnostics.total = all.length;
   return { transactions: all, diagnostics };
 }
@@ -347,7 +342,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
   const fromEndpoint: any[] = extraTransactionsBySubscription.get(subId) || [];
   const today = todayInSaoPaulo();
-  const openToday = fromEndpoint.filter((t) => t && String(t.payday ?? "") === today);
+  const openToday = fromEndpoint.filter((t) => t && String(t.payday ?? "") === today && isOpenTransaction(t));
   if (!openToday.length) {
     return { isOverdue: false, overdueCents: 0, dueDate: null };
   }
@@ -370,13 +365,21 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     }
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
-    const subs = await fetchAllSubscriptions(env, token);
     const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
       env,
       token,
-      subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String),
       tenantDeadline,
     );
+    // Cada transação traz a assinatura e o cliente completos. Isso inclui
+    // pagamentos abertos de contratos inativos/interrompidos sem listar todas
+    // as assinaturas da conta.
+    const subsById = new Map<string, any>();
+    for (const transaction of recentTransactions as Array<CelCashTransaction & { Subscription?: any; subscription?: any }>) {
+      const subscription = transaction.Subscription ?? transaction.subscription;
+      const subId = String(transaction.subscriptionGalaxPayId ?? subscription?.galaxPayId ?? "");
+      if (subscription && subId) subsById.set(subId, subscription);
+    }
+    const subs = Array.from(subsById.values());
     const extraTransactionsBySubscription = new Map<string, any[]>();
     for (const t of recentTransactions) {
       const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
@@ -444,7 +447,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
 
     return {
       tenant_id: tenant.id,
-      fetched: subs.length,
+      fetched: recentTransactions.length,
       overdue_upserted: upserted,
       removed,
       transactions_endpoint: transactionsDiagnostics,
