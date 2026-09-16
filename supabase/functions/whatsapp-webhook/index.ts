@@ -11149,6 +11149,39 @@ function isBookingTimeConfirmationPrompt(value: string): boolean {
 // isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
 // foram movidos para providers/trinks/index.ts (atalho de cancelamento é Trinks-only).
 
+/** Idade (ms) da mensagem recebida, a partir do timestamp original do WhatsApp.
+ * Aceita epoch em segundos, em milissegundos e string ISO. Retorna null quando
+ * o payload não traz nenhum timestamp confiável (nesse caso não travamos nada). */
+function getInboundMessageAgeMs(payload: any, msg: any): number | null {
+  const candidates: unknown[] = [
+    msg?.messageTimestamp, msg?.message?.messageTimestamp, msg?.timestamp, msg?.moment,
+    msg?.t, msg?.messageTimestampMs,
+    payload?.messageTimestamp, payload?.message?.messageTimestamp,
+    payload?.data?.messageTimestamp, payload?.data?.message?.messageTimestamp,
+    payload?.timestamp, payload?.moment,
+  ];
+  for (const raw of candidates) {
+    if (raw === null || raw === undefined || raw === "") continue;
+    let ms: number | null = null;
+    if (typeof raw === "number" || /^\d+$/.test(String(raw))) {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      // < 1e12 → epoch em segundos; senão milissegundos.
+      ms = n < 1e12 ? n * 1000 : n;
+    } else {
+      const parsed = new Date(String(raw)).getTime();
+      if (Number.isFinite(parsed) && parsed > 0) ms = parsed;
+    }
+    if (ms === null) continue;
+    const age = Date.now() - ms;
+    // Timestamps absurdos (futuro, ou antes de 2020) são ignorados.
+    if (ms < 1577836800000 || age < -5 * 60 * 1000) continue;
+    return Math.max(0, age);
+  }
+  return null;
+}
+
+
 function extractPhoneNumber(payload: any, msg: any): { phone: string; source: string } | null {
   const directCandidates: Array<[string, unknown]> = [
     ["payload.phone", payload.phone], ["payload.from", payload.from],
