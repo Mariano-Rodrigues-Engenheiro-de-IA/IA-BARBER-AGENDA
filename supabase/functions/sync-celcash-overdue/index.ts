@@ -150,68 +150,78 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
 // das duas fontes por assinatura, pra não perder dado se uma das fontes
 // falhar ou vier incompleta.
 //
-// ⚠️ Corrigido (16/09): a primeira versão buscava até 2000 transações
-// (20 páginas) SEM ordenação — se a API devolve em ordem cronológica
-// ANTIGA primeiro (comportamento padrão comum), isso nunca chegava nem
-// perto das transações recentes, e ainda estourou o tempo limite da
-// function (504 Gateway Timeout) tentando buscar tudo. Corrigido usando
-// o parâmetro "order" (confirmado no SDK oficial @cel_cash/client, que
-// usa esse formato: order: 'createdAt.desc') para pedir as mais recentes
-// primeiro — com isso, poucas páginas já bastam, e paramos assim que as
-// transações da página ficarem mais antigas que a janela que interessa
-// (90 dias), já que dali pra trás só fica mais antigo ainda.
-async function fetchRecentTransactions(env: string, token: string): Promise<{ transactions: any[]; diagnostics: any }> {
-  const all: any[] = [];
+// CelCash: busca dirigida às assinaturas conhecidas, sem varrer a conta inteira.
+// Inclui TODOS os status: filtrar só não pagos preservaria um status antigo do
+// array embutido quando a mesma transação já tiver sido paga no endpoint.
+interface CelCashTransaction {
+  galaxPayId?: string | number;
+  subscriptionGalaxPayId?: string | number;
+  subscriptionMyId?: string | number;
+  payday?: string;
+  status?: string;
+  value?: number | string;
+}
+
+async function fetchRecentTransactions(env: string, token: string, subscriptionIds: string[]) {
+  const ids = [...new Set(subscriptionIds)];
+  const all: CelCashTransaction[] = [];
+  const diagnostics = {
+    pages: 0, batches: 0, subscriptions: ids.length, total: 0,
+    lastHttpStatus: null as number | null,
+    lastRawSample: null as string | null,
+    error: null as string | null, stoppedReason: "all_batches_complete",
+  };
+  const deadline = Date.now() + 90_000;
+  const batchSize = 50;
   const limit = 100;
-  let startAt = 0;
-  const diagnostics: any = { pages: 0, lastHttpStatus: null, lastRawSample: null, error: null, stoppedReason: null };
-  const cutoffDate = new Date();
-  cutoffDate.setDate(cutoffDate.getDate() - 90);
-  const cutoffStr = cutoffDate.toISOString().slice(0, 10);
-
-  // ⚠️ Corrigido (16/09, dado real confirmado via teste na documentação da
-  // CelCash): ordenar por "createdAt" (quando a transação foi CRIADA no
-  // sistema) não serve — visto na prática uma transação criada ontem
-  // (15/09) com vencimento em outubro (a CelCash cria cobranças futuras
-  // com antecedência). As primeiras páginas por createdAt.desc vinham
-  // cheias de cobranças FUTURAS, nunca chegando nas vencidas de verdade.
-  // Ordenar por "payday" (vencimento) é o critério certo.
-  for (let i = 0; i < 12; i++) {
-    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}&order=payday.desc`;
-    const resp = await fetch(url, {
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-    });
-    const text = await resp.text();
-    diagnostics.pages++;
-    diagnostics.lastHttpStatus = resp.status;
-    let json: any; try { json = JSON.parse(text); } catch { json = null; }
-    if (!resp.ok) {
-      diagnostics.error = `HTTP ${resp.status}`;
-      diagnostics.lastRawSample = text.slice(0, 500);
-      console.warn(`[CelCashOverdue] /transactions HTTP ${resp.status}: ${text.slice(0, 200)} — seguindo só com o array embutido em /subscriptions.`);
-      break;
+  // Duas consultas simultâneas, com paginação independente por lote.
+  let nextBatch = 0;
+  async function fetchBatches() {
+    while (nextBatch < ids.length) {
+      const offset = nextBatch;
+      nextBatch += batchSize;
+      const batch = ids.slice(offset, offset + batchSize);
+      const allowedIds = new Set(batch);
+      const seen = new Set<string>();
+      let startAt = 0;
+      diagnostics.batches++;
+      while (true) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) throw new Error("CelCash: busca incompleta (limite de tempo); lista anterior preservada.");
+        const params = new URLSearchParams({
+          limit: String(limit), startAt: String(startAt),
+          order: "payday.desc", subscriptionGalaxPayIds: batch.join(","),
+        });
+        const resp = await fetch(`${baseUrl(env)}/transactions?${params}`, {
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(Math.min(20_000, remaining)),
+        });
+        diagnostics.pages++;
+        diagnostics.lastHttpStatus = resp.status;
+        if (!resp.ok) throw new Error(`CelCash transactions HTTP ${resp.status}; lista anterior preservada.`);
+        const json: unknown = await resp.json();
+        const body = json && typeof json === "object" ? json as Record<string, unknown> : {};
+        const items = Array.isArray(json) ? json : body.Transactions ?? body.transactions ?? body.data ?? body.items;
+        if (!Array.isArray(items)) throw new Error("CelCash: resposta de transações inválida; lista anterior preservada.");
+        for (const item of items) {
+          if (!item || typeof item !== "object") throw new Error("CelCash: transação inválida.");
+          const tx = item as CelCashTransaction;
+          if (!allowedIds.has(String(tx.subscriptionGalaxPayId ?? ""))) {
+            throw new Error("CelCash: resposta fora do lote de assinaturas; sincronização interrompida.");
+          }
+          const id = String(tx.galaxPayId ?? "");
+          if (!id || seen.has(id)) throw new Error("CelCash: paginação de transações inconsistente; lista anterior preservada.");
+          seen.add(id);
+          all.push(tx);
+        }
+        if (items.length < limit) break;
+        startAt += items.length;
+      }
     }
-    const items: any[] =
-      json?.Transactions || json?.transactions || json?.data || json?.items || (Array.isArray(json) ? json : []);
-    if (i === 0) diagnostics.lastRawSample = text.slice(0, 500);
-    if (!items.length) { diagnostics.stoppedReason = "empty_page"; break; }
-    all.push(...items);
-
-    // Como agora ordenamos por payday.desc (vencimento, não criação), as
-    // primeiras páginas trazem cobranças FUTURAS (ainda não vencidas) —
-    // isso é esperado, continua buscando até o payday da página cair
-    // abaixo do corte de 90 dias atrás (aí sim já passou da zona que
-    // interessa, o resto só fica mais antigo ainda).
-    const oldestPaydayInPage = items.reduce((min, t) => (t?.payday && t.payday < min ? t.payday : min), items[0]?.payday || "9999-99-99");
-    if (oldestPaydayInPage && oldestPaydayInPage < cutoffStr) {
-      diagnostics.stoppedReason = "past_cutoff_90_days";
-      break;
-    }
-
-    if (items.length < limit) { diagnostics.stoppedReason = "last_page"; break; }
-    startAt += items.length;
   }
-  if (!diagnostics.stoppedReason) diagnostics.stoppedReason = "page_limit_reached";
+  // Aguarda ambos os workers inclusive em falha; nunca persiste snapshot parcial.
+  const results = await Promise.allSettled([fetchBatches(), fetchBatches()]);
+  for (const result of results) if (result.status === "rejected") throw result.reason;
   diagnostics.total = all.length;
   return { transactions: all, diagnostics };
 }
@@ -262,13 +272,13 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
     const planMap = await fetchPlansMap(env, token);
-    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(env, token);
+    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(env, token, subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String));
     const extraTransactionsBySubscription = new Map<string, any[]>();
     for (const t of recentTransactions) {
       const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
       if (!subId || subId === "undefined" || subId === "null") continue;
       if (!extraTransactionsBySubscription.has(subId)) extraTransactionsBySubscription.set(subId, []);
-      extraTransactionsBySubscription.get(subId)!.push(t);
+      extraTransactionsBySubscription.get(subId)?.push(t);
     }
 
     const rows = subs.map((s: any) => {
