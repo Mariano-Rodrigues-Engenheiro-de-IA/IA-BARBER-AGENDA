@@ -345,7 +345,12 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
     const planMap = await fetchPlansMap(env, token);
-    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(env, token, subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String));
+    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
+      env,
+      token,
+      subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String),
+      tenantDeadline,
+    );
     const extraTransactionsBySubscription = new Map<string, any[]>();
     for (const t of recentTransactions) {
       const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
