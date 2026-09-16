@@ -23,6 +23,15 @@ function baseUrl(env: string) {
     : "https://api-celcash.sandbox.cel.cash/v2";
 }
 
+function todayInSaoPaulo(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
 function normalizePhone(raw?: string | null): string | null {
   if (!raw) return null;
   const digits = String(raw).replace(/\D/g, "");
@@ -159,8 +168,8 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
 // falhar ou vier incompleta.
 //
 // CelCash: busca dirigida às assinaturas conhecidas, sem varrer a conta inteira.
-// Inclui TODOS os status: filtrar só não pagos preservaria um status antigo do
-// array embutido quando a mesma transação já tiver sido paga no endpoint.
+// Esta sincronização lista somente pagamentos EM ABERTO com vencimento HOJE.
+// O endpoint dedicado é a fonte atual; o array embutido da assinatura é antigo.
 interface CelCashTransaction {
   galaxPayId?: string | number;
   subscriptionGalaxPayId?: string | number;
@@ -187,7 +196,7 @@ async function fetchRecentTransactions(
   const deadline = deadlineAt;
   const batchSize = 50;
   const limit = 100;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayInSaoPaulo();
   // A CelCash responde 403 sem corpo explicativo quando recebe páginas em
   // paralelo. Mantém uma única fila e repete apenas 403/429 com espera curta.
   let nextBatch = 0;
@@ -210,6 +219,7 @@ async function fetchRecentTransactions(
         const params = new URLSearchParams({
           limit: String(limit), startAt: String(startAt),
           order: "payday.asc", subscriptionGalaxPayIds: batch.join(","),
+          status: "notSend,pendingBoleto,pendingPix,denied",
         });
         let resp: Response | null = null;
         for (let attempt = 0; attempt < 4; attempt++) {
@@ -280,8 +290,9 @@ async function fetchRecentTransactions(
           throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
         }
         const lastPayday = String((items[items.length - 1] as CelCashTransaction | undefined)?.payday ?? "");
-        // Daqui pra frente só há cobrança futura, que nunca indica atraso.
-        if (lastPayday && lastPayday >= today) {
+        // A página já contém hoje; depois que chega ao futuro não há mais
+        // pagamentos de hoje nas páginas seguintes.
+        if (lastPayday && lastPayday > today) {
           diagnostics.stoppedReason = "future_charges_reached";
           break;
         }
@@ -307,33 +318,17 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   }
 
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
-  const embedded: any[] = Array.isArray(sub.Transactions) ? sub.Transactions : [];
   const fromEndpoint: any[] = extraTransactionsBySubscription.get(subId) || [];
-  // Junta as duas fontes e deduplica por galaxPayId da transação — usa o
-  // que vier do endpoint dedicado quando o mesmo id aparecer nos dois
-  // (mais provável de estar atualizado).
-  const byTxId = new Map<string, any>();
-  for (const t of embedded) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
-  for (const t of fromEndpoint) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
-  const transactions = Array.from(byTxId.values());
-
-  const today = new Date().toISOString().slice(0, 10);
-  // A CelCash pré-cria parcelas futuras: elas nunca indicam inadimplência e
-  // não podem esconder uma cobrança vencida (bug anterior — a parcela futura
-  // era tomada como "mais recente" e o atrasado ficava de fora).
-  const pastDue = transactions.filter((t) => t && t.payday && String(t.payday) < today);
-  if (!pastDue.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
-
-  const mostRecent = pastDue.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
-  const txStatus = String(mostRecent.status || "").toLowerCase();
-  if (txStatus === "captured" || txStatus === "payexternal" || txStatus === "free") {
+  const today = todayInSaoPaulo();
+  const openToday = fromEndpoint.filter((t) => t && String(t.payday ?? "") === today);
+  if (!openToday.length) {
     return { isOverdue: false, overdueCents: 0, dueDate: null };
   }
 
   return {
     isOverdue: true,
-    overdueCents: Math.round(Number(mostRecent.value) || 0),
-    dueDate: mostRecent.payday,
+    overdueCents: openToday.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
+    dueDate: today,
   };
 }
 
@@ -348,12 +343,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     }
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
-    // As duas consultas são independentes. Rodá-las juntas deixa o orçamento
-    // do tenant disponível para a etapa que realmente decide a inadimplência.
-    const [subs, planMap] = await Promise.all([
-      fetchAllSubscriptions(env, token),
-      fetchPlansMap(env, token),
-    ]);
+    const subs = await fetchAllSubscriptions(env, token);
     const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
       env,
       token,
@@ -389,7 +379,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
         name: customer.name || customer.fullName || customer.full_name || s.name || null,
         email: customerEmail,
         plan_id: planIdStr,
-        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || planNameFromMap || planNameFromMap2 || null,
+        plan_name: s.Plan?.name || s.plan?.name || s.plan_name || s.planName || null,
         overdue_amount_cents: overdueCents,
         next_due_date: dueDate,
         last_payment_date: s.last_payment_date || s.lastPaymentDate || null,
