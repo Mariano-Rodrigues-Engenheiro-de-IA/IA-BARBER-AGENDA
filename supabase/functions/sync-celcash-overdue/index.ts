@@ -198,7 +198,24 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
         });
         diagnostics.pages++;
         diagnostics.lastHttpStatus = resp.status;
-        if (!resp.ok) throw new Error(`CelCash transactions HTTP ${resp.status}; lista anterior preservada.`);
+        if (!resp.ok) {
+          // Classifica a resposta sem registrar corpo bruto (pode conter dados sensíveis).
+          const errorBody = (await resp.text()).toLowerCase();
+          const reason = /rate.?limit|too many|muitas requisi|limite de requisi/.test(errorBody)
+            ? "limite de requisições informado pela API"
+            : /expired|expirad/.test(errorBody)
+            ? "expiração informada pela API"
+            : /scope|permission|permiss|unauthorized|não autorizado|nao autorizado/.test(errorBody)
+            ? "restrição de autorização informada pela API"
+            : /cloudflare|access denied|forbidden|waf/.test(errorBody)
+            ? "acesso recusado; causa específica não informada"
+            : "causa não identificada na resposta";
+          const retryAfter = resp.headers.get("retry-after");
+          const retrySeconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null;
+          const diagnostic = `HTTP ${resp.status}; ${reason}; lote ${offset / batchSize + 1}, página ${startAt / limit + 1}${retrySeconds !== null ? `; Retry-After ${retrySeconds}s` : ""}`;
+          console.warn(`[CelCashOverdue] ${diagnostic}`);
+          throw new Error(`CelCash transactions ${diagnostic}; lista anterior preservada.`);
+        }
         const json: unknown = await resp.json();
         const body = json && typeof json === "object" ? json as Record<string, unknown> : {};
         const items = Array.isArray(json) ? json : body.Transactions ?? body.transactions ?? body.data ?? body.items;
