@@ -2144,6 +2144,50 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         }
       }
 
+      // 🕰️ TRAVA ANTI-SINCRONIZAÇÃO DE HISTÓRICO (bug real 16/09/2026 — Future & Cut).
+      // Quando a instância do WhatsApp reconecta/re-sincroniza, a UAZAPI reentrega
+      // mensagens ANTIGAS como se fossem novas (dezenas no mesmo segundo). A IA
+      // respondia todas — clientes que não falaram nada naquele dia recebiam mensagem
+      // do nada, e nos chats identificados só por @lid o envio ainda falhava com
+      // "UAZAPI status 500". Aqui a mensagem antiga é gravada para contexto/painel,
+      // mas NUNCA gera resposta. Motivo registrado em agent_logs (nunca descartar
+      // em silêncio).
+      const STALE_INBOUND_MS = 15 * 60 * 1000;
+      const inboundAgeMs = getInboundMessageAgeMs(payload, msg);
+      if (inboundAgeMs !== null && inboundAgeMs > STALE_INBOUND_MS) {
+        const ageMin = Math.round(inboundAgeMs / 60000);
+        console.warn(`[StaleInbound] Mensagem de ${phoneNumber} tem ${ageMin} min (provável re-sincronização de histórico da UAZAPI) — gravada sem resposta da IA.`);
+        try {
+          await supabase.from("chat_messages").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            role: "user",
+            content: messageContent || (hasMedia ? "[Mídia recebida]" : ""),
+            message_id: messageId,
+            processed: true,
+          });
+        } catch (e) {
+          console.error("[StaleInbound] falha ao gravar mensagem antiga:", (e as Error)?.message);
+        }
+        try {
+          await supabase.from("agent_logs").insert({
+            tenant_id: tenant.id,
+            phone_number: phoneNumber,
+            user_message: (messageContent || "").slice(0, 500),
+            ai_response: "",
+            model_used: "discarded:stale_inbound",
+            errors: [{
+              level: "warning",
+              message: `Mensagem descartada por ter ${ageMin} min de idade (limite ${STALE_INBOUND_MS / 60000} min). Provável re-sincronização de histórico da UAZAPI após reconexão da instância — responder isso disparava mensagem para clientes que não escreveram.`,
+            }],
+          });
+        } catch (e) {
+          console.error("[StaleInbound] falha ao registrar descarte:", (e as Error)?.message);
+        }
+        return new Response(JSON.stringify({ status: "skipped_stale_inbound", age_minutes: ageMin }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
 
       const uazapiUrlMedia = tenant.uazapi_url || Deno.env.get("UAZAPI_URL") || "";
       const uazapiTokenMedia = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN") || "";
@@ -11104,6 +11148,39 @@ function isBookingTimeConfirmationPrompt(value: string): boolean {
 
 // isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
 // foram movidos para providers/trinks/index.ts (atalho de cancelamento é Trinks-only).
+
+/** Idade (ms) da mensagem recebida, a partir do timestamp original do WhatsApp.
+ * Aceita epoch em segundos, em milissegundos e string ISO. Retorna null quando
+ * o payload não traz nenhum timestamp confiável (nesse caso não travamos nada). */
+function getInboundMessageAgeMs(payload: any, msg: any): number | null {
+  const candidates: unknown[] = [
+    msg?.messageTimestamp, msg?.message?.messageTimestamp, msg?.timestamp, msg?.moment,
+    msg?.t, msg?.messageTimestampMs,
+    payload?.messageTimestamp, payload?.message?.messageTimestamp,
+    payload?.data?.messageTimestamp, payload?.data?.message?.messageTimestamp,
+    payload?.timestamp, payload?.moment,
+  ];
+  for (const raw of candidates) {
+    if (raw === null || raw === undefined || raw === "") continue;
+    let ms: number | null = null;
+    if (typeof raw === "number" || /^\d+$/.test(String(raw))) {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      // < 1e12 → epoch em segundos; senão milissegundos.
+      ms = n < 1e12 ? n * 1000 : n;
+    } else {
+      const parsed = new Date(String(raw)).getTime();
+      if (Number.isFinite(parsed) && parsed > 0) ms = parsed;
+    }
+    if (ms === null) continue;
+    const age = Date.now() - ms;
+    // Timestamps absurdos (futuro, ou antes de 2020) são ignorados.
+    if (ms < 1577836800000 || age < -5 * 60 * 1000) continue;
+    return Math.max(0, age);
+  }
+  return null;
+}
+
 
 function extractPhoneNumber(payload: any, msg: any): { phone: string; source: string } | null {
   const directCandidates: Array<[string, unknown]> = [
