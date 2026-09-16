@@ -351,15 +351,20 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
   const fromEndpoint: any[] = extraTransactionsBySubscription.get(subId) || [];
   const today = todayInSaoPaulo();
-  const openToday = fromEndpoint.filter((t) => t && String(t.payday ?? "") === today && isOpenTransaction(t));
-  if (!openToday.length) {
+  const openOverdue = fromEndpoint.filter((t) => t && String(t.payday ?? "") <= today && isOpenTransaction(t));
+  if (!openOverdue.length) {
     return { isOverdue: false, overdueCents: 0, dueDate: null };
   }
 
+  const mostRecentDueDate = openOverdue.reduce((latest, t) => {
+    const p = String(t.payday ?? "");
+    return p > latest ? p : latest;
+  }, "");
+
   return {
     isOverdue: true,
-    overdueCents: openToday.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
-    dueDate: today,
+    overdueCents: openOverdue.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
+    dueDate: mostRecentDueDate || today,
   };
 }
 
