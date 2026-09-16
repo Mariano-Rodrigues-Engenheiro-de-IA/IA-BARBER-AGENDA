@@ -166,7 +166,7 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
   const ids = [...new Set(subscriptionIds)];
   const all: CelCashTransaction[] = [];
   const diagnostics = {
-    pages: 0, batches: 0, subscriptions: ids.length, total: 0,
+    pages: 0, batches: 0, subscriptions: ids.length, total: 0, duplicates: 0,
     lastHttpStatus: null as number | null,
     lastRawSample: null as string | null,
     error: null as string | null, stoppedReason: "all_batches_complete",
@@ -203,6 +203,7 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
         const body = json && typeof json === "object" ? json as Record<string, unknown> : {};
         const items = Array.isArray(json) ? json : body.Transactions ?? body.transactions ?? body.data ?? body.items;
         if (!Array.isArray(items)) throw new Error("CelCash: resposta de transações inválida; lista anterior preservada.");
+        let added = 0;
         for (const item of items) {
           if (!item || typeof item !== "object") throw new Error("CelCash: transação inválida.");
           const tx = item as CelCashTransaction;
@@ -210,9 +211,20 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
             throw new Error("CelCash: resposta fora do lote de assinaturas; sincronização interrompida.");
           }
           const id = String(tx.galaxPayId ?? "");
-          if (!id || seen.has(id)) throw new Error("CelCash: paginação de transações inconsistente; lista anterior preservada.");
+          if (!id) throw new Error(`CelCash: transação sem galaxPayId (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
+          // Páginas podem se sobrepor; a mesma transação conta só uma vez.
+          if (seen.has(id)) {
+            diagnostics.duplicates++;
+            continue;
+          }
+          added++;
           seen.add(id);
           all.push(tx);
+        }
+        console.info(`[CelCashOverdue] lote=${offset / batchSize + 1} startAt=${startAt} recebidas=${items.length} novas=${added}`);
+        // Uma página cheia sem progresso não comprova que a busca terminou.
+        if (items.length >= limit && added === 0) {
+          throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
         }
         if (items.length < limit) break;
         startAt += items.length;
