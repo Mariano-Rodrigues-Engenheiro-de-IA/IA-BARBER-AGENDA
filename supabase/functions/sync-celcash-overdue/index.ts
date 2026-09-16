@@ -139,15 +139,62 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
 //     assinatura, que não existe no payload real).
 //   - Se o "payday" ainda não chegou, ainda não é inadimplente (cobrança
 //     futura normal).
-function deriveOverdueFromTransactions(sub: any): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
+// ⚠️ Adicionado (16/09): confirmado com dado real (Raimundo Mesquita) que
+// o array Transactions[] embutido em cada assinatura de /subscriptions
+// pode estar DESATUALIZADO — faltava a tentativa de cobrança mais recente
+// (setembro), mesmo já tendo sido tentada e negada de verdade (confirmado
+// no relatório visual da CelCash). Existe um endpoint dedicado
+// GET /transactions (docs.prod.cloud.galaxpay.com.br/transactions/list)
+// que deve refletir isso corretamente. Busca as transações recentes por
+// esse endpoint e junta com as já embutidas — usa o que for mais recente
+// das duas fontes por assinatura, pra não perder dado se uma das fontes
+// falhar ou vier incompleta.
+async function fetchRecentTransactions(env: string, token: string): Promise<any[]> {
+  const all: any[] = [];
+  const limit = 100;
+  let startAt = 0;
+  // Limite de segurança: até 20 páginas (2000 transações). Não filtra por
+  // data via query (schema exato dos filtros não pôde ser confirmado na
+  // documentação estática) — pega o volume recente disponível e filtra
+  // por data no código depois.
+  for (let i = 0; i < 20; i++) {
+    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}`;
+    const resp = await fetch(url, {
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    const text = await resp.text();
+    let json: any; try { json = JSON.parse(text); } catch { json = null; }
+    if (!resp.ok) {
+      console.warn(`[CelCashOverdue] /transactions HTTP ${resp.status}: ${text.slice(0, 200)} — seguindo só com o array embutido em /subscriptions.`);
+      break;
+    }
+    const items: any[] =
+      json?.Transactions || json?.transactions || json?.data || json?.items || (Array.isArray(json) ? json : []);
+    if (!items.length) break;
+    all.push(...items);
+    if (items.length < limit) break;
+    startAt += items.length;
+  }
+  return all;
+}
+
+function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
   const rawStatus = String(sub.status || "").toLowerCase();
   // Assinatura cancelada/encerrada nunca conta como pendência de cobrança.
   if (rawStatus === "closed" || /cancel/.test(rawStatus)) {
     return { isOverdue: false, overdueCents: 0, dueDate: null };
   }
 
-  const transactions: any[] = Array.isArray(sub.Transactions) ? sub.Transactions : [];
-  if (!transactions.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
+  const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
+  const embedded: any[] = Array.isArray(sub.Transactions) ? sub.Transactions : [];
+  const fromEndpoint: any[] = extraTransactionsBySubscription.get(subId) || [];
+  // Junta as duas fontes e deduplica por galaxPayId da transação — usa o
+  // que vier do endpoint dedicado quando o mesmo id aparecer nos dois
+  // (mais provável de estar atualizado).
+  const byTxId = new Map<string, any>();
+  for (const t of embedded) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
+  for (const t of fromEndpoint) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
+  const transactions = Array.from(byTxId.values());
 
   const withPayday = transactions.filter((t) => t && t.payday);
   if (!withPayday.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
@@ -176,12 +223,20 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
     const planMap = await fetchPlansMap(env, token);
+    const recentTransactions = await fetchRecentTransactions(env, token);
+    const extraTransactionsBySubscription = new Map<string, any[]>();
+    for (const t of recentTransactions) {
+      const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
+      if (!subId || subId === "undefined" || subId === "null") continue;
+      if (!extraTransactionsBySubscription.has(subId)) extraTransactionsBySubscription.set(subId, []);
+      extraTransactionsBySubscription.get(subId)!.push(t);
+    }
 
     const rows = subs.map((s: any) => {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
       const phoneRaw = pickPhone(customer) || pickPhone(s);
       const phoneE164 = normalizePhone(phoneRaw);
-      const { isOverdue, overdueCents, dueDate } = deriveOverdueFromTransactions(s);
+      const { isOverdue, overdueCents, dueDate } = deriveOverdueFromTransactions(s, extraTransactionsBySubscription);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
       const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
