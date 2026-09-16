@@ -520,7 +520,16 @@ Deno.serve(async (req) => {
     }
 
     const results = [];
-    for (const t of tenants) results.push(await syncTenantOverdue(supabase, t));
+    // Nunca estourar o tempo da requisição: sobrando pouco, os tenants
+    // restantes voltam marcados (nunca descartados em silêncio).
+    const requestDeadline = Date.now() + 220_000;
+    for (const t of tenants) {
+      if (Date.now() > requestDeadline) {
+        results.push({ tenant_id: t.id, error: "Sincronização não executada nesta rodada (limite de tempo da requisição); tente novamente." });
+        continue;
+      }
+      results.push(await syncTenantOverdue(supabase, t));
+    }
 
     return new Response(JSON.stringify({ success: true, results }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
