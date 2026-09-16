@@ -149,13 +149,28 @@ async function fetchPlansMap(env: string, token: string): Promise<Map<string, st
 // esse endpoint e junta com as já embutidas — usa o que for mais recente
 // das duas fontes por assinatura, pra não perder dado se uma das fontes
 // falhar ou vier incompleta.
+//
+// ⚠️ Corrigido (16/09): a primeira versão buscava até 2000 transações
+// (20 páginas) SEM ordenação — se a API devolve em ordem cronológica
+// ANTIGA primeiro (comportamento padrão comum), isso nunca chegava nem
+// perto das transações recentes, e ainda estourou o tempo limite da
+// function (504 Gateway Timeout) tentando buscar tudo. Corrigido usando
+// o parâmetro "order" (confirmado no SDK oficial @cel_cash/client, que
+// usa esse formato: order: 'createdAt.desc') para pedir as mais recentes
+// primeiro — com isso, poucas páginas já bastam, e paramos assim que as
+// transações da página ficarem mais antigas que a janela que interessa
+// (90 dias), já que dali pra trás só fica mais antigo ainda.
 async function fetchRecentTransactions(env: string, token: string): Promise<{ transactions: any[]; diagnostics: any }> {
   const all: any[] = [];
   const limit = 100;
   let startAt = 0;
-  const diagnostics: any = { pages: 0, lastHttpStatus: null, lastRawSample: null, error: null };
-  for (let i = 0; i < 20; i++) {
-    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}`;
+  const diagnostics: any = { pages: 0, lastHttpStatus: null, lastRawSample: null, error: null, stoppedReason: null };
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - 90);
+  const cutoffStr = cutoffDate.toISOString().slice(0, 10);
+
+  for (let i = 0; i < 6; i++) {
+    const url = `${baseUrl(env)}/transactions?limit=${limit}&startAt=${startAt}&order=createdAt.desc`;
     const resp = await fetch(url, {
       headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
     });
@@ -172,13 +187,25 @@ async function fetchRecentTransactions(env: string, token: string): Promise<{ tr
     const items: any[] =
       json?.Transactions || json?.transactions || json?.data || json?.items || (Array.isArray(json) ? json : []);
     if (i === 0) diagnostics.lastRawSample = text.slice(0, 500);
+    if (!items.length) { diagnostics.stoppedReason = "empty_page"; break; }
     all.push(...items);
-    if (items.length < limit) break;
+
+    // Já veio bem antigo? Como pedimos ordem decrescente, o resto só
+    // fica mais antigo ainda — não vale a pena continuar buscando.
+    const oldestInPage = items.reduce((min, t) => (t?.createdAt && t.createdAt < min ? t.createdAt : min), items[0]?.createdAt || "");
+    if (oldestInPage && oldestInPage.slice(0, 10) < cutoffStr) {
+      diagnostics.stoppedReason = "past_cutoff_90_days";
+      break;
+    }
+
+    if (items.length < limit) { diagnostics.stoppedReason = "last_page"; break; }
     startAt += items.length;
   }
+  if (!diagnostics.stoppedReason) diagnostics.stoppedReason = "page_limit_reached";
   diagnostics.total = all.length;
   return { transactions: all, diagnostics };
 }
+
 
 function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
   const rawStatus = String(sub.status || "").toLowerCase();
