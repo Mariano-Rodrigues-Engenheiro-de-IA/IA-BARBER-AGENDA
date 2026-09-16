@@ -162,7 +162,12 @@ interface CelCashTransaction {
   value?: number | string;
 }
 
-async function fetchRecentTransactions(env: string, token: string, subscriptionIds: string[]) {
+async function fetchRecentTransactions(
+  env: string,
+  token: string,
+  subscriptionIds: string[],
+  deadlineAt: number,
+) {
   const ids = [...new Set(subscriptionIds)];
   const all: CelCashTransaction[] = [];
   const diagnostics = {
@@ -171,9 +176,10 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
     lastRawSample: null as string | null,
     error: null as string | null, stoppedReason: "all_batches_complete",
   };
-  const deadline = Date.now() + 90_000;
+  const deadline = deadlineAt;
   const batchSize = 50;
   const limit = 100;
+  const today = new Date().toISOString().slice(0, 10);
   // A CelCash responde 403 sem corpo explicativo quando recebe páginas em
   // paralelo. Mantém uma única fila e repete apenas 403/429 com espera curta.
   let nextBatch = 0;
@@ -184,6 +190,11 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
       const batch = ids.slice(offset, offset + batchSize);
       const allowedIds = new Set(batch);
       const seen = new Set<string>();
+      // Basta a cobrança vencida mais recente de cada assinatura: com
+      // order=payday.desc, quando toda assinatura vista do lote já tem uma
+      // cobrança anterior a hoje, o histórico antigo restante é inútil.
+      const seenSubs = new Set<string>();
+      const withPastDue = new Set<string>();
       let startAt = 0;
       diagnostics.batches++;
       while (true) {
@@ -254,12 +265,20 @@ async function fetchRecentTransactions(env: string, token: string, subscriptionI
           }
           added++;
           seen.add(id);
+          const subId = String(tx.subscriptionGalaxPayId ?? "");
+          seenSubs.add(subId);
+          if (tx.payday && String(tx.payday) < today) withPastDue.add(subId);
           all.push(tx);
         }
         console.info(`[CelCashOverdue] lote=${offset / batchSize + 1} startAt=${startAt} recebidas=${items.length} novas=${added}`);
         // Uma página cheia sem progresso não comprova que a busca terminou.
         if (items.length >= limit && added === 0) {
           throw new Error(`CelCash: paginação sem avanço (lote ${offset / batchSize + 1}, startAt ${startAt}); lista anterior preservada.`);
+        }
+        const lastPayday = String((items[items.length - 1] as CelCashTransaction | undefined)?.payday ?? "");
+        if (lastPayday && lastPayday < today && seenSubs.size > 0 && withPastDue.size >= seenSubs.size) {
+          diagnostics.stoppedReason = "past_due_covered";
+          break;
         }
         if (items.length < limit) break;
         startAt += items.length;
@@ -293,16 +312,18 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   for (const t of fromEndpoint) if (t?.galaxPayId != null) byTxId.set(String(t.galaxPayId), t);
   const transactions = Array.from(byTxId.values());
 
-  const withPayday = transactions.filter((t) => t && t.payday);
-  if (!withPayday.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
-
-  const mostRecent = withPayday.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
-  const txStatus = String(mostRecent.status || "").toLowerCase();
-  if (txStatus === "captured") return { isOverdue: false, overdueCents: 0, dueDate: null };
-
   const today = new Date().toISOString().slice(0, 10);
-  const isPastDue = String(mostRecent.payday) < today;
-  if (!isPastDue) return { isOverdue: false, overdueCents: 0, dueDate: null };
+  // A CelCash pré-cria parcelas futuras: elas nunca indicam inadimplência e
+  // não podem esconder uma cobrança vencida (bug anterior — a parcela futura
+  // era tomada como "mais recente" e o atrasado ficava de fora).
+  const pastDue = transactions.filter((t) => t && t.payday && String(t.payday) < today);
+  if (!pastDue.length) return { isOverdue: false, overdueCents: 0, dueDate: null };
+
+  const mostRecent = pastDue.reduce((latest, t) => (t.payday > latest.payday ? t : latest));
+  const txStatus = String(mostRecent.status || "").toLowerCase();
+  if (txStatus === "captured" || txStatus === "payexternal" || txStatus === "free") {
+    return { isOverdue: false, overdueCents: 0, dueDate: null };
+  }
 
   return {
     isOverdue: true,
@@ -312,6 +333,10 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
 }
 
 async function syncTenantOverdue(supabase: any, tenant: any) {
+  // Orçamento total do tenant: a busca precisa terminar antes do limite de
+  // tempo da própria Edge Function, senão a chamada morre com 504 e o painel
+  // recebe "non-2xx" sem diagnóstico algum.
+  const tenantDeadline = Date.now() + 100_000;
   try {
     if (!tenant.celcash_galax_id || !tenant.celcash_galax_hash) {
       throw new Error("Credenciais CelCash ausentes");
@@ -320,7 +345,12 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     const subs = await fetchAllSubscriptions(env, token);
     const planMap = await fetchPlansMap(env, token);
-    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(env, token, subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String));
+    const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
+      env,
+      token,
+      subs.map((sub: { galaxPayId?: string | number }) => sub.galaxPayId).filter((id: unknown) => id !== undefined && id !== null).map(String),
+      tenantDeadline,
+    );
     const extraTransactionsBySubscription = new Map<string, any[]>();
     for (const t of recentTransactions) {
       const subId = String(t.subscriptionGalaxPayId ?? t.subscriptionMyId ?? "");
@@ -490,7 +520,16 @@ Deno.serve(async (req) => {
     }
 
     const results = [];
-    for (const t of tenants) results.push(await syncTenantOverdue(supabase, t));
+    // Nunca estourar o tempo da requisição: sobrando pouco, os tenants
+    // restantes voltam marcados (nunca descartados em silêncio).
+    const requestDeadline = Date.now() + 220_000;
+    for (const t of tenants) {
+      if (Date.now() > requestDeadline) {
+        results.push({ tenant_id: t.id, error: "Sincronização não executada nesta rodada (limite de tempo da requisição); tente novamente." });
+        continue;
+      }
+      results.push(await syncTenantOverdue(supabase, t));
+    }
 
     return new Response(JSON.stringify({ success: true, results }), {
       status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
