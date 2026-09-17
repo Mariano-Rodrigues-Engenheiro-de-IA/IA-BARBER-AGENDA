@@ -40,6 +40,13 @@ export type AppBarberGuardDecision = {
   reason: string;
 };
 
+export type AppBarberSlotSelection = {
+  serviceCode: number;
+  professionalCode: number;
+  date: string;
+  time: string;
+};
+
 const cleanText = (value: unknown): string => String(value ?? "")
   .normalize("NFD")
   .replace(/[\u0300-\u036f]/g, "")
@@ -91,6 +98,62 @@ const nullableText = (value: unknown, maxLength = 120): string | null => {
   const text = String(value ?? "").trim();
   return text ? text.slice(0, maxLength) : null;
 };
+
+/** Detecta afirmação de reserva concluída; a legitimidade é validada pelo orquestrador. */
+export function appBarberClaimsCompletedBooking(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  const completedClaim = /\b(?:(?:j[aá]\s+)?(?:agendei|reservei|marquei)|(?:j[aá]\s+)?deixei(?:\s+(?:seu|o))?\s+(?:hor[aá]rio\s+)?(?:agendad[oa]|reservad[oa]|marcad[oa]|confirmad[oa])|acabe[io]\s+de\s+(?:agendar|reservar|marcar)|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|(?:(?:seu|o)\s+(?:hor[aá]rio|agendamento)|(?:sua|a)\s+reserva)[^.!?]{0,80}\b(?:est[aá]|ficou|foi)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|(?:agendamento|reserva|hor[aá]rio)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|^\s*(?:agendad[oa]|confirmad[oa]|reservad[oa]|remarcad[oa]))\b/i;
+  const negated = /\bn[ãa]o\s+(?:foi\s+|est[áa]\s+|ficou\s+|consegui\s+)?(?:agend|reserv|marc|confirm)/i;
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .some((sentence) => !sentence.endsWith("?") && completedClaim.test(sentence) && !negated.test(sentence));
+}
+
+/** Resolve uma escolha curta somente quando ela identifica um único slot já oferecido. */
+export function resolveAppBarberSlotSelection(
+  currentRequest: unknown,
+  previousAssistantMessage: unknown,
+  slots: Array<{
+    service_code?: unknown;
+    professional_code?: unknown;
+    professional_name?: unknown;
+    start_date?: unknown;
+    start_time?: unknown;
+  }> | null | undefined,
+): AppBarberSlotSelection | null {
+  const request = cleanText(currentRequest);
+  const previous = cleanText(previousAssistantMessage);
+  if (!request || !previous || !Array.isArray(slots) || slots.length === 0) return null;
+
+  const timeMatch = request.match(/\b([01]?\d|2[0-3])\s*(?::|h)\s*([0-5]\d)\b/);
+  if (!timeMatch) return null;
+  const time = `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
+  const requestTokens = request.split(/[^a-z0-9]+/).filter((token) => token.length >= 3);
+  const previousMentionsTime = previous.includes(time)
+    || previous.includes(time.replace(":", "h"))
+    || (time.endsWith(":00") && new RegExp(`\\b${Number(time.slice(0, 2))}h\\b`).test(previous));
+  if (!previousMentionsTime) return null;
+
+  const matches = slots.filter((slot) => {
+    const professionalWords = cleanText(slot.professional_name).split(" ").filter(Boolean);
+    const professionalMentioned = requestTokens.some((token) => professionalWords.includes(token));
+    return String(slot.start_time ?? "").slice(0, 5) === time && professionalMentioned;
+  });
+
+  const unique = new Map<string, AppBarberSlotSelection>();
+  for (const slot of matches) {
+    const serviceCode = positiveInt(slot.service_code);
+    const professionalCode = positiveInt(slot.professional_code);
+    const date = nullableText(slot.start_date, 10);
+    if (!serviceCode || !professionalCode || !date) continue;
+    const selection = { serviceCode, professionalCode, date, time };
+    unique.set(`${serviceCode}|${professionalCode}|${date}|${time}`, selection);
+  }
+  return unique.size === 1 ? [...unique.values()][0] : null;
+}
 
 export function normalizeAppBarberIntentItems(value: unknown): AppBarberIntentItem[] {
   if (!Array.isArray(value)) return [];

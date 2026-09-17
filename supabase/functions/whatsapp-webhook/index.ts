@@ -33,9 +33,11 @@ import {
   bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
+  appBarberClaimsCompletedBooking,
   appBarberCurrentRequestMentionsPendingService,
   buildAppBarberIntentSnapshot,
   reconcileAppBarberBookings,
+  resolveAppBarberSlotSelection,
   type AppBarberIntentSnapshot,
 } from "./providers/appbarber/guard-core.ts";
 import {
@@ -6164,6 +6166,19 @@ async function callAIAgent(
   // sem nunca perguntar nada ao cliente. Uma vez bloqueado por nome no turno, só
   // aceita nome corroborado (dito nesta conversa) até o cliente responder de novo.
   let appbarberNameBlockedThisTurn = false;
+  if (provider === "appbarber") {
+    const selectedSlot = resolveAppBarberSlotSelection(
+      userMessage,
+      getLastAssistantMessage(history),
+      sessionState.appbarberSlotOptions,
+    );
+    if (selectedSlot) {
+      sessionState.selectedServiceId = selectedSlot.serviceCode;
+      sessionState.selectedProfessionalId = selectedSlot.professionalCode;
+      sessionState.selectedDate = selectedSlot.date;
+      console.log(`[AppBarberSelection] locked svc=${selectedSlot.serviceCode} prof=${selectedSlot.professionalCode} date=${selectedSlot.date} time=${selectedSlot.time}`);
+    }
+  }
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
 
@@ -6216,8 +6231,26 @@ async function callAIAgent(
             changed = true;
           }
         }
+        const selectedServiceId = toPositiveInteger(sessionState.selectedServiceId);
+        const requestedServiceId = toPositiveInteger(parsedArgs?.service_code);
+        if (
+          selectedServiceId
+          && requestedServiceId
+          && requestedServiceId !== selectedServiceId
+          && ["listar_profissionais", "listar_horarios", "listar_horarios_geral", "criar_agendamento"].includes(toolCall.function.name)
+        ) {
+          const selectedCatalogEntry = (sessionState.appbarberServiceCatalog || [])
+            .find((service) => Number(service.service_code) === selectedServiceId);
+          parsedArgs.service_code = selectedServiceId;
+          if (toolCall.function.name === "criar_agendamento" && selectedCatalogEntry?.duration_minutes) {
+            parsedArgs.service_duration_minutes = selectedCatalogEntry.duration_minutes;
+          }
+          changed = true;
+          correctionReason = `service_code preservado da opção escolhida pelo cliente (${requestedServiceId} → ${selectedServiceId})`;
+          console.warn(`[AppBarberSelection] corrigido service_code ${requestedServiceId}→${selectedServiceId} em ${toolCall.function.name}`);
+        }
         if (changed) {
-          correctionReason = "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
+          correctionReason = correctionReason || "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
           toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
         }
 
@@ -7447,6 +7480,7 @@ async function callAIAgent(
               service_code: toPositiveInteger(s?.service_code) ?? null,
               name: typeof s?.name === "string" ? s.name : "",
               duration_minutes: toPositiveInteger(s?.duration_minutes) ?? null,
+              has_subscription: s?.has_subscription === true,
             }))
             .filter((s: any) => s.service_code);
           (sessionState as any).appbarberServiceCatalog = catalog;
@@ -7476,10 +7510,12 @@ async function callAIAgent(
             // data, horário citado que veio de busca real) só dependem de
             // service_code + start_date + start_time.
             const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code) ?? 0;
+            const knownProfessionalName = ((((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>)
+              .find((slot) => slot.professional_code === professionalCode && !!slot.professional_name)?.professional_name) || "";
             for (const time of (toolResult as any).available_times) {
               const hhmm = String(time || "").slice(0, 5);
               if (/^\d{2}:\d{2}$/.test(hhmm)) {
-                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
+                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: knownProfessionalName, start_date: startDate, start_time: hhmm });
               }
             }
           }
@@ -8091,7 +8127,6 @@ async function callAIAgent(
     // "marcamos". Mantém a forma ATIVA/primeira pessoa apenas — a forma
     // PASSIVA ("está confirmado para", "foi remarcado") continua de fora de
     // propósito, é o que causou a regressão de 03/09 (ver nota acima).
-    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
     // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
@@ -8105,7 +8140,10 @@ async function callAIAgent(
     // nada mudou, não confirmando uma ação).
     const CANCEL_CONTEXT_RE = /\bn[ãa]o\s+(?:foi\s+)?(?:cancel\w*|desmarc\w*)\b/i;
     const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
-    const hasExplicitCreationClaim = sentences.some((s: string) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const LEGACY_CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
+    const hasExplicitCreationClaim = provider === "appbarber"
+      ? appBarberClaimsCompletedBooking(finalResponse) && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s))
+      : sentences.some((s: string) => LEGACY_CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
       && sentences.some((s: string) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
@@ -8125,9 +8163,21 @@ async function callAIAgent(
       // separada e isolada só pra este guard. O tamanho da lista já é limitado
       // por ACTION_LEDGER_MAX (12) em recordCompletedAction, então não cresce
       // sem limite mesmo sem o filtro de tempo aqui.
-      const recentBookingSuccess = (sessionState.recentCompletedActions || []).some(
-        (a) => a.category === "booking" && a.status === "success",
+      // R2 determinística: uma afirmação de criação só é legítima quando houve
+      // escrita bem-sucedida NESTE turno. Sucesso antigo do ledger não prova que
+      // a reserva que a resposta acabou de afirmar foi criada agora.
+      const successfulWriteThisTurn = (logToolCalls || []).some((tc: any) =>
+        tc
+        && _phantomCfg.bookingToolNames.includes(tc.name)
+        && !tc.blocked
+        && tc?.result
+        && !tc.result.error
+        && tc.result.blocked !== true
+        && (tc.result.ok === true || tc.result.success === true || tc.result.appointment_id || tc.result.id || tc.result.agendamentoId)
       );
+      const recentBookingSuccess = provider === "appbarber"
+        ? successfulWriteThisTurn
+        : (sessionState.recentCompletedActions || []).some((a) => a.category === "booking" && a.status === "success");
 
       // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
       // ativo do cliente (buscar_agendamento[s|_dia] / listar_agendamentos)
@@ -8136,7 +8186,13 @@ async function callAIAgent(
       // e depois mandou "vou atrasar"), que nunca entra em recentCompletedActions.
       // TTL curto (10 min) e invalidada por cancel posterior — ver
       // isActiveBookingLookupStillValid.
-      const lookupLegit = isActiveBookingLookupStillValid(sessionState)
+      const activeLookupThisTurn = (logToolCalls || []).some((tc: any) => {
+        if (!tc || !_phantomCfg.searchToolNames.includes(tc.name) || tc.blocked || tc?.result?.error) return false;
+        const total = Number(tc?.result?.total ?? tc?.result?.count ?? 0);
+        return total > 0 || (Array.isArray(tc?.result?.appointments) && tc.result.appointments.length > 0);
+      });
+      const lookupLegit = (provider !== "appbarber" || activeLookupThisTurn)
+        && isActiveBookingLookupStillValid(sessionState)
         && responseCitesLookupBooking(finalResponse, sessionState);
       if (lookupLegit) {
         console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
@@ -8166,7 +8222,7 @@ async function callAIAgent(
       const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
       const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
 
-      if (!recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
+      if (provider !== "appbarber" && !recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
         console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
         logToolCalls.push({
           name: "__phantom_guard__",
@@ -8227,7 +8283,7 @@ async function callAIAgent(
               model: modelUsed,
               messages,
               tools: buildToolsForProvider(provider, tenant),
-              tool_choice: "auto",
+              tool_choice: round === 0 ? "required" : "auto",
               max_completion_tokens: _isGpt5Reinject ? 1500 : 700,
             };
             const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `phantom-confirmation-reinject-r${round + 1}`);
