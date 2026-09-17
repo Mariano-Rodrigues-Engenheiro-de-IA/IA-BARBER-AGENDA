@@ -8140,8 +8140,10 @@ async function callAIAgent(
     // nada mudou, não confirmando uma ação).
     const CANCEL_CONTEXT_RE = /\bn[ãa]o\s+(?:foi\s+)?(?:cancel\w*|desmarc\w*)\b/i;
     const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
-    const hasExplicitCreationClaim = appBarberClaimsCompletedBooking(finalResponse)
-      && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s));
+    const LEGACY_CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
+    const hasExplicitCreationClaim = provider === "appbarber"
+      ? appBarberClaimsCompletedBooking(finalResponse) && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s))
+      : sentences.some((s: string) => LEGACY_CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
       && sentences.some((s: string) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
@@ -8173,6 +8175,9 @@ async function callAIAgent(
         && tc.result.blocked !== true
         && (tc.result.ok === true || tc.result.success === true || tc.result.appointment_id || tc.result.id || tc.result.agendamentoId)
       );
+      const recentBookingSuccess = provider === "appbarber"
+        ? successfulWriteThisTurn
+        : (sessionState.recentCompletedActions || []).some((a) => a.category === "booking" && a.status === "success");
 
       // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
       // ativo do cliente (buscar_agendamento[s|_dia] / listar_agendamentos)
@@ -8186,7 +8191,7 @@ async function callAIAgent(
         const total = Number(tc?.result?.total ?? tc?.result?.count ?? 0);
         return total > 0 || (Array.isArray(tc?.result?.appointments) && tc.result.appointments.length > 0);
       });
-      const lookupLegit = activeLookupThisTurn
+      const lookupLegit = (provider !== "appbarber" || activeLookupThisTurn)
         && isActiveBookingLookupStillValid(sessionState)
         && responseCitesLookupBooking(finalResponse, sessionState);
       if (lookupLegit) {
@@ -8217,7 +8222,21 @@ async function callAIAgent(
       const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
       const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
 
-      if (!successfulWriteThisTurn && !lookupLegit) {
+      if (provider !== "appbarber" && !recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
+        console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
+        logToolCalls.push({
+          name: "__phantom_guard__",
+          args: { phase: "response_guard" },
+          result: {
+            layer: "phantom_confirmation_guard",
+            provider,
+            acao: "detected_shadow_no_structured_evidence",
+            claim: String(finalResponse).slice(0, 160),
+            explicit: hasExplicitCreationClaim,
+            implied: hasImpliedFinalizationClaim,
+          },
+        });
+      } else if (!recentBookingSuccess && !lookupLegit) {
         console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}. Tentando reinjeção.`);
         logErrors.push({ message: `Resposta prometia finalização de agendamento novo sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
