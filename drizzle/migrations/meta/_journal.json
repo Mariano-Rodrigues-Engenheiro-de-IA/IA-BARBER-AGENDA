@@ -15,6 +15,13 @@
       "when": 1789507606628,
       "tag": "0001_celcash_overdue_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789607388444,
+      "tag": "0002_staff_full_capabilities",
+      "breakpoints": true
     }
   ]
 }

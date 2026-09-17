@@ -11,7 +11,10 @@ export type AppModule =
 
 export type PermissionsMap = Partial<Record<AppModule, ModuleVisibility>>;
 
-export type StaffModule = "follow-ups" | "agent-logs" | "prompts" | "staff" | "audit" | "settings";
+export type StaffModule =
+  | "follow-ups" | "agent-logs" | "ai-monitor" | "prompts" | "staff" | "audit" | "settings"
+  // Capacidades antes exclusivas do admin, agora liberáveis manualmente
+  | "tenant-credentials" | "tenant-manage" | "tenant-access";
 
 interface AuthContextType {
   session: Session | null;
@@ -22,6 +25,8 @@ interface AuthContextType {
   tenantId: string | null;
   permissions: PermissionsMap;
   staffModules: Set<StaffModule>;
+  /** Admin tem tudo; colaborador tem o que estiver marcado no painel. */
+  can: (module: StaffModule) => boolean;
   loading: boolean;
   authReady: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -156,8 +161,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // precise de tela de acesso negado depois), não "ainda carregando".
   const authReady = !loading && (!user || !profileLoading);
 
+  const can = (module: StaffModule) => isAdmin || staffModules.has(module);
+
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
+    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, can, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );

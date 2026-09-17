@@ -18,13 +18,18 @@ type TenantRow = { id: string; name: string; visibility: string; created_by: str
 type AccessRow = { user_id: string; tenant_id: string };
 type ModuleRow = { user_id: string; module: string };
 
-const MODULES: { key: string; label: string }[] = [
+// Tudo o que o admin faz pode ser liberado item por item para o colaborador.
+const MODULES: { key: string; label: string; hint?: string }[] = [
   { key: "follow-ups", label: "Follow-ups" },
   { key: "agent-logs", label: "Monitor IA" },
-  { key: "prompts", label: "Prompts" },
-  { key: "staff", label: "Colaboradores" },
+  { key: "ai-monitor", label: "Monitor da IA (24h)" },
+  { key: "prompts", label: "Prompts", hint: "Editar os prompts globais por provedor" },
+  { key: "staff", label: "Colaboradores", hint: "Criar colaboradores e liberar acessos" },
   { key: "audit", label: "Auditoria" },
   { key: "settings", label: "Configurações" },
+  { key: "tenant-credentials", label: "Integrações e tokens", hint: "Editar credenciais das empresas (Trinks, WhatsApp, CelCash etc.)" },
+  { key: "tenant-manage", label: "Gestão da empresa", hint: "Status, slug, arquivar, excluir, visibilidade, modo econômico" },
+  { key: "tenant-access", label: "Acessos e permissões", hint: "Usuários do cliente e abas liberadas para ele" },
 ];
 
 async function invoke(action: string, body: Record<string, unknown> = {}) {
@@ -275,14 +280,17 @@ export default function StaffPage() {
             <>
               <div>
                 <h4 className="text-sm font-semibold text-foreground mb-2">Abas do painel</h4>
-                <p className="text-xs text-muted-foreground mb-3">"Visão Geral" e "Empresas" ficam sempre visíveis. Marque abaixo o que este colaborador enxerga.</p>
-                <div className="grid grid-cols-2 gap-2">
+                <p className="text-xs text-muted-foreground mb-3">"Visão Geral" e "Empresas" ficam sempre visíveis. Marque abaixo tudo o que este colaborador pode ver e fazer — desmarcado, ele não tem acesso.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {MODULES.map((m) => {
                     const has = userModules.has(m.key);
                     return (
-                      <label key={m.key} className="flex items-center gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
-                        <Checkbox checked={has} onCheckedChange={() => toggleModule(m.key, has)} />
-                        <span className="text-sm">{m.label}</span>
+                      <label key={m.key} className="flex items-start gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
+                        <Checkbox className="mt-0.5" checked={has} onCheckedChange={() => toggleModule(m.key, has)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm">{m.label}</span>
+                          {m.hint && <span className="block text-[11px] text-muted-foreground">{m.hint}</span>}
+                        </span>
                       </label>
                     );
                   })}

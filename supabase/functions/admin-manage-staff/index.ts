@@ -47,10 +47,15 @@ Deno.serve(async (req) => {
     if (userErr || !userData.user) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
+    // Admin sempre pode; colaborador só se o módulo "staff" estiver marcado
+    // manualmente no painel (staff_has_module já devolve true para admin).
+    const { data: allowed } = await admin.rpc("staff_has_module", {
+      _user_id: userData.user.id, _module: "staff",
+    });
+    if (!allowed) return json({ error: "Sem permissão para gerenciar colaboradores" }, 403);
     const { data: isAdmin } = await admin.rpc("has_role", {
       _user_id: userData.user.id, _role: "admin",
     });
-    if (!isAdmin) return json({ error: "Apenas administradores" }, 403);
 
     const body = await req.json();
     const { action, email, password, user_id } = body ?? {};
