@@ -8161,8 +8161,17 @@ async function callAIAgent(
       // separada e isolada só pra este guard. O tamanho da lista já é limitado
       // por ACTION_LEDGER_MAX (12) em recordCompletedAction, então não cresce
       // sem limite mesmo sem o filtro de tempo aqui.
-      const recentBookingSuccess = (sessionState.recentCompletedActions || []).some(
-        (a) => a.category === "booking" && a.status === "success",
+      // R2 determinística: uma afirmação de criação só é legítima quando houve
+      // escrita bem-sucedida NESTE turno. Sucesso antigo do ledger não prova que
+      // a reserva que a resposta acabou de afirmar foi criada agora.
+      const successfulWriteThisTurn = (logToolCalls || []).some((tc: any) =>
+        tc
+        && _phantomCfg.bookingToolNames.includes(tc.name)
+        && !tc.blocked
+        && tc?.result
+        && !tc.result.error
+        && tc.result.blocked !== true
+        && (tc.result.ok === true || tc.result.success === true || tc.result.appointment_id || tc.result.id || tc.result.agendamentoId)
       );
 
       // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
@@ -8172,7 +8181,13 @@ async function callAIAgent(
       // e depois mandou "vou atrasar"), que nunca entra em recentCompletedActions.
       // TTL curto (10 min) e invalidada por cancel posterior — ver
       // isActiveBookingLookupStillValid.
-      const lookupLegit = isActiveBookingLookupStillValid(sessionState)
+      const activeLookupThisTurn = (logToolCalls || []).some((tc: any) => {
+        if (!tc || !_phantomCfg.searchToolNames.includes(tc.name) || tc.blocked || tc?.result?.error) return false;
+        const total = Number(tc?.result?.total ?? tc?.result?.count ?? 0);
+        return total > 0 || (Array.isArray(tc?.result?.appointments) && tc.result.appointments.length > 0);
+      });
+      const lookupLegit = activeLookupThisTurn
+        && isActiveBookingLookupStillValid(sessionState)
         && responseCitesLookupBooking(finalResponse, sessionState);
       if (lookupLegit) {
         console.log(`[PhantomConfirmationGuard] Liberado pela 2ª fonte: busca ativa recente (${sessionState.recentActiveBookingsLookup?.toolName}, count=${sessionState.recentActiveBookingsLookup?.count}) bate com horário/data citado na resposta.`);
@@ -8202,21 +8217,7 @@ async function callAIAgent(
       const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
       const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
 
-      if (!recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
-        console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
-        logToolCalls.push({
-          name: "__phantom_guard__",
-          args: { phase: "response_guard" },
-          result: {
-            layer: "phantom_confirmation_guard",
-            provider,
-            acao: "detected_shadow_no_structured_evidence",
-            claim: String(finalResponse).slice(0, 160),
-            explicit: hasExplicitCreationClaim,
-            implied: hasImpliedFinalizationClaim,
-          },
-        });
-      } else if (!recentBookingSuccess && !lookupLegit) {
+      if (!successfulWriteThisTurn && !lookupLegit) {
         console.warn(`[PhantomConfirmationGuard] Resposta promete finalização de agendamento novo mas houve 0 tentativas de agendar/criar_agendamento nesta rodada. Contexto final=${isNewBookingFinalStep} explicit=${hasExplicitCreationClaim} implied=${hasImpliedFinalizationClaim} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}. Tentando reinjeção.`);
         logErrors.push({ message: `Resposta prometia finalização de agendamento novo sem chamada real de agendar — tentando reinjeção antes de responder.`, level: "warning" });
 
@@ -8263,7 +8264,7 @@ async function callAIAgent(
               model: modelUsed,
               messages,
               tools: buildToolsForProvider(provider, tenant),
-              tool_choice: "auto",
+              tool_choice: round === 0 ? "required" : "auto",
               max_completion_tokens: _isGpt5Reinject ? 1500 : 700,
             };
             const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `phantom-confirmation-reinject-r${round + 1}`);

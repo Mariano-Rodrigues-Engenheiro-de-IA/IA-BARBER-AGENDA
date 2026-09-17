@@ -794,6 +794,17 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         }
         const phoneDigits = normalizePhoneDigits(phoneNumber || args.customer_phone || "");
         if (!phoneDigits) return { error: "Telefone do cliente é obrigatório." };
+        const lockedServiceCode = toPositiveInteger((sessionState as any)?.selectedServiceId);
+        const modelServiceCode = toPositiveInteger(args.service_code);
+        if (lockedServiceCode && modelServiceCode && lockedServiceCode !== modelServiceCode) {
+          const lockedService = findAppBarberCatalogEntry(lockedServiceCode);
+          console.warn(`[AppBarberSelection] criar_agendamento corrigido ${modelServiceCode}→${lockedServiceCode}`);
+          args.service_code = lockedServiceCode;
+          if (lockedService?.duration_minutes) args.service_duration_minutes = lockedService.duration_minutes;
+          if (Array.isArray(args.services) && args.services.length === 1) {
+            args.services = [{ ...args.services[0], service_code: lockedServiceCode, duration: lockedService?.duration_minutes ?? args.services[0]?.duration }];
+          }
+        }
         const requestedServices = (Array.isArray(args.services) && args.services.length > 0
           ? args.services
           : [{ service_code: args.service_code, duration: args.service_duration_minutes }])
