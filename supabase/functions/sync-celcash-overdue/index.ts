@@ -341,11 +341,11 @@ async function fetchRecentTransactions(
 }
 
 
-function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null } {
+function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null; debugTransactions: any[] } {
   const rawStatus = String(sub.status || "").toLowerCase();
   // Assinatura cancelada/encerrada nunca conta como pendência de cobrança.
   if (rawStatus === "closed" || /cancel/.test(rawStatus)) {
-    return { isOverdue: false, overdueCents: 0, dueDate: null };
+    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [] };
   }
 
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
@@ -353,7 +353,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   const today = todayInSaoPaulo();
   const openOverdue = fromEndpoint.filter((t) => t && String(t.payday ?? "") <= today && isOpenTransaction(t));
   if (!openOverdue.length) {
-    return { isOverdue: false, overdueCents: 0, dueDate: null };
+    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [] };
   }
 
   const mostRecentDueDate = openOverdue.reduce((latest, t) => {
@@ -365,6 +365,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
     isOverdue: true,
     overdueCents: openOverdue.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
     dueDate: mostRecentDueDate || today,
+    debugTransactions: openOverdue,
   };
 }
 
@@ -406,7 +407,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
       const phoneRaw = pickPhone(customer) || pickPhone(s);
       const phoneE164 = normalizePhone(phoneRaw);
-      const { isOverdue, overdueCents, dueDate } = deriveOverdueFromTransactions(s, extraTransactionsBySubscription);
+      const { isOverdue, overdueCents, dueDate, debugTransactions } = deriveOverdueFromTransactions(s, extraTransactionsBySubscription);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
       const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
@@ -425,7 +426,12 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
         overdue_amount_cents: overdueCents,
         next_due_date: dueDate,
         last_payment_date: s.last_payment_date || s.lastPaymentDate || null,
-        raw_payload: s,
+        // ⚠️ Adicionado (16/09): a transação que decide "é inadimplente"
+        // nunca era persistida em lugar nenhum, só usada em memória — isso
+        // impedia investigar casos onde a classificação parecia errada
+        // (ex: Bruno Paes, Iago Ragel de Oliveira, sem explicação visível).
+        // Agora fica salva junto, dentro do próprio raw_payload.
+        raw_payload: { ...s, _debugOverdueTransactions: debugTransactions },
         synced_at: new Date().toISOString(),
         _isOverdue: isOverdue,
       };
