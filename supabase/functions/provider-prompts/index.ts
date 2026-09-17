@@ -86,10 +86,9 @@ Deno.serve(async (req) => {
       allowed = !!mod;
     }
     if (!allowed) return json({ error: "Forbidden" }, 403);
-    // Writes still require admin
-    if ((req.method === "POST" || req.method === "DELETE") && !isAdmin) {
-      return json({ error: "Forbidden" }, 403);
-    }
+    // Escrita liberada para quem tem o módulo "prompts" marcado no painel
+    // (admin sempre; colaborador só se o admin marcar).
+    void isAdmin;
 
     if (req.method === "GET") {
       const { data: rows } = await admin.from("provider_prompts").select("*");
