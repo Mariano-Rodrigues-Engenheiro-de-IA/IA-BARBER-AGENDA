@@ -7480,6 +7480,7 @@ async function callAIAgent(
               service_code: toPositiveInteger(s?.service_code) ?? null,
               name: typeof s?.name === "string" ? s.name : "",
               duration_minutes: toPositiveInteger(s?.duration_minutes) ?? null,
+              has_subscription: s?.has_subscription === true,
             }))
             .filter((s: any) => s.service_code);
           (sessionState as any).appbarberServiceCatalog = catalog;
@@ -7509,10 +7510,12 @@ async function callAIAgent(
             // data, horário citado que veio de busca real) só dependem de
             // service_code + start_date + start_time.
             const professionalCode = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code) ?? 0;
+            const knownProfessionalName = ((((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>)
+              .find((slot) => slot.professional_code === professionalCode && !!slot.professional_name)?.professional_name) || "";
             for (const time of (toolResult as any).available_times) {
               const hhmm = String(time || "").slice(0, 5);
               if (/^\d{2}:\d{2}$/.test(hhmm)) {
-                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: "", start_date: startDate, start_time: hhmm });
+                slotOptions.push({ service_code: serviceCode, service_name: serviceName, duration_minutes: duration, professional_code: professionalCode, professional_name: knownProfessionalName, start_date: startDate, start_time: hhmm });
               }
             }
           }
