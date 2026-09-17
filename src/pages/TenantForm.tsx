@@ -354,7 +354,7 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
-  const { user, isAdmin, isStaff, can } = useAuth();
+  const { user, can } = useAuth();
   // Capacidades liberadas manualmente por colaborador no painel de Colaboradores.
   const canManageTenant = can("tenant-manage");
   const canManageAccess = can("tenant-access");
