@@ -208,10 +208,17 @@ interface CelCashTransaction {
 
 function isOpenTransaction(transaction: CelCashTransaction): boolean {
   const status = String(transaction.status ?? "").toLowerCase();
-  // Estados liquidados não representam pagamento em aberto. Os demais são
-  // preservados porque a CelCash possui estados de falha adicionais que o
-  // filtro do endpoint não aceitava e que estavam sumindo da lista.
-  return !["captured", "payexternal", "free", "reversed"].includes(status);
+  // Estados liquidados/cancelados não representam pagamento em aberto. Os
+  // demais são preservados porque a CelCash possui estados de falha
+  // adicionais que o filtro do endpoint não aceitava e que estavam sumindo
+  // da lista.
+  // ⚠️ "cancel" adicionado (16/09): confirmado com dado real (Bruno Paes,
+  // Iago Ragel de Oliveira) que uma transação cancelada MANUALMENTE
+  // ("statusDescription": "Cancelada manualmente") estava sendo contada
+  // como pendência real de cobrança — o dono da barbearia cancelou aquela
+  // cobrança especificamente (provavelmente já resolvida de outra forma,
+  // ou decisão administrativa), não é mais algo a cobrar do cliente.
+  return !["captured", "payexternal", "free", "reversed", "cancel", "canceled", "cancelled"].includes(status);
 }
 
 async function fetchRecentTransactions(
