@@ -280,14 +280,17 @@ export default function StaffPage() {
             <>
               <div>
                 <h4 className="text-sm font-semibold text-foreground mb-2">Abas do painel</h4>
-                <p className="text-xs text-muted-foreground mb-3">"Visão Geral" e "Empresas" ficam sempre visíveis. Marque abaixo o que este colaborador enxerga.</p>
-                <div className="grid grid-cols-2 gap-2">
+                <p className="text-xs text-muted-foreground mb-3">"Visão Geral" e "Empresas" ficam sempre visíveis. Marque abaixo tudo o que este colaborador pode ver e fazer — desmarcado, ele não tem acesso.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {MODULES.map((m) => {
                     const has = userModules.has(m.key);
                     return (
-                      <label key={m.key} className="flex items-center gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
-                        <Checkbox checked={has} onCheckedChange={() => toggleModule(m.key, has)} />
-                        <span className="text-sm">{m.label}</span>
+                      <label key={m.key} className="flex items-start gap-2 p-2 rounded hover:bg-muted/30 cursor-pointer">
+                        <Checkbox className="mt-0.5" checked={has} onCheckedChange={() => toggleModule(m.key, has)} />
+                        <span className="min-w-0">
+                          <span className="block text-sm">{m.label}</span>
+                          {m.hint && <span className="block text-[11px] text-muted-foreground">{m.hint}</span>}
+                        </span>
                       </label>
                     );
                   })}

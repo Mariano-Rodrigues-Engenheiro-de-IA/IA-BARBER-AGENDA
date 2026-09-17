@@ -92,14 +92,14 @@ function AppRoutes() {
       <Route path="/tenants" element={<AdminRoute><TenantsPage /></AdminRoute>} />
       <Route path="/tenants/new" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
       <Route path="/tenants/:id" element={<AdminRoute><TenantFormPage /></AdminRoute>} />
-      <Route path="/tenants/:id/access" element={<AdminRoute><TenantAccessPage /></AdminRoute>} />
+      <Route path="/tenants/:id/access" element={<AdminRoute module="tenant-access"><TenantAccessPage /></AdminRoute>} />
       <Route path="/tenants/:id/dashboard" element={<AdminRoute><TenantDashboardPage /></AdminRoute>} />
       <Route path="/tenants/:id/kanban" element={<AdminRoute><TenantKanbanPage /></AdminRoute>} />
       <Route path="/follow-ups" element={<AdminRoute module="follow-ups"><FollowUpsDashboardPage /></AdminRoute>} />
       <Route path="/audit" element={<AdminRoute module="audit"><AuditPage /></AdminRoute>} />
-      <Route path="/settings" element={<AdminRoute adminOnly module="settings"><SettingsPage /></AdminRoute>} />
+      <Route path="/settings" element={<AdminRoute module="settings"><SettingsPage /></AdminRoute>} />
       <Route path="/prompts" element={<AdminRoute module="prompts"><PromptsPage /></AdminRoute>} />
-      <Route path="/staff" element={<AdminRoute adminOnly module="staff"><StaffPage /></AdminRoute>} />
+      <Route path="/staff" element={<AdminRoute module="staff"><StaffPage /></AdminRoute>} />
       <Route path="/agent-logs" element={<AdminRoute module="agent-logs"><AgentLogsPage /></AdminRoute>} />
       <Route path="/ai-monitor" element={<AdminRoute module="ai-monitor"><AiMonitorPage /></AdminRoute>} />
 
