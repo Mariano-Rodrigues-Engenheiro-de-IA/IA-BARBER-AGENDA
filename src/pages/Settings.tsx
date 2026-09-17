@@ -8,7 +8,7 @@ import { toast } from "sonner";
 export default function SettingsPage() {
   const { data: tenants, isLoading } = useTenants();
   const archiveTenant = useArchiveTenant();
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
 
   const archived = tenants?.filter((t) => (t as any).archived) ?? [];
 
@@ -67,7 +67,7 @@ export default function SettingsPage() {
                     </p>
                   )}
                 </div>
-                {isAdmin && (
+                {can("tenant-manage") && (
                   <Button
                     variant="outline"
                     size="sm"

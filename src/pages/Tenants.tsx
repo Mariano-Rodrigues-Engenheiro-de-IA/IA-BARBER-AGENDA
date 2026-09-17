@@ -22,7 +22,9 @@ export default function TenantsPage() {
   const { data: tenants, isLoading } = useTenants();
   const deleteTenant = useDeleteTenant();
   const archiveTenant = useArchiveTenant();
-  const { isAdmin } = useAuth();
+  const { can } = useAuth();
+  // "Gestão da empresa" — liberado manualmente por colaborador no painel.
+  const canManage = can("tenant-manage");
   const [search, setSearch] = useState("");
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [archiveId, setArchiveId] = useState<string | null>(null);
