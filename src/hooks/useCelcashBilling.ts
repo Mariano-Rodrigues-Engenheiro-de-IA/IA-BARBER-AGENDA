@@ -19,10 +19,15 @@ export type CelcashBillingConfig = {
   message_template: string;
   days_after_due: number;
   repeat_every_days: number | null;
+  due_today_active: boolean;
+  due_today_message_template: string;
+  overdue_max_days: number | null;
 };
 
 const DEFAULT_MESSAGE =
   "Oi {nome}! Vimos que sua assinatura está em atraso. Pode regularizar quando puder? Qualquer dúvida, estamos por aqui 😊";
+const DEFAULT_DUE_TODAY_MESSAGE =
+  "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje. Qualquer coisa, estamos por aqui 😊";
 
 /** Configuração + lista de inadimplentes + histórico de disparo, para a
  * seção "Cobrança automática" (Integrações, só quando celcash_enabled). */
@@ -51,6 +56,9 @@ export function useCelcashBilling(tenantId: string | undefined) {
           message_template: DEFAULT_MESSAGE,
           days_after_due: 1,
           repeat_every_days: null,
+          due_today_active: false,
+          due_today_message_template: DEFAULT_DUE_TODAY_MESSAGE,
+          overdue_max_days: null,
         }
       );
     },

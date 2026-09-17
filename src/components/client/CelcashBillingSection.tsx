@@ -33,8 +33,8 @@ function daysOverdueLabel(dateStr: string | null) {
 }
 
 /** Seção "Cobrança automática" — só aparece se o tenant tiver celcash_enabled.
- * Configuração (mensagem, timing) + lista de quem está inadimplente com o
- * histórico de cobrança já enviada pra cada um. */
+ * 2 disparos independentes (vence hoje / atrasados), cada um com seu
+ * próprio liga/desliga e mensagem, + lista de inadimplentes com histórico. */
 export function CelcashBillingSection({ tenantId, editable }: { tenantId: string; editable: boolean }) {
   const { config, overdueList, dispatchHistory, saveConfig, dispatchNow, syncNow, error } = useCelcashBilling(tenantId);
   const [form, setForm] = useState(config);
@@ -59,53 +59,95 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
   if (!form) return null;
 
   return (
-    <div className="glass-card p-5 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold text-foreground">Cobrança automática de inadimplentes</h3>
-          <p className="text-sm text-muted-foreground">
-            Manda uma mensagem automática pelo WhatsApp pra quem está com a assinatura em atraso.
-          </p>
+    <div className="space-y-4">
+      {/* ===== Lembrete de vencimento no dia ===== */}
+      <div className="glass-card p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-foreground">Lembrete de vencimento no dia</h3>
+            <p className="text-sm text-muted-foreground">
+              Manda uma mensagem só pra quem vence exatamente hoje — antes de virar atraso.
+            </p>
+          </div>
+          <Switch
+            checked={!!form.due_today_active}
+            disabled={!editable}
+            onCheckedChange={(checked) => setForm({ ...form, due_today_active: checked })}
+          />
         </div>
-        <Switch
-          checked={!!form.active}
-          disabled={!editable}
-          onCheckedChange={(checked) => setForm({ ...form, active: checked })}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2 md:col-span-2">
+        <div className="space-y-2">
           <Label>Mensagem</Label>
           <Textarea
             disabled={!editable}
             rows={3}
-            value={form.message_template}
-            onChange={(e) => setForm({ ...form, message_template: e.target.value })}
+            value={form.due_today_message_template}
+            onChange={(e) => setForm({ ...form, due_today_message_template: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">Use {"{nome}"} para incluir o primeiro nome do cliente.</p>
         </div>
-        <div className="space-y-2">
-          <Label>Disparar quantos dias depois do vencimento</Label>
-          <Input
-            type="number"
-            min={0}
+      </div>
+
+      {/* ===== Cobrança de atrasados ===== */}
+      <div className="glass-card p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-foreground">Cobrança de atrasados</h3>
+            <p className="text-sm text-muted-foreground">
+              Manda uma mensagem automática pra quem já está com a assinatura em atraso (exceto quem vence hoje — esses recebem só o lembrete acima).
+            </p>
+          </div>
+          <Switch
+            checked={!!form.active}
             disabled={!editable}
-            value={form.days_after_due}
-            onChange={(e) => setForm({ ...form, days_after_due: Number(e.target.value) || 0 })}
+            onCheckedChange={(checked) => setForm({ ...form, active: checked })}
           />
         </div>
-        <div className="space-y-2">
-          <Label>Repetir a cada quantos dias (deixe em branco pra mandar só 1 vez)</Label>
-          <Input
-            type="number"
-            min={1}
-            disabled={!editable}
-            value={form.repeat_every_days ?? ""}
-            onChange={(e) =>
-              setForm({ ...form, repeat_every_days: e.target.value ? Number(e.target.value) : null })
-            }
-          />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2 md:col-span-2">
+            <Label>Mensagem</Label>
+            <Textarea
+              disabled={!editable}
+              rows={3}
+              value={form.message_template}
+              onChange={(e) => setForm({ ...form, message_template: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">Use {"{nome}"} para incluir o primeiro nome do cliente.</p>
+          </div>
+          <div className="space-y-2">
+            <Label>Disparar quantos dias depois do vencimento</Label>
+            <Input
+              type="number"
+              min={0}
+              disabled={!editable}
+              value={form.days_after_due}
+              onChange={(e) => setForm({ ...form, days_after_due: Number(e.target.value) || 0 })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Repetir a cada quantos dias (deixe em branco pra mandar só 1 vez)</Label>
+            <Input
+              type="number"
+              min={1}
+              disabled={!editable}
+              value={form.repeat_every_days ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, repeat_every_days: e.target.value ? Number(e.target.value) : null })
+              }
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Parar de cobrar depois de quantos dias em atraso (deixe em branco pra não ter limite)</Label>
+            <Input
+              type="number"
+              min={1}
+              disabled={!editable}
+              value={form.overdue_max_days ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, overdue_max_days: e.target.value ? Number(e.target.value) : null })
+              }
+            />
+          </div>
         </div>
       </div>
 
@@ -118,6 +160,9 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 message_template: form.message_template,
                 days_after_due: form.days_after_due,
                 repeat_every_days: form.repeat_every_days,
+                due_today_active: form.due_today_active,
+                due_today_message_template: form.due_today_message_template,
+                overdue_max_days: form.overdue_max_days,
               })
             }
           >
@@ -127,8 +172,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <Button
             type="button"
             variant="outline"
-            disabled={!form.active || dispatching}
-            title={!form.active ? "Ative e salve a cobrança antes de disparar" : undefined}
+            disabled={(!form.active && !form.due_today_active) || dispatching}
+            title={!form.active && !form.due_today_active ? "Ative pelo menos um dos disparos e salve antes" : undefined}
             onClick={async () => {
               setDispatching(true);
               await dispatchNow();
@@ -136,12 +181,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             }}
           >
             <Send className="w-4 h-4 mr-2" />
-            {dispatching ? "Disparando..." : "Cobrar agora"}
+            {dispatching ? "Disparando..." : "Disparar agora"}
           </Button>
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="glass-card p-5 space-y-2">
         <div className="flex items-center justify-between">
           <h4 className="font-medium text-sm text-foreground">Inadimplentes ({overdueList.length})</h4>
           {editable && (

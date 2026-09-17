@@ -1,19 +1,24 @@
 // 2 modos de chamada:
 //  - Cron (sem tenant_id no body): chamado por pg_cron 1x/dia, processa
-//    TODOS os tenants com celcash_billing_config.active=true. Autenticação:
-//    header `apikey` = SUPABASE_PUBLISHABLE_KEY (padrão pg_cron).
+//    TODOS os tenants com celcash_billing_config.active=true OU
+//    due_today_active=true. Autenticação: header `apikey` =
+//    SUPABASE_PUBLISHABLE_KEY (padrão pg_cron).
 //  - Sob demanda (body { tenant_id: "uuid" }): botão "Cobrar agora" no
 //    painel do cliente. Autenticação: JWT do próprio usuário logado
 //    (Authorization: Bearer), verificado como pertencente a esse tenant
-//    (ou admin). Roda a MESMA lógica de decisão do cron (respeita
-//    days_after_due / repeat_every_days e exige config.active=true) — o
-//    botão não ignora a configuração, só executa na hora em vez de esperar
-//    o cron do dia seguinte.
+//    (ou admin). Roda a MESMA lógica de decisão do cron — o botão não
+//    ignora a configuração, só executa na hora em vez de esperar o cron
+//    do dia seguinte.
 //
-// Para cada tenant processado, busca os inadimplentes conhecidos
-// (celcash_overdue_subscribers) e dispara a mensagem configurada para quem
-// já passou de days_after_due e ainda não foi cobrado dentro do período
-// (repeat_every_days, se configurado).
+// ⚠️ Adicionado (17/09): 2 disparos distintos, cada um com seu próprio
+// liga/desliga e mensagem:
+//   1. "Vence hoje" (due_today) — lembrete pra quem vence EXATAMENTE
+//      hoje, mensagem mais leve. Manda no máximo 1x por vencimento (não
+//      repete, cada mês tem uma data nova).
+//   2. "Atrasados" (overdue) — a cobrança já existente, agora excluindo
+//      quem vence hoje (esses só recebem o lembrete acima, não os dois)
+//      e com um teto configurável de dias em atraso (overdue_max_days —
+//      null = sem teto).
 //
 // ⚠️ Decisão explícita do usuário: cobrança automática NÃO respeita a
 // etiqueta "IA OFF" nem "conversa pausada" (atendimento humano em
@@ -50,6 +55,56 @@ function daysSince(dateStr: string | null): number | null {
   return Math.round((today.getTime() - d.getTime()) / 86400000);
 }
 
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function sendOne(
+  supabase: any,
+  uazapiUrl: string,
+  uazapiToken: string,
+  tenant: any,
+  sub: any,
+  message: string,
+  messageType: "due_today" | "overdue",
+): Promise<"sent" | "error"> {
+  try {
+    const phoneDigits = String(sub.phone_e164).replace(/\D/g, "");
+    const sendRes = await fetch(`${uazapiUrl}/send/text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+      body: JSON.stringify({ number: phoneDigits, text: message }),
+    });
+    const sendData = await sendRes.json().catch(() => ({}));
+    if (!sendRes.ok) {
+      console.error(`[CelCashBilling] falha ao enviar pra ${phoneDigits}:`, JSON.stringify(sendData).slice(0, 150));
+      return "error";
+    }
+
+    await supabase.from("celcash_billing_sent_log").insert({
+      tenant_id: tenant.id,
+      celcash_customer_id: sub.celcash_customer_id,
+      phone_e164: sub.phone_e164,
+      overdue_amount_cents_at_send: sub.overdue_amount_cents,
+      next_due_date_at_send: sub.next_due_date,
+      message_sent: message,
+      message_type: messageType,
+    });
+
+    await supabase.from("chat_messages").insert({
+      tenant_id: tenant.id,
+      phone_number: phoneDigits,
+      role: "assistant",
+      content: message,
+    });
+
+    return "sent";
+  } catch (sendErr) {
+    console.error(`[CelCashBilling] exceção ao enviar pra ${sub.phone_e164}:`, sendErr);
+    return "error";
+  }
+}
+
 async function processTenant(
   supabase: any,
   config: any,
@@ -74,71 +129,68 @@ async function processTenant(
   const customerIds = overdueList.map((o: any) => o.celcash_customer_id);
   const { data: sentLogRows } = await supabase
     .from("celcash_billing_sent_log")
-    .select("celcash_customer_id, sent_at")
+    .select("celcash_customer_id, sent_at, message_type, next_due_date_at_send")
     .eq("tenant_id", tenant.id)
     .in("celcash_customer_id", customerIds)
     .order("sent_at", { ascending: false });
-  const lastSentByCustomer = new Map<string, string>();
+
+  // Último envio de "atrasado" por cliente (pra days_after_due/repeat_every_days).
+  const lastOverdueSentByCustomer = new Map<string, string>();
+  // Já mandou o lembrete de "vence hoje" pra ESSE vencimento específico?
+  const dueTodayAlreadySent = new Set<string>();
   for (const row of sentLogRows ?? []) {
-    if (!lastSentByCustomer.has(row.celcash_customer_id)) {
-      lastSentByCustomer.set(row.celcash_customer_id, row.sent_at);
+    if (row.message_type === "overdue") {
+      if (!lastOverdueSentByCustomer.has(row.celcash_customer_id)) {
+        lastOverdueSentByCustomer.set(row.celcash_customer_id, row.sent_at);
+      }
+    } else if (row.message_type === "due_today") {
+      dueTodayAlreadySent.add(`${row.celcash_customer_id}::${row.next_due_date_at_send}`);
     }
   }
 
-  for (const sub of overdueList) {
-    const daysOverdue = daysSince(sub.next_due_date);
-    if (daysOverdue === null || daysOverdue < config.days_after_due) { skipped++; continue; }
+  const today = todayStr();
+  const dueToday = overdueList.filter((o: any) => o.next_due_date === today);
+  const pastDue = overdueList.filter((o: any) => o.next_due_date !== today);
 
-    const lastSent = lastSentByCustomer.get(sub.celcash_customer_id);
-    if (lastSent) {
-      if (config.repeat_every_days == null) { skipped++; continue; }
-      const daysSinceLastSent = daysSince(lastSent.slice(0, 10));
-      if (daysSinceLastSent === null || daysSinceLastSent < config.repeat_every_days) { skipped++; continue; }
+  // ===== Grupo 1: vence hoje =====
+  if (config.due_today_active) {
+    for (const sub of dueToday) {
+      const key = `${sub.celcash_customer_id}::${sub.next_due_date}`;
+      if (dueTodayAlreadySent.has(key)) { skipped++; continue; }
+
+      const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
+      if (selfInstance) { skipped++; continue; }
+
+      const message = renderMessage(config.due_today_message_template, sub.name);
+      const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "due_today");
+      if (result === "sent") sent++; else errors++;
     }
+  }
 
-    const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
-    if (selfInstance) {
-      console.log(`[CelCashBilling] Pulado ${sub.phone_e164}: é o número da instância "${selfInstance.name}".`);
-      skipped++;
-      continue;
-    }
+  // ===== Grupo 2: atrasados (exclui quem vence hoje, respeita teto de dias) =====
+  if (config.active) {
+    for (const sub of pastDue) {
+      const daysOverdue = daysSince(sub.next_due_date);
+      if (daysOverdue === null || daysOverdue < config.days_after_due) { skipped++; continue; }
+      if (config.overdue_max_days != null && daysOverdue > config.overdue_max_days) { skipped++; continue; }
 
-    const message = renderMessage(config.message_template, sub.name);
+      const lastSent = lastOverdueSentByCustomer.get(sub.celcash_customer_id);
+      if (lastSent) {
+        if (config.repeat_every_days == null) { skipped++; continue; }
+        const daysSinceLastSent = daysSince(lastSent.slice(0, 10));
+        if (daysSinceLastSent === null || daysSinceLastSent < config.repeat_every_days) { skipped++; continue; }
+      }
 
-    try {
-      const phoneDigits = String(sub.phone_e164).replace(/\D/g, "");
-      const sendRes = await fetch(`${uazapiUrl}/send/text`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number: phoneDigits, text: message }),
-      });
-      const sendData = await sendRes.json().catch(() => ({}));
-      if (!sendRes.ok) {
-        console.error(`[CelCashBilling] falha ao enviar pra ${phoneDigits}:`, JSON.stringify(sendData).slice(0, 150));
-        errors++;
+      const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
+      if (selfInstance) {
+        console.log(`[CelCashBilling] Pulado ${sub.phone_e164}: é o número da instância "${selfInstance.name}".`);
+        skipped++;
         continue;
       }
 
-      await supabase.from("celcash_billing_sent_log").insert({
-        tenant_id: tenant.id,
-        celcash_customer_id: sub.celcash_customer_id,
-        phone_e164: sub.phone_e164,
-        overdue_amount_cents_at_send: sub.overdue_amount_cents,
-        next_due_date_at_send: sub.next_due_date,
-        message_sent: message,
-      });
-
-      await supabase.from("chat_messages").insert({
-        tenant_id: tenant.id,
-        phone_number: phoneDigits,
-        role: "assistant",
-        content: message,
-      });
-
-      sent++;
-    } catch (sendErr) {
-      console.error(`[CelCashBilling] exceção ao enviar pra ${sub.phone_e164}:`, sendErr);
-      errors++;
+      const message = renderMessage(config.message_template, sub.name);
+      const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "overdue");
+      if (result === "sent") sent++; else errors++;
     }
   }
 
@@ -197,7 +249,7 @@ Deno.serve(async (req) => {
       .from("celcash_billing_config")
       .select("*, tenants(*)")
       .eq("tenant_id", requestedTenantId)
-      .eq("active", true)
+      .or("active.eq.true,due_today_active.eq.true")
       .maybeSingle();
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {
@@ -236,7 +288,7 @@ Deno.serve(async (req) => {
     const { data: configs, error: cfgErr } = await supabase
       .from("celcash_billing_config")
       .select("*, tenants(*)")
-      .eq("active", true);
+      .or("active.eq.true,due_today_active.eq.true");
 
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {
