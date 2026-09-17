@@ -26,3 +26,5 @@
 - [~] Reprocessamento dos 77 erros de 14/09: automático pela fila nos próximos ciclos do agendador (~1-2h para drenar)
 - [ ] Acompanhar um dia completo: status=error <1%, zero credit_limit_reached, custo diário dentro do teto
 - [x] Corrigir corrida da IA OFF: impedir escalada que delega agendamento e distinguir etiqueta aplicada pela própria transferência silenciosa
+- [x] Corrigir caso 553dc6b9: detectar "já deixei reservado" sem escrita e reinjetar sem depender de snapshot
+- [x] Preservar no AppBarber o serviço/profissional/data escolhidos a partir dos slots oferecidos

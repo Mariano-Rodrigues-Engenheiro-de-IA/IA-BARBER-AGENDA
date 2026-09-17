@@ -1,12 +1,56 @@
 import { describe, expect, it } from "vitest";
 import {
+  appBarberClaimsCompletedBooking,
   appBarberCurrentRequestMentionsPendingService,
   appBarberExecutionKey,
   appBarberNamesConflict,
   arbitrateAppBarberGuardDecisions,
   buildAppBarberIntentSnapshot,
   reconcileAppBarberBookings,
+  resolveAppBarberSlotSelection,
 } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/guard-core";
+
+describe("AppBarber guard core — confirmação fantasma", () => {
+  it.each([
+    "Perfeito, já deixei reservado com o Nando às 10h.",
+    "Já agendei seu corte para sábado.",
+    "Seu horário ficou marcado para as 10h.",
+    "Agendado! Te espero sábado.",
+  ])("detecta afirmação concluída: %s", (text) => {
+    expect(appBarberClaimsCompletedBooking(text)).toBe(true);
+  });
+
+  it.each([
+    "Posso deixar reservado às 10h?",
+    "Não consegui reservar esse horário.",
+    "Tenho 10h disponível. Qual prefere?",
+  ])("não confunde oferta, pergunta ou falha: %s", (text) => {
+    expect(appBarberClaimsCompletedBooking(text)).toBe(false);
+  });
+});
+
+describe("AppBarber guard core — escolha preservada entre turnos", () => {
+  const slots = [
+    { service_code: 1131457, professional_code: 21573809, professional_name: "Nando Júnior", start_date: "2026-09-19", start_time: "10:00" },
+    { service_code: 1131457, professional_code: 28010864, professional_name: "Leonardo Jaldi", start_date: "2026-09-19", start_time: "10:00" },
+  ];
+
+  it("resolve o caso real sem trocar corte avulso pelo serviço do clube", () => {
+    expect(resolveAppBarberSlotSelection(
+      "Com o Nando, as 10:00",
+      "Com o Nando tem 10h, 10h15 e 10h30. Qual prefere?",
+      slots,
+    )).toEqual({ serviceCode: 1131457, professionalCode: 21573809, date: "2026-09-19", time: "10:00" });
+  });
+
+  it("não escolhe quando dois serviços continuam possíveis", () => {
+    expect(resolveAppBarberSlotSelection(
+      "Com o Nando, as 10:00",
+      "Com o Nando tem 10h. Qual prefere?",
+      [...slots, { ...slots[0], service_code: 1131740 }],
+    )).toBeNull();
+  });
+});
 
 describe("AppBarber guard core — serviços pendentes do pedido atual", () => {
   it("não transforma um pedido novo de corte em combo e barba por causa de slots antigos", () => {
