@@ -161,8 +161,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // precise de tela de acesso negado depois), não "ainda carregando".
   const authReady = !loading && (!user || !profileLoading);
 
+  const can = (module: StaffModule) => isAdmin || staffModules.has(module);
+
   return (
-    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
+    <AuthContext.Provider value={{ session, user, isAdmin, isStaff, role, tenantId, permissions, staffModules, can, loading: loading || profileLoading, authReady, signIn, signOut, refreshPermissions }}>
       {children}
     </AuthContext.Provider>
   );
