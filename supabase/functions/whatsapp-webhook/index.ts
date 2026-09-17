@@ -33,9 +33,11 @@ import {
   bookingGuardsConfig as appbarberBookingGuardsConfig,
 } from "./providers/appbarber/index.ts";
 import {
+  appBarberClaimsCompletedBooking,
   appBarberCurrentRequestMentionsPendingService,
   buildAppBarberIntentSnapshot,
   reconcileAppBarberBookings,
+  resolveAppBarberSlotSelection,
   type AppBarberIntentSnapshot,
 } from "./providers/appbarber/guard-core.ts";
 import {
@@ -6164,6 +6166,19 @@ async function callAIAgent(
   // sem nunca perguntar nada ao cliente. Uma vez bloqueado por nome no turno, só
   // aceita nome corroborado (dito nesta conversa) até o cliente responder de novo.
   let appbarberNameBlockedThisTurn = false;
+  if (provider === "appbarber") {
+    const selectedSlot = resolveAppBarberSlotSelection(
+      userMessage,
+      getLastAssistantMessage(history),
+      sessionState.appbarberSlotOptions,
+    );
+    if (selectedSlot) {
+      sessionState.selectedServiceId = selectedSlot.serviceCode;
+      sessionState.selectedProfessionalId = selectedSlot.professionalCode;
+      sessionState.selectedDate = selectedSlot.date;
+      console.log(`[AppBarberSelection] locked svc=${selectedSlot.serviceCode} prof=${selectedSlot.professionalCode} date=${selectedSlot.date} time=${selectedSlot.time}`);
+    }
+  }
 
   while (assistantMessage?.tool_calls && rounds < maxRounds) {
 
@@ -6216,8 +6231,26 @@ async function callAIAgent(
             changed = true;
           }
         }
+        const selectedServiceId = toPositiveInteger(sessionState.selectedServiceId);
+        const requestedServiceId = toPositiveInteger(parsedArgs?.service_code);
+        if (
+          selectedServiceId
+          && requestedServiceId
+          && requestedServiceId !== selectedServiceId
+          && ["listar_profissionais", "listar_horarios", "listar_horarios_geral", "criar_agendamento"].includes(toolCall.function.name)
+        ) {
+          const selectedCatalogEntry = (sessionState.appbarberServiceCatalog || [])
+            .find((service) => Number(service.service_code) === selectedServiceId);
+          parsedArgs.service_code = selectedServiceId;
+          if (toolCall.function.name === "criar_agendamento" && selectedCatalogEntry?.duration_minutes) {
+            parsedArgs.service_duration_minutes = selectedCatalogEntry.duration_minutes;
+          }
+          changed = true;
+          correctionReason = `service_code preservado da opção escolhida pelo cliente (${requestedServiceId} → ${selectedServiceId})`;
+          console.warn(`[AppBarberSelection] corrigido service_code ${requestedServiceId}→${selectedServiceId} em ${toolCall.function.name}`);
+        }
         if (changed) {
-          correctionReason = "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
+          correctionReason = correctionReason || "Argumentos AppBarber normalizados (DDD + 9 + número, sem DDI 55)";
           toolCallToExecute = { ...toolCall, function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) } };
         }
 
@@ -8091,7 +8124,6 @@ async function callAIAgent(
     // "marcamos". Mantém a forma ATIVA/primeira pessoa apenas — a forma
     // PASSIVA ("está confirmado para", "foi remarcado") continua de fora de
     // propósito, é o que causou a regressão de 03/09 (ver nota acima).
-    const CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
     // Frases que não dizem "agendei", mas no ÚLTIMO PASSO de criação dão ao
     // cliente a impressão inequívoca de que pode ir à barbearia.
     const IMPLIED_FINALIZATION_RE = /\b(?:(?:tudo|ta|tá|esta|está)\s+(?:certo|confirmad[oa]|combinado)|confirmad[oa]|hor[aá]rio\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|agendamento\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|reserva\s+(?:confirmad[oa]|marcad[oa]|reservad[oa])|te\s+esperamos|esperamos\s+voc[eê]|at[eé]\s+(?:l[aá]|mais\s+tarde|amanh[aã])|fechado(?:\s+ent[aã]o)?|combinado(?:\s+ent[aã]o)?)\b/i;
@@ -8105,7 +8137,8 @@ async function callAIAgent(
     // nada mudou, não confirmando uma ação).
     const CANCEL_CONTEXT_RE = /\bn[ãa]o\s+(?:foi\s+)?(?:cancel\w*|desmarc\w*)\b/i;
     const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
-    const hasExplicitCreationClaim = sentences.some((s: string) => CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
+    const hasExplicitCreationClaim = appBarberClaimsCompletedBooking(finalResponse)
+      && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
       && sentences.some((s: string) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
