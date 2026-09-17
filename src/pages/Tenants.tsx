@@ -89,7 +89,7 @@ export default function TenantsPage() {
             className="pl-9"
           />
         </div>
-        {isAdmin && archivedCount > 0 && (
+        {canManage && archivedCount > 0 && (
           <Button variant="outline" asChild>
             <Link to="/settings">
               <Archive className="w-4 h-4 mr-2" />
@@ -168,7 +168,7 @@ export default function TenantsPage() {
                           <Pencil className="w-4 h-4" />
                         </Link>
                       </Button>
-                      {isAdmin && (
+                      {canManage && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -178,7 +178,7 @@ export default function TenantsPage() {
                           <Archive className="w-4 h-4" />
                         </Button>
                       )}
-                      {isAdmin && (
+                      {canManage && (
                         <Button
                           variant="ghost"
                           size="icon"
