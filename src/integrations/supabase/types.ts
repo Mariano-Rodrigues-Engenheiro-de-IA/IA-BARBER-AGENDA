@@ -280,11 +280,8 @@ export type Database = {
           active: boolean
           created_at: string
           days_after_due: number
-          due_today_active: boolean
-          due_today_message_template: string
           id: string
           message_template: string
-          overdue_max_days: number | null
           repeat_every_days: number | null
           tenant_id: string
           updated_at: string
@@ -293,11 +290,8 @@ export type Database = {
           active?: boolean
           created_at?: string
           days_after_due?: number
-          due_today_active?: boolean
-          due_today_message_template?: string
           id?: string
           message_template?: string
-          overdue_max_days?: number | null
           repeat_every_days?: number | null
           tenant_id: string
           updated_at?: string
@@ -306,11 +300,8 @@ export type Database = {
           active?: boolean
           created_at?: string
           days_after_due?: number
-          due_today_active?: boolean
-          due_today_message_template?: string
           id?: string
           message_template?: string
-          overdue_max_days?: number | null
           repeat_every_days?: number | null
           tenant_id?: string
           updated_at?: string
@@ -330,7 +321,6 @@ export type Database = {
           celcash_customer_id: string
           id: string
           message_sent: string | null
-          message_type: string
           next_due_date_at_send: string | null
           overdue_amount_cents_at_send: number | null
           phone_e164: string | null
@@ -341,7 +331,6 @@ export type Database = {
           celcash_customer_id: string
           id?: string
           message_sent?: string | null
-          message_type?: string
           next_due_date_at_send?: string | null
           overdue_amount_cents_at_send?: number | null
           phone_e164?: string | null
@@ -352,7 +341,6 @@ export type Database = {
           celcash_customer_id?: string
           id?: string
           message_sent?: string | null
-          message_type?: string
           next_due_date_at_send?: string | null
           overdue_amount_cents_at_send?: number | null
           phone_e164?: string | null
