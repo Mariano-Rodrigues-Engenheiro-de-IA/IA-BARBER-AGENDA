@@ -18,13 +18,18 @@ type TenantRow = { id: string; name: string; visibility: string; created_by: str
 type AccessRow = { user_id: string; tenant_id: string };
 type ModuleRow = { user_id: string; module: string };
 
-const MODULES: { key: string; label: string }[] = [
+// Tudo o que o admin faz pode ser liberado item por item para o colaborador.
+const MODULES: { key: string; label: string; hint?: string }[] = [
   { key: "follow-ups", label: "Follow-ups" },
   { key: "agent-logs", label: "Monitor IA" },
-  { key: "prompts", label: "Prompts" },
-  { key: "staff", label: "Colaboradores" },
+  { key: "ai-monitor", label: "Monitor da IA (24h)" },
+  { key: "prompts", label: "Prompts", hint: "Editar os prompts globais por provedor" },
+  { key: "staff", label: "Colaboradores", hint: "Criar colaboradores e liberar acessos" },
   { key: "audit", label: "Auditoria" },
   { key: "settings", label: "Configurações" },
+  { key: "tenant-credentials", label: "Integrações e tokens", hint: "Editar credenciais das empresas (Trinks, WhatsApp, CelCash etc.)" },
+  { key: "tenant-manage", label: "Gestão da empresa", hint: "Status, slug, arquivar, excluir, visibilidade, modo econômico" },
+  { key: "tenant-access", label: "Acessos e permissões", hint: "Usuários do cliente e abas liberadas para ele" },
 ];
 
 async function invoke(action: string, body: Record<string, unknown> = {}) {
