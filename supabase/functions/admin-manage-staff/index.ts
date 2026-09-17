@@ -40,11 +40,19 @@ Deno.serve(async (req) => {
     const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
+    // Valida o JWT com getClaims (compatível com signing keys assimétricas);
+    // getUser() falhava com 401 nos tokens novos.
+    const token = authHeader.replace(/^Bearer\s+/i, "");
     const userClient = createClient(SUPABASE_URL, ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
+      auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data: userData, error: userErr } = await userClient.auth.getUser();
-    if (userErr || !userData.user) return json({ error: "Unauthorized" }, 401);
+    const { data: claimsData, error: claimsErr } = await userClient.auth.getClaims(token);
+    const callerId = claimsData?.claims?.sub;
+    if (claimsErr || typeof callerId !== "string") {
+      return json({ error: "Sessão inválida ou expirada" }, 401);
+    }
+    const userData = { user: { id: callerId } };
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY);
     // Admin sempre pode; colaborador só se o módulo "staff" estiver marcado
