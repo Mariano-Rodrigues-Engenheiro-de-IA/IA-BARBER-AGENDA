@@ -354,7 +354,10 @@ export default function TenantFormPage() {
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
 
-  const { user, isAdmin, isStaff } = useAuth();
+  const { user, isAdmin, isStaff, can } = useAuth();
+  // Capacidades liberadas manualmente por colaborador no painel de Colaboradores.
+  const canManageTenant = can("tenant-manage");
+  const canManageAccess = can("tenant-access");
   const [showApiKey, setShowApiKey] = useState(false);
   const [customTools, setCustomTools] = useState<CustomTool[]>([]);
   const [followUps, setFollowUps] = useState<FollowUpConfig[]>([]);
@@ -621,7 +624,7 @@ export default function TenantFormPage() {
             {isEditing ? "Atualize as informações do estabelecimento" : "Cadastre um novo salão ou barbearia"}
           </p>
         </div>
-        {isEditing && id && (isAdmin || isStaff) && (
+        {isEditing && id && canManageAccess && (
           <Button variant="outline" onClick={() => navigate(`/tenants/${id}/access`)}>
             Acessos &amp; Permissões
           </Button>
@@ -673,12 +676,12 @@ export default function TenantFormPage() {
                 </div>
                 <Switch
                   checked={!!(form as any).economic_mode_enabled}
-                  disabled={!isAdmin}
+                  disabled={!canManageTenant}
                   onCheckedChange={(v) => handleChange("economic_mode_enabled" as any, v as any)}
                 />
               </div>
-              {!isAdmin && (
-                <p className="text-xs text-muted-foreground">Apenas administradores podem ligar/desligar este modo.</p>
+              {!canManageTenant && (
+                <p className="text-xs text-muted-foreground">Você não tem permissão para ligar/desligar este modo.</p>
               )}
 
               {isEditing && (
