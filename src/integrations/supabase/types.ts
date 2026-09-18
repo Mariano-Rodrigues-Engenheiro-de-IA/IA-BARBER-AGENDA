@@ -437,8 +437,8 @@ export type Database = {
           id: string
           last_payment_date: string | null
           name: string | null
-          no_card_on_file: boolean
           next_due_date: string | null
+          no_card_on_file: boolean
           overdue_amount_cents: number
           phone_e164: string | null
           phone_raw: string | null
@@ -457,8 +457,8 @@ export type Database = {
           id?: string
           last_payment_date?: string | null
           name?: string | null
-          no_card_on_file?: boolean
           next_due_date?: string | null
+          no_card_on_file?: boolean
           overdue_amount_cents?: number
           phone_e164?: string | null
           phone_raw?: string | null
@@ -477,8 +477,8 @@ export type Database = {
           id?: string
           last_payment_date?: string | null
           name?: string | null
-          no_card_on_file?: boolean
           next_due_date?: string | null
+          no_card_on_file?: boolean
           overdue_amount_cents?: number
           phone_e164?: string | null
           phone_raw?: string | null
