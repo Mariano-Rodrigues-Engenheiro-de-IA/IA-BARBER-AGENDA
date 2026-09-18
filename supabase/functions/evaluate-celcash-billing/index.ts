@@ -307,8 +307,23 @@ Deno.serve(async (req) => {
 
   // ===== Modo cron: todos os tenants =====
   const apikey = req.headers.get("apikey") ?? "";
-  const expected = Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
-  if (!apikey || apikey !== expected) {
+  const expectedKeys = [
+    Deno.env.get("SUPABASE_PUBLISHABLE_KEY"),
+    Deno.env.get("SUPABASE_ANON_KEY"),
+  ].filter((k): k is string => !!k);
+  let cronAuthorized = !!apikey && expectedKeys.includes(apikey);
+  // Token interno do agendador (mesmo padrão do audit-monitor: guardado no banco)
+  const providedSecret = req.headers.get("x-cron-secret");
+  if (!cronAuthorized && providedSecret) {
+    const cronSecret = Deno.env.get("CRON_SECRET");
+    if (cronSecret && providedSecret === cronSecret) {
+      cronAuthorized = true;
+    } else {
+      const { data: internalToken } = await supabase.rpc("get_internal_cron_token");
+      cronAuthorized = typeof internalToken === "string" && providedSecret === internalToken;
+    }
+  }
+  if (!cronAuthorized) {
     return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
       status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
