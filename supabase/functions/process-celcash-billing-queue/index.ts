@@ -26,18 +26,35 @@ function tolerantPhoneMatch(a: string, b: string): boolean {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  const apikey = req.headers.get("apikey") ?? "";
-  const expected = Deno.env.get("SUPABASE_PUBLISHABLE_KEY") ?? "";
-  if (!apikey || apikey !== expected) {
-    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
+
+  // Mesmo padrão de autenticação do modo cron de evaluate-celcash-billing:
+  // apikey (publishable/anon) ou x-cron-secret (CRON_SECRET ou token
+  // interno guardado no banco). Fail-closed.
+  const apikey = req.headers.get("apikey") ?? "";
+  const expectedKeys = [
+    Deno.env.get("SUPABASE_PUBLISHABLE_KEY"),
+    Deno.env.get("SUPABASE_ANON_KEY"),
+  ].filter((k): k is string => !!k);
+  let authorized = !!apikey && expectedKeys.includes(apikey);
+  const providedSecret = req.headers.get("x-cron-secret");
+  if (!authorized && providedSecret) {
+    const cronSecret = Deno.env.get("CRON_SECRET");
+    if (cronSecret && providedSecret === cronSecret) {
+      authorized = true;
+    } else {
+      const { data: internalToken } = await supabase.rpc("get_internal_cron_token");
+      authorized = typeof internalToken === "string" && providedSecret === internalToken;
+    }
+  }
+  if (!authorized) {
+    return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
+      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   let sent = 0, errors = 0;
   const deadline = Date.now() + 50_000; // roda a cada 1min, nunca deve chegar perto disso
