@@ -387,6 +387,17 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     }
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
+    // Precisa do teto de dias configurado (overdue_max_days) para a lista
+    // de inadimplentes já vir filtrada — ⚠️ decisão do usuário (18/09):
+    // "na lista é pra ter só quem vai receber o disparo" — o teto agora
+    // se aplica na sincronização, não só na hora de disparar.
+    const { data: billingConfig } = await supabase
+      .from("celcash_billing_config")
+      .select("overdue_max_days")
+      .eq("tenant_id", tenant.id)
+      .maybeSingle();
+    const overdueMaxDays: number | null = billingConfig?.overdue_max_days ?? null;
+    const todayForCutoff = new Date().toISOString().slice(0, 10);
     const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
       env,
       token,
@@ -445,7 +456,21 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     }).filter((r) => r.celcash_customer_id && r.celcash_customer_id !== "undefined" && r.celcash_customer_id !== "");
 
     // Só inadimplentes — o oposto do filtro em sync-celcash-subscribers.
-    const overdueRows = rows.filter((r) => r._isOverdue).map(({ _isOverdue, ...r }) => r);
+    const daysOverdue = (dateStr: string | null): number | null => {
+      if (!dateStr) return null;
+      const d = new Date(dateStr + "T00:00:00");
+      if (Number.isNaN(d.getTime())) return null;
+      const today = new Date(todayForCutoff + "T00:00:00");
+      return Math.round((today.getTime() - d.getTime()) / 86400000);
+    };
+    const overdueRows = rows
+      .filter((r) => r._isOverdue)
+      .filter((r) => {
+        if (overdueMaxDays == null) return true;
+        const days = daysOverdue(r.next_due_date);
+        return days === null || days <= overdueMaxDays;
+      })
+      .map(({ _isOverdue, ...r }) => r);
 
     const byCustomer = new Map<string, any>();
     for (const r of overdueRows) byCustomer.set(`${r.tenant_id}::${r.celcash_customer_id}`, r);
