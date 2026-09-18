@@ -506,7 +506,13 @@ Deno.serve(async (req) => {
       const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
       const secretOk = !!(cronSecret && providedSecret && providedSecret === cronSecret);
       const serviceOk = !!(bearer && bearer === serviceRoleKey);
-      if (!secretOk && !serviceOk) {
+      // Token interno do agendador (mesmo padrão do audit-monitor: guardado no banco)
+      let internalOk = false;
+      if (!secretOk && !serviceOk && providedSecret) {
+        const { data: internalToken } = await supabase.rpc("get_internal_cron_token");
+        internalOk = typeof internalToken === "string" && providedSecret === internalToken;
+      }
+      if (!secretOk && !serviceOk && !internalOk) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
