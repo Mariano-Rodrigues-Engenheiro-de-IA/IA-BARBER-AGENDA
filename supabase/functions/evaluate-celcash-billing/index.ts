@@ -134,14 +134,22 @@ async function processTenant(
     .in("celcash_customer_id", customerIds)
     .order("sent_at", { ascending: false });
 
-  // Último envio de "atrasado" por cliente (pra days_after_due/repeat_every_days).
-  const lastOverdueSentByCustomer = new Map<string, string>();
+  // Último envio de "atrasado" por cliente — guarda também o vencimento
+  // que foi cobrado, pra diferenciar "já cobrei essa MESMA dívida" (aplica
+  // days_after_due/repeat_every_days) de "isso é uma dívida NOVA, com
+  // vencimento diferente da última vez" (trata como primeira cobrança
+  // desse período, não bloqueia por 'já mandei uma vez pra esse cliente').
+  // ⚠️ Corrigido (18/09, caso real de teste do usuário): antes só guardava
+  // sent_at, sem o vencimento — um cliente que já tinha recebido cobrança
+  // de uma dívida ANTIGA nunca mais receberia nada, mesmo caindo em atraso
+  // de novo depois (dívida nova), se repeat_every_days estivesse vazio.
+  const lastOverdueSentByCustomer = new Map<string, { sentAt: string; dueDate: string | null }>();
   // Já mandou o lembrete de "vence hoje" pra ESSE vencimento específico?
   const dueTodayAlreadySent = new Set<string>();
   for (const row of sentLogRows ?? []) {
     if (row.message_type === "overdue") {
       if (!lastOverdueSentByCustomer.has(row.celcash_customer_id)) {
-        lastOverdueSentByCustomer.set(row.celcash_customer_id, row.sent_at);
+        lastOverdueSentByCustomer.set(row.celcash_customer_id, { sentAt: row.sent_at, dueDate: row.next_due_date_at_send });
       }
     } else if (row.message_type === "due_today") {
       dueTodayAlreadySent.add(`${row.celcash_customer_id}::${row.next_due_date_at_send}`);
@@ -175,9 +183,13 @@ async function processTenant(
       if (config.overdue_max_days != null && daysOverdue > config.overdue_max_days) { skipped++; continue; }
 
       const lastSent = lastOverdueSentByCustomer.get(sub.celcash_customer_id);
-      if (lastSent) {
+      // Só bloqueia/aplica repetição se for a MESMA dívida (mesmo
+      // vencimento) já cobrada antes. Vencimento diferente = dívida nova,
+      // trata como primeira cobrança desse período — não fica preso pra
+      // sempre por causa de uma cobrança antiga já resolvida.
+      if (lastSent && lastSent.dueDate === sub.next_due_date) {
         if (config.repeat_every_days == null) { skipped++; continue; }
-        const daysSinceLastSent = daysSince(lastSent.slice(0, 10));
+        const daysSinceLastSent = daysSince(lastSent.sentAt.slice(0, 10));
         if (daysSinceLastSent === null || daysSinceLastSent < config.repeat_every_days) { skipped++; continue; }
       }
 
