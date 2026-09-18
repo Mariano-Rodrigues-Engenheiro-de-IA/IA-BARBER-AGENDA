@@ -66,7 +66,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <div>
             <h3 className="font-semibold text-foreground">Lembrete de vencimento no dia</h3>
             <p className="text-sm text-muted-foreground">
-              Manda uma mensagem só pra quem vence exatamente hoje — antes de virar atraso.
+              Manda uma mensagem só pra quem vence exatamente hoje, antes de virar atraso.
             </p>
           </div>
           <Switch
@@ -93,7 +93,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <div>
             <h3 className="font-semibold text-foreground">Cobrança de atrasados</h3>
             <p className="text-sm text-muted-foreground">
-              Manda uma mensagem automática pra quem já está com a assinatura em atraso (exceto quem vence hoje — esses recebem só o lembrete acima).
+              Manda uma mensagem automática pra quem já está com a assinatura em atraso (exceto quem vence hoje, esses recebem só o lembrete acima).
             </p>
           </div>
           <Switch
