@@ -137,7 +137,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             />
           </div>
           <div className="space-y-2 md:col-span-2">
-            <Label>Parar de cobrar depois de quantos dias em atraso (deixe em branco pra não ter limite)</Label>
+            <Label>Cobrar inadimplentes dos últimos quantos dias (deixe em branco pra não ter limite)</Label>
             <Input
               type="number"
               min={1}
