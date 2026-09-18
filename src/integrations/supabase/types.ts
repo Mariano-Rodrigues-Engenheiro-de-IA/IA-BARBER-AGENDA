@@ -325,6 +325,65 @@ export type Database = {
           },
         ]
       }
+      celcash_billing_queue: {
+        Row: {
+          celcash_customer_id: string
+          created_at: string
+          error_message: string | null
+          id: string
+          message_text: string
+          message_type: string
+          name: string | null
+          next_due_date_at_send: string | null
+          overdue_amount_cents_at_send: number | null
+          phone_e164: string
+          scheduled_at: string
+          sent_at: string | null
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          celcash_customer_id: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          message_text: string
+          message_type: string
+          name?: string | null
+          next_due_date_at_send?: string | null
+          overdue_amount_cents_at_send?: number | null
+          phone_e164: string
+          scheduled_at: string
+          sent_at?: string | null
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          celcash_customer_id?: string
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          message_text?: string
+          message_type?: string
+          name?: string | null
+          next_due_date_at_send?: string | null
+          overdue_amount_cents_at_send?: number | null
+          phone_e164?: string
+          scheduled_at?: string
+          sent_at?: string | null
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "celcash_billing_queue_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       celcash_billing_sent_log: {
         Row: {
           celcash_customer_id: string

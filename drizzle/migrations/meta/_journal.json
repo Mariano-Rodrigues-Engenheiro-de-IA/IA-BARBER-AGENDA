@@ -36,6 +36,13 @@
       "when": 1789750672817,
       "tag": "0004_celcash_cron_no_vault",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789754544599,
+      "tag": "0005_celcash_billing_queue",
+      "breakpoints": true
     }
   ]
 }
