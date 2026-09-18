@@ -43,6 +43,13 @@
       "when": 1789754544599,
       "tag": "0005_celcash_billing_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789754574414,
+      "tag": "0006_celcash_queue_cron",
+      "breakpoints": true
     }
   ]
 }
