@@ -50,6 +50,13 @@
       "when": 1789754574414,
       "tag": "0006_celcash_queue_cron",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789756567335,
+      "tag": "0007_celcash_overdue_no_card_flag",
+      "breakpoints": true
     }
   ]
 }
