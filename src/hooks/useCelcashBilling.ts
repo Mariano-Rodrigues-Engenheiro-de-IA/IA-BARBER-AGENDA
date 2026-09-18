@@ -134,7 +134,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
       toast.error("Ative a cobrança e salve antes de disparar.");
       return null;
     }
-    toast.success(`Disparo concluído: ${data.sent} enviada(s), ${data.skipped} pulada(s), ${data.errors} com erro.`);
+    toast.success(`${data.queued} mensagem(ns) na fila (envio espaçado, 1-2min entre cada), ${data.skipped} pulada(s).`);
     queryClient.invalidateQueries({ queryKey: ["celcash-billing-sent-log", tenantId] });
     return data;
   };

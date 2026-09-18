@@ -79,64 +79,47 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-async function sendOne(
+// ⚠️ Reescrito (18/09): antes mandava tudo direto, em sequência, sem
+// pausa — usuário pediu intervalo de 1-2 min entre cada mensagem (risco
+// de bloqueio no WhatsApp por volume). Uma função Edge rodando dentro do
+// limite de tempo de uma requisição não aguenta esperar 1-2 min entre
+// dezenas de mensagens (30 pessoas x ~1.5min = ~45min, bem além do
+// limite). Por isso, agora só ENFILEIRA (celcash_billing_queue) com um
+// horário agendado — quem manda de verdade é a Edge Function separada
+// process-celcash-billing-queue, rodando a cada 1 minuto via cron.
+async function enqueueOne(
   supabase: any,
-  uazapiUrl: string,
-  uazapiToken: string,
   tenant: any,
   sub: any,
   message: string,
   messageType: "due_today" | "overdue",
-): Promise<"sent" | "error"> {
-  try {
-    const phoneDigits = String(sub.phone_e164).replace(/\D/g, "");
-    const sendRes = await fetch(`${uazapiUrl}/send/text`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-      body: JSON.stringify({ number: phoneDigits, text: message }),
-    });
-    const sendData = await sendRes.json().catch(() => ({}));
-    if (!sendRes.ok) {
-      console.error(`[CelCashBilling] falha ao enviar pra ${phoneDigits}:`, JSON.stringify(sendData).slice(0, 150));
-      return "error";
-    }
-
-    await supabase.from("celcash_billing_sent_log").insert({
-      tenant_id: tenant.id,
-      celcash_customer_id: sub.celcash_customer_id,
-      phone_e164: sub.phone_e164,
-      overdue_amount_cents_at_send: sub.overdue_amount_cents,
-      next_due_date_at_send: sub.next_due_date,
-      message_sent: message,
-      message_type: messageType,
-    });
-
-    await supabase.from("chat_messages").insert({
-      tenant_id: tenant.id,
-      phone_number: phoneDigits,
-      role: "assistant",
-      content: message,
-    });
-
-    return "sent";
-  } catch (sendErr) {
-    console.error(`[CelCashBilling] exceção ao enviar pra ${sub.phone_e164}:`, sendErr);
-    return "error";
-  }
+  scheduledAt: Date,
+): Promise<void> {
+  await supabase.from("celcash_billing_queue").insert({
+    tenant_id: tenant.id,
+    celcash_customer_id: sub.celcash_customer_id,
+    phone_e164: sub.phone_e164,
+    name: sub.name,
+    message_type: messageType,
+    message_text: message,
+    overdue_amount_cents_at_send: sub.overdue_amount_cents,
+    next_due_date_at_send: sub.next_due_date,
+    scheduled_at: scheduledAt.toISOString(),
+  });
 }
 
 async function processTenant(
   supabase: any,
   config: any,
   instanceNumbers: Array<{ name: string; number: string }>,
-): Promise<{ sent: number; skipped: number; errors: number }> {
-  let sent = 0, skipped = 0, errors = 0;
+): Promise<{ queued: number; skipped: number; errors: number }> {
+  let queued = 0, skipped = 0, errors = 0;
   const tenant = config.tenants;
-  if (!tenant || tenant.status !== "active") return { sent, skipped, errors };
+  if (!tenant || tenant.status !== "active") return { queued, skipped, errors };
 
   const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
   const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
-  if (!uazapiUrl || !uazapiToken) return { sent, skipped, errors: errors + 1 };
+  if (!uazapiUrl || !uazapiToken) return { queued, skipped, errors: errors + 1 };
 
   const { data: overdueList, error: odErr } = await supabase
     .from("celcash_overdue_subscribers")
@@ -144,7 +127,7 @@ async function processTenant(
     .eq("tenant_id", tenant.id)
     .not("phone_e164", "is", null)
     .limit(500);
-  if (odErr || !overdueList?.length) return { sent, skipped, errors };
+  if (odErr || !overdueList?.length) return { queued, skipped, errors };
 
   const customerIds = overdueList.map((o: any) => o.celcash_customer_id);
   const { data: sentLogRows } = await supabase
@@ -153,6 +136,18 @@ async function processTenant(
     .eq("tenant_id", tenant.id)
     .in("celcash_customer_id", customerIds)
     .order("sent_at", { ascending: false });
+
+  // Já enfileirado (pendente ou já enviado) nesta rodada — evita duplicar
+  // se o cron rodar de novo antes da fila anterior esvaziar.
+  const { data: queuedRows } = await supabase
+    .from("celcash_billing_queue")
+    .select("celcash_customer_id, message_type, next_due_date_at_send")
+    .eq("tenant_id", tenant.id)
+    .in("celcash_customer_id", customerIds)
+    .in("status", ["pending", "sent"]);
+  const alreadyQueued = new Set<string>(
+    (queuedRows ?? []).map((r: any) => `${r.celcash_customer_id}::${r.message_type}::${r.next_due_date_at_send}`)
+  );
 
   // Último envio de "atrasado" por cliente — guarda também o vencimento
   // que foi cobrado, pra diferenciar "já cobrei essa MESMA dívida" (aplica
@@ -180,18 +175,29 @@ async function processTenant(
   const dueToday = overdueList.filter((o: any) => o.next_due_date === today);
   const pastDue = overdueList.filter((o: any) => o.next_due_date !== today);
 
+  // Intervalo entre cada mensagem enfileirada: entre 1 e 2 minutos,
+  // variando a cada uma (não fixo) — pedido explícito do usuário, pra não
+  // mandar tudo em rajada e reduzir risco de bloqueio no WhatsApp.
+  let cursor = Date.now();
+  const nextScheduledAt = (): Date => {
+    const jitterMs = (60 + Math.random() * 60) * 1000; // 60s a 120s
+    cursor += jitterMs;
+    return new Date(cursor);
+  };
+
   // ===== Grupo 1: vence hoje =====
   if (config.due_today_active) {
     for (const sub of dueToday) {
       const key = `${sub.celcash_customer_id}::${sub.next_due_date}`;
       if (dueTodayAlreadySent.has(key)) { skipped++; continue; }
+      if (alreadyQueued.has(`${sub.celcash_customer_id}::due_today::${sub.next_due_date}`)) { skipped++; continue; }
 
       const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
       if (selfInstance) { skipped++; continue; }
 
       const message = renderMessage(config.due_today_message_template, sub);
-      const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "due_today");
-      if (result === "sent") sent++; else errors++;
+      await enqueueOne(supabase, tenant, sub, message, "due_today", nextScheduledAt());
+      queued++;
     }
   }
 
@@ -212,6 +218,7 @@ async function processTenant(
         const daysSinceLastSent = daysSince(lastSent.sentAt.slice(0, 10));
         if (daysSinceLastSent === null || daysSinceLastSent < config.repeat_every_days) { skipped++; continue; }
       }
+      if (alreadyQueued.has(`${sub.celcash_customer_id}::overdue::${sub.next_due_date}`)) { skipped++; continue; }
 
       const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
       if (selfInstance) {
@@ -221,12 +228,12 @@ async function processTenant(
       }
 
       const message = renderMessage(config.message_template, sub);
-      const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "overdue");
-      if (result === "sent") sent++; else errors++;
+      await enqueueOne(supabase, tenant, sub, message, "overdue", nextScheduledAt());
+      queued++;
     }
   }
 
-  return { sent, skipped, errors };
+  return { queued, skipped, errors };
 }
 
 Deno.serve(async (req) => {
@@ -289,7 +296,7 @@ Deno.serve(async (req) => {
       });
     }
     if (!config) {
-      return new Response(JSON.stringify({ ok: true, sent: 0, skipped: 0, errors: 0, note: "config_inactive_or_missing" }), {
+      return new Response(JSON.stringify({ ok: true, queued: 0, skipped: 0, errors: 0, note: "config_inactive_or_missing" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -329,7 +336,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  let sent = 0, skipped = 0, errors = 0;
+  let queued = 0, skipped = 0, errors = 0;
 
   try {
     const { data: configs, error: cfgErr } = await supabase
@@ -344,7 +351,7 @@ Deno.serve(async (req) => {
     }
 
     if (!configs?.length) {
-      return new Response(JSON.stringify({ ok: true, sent: 0, skipped: 0, errors: 0, note: "no_active_configs" }), {
+      return new Response(JSON.stringify({ ok: true, queued: 0, skipped: 0, errors: 0, note: "no_active_configs" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -356,12 +363,12 @@ Deno.serve(async (req) => {
 
     for (const config of configs) {
       const r = await processTenant(supabase, config, instanceNumbers);
-      sent += r.sent;
+      queued += r.queued;
       skipped += r.skipped;
       errors += r.errors;
     }
 
-    return new Response(JSON.stringify({ ok: true, sent, skipped, errors }), {
+    return new Response(JSON.stringify({ ok: true, queued, skipped, errors }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
