@@ -21,6 +21,14 @@ function formatDate(dateStr: string | null) {
   return d.toLocaleDateString("pt-BR");
 }
 
+function isDueToday(dateStr: string | null) {
+  if (!dateStr) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().slice(0, 10);
+  return dateStr === todayStr;
+}
+
 function daysOverdueLabel(dateStr: string | null) {
   if (!dateStr) return null;
   const d = new Date(dateStr + "T00:00:00");
@@ -225,17 +233,24 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 {overdueList.map((sub) => {
                   const history = dispatchHistory.get(sub.celcash_customer_id);
                   const daysOverdue = daysOverdueLabel(sub.next_due_date);
+                  const dueToday = isDueToday(sub.next_due_date);
                   return (
                     <TableRow key={sub.id}>
                       <TableCell className="font-medium text-foreground">{sub.name || "—"}</TableCell>
                       <TableCell className="text-foreground">{sub.plan_name || "—"}</TableCell>
                       <TableCell className="text-foreground">{formatCents(sub.overdue_amount_cents)}</TableCell>
                       <TableCell className="text-foreground">
-                        {formatDate(sub.next_due_date)}
-                        {daysOverdue != null && (
-                          <Badge variant="destructive" className="ml-2">
-                            {daysOverdue}d
-                          </Badge>
+                        {dueToday ? (
+                          <Badge variant="default">Hoje</Badge>
+                        ) : (
+                          <>
+                            {formatDate(sub.next_due_date)}
+                            {daysOverdue != null && (
+                              <Badge variant="destructive" className="ml-2">
+                                {daysOverdue}d
+                              </Badge>
+                            )}
+                          </>
                         )}
                       </TableCell>
                       <TableCell className="text-foreground">{history ? formatDate(history.lastSentAt.slice(0, 10)) : "—"}</TableCell>
