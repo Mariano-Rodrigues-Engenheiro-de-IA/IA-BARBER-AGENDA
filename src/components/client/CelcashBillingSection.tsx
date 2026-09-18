@@ -91,7 +91,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             value={form.due_today_message_template}
             onChange={(e) => setForm({ ...form, due_today_message_template: e.target.value })}
           />
-          <p className="text-xs text-muted-foreground">Use {"{nome}"} para incluir o primeiro nome do cliente.</p>
+          <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
         </div>
       </div>
 
@@ -120,7 +120,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               value={form.message_template}
               onChange={(e) => setForm({ ...form, message_template: e.target.value })}
             />
-            <p className="text-xs text-muted-foreground">Use {"{nome}"} para incluir o primeiro nome do cliente.</p>
+            <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
           </div>
           <div className="space-y-2">
             <Label>Disparar quantos dias depois do vencimento</Label>

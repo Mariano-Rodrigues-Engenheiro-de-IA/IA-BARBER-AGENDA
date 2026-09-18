@@ -40,9 +40,29 @@ function tolerantPhoneMatch(a: string, b: string): boolean {
   return strip9(da) === strip9(db);
 }
 
-function renderMessage(template: string, name: string | null): string {
-  const safeName = (name || "").trim().split(/\s+/)[0] || "";
-  return template.replace(/\{nome\}/gi, safeName || "tudo bem?").replace(/\{\{nome\}\}/gi, safeName || "tudo bem?");
+function formatCentsBRL(cents: number | null | undefined): string {
+  if (!cents) return "";
+  return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function formatDateBR(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("pt-BR");
+}
+
+function renderMessage(template: string, sub: { name: string | null; next_due_date?: string | null; overdue_amount_cents?: number | null }): string {
+  const safeName = (sub.name || "").trim().split(/\s+/)[0] || "";
+  const vencimento = formatDateBR(sub.next_due_date);
+  const valor = formatCentsBRL(sub.overdue_amount_cents);
+  return template
+    .replace(/\{\{nome\}\}/gi, safeName || "tudo bem?")
+    .replace(/\{nome\}/gi, safeName || "tudo bem?")
+    .replace(/\{\{vencimento\}\}/gi, vencimento)
+    .replace(/\{vencimento\}/gi, vencimento)
+    .replace(/\{\{valor\}\}/gi, valor)
+    .replace(/\{valor\}/gi, valor);
 }
 
 function daysSince(dateStr: string | null): number | null {
@@ -169,7 +189,7 @@ async function processTenant(
       const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
       if (selfInstance) { skipped++; continue; }
 
-      const message = renderMessage(config.due_today_message_template, sub.name);
+      const message = renderMessage(config.due_today_message_template, sub);
       const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "due_today");
       if (result === "sent") sent++; else errors++;
     }
@@ -200,7 +220,7 @@ async function processTenant(
         continue;
       }
 
-      const message = renderMessage(config.message_template, sub.name);
+      const message = renderMessage(config.message_template, sub);
       const result = await sendOne(supabase, uazapiUrl, uazapiToken, tenant, sub, message, "overdue");
       if (result === "sent") sent++; else errors++;
     }
