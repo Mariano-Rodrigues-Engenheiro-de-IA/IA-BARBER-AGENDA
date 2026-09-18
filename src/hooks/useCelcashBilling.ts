@@ -10,6 +10,7 @@ export type CelcashOverdueSubscriber = {
   plan_name: string | null;
   overdue_amount_cents: number;
   next_due_date: string | null;
+  no_card_on_file: boolean;
 };
 
 export type CelcashBillingConfig = {
@@ -71,7 +72,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
     queryFn: async (): Promise<CelcashOverdueSubscriber[]> => {
       const { data, error } = await supabase
         .from("celcash_overdue_subscribers")
-        .select("id, celcash_customer_id, name, phone_e164, plan_name, overdue_amount_cents, next_due_date")
+        .select("id, celcash_customer_id, name, phone_e164, plan_name, overdue_amount_cents, next_due_date, no_card_on_file")
         .eq("tenant_id", tenantId!)
         .order("next_due_date", { ascending: true });
       if (error) throw error;

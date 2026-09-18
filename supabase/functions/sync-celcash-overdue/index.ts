@@ -348,11 +348,11 @@ async function fetchRecentTransactions(
 }
 
 
-function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null; debugTransactions: any[] } {
+function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription: Map<string, any[]>): { isOverdue: boolean; overdueCents: number; dueDate: string | null; debugTransactions: any[]; noCardOnFile: boolean } {
   const rawStatus = String(sub.status || "").toLowerCase();
   // Assinatura cancelada/encerrada nunca conta como pendência de cobrança.
   if (rawStatus === "closed" || /cancel/.test(rawStatus)) {
-    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [] };
+    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [], noCardOnFile: false };
   }
 
   const subId = String(sub.galaxPayId ?? sub.id ?? sub.myId ?? "");
@@ -360,7 +360,7 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
   const today = todayInSaoPaulo();
   const openOverdue = fromEndpoint.filter((t) => t && String(t.payday ?? "") <= today && isOpenTransaction(t));
   if (!openOverdue.length) {
-    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [] };
+    return { isOverdue: false, overdueCents: 0, dueDate: null, debugTransactions: [], noCardOnFile: false };
   }
 
   const mostRecentDueDate = openOverdue.reduce((latest, t) => {
@@ -368,11 +368,22 @@ function deriveOverdueFromTransactions(sub: any, extraTransactionsBySubscription
     return p > latest ? p : latest;
   }, "");
 
+  // ⚠️ Adicionado (18/09): confirmado com dado real (9 casos comparados
+  // contra o relatório oficial da CelCash) que quem nunca cadastrou um
+  // cartão de pagamento (sem objeto "Card" dentro de
+  // PaymentMethodCreditCard) nunca tem a cobrança processada de
+  // verdade — fica "Aguardando pagamento" indefinidamente, sem nunca
+  // ser tentada. Decisão do usuário: continua contando como
+  // inadimplente (mantido na lista), só marcado visualmente como
+  // "sem cartão" pra diferenciar de quem tem cobrança realmente negada.
+  const noCardOnFile = !sub.PaymentMethodCreditCard?.Card;
+
   return {
     isOverdue: true,
     overdueCents: openOverdue.reduce((sum, t) => sum + Math.round(Number(t.value) || 0), 0),
     dueDate: mostRecentDueDate || today,
     debugTransactions: openOverdue,
+    noCardOnFile,
   };
 }
 
@@ -425,7 +436,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
       const customer = s.Customer || s.customer || s.client || s.payer || {};
       const phoneRaw = pickPhone(customer) || pickPhone(s);
       const phoneE164 = normalizePhone(phoneRaw);
-      const { isOverdue, overdueCents, dueDate, debugTransactions } = deriveOverdueFromTransactions(s, extraTransactionsBySubscription);
+      const { isOverdue, overdueCents, dueDate, debugTransactions, noCardOnFile } = deriveOverdueFromTransactions(s, extraTransactionsBySubscription);
       const customerEmail = Array.isArray(customer.emails) ? customer.emails[0] : (customer.email || null);
       const planIdRaw = s.planGalaxPayId ?? s.PlanGalaxPayId ?? s.planMyId ?? s.PlanMyId ?? s.plan_id ?? s.Plan?.galaxPayId ?? s.plan?.id ?? null;
       const planIdStr = planIdRaw !== null && planIdRaw !== undefined ? String(planIdRaw) : null;
@@ -444,6 +455,7 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
         overdue_amount_cents: overdueCents,
         next_due_date: dueDate,
         last_payment_date: s.last_payment_date || s.lastPaymentDate || null,
+        no_card_on_file: noCardOnFile,
         // ⚠️ Adicionado (16/09): a transação que decide "é inadimplente"
         // nunca era persistida em lugar nenhum, só usada em memória — isso
         // impedia investigar casos onde a classificação parecia errada

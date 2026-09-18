@@ -236,7 +236,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                   const dueToday = isDueToday(sub.next_due_date);
                   return (
                     <TableRow key={sub.id}>
-                      <TableCell className="font-medium text-foreground">{sub.name || "—"}</TableCell>
+                      <TableCell className="font-medium text-foreground">
+                        {sub.name || "—"}
+                        {sub.no_card_on_file && (
+                          <Badge variant="outline" className="ml-2">Sem cartão</Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="text-foreground">{sub.plan_name || "—"}</TableCell>
                       <TableCell className="text-foreground">{formatCents(sub.overdue_amount_cents)}</TableCell>
                       <TableCell className="text-foreground">
