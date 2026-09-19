@@ -52,17 +52,20 @@ function formatDateBR(dateStr: string | null | undefined): string {
   return d.toLocaleDateString("pt-BR");
 }
 
-function renderMessage(template: string, sub: { name: string | null; next_due_date?: string | null; overdue_amount_cents?: number | null }): string {
+function renderMessage(template: string, sub: { name: string | null; next_due_date?: string | null; overdue_amount_cents?: number | null }, daysOverdue?: number | null): string {
   const safeName = (sub.name || "").trim().split(/\s+/)[0] || "";
   const vencimento = formatDateBR(sub.next_due_date);
   const valor = formatCentsBRL(sub.overdue_amount_cents);
+  const diasAtraso = daysOverdue != null ? String(daysOverdue) : "";
   return template
     .replace(/\{\{nome\}\}/gi, safeName || "tudo bem?")
     .replace(/\{nome\}/gi, safeName || "tudo bem?")
     .replace(/\{\{vencimento\}\}/gi, vencimento)
     .replace(/\{vencimento\}/gi, vencimento)
     .replace(/\{\{valor\}\}/gi, valor)
-    .replace(/\{valor\}/gi, valor);
+    .replace(/\{valor\}/gi, valor)
+    .replace(/\{\{dias_atraso\}\}/gi, diasAtraso)
+    .replace(/\{dias_atraso\}/gi, diasAtraso);
 }
 
 function daysSince(dateStr: string | null): number | null {
@@ -92,14 +95,19 @@ async function enqueueOne(
   tenant: any,
   sub: any,
   message: string,
-  messageType: "due_today" | "overdue",
+  messageType: "due_today" | "overdue" | "owner_alert",
   scheduledAt: Date,
+  // Aviso ao dono vai para um número diferente do cliente inadimplente
+  // (sub.phone_e164) — quando informado, usa este telefone como destino,
+  // mantendo sub.celcash_customer_id só para controle de dedup/log (saber
+  // sobre qual cliente inadimplente o aviso trata).
+  destinationOverride?: { phone_e164: string; name?: string },
 ): Promise<void> {
   await supabase.from("celcash_billing_queue").insert({
     tenant_id: tenant.id,
     celcash_customer_id: sub.celcash_customer_id,
-    phone_e164: sub.phone_e164,
-    name: sub.name,
+    phone_e164: destinationOverride?.phone_e164 ?? sub.phone_e164,
+    name: destinationOverride?.name ?? sub.name,
     message_type: messageType,
     message_text: message,
     overdue_amount_cents_at_send: sub.overdue_amount_cents,
@@ -161,6 +169,8 @@ async function processTenant(
   const lastOverdueSentByCustomer = new Map<string, { sentAt: string; dueDate: string | null }>();
   // Já mandou o lembrete de "vence hoje" pra ESSE vencimento específico?
   const dueTodayAlreadySent = new Set<string>();
+  // Já avisou o dono sobre ESSA dívida específica (customer + vencimento)?
+  const ownerAlertAlreadySent = new Set<string>();
   for (const row of sentLogRows ?? []) {
     if (row.message_type === "overdue") {
       if (!lastOverdueSentByCustomer.has(row.celcash_customer_id)) {
@@ -168,6 +178,8 @@ async function processTenant(
       }
     } else if (row.message_type === "due_today") {
       dueTodayAlreadySent.add(`${row.celcash_customer_id}::${row.next_due_date_at_send}`);
+    } else if (row.message_type === "owner_alert") {
+      ownerAlertAlreadySent.add(`${row.celcash_customer_id}::${row.next_due_date_at_send}`);
     }
   }
 
@@ -233,6 +245,24 @@ async function processTenant(
     }
   }
 
+  // ===== Grupo 3: aviso ao dono (cliente bateu o limite de dias em atraso) =====
+  if (config.owner_alert_active && config.owner_alert_phone_e164) {
+    for (const sub of pastDue) {
+      const daysOverdue = daysSince(sub.next_due_date);
+      if (daysOverdue === null || daysOverdue < config.owner_alert_days) { skipped++; continue; }
+
+      const key = `${sub.celcash_customer_id}::${sub.next_due_date}`;
+      if (ownerAlertAlreadySent.has(key)) { skipped++; continue; }
+      if (alreadyQueued.has(`${sub.celcash_customer_id}::owner_alert::${sub.next_due_date}`)) { skipped++; continue; }
+
+      const message = renderMessage(config.owner_alert_message_template, sub, daysOverdue);
+      await enqueueOne(supabase, tenant, sub, message, "owner_alert", nextScheduledAt(), {
+        phone_e164: config.owner_alert_phone_e164,
+      });
+      queued++;
+    }
+  }
+
   return { queued, skipped, errors };
 }
 
@@ -288,7 +318,7 @@ Deno.serve(async (req) => {
       .from("celcash_billing_config")
       .select("*, tenants(*)")
       .eq("tenant_id", requestedTenantId)
-      .or("active.eq.true,due_today_active.eq.true")
+      .or("active.eq.true,due_today_active.eq.true,owner_alert_active.eq.true")
       .maybeSingle();
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {
@@ -342,7 +372,7 @@ Deno.serve(async (req) => {
     const { data: configs, error: cfgErr } = await supabase
       .from("celcash_billing_config")
       .select("*, tenants(*)")
-      .or("active.eq.true,due_today_active.eq.true");
+      .or("active.eq.true,due_today_active.eq.true,owner_alert_active.eq.true");
 
     if (cfgErr) {
       return new Response(JSON.stringify({ ok: false, error: cfgErr.message }), {

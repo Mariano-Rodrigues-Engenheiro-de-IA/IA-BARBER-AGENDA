@@ -159,6 +159,55 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
         </div>
       </div>
 
+      {/* ===== Aviso ao dono (cliente bateu X dias de atraso) ===== */}
+      <div className="glass-card p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-foreground">Aviso ao dono</h3>
+            <p className="text-sm text-muted-foreground">
+              Manda uma mensagem pra você (não pro cliente) quando um assinante bate o limite de dias em atraso configurado abaixo. Manda só 1 vez por dívida.
+            </p>
+          </div>
+          <Switch
+            checked={!!form.owner_alert_active}
+            disabled={!editable}
+            onCheckedChange={(checked) => setForm({ ...form, owner_alert_active: checked })}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2 md:col-span-2">
+            <Label>Mensagem</Label>
+            <Textarea
+              disabled={!editable}
+              rows={3}
+              value={form.owner_alert_message_template}
+              onChange={(e) => setForm({ ...form, owner_alert_message_template: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{dias_atraso}"} e {"{valor}"} para incluir o primeiro nome do cliente, os dias em atraso e o valor devido.</p>
+          </div>
+          <div className="space-y-2">
+            <Label>Avisar a partir de quantos dias em atraso</Label>
+            <Input
+              type="number"
+              min={1}
+              disabled={!editable}
+              value={form.owner_alert_days}
+              onChange={(e) => setForm({ ...form, owner_alert_days: Number(e.target.value) || 0 })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Seu número de WhatsApp (com DDI, ex: 5511999999999)</Label>
+            <Input
+              type="text"
+              disabled={!editable}
+              value={form.owner_alert_phone_e164 ?? ""}
+              onChange={(e) => setForm({ ...form, owner_alert_phone_e164: e.target.value || null })}
+            />
+          </div>
+        </div>
+      </div>
+
       {editable && (
         <div className="flex items-center gap-2">
           <Button
@@ -171,6 +220,10 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 due_today_active: form.due_today_active,
                 due_today_message_template: form.due_today_message_template,
                 overdue_max_days: form.overdue_max_days,
+                owner_alert_active: form.owner_alert_active,
+                owner_alert_days: form.owner_alert_days,
+                owner_alert_phone_e164: form.owner_alert_phone_e164,
+                owner_alert_message_template: form.owner_alert_message_template,
               })
             }
           >
@@ -180,8 +233,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <Button
             type="button"
             variant="outline"
-            disabled={(!form.active && !form.due_today_active) || dispatching}
-            title={!form.active && !form.due_today_active ? "Ative pelo menos um dos disparos e salve antes" : undefined}
+            disabled={(!form.active && !form.due_today_active && !form.owner_alert_active) || dispatching}
+            title={!form.active && !form.due_today_active && !form.owner_alert_active ? "Ative pelo menos um dos disparos e salve antes" : undefined}
             onClick={async () => {
               setDispatching(true);
               await dispatchNow();
