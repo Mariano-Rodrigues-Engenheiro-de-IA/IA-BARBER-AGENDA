@@ -11203,7 +11203,19 @@ function isBookingTimeConfirmationPrompt(value: string): boolean {
   // foi testada contra IMPLIED_FINALIZATION_RE porque isNewBookingFinalStep
   // ficou false aqui. Ver src/test/appbarber-failure.test.ts para o teste de
   // regressão deste caso específico.
-  return /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|confirmo a mudanca|confirmo a troca|confirmo a alteracao|confirmo a remarcacao|confirmo o agendamento|confirmo o horario|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
+  const hasConfirmationVerb = /\b(posso confirmar|posso marcar|posso reservar|quer confirmar|quer que eu confirme|quer que eu marque|quer que eu reserve|confirmo pra voce|confirmo para voce|confirmo a mudanca|confirmo a troca|confirmo a alteracao|confirmo a remarcacao|confirmo o agendamento|confirmo o horario|vou confirmar|vou marcar|vou reservar|fecho pra voce|fecho para voce|fechar esse horario|confirmar esse horario|pode ser esse horario|pode ser esse horario pro|pode ser esse horario para|pode ser esse|esse horario serve|serve esse horario|fechou nesse horario|confirmando)\b/.test(normalized);
+  if (!hasConfirmationVerb) return false;
+  // ⚠️ Adicionado (19/09, caso real Tiago/Thallys Barber): "posso reservar"
+  // e "vou reservar" batiam também para RESERVA DE PRODUTO ("Posso reservar
+  // a fita pra você?" — sobre uma fita de prótese, não um horário). A IA
+  // respondeu certo ("Perfeito, reservei a fita pra você"), mas o guard
+  // reescreveu pra uma resposta sem sentido ("Só um instante que eu confiro
+  // seu horário na agenda agora"). Agora exige que a MESMA frase também
+  // mencione horário/agenda (palavra "horário"/"agenda" ou um horário no
+  // formato HH:MM) — sem isso, "reservar"/"confirmar"/"marcar" sozinhos são
+  // ambíguos demais (produto físico vs. horário de atendimento).
+  const mentionsScheduleContext = /\b(hor[aá]rio|agend\w*|marca[cç][aã]o)\b|\b[0-2]?\d[:h](?:[0-5]\d)?\b/.test(normalized);
+  return mentionsScheduleContext;
 }
 
 // isSingleCancellationConfirmationPrompt e maybeHandleDirectCancellationConfirmation
