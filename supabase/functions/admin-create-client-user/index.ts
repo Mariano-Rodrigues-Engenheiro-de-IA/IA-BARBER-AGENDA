@@ -81,6 +81,17 @@ Deno.serve(async (req) => {
       email, password: tempPassword, email_confirm: true,
     });
     if (createErr) {
+      // Senha fraca/vazada não é "usuário já existe": devolve motivo claro.
+      const msg = (createErr.message ?? "").toLowerCase();
+      if (msg.includes("weak") || msg.includes("pwned") || msg.includes("password")) {
+        return new Response(
+          JSON.stringify({
+            error:
+              "Essa senha é fraca ou já apareceu em vazamentos. Use pelo menos 12 caracteres combinando letras, números e símbolos, ou deixe o campo em branco para gerar uma senha automática.",
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
       // Pode já existir; tenta achar
       const { data: list } = await admin.auth.admin.listUsers();
       const existing = list?.users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
@@ -145,9 +156,9 @@ Deno.serve(async (req) => {
 });
 
 function generatePassword(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*?";
   let p = "";
-  const arr = new Uint32Array(12);
+  const arr = new Uint32Array(16);
   crypto.getRandomValues(arr);
   for (const n of arr) p += chars[n % chars.length];
   return p;

@@ -87,7 +87,7 @@ export default function TenantAccessPage() {
 
   const handleCreate = async () => {
     if (!email) return toast.error("Informe um email");
-    if (createPassword && createPassword.length < 6) return toast.error("Senha deve ter pelo menos 6 caracteres");
+    if (createPassword && createPassword.length < 12) return toast.error("Senha deve ter pelo menos 12 caracteres, com letras, números e símbolos");
     setCreating(true);
     try {
       const { data, error } = await supabase.functions.invoke("admin-create-client-user", {
