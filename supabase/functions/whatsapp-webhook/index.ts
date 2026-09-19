@@ -2347,18 +2347,22 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // ----- Bidirectional flag reconciliation (WhatsApp = source of truth) -----
         // Build the desired flag set from WhatsApp, but only for labels configured as type:"flag".
         // Unknown labels (e.g. funnel labels) are ignored here.
+        //
+        // ⚠️ Corrigido (19/09): existia uma segunda camada de proteção aqui
+        // que reinseria a flag IA OFF no banco sempre que dbHasIaOff (do
+        // estado salvo na mensagem ANTERIOR) fosse true, mesmo quando a
+        // leitura ATUAL (waLabelsKnown=true, ou seja, já confirmada com
+        // sucesso) mostrava a etiqueta removida de verdade. Isso é
+        // redundante com a proteção que já existe (o bloco inteiro só roda
+        // quando waLabelsKnown=true — leitura não confiável já é tratada
+        // ali, não aqui) — e, pior, criava um ciclo que nunca se
+        // autocorrige: cada mensagem salvava a flag de volta no banco,
+        // então a PRÓXIMA mensagem lia dbHasIaOff=true de novo, reinserindo
+        // outra vez, indefinidamente — mesmo com a etiqueta já removida no
+        // WhatsApp há muito tempo. Caso real: cliente removeu a etiqueta
+        // IA OFF, mandou mensagens de teste, a IA nunca voltou a responder.
         if (waLabelsKnown && allConfiguredFlagIds.length > 0) {
           const desiredFlags = [...new Set(waLabelIds.filter((id: string) => allConfiguredFlagIds.includes(id)))];
-          // Nunca remover IA OFF por ausência em uma única leitura da UAZAPI.
-          // Essa fonte pode ficar temporariamente atrasada; a remoção legítima já
-          // atualiza o CRM diretamente e será observada na próxima mensagem.
-          if (dbHasIaOff && !waHasIaOff) {
-            for (const flag of flagLabels) {
-              if ((iaOffLabelIds.includes(flag) || /ia\s*off/i.test(flag)) && !desiredFlags.includes(flag)) {
-                desiredFlags.push(flag);
-              }
-            }
-          }
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
 
