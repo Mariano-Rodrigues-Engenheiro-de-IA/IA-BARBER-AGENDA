@@ -22,6 +22,7 @@ export type CelcashBillingConfig = {
   repeat_every_days: number | null;
   due_today_active: boolean;
   due_today_message_template: string;
+  due_today_no_card_message_template: string;
   overdue_max_days: number | null;
   owner_alert_active: boolean;
   owner_alert_days: number;
@@ -35,6 +36,8 @@ const DEFAULT_MESSAGE =
   "Oi {nome}! Vimos que sua assinatura está em atraso. Pode regularizar quando puder? Qualquer dúvida, estamos por aqui 😊";
 const DEFAULT_DUE_TODAY_MESSAGE =
   "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje. Qualquer coisa, estamos por aqui 😊";
+const DEFAULT_DUE_TODAY_NO_CARD_MESSAGE =
+  "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje e não identificamos um cartão cadastrado. Pode atualizar seu cartão? Qualquer dúvida, estamos por aqui 😊";
 const DEFAULT_OWNER_ALERT_MESSAGE =
   "Atenção: o cliente {nome} está com {dias_atraso} dias de atraso na assinatura (valor: {valor}). Pode ser interessante entrar em contato diretamente.";
 const DEFAULT_NO_CARD_MESSAGE =
@@ -69,6 +72,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
           repeat_every_days: null,
           due_today_active: false,
           due_today_message_template: DEFAULT_DUE_TODAY_MESSAGE,
+          due_today_no_card_message_template: DEFAULT_DUE_TODAY_NO_CARD_MESSAGE,
           overdue_max_days: null,
           owner_alert_active: false,
           owner_alert_days: 60,

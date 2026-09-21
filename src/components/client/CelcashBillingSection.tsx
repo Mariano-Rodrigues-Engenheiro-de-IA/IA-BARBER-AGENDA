@@ -84,7 +84,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           />
         </div>
         <div className="space-y-2">
-          <Label>Mensagem</Label>
+          <Label>Mensagem (com cartão cadastrado)</Label>
           <Textarea
             disabled={!editable}
             rows={3}
@@ -92,6 +92,16 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             onChange={(e) => setForm({ ...form, due_today_message_template: e.target.value })}
           />
           <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
+        </div>
+        <div className="space-y-2">
+          <Label>Mensagem (sem cartão cadastrado)</Label>
+          <Textarea
+            disabled={!editable}
+            rows={3}
+            value={form.due_today_no_card_message_template}
+            onChange={(e) => setForm({ ...form, due_today_no_card_message_template: e.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">Usada no lugar da mensagem acima quando o cliente não tem cartão cadastrado.</p>
         </div>
       </div>
 
@@ -113,7 +123,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2 md:col-span-2">
-            <Label>Mensagem</Label>
+            <Label>Mensagem (com cartão cadastrado)</Label>
             <Textarea
               disabled={!editable}
               rows={3}
@@ -121,6 +131,16 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               onChange={(e) => setForm({ ...form, message_template: e.target.value })}
             />
             <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Mensagem (sem cartão cadastrado)</Label>
+            <Textarea
+              disabled={!editable}
+              rows={3}
+              value={form.no_card_message_template}
+              onChange={(e) => setForm({ ...form, no_card_message_template: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">Usada no lugar da mensagem acima quando o cliente não tem cartão cadastrado.</p>
           </div>
           <div className="space-y-2">
             <Label>Disparar quantos dias depois do vencimento</Label>
@@ -166,16 +186,6 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               onChange={(e) => setForm({ ...form, max_overdue_messages: Number(e.target.value) || 1 })}
             />
             <p className="text-xs text-muted-foreground">Depois desse número de mensagens pra mesma dívida, para de insistir automaticamente.</p>
-          </div>
-          <div className="space-y-2 md:col-span-2">
-            <Label>Mensagem para quem não tem cartão cadastrado</Label>
-            <Textarea
-              disabled={!editable}
-              rows={3}
-              value={form.no_card_message_template}
-              onChange={(e) => setForm({ ...form, no_card_message_template: e.target.value })}
-            />
-            <p className="text-xs text-muted-foreground">Usada no lugar da mensagem normal quando o cliente não tem cartão cadastrado. Use {"{nome}"}, {"{vencimento}"} e {"{valor}"}.</p>
           </div>
         </div>
       </div>
@@ -240,6 +250,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 repeat_every_days: form.repeat_every_days,
                 due_today_active: form.due_today_active,
                 due_today_message_template: form.due_today_message_template,
+                due_today_no_card_message_template: form.due_today_no_card_message_template,
                 overdue_max_days: form.overdue_max_days,
                 owner_alert_active: form.owner_alert_active,
                 owner_alert_days: form.owner_alert_days,

@@ -213,7 +213,12 @@ async function processTenant(
       const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
       if (selfInstance) { skipped++; continue; }
 
-      const message = renderMessage(config.due_today_message_template, sub);
+      // Cliente sem cartão cadastrado recebe uma mensagem própria, igual
+      // já acontece na cobrança de atraso — pedido do usuário, 19/09.
+      const template = sub.no_card_on_file
+        ? config.due_today_no_card_message_template
+        : config.due_today_message_template;
+      const message = renderMessage(template, sub);
       await enqueueOne(supabase, tenant, sub, message, "due_today", nextScheduledAt());
       queued++;
     }
