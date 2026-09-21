@@ -30,6 +30,8 @@ export type CelcashBillingConfig = {
   owner_alert_message_template: string;
   max_overdue_messages: number;
   no_card_message_template: string;
+  pace_seconds_min: number;
+  pace_seconds_max: number;
 };
 
 const DEFAULT_MESSAGE =
@@ -80,6 +82,8 @@ export function useCelcashBilling(tenantId: string | undefined) {
           owner_alert_message_template: DEFAULT_OWNER_ALERT_MESSAGE,
           max_overdue_messages: 5,
           no_card_message_template: DEFAULT_NO_CARD_MESSAGE,
+          pace_seconds_min: 60,
+          pace_seconds_max: 120,
         }
       );
     },

@@ -239,6 +239,38 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
         </div>
       </div>
 
+      {/* ===== Ritmo de envio (vale pros 3 tipos de mensagem acima) ===== */}
+      <div className="glass-card p-5 space-y-4">
+        <div>
+          <h3 className="font-semibold text-foreground">Ritmo de envio</h3>
+          <p className="text-sm text-muted-foreground">
+            Intervalo entre uma mensagem e outra (sorteado dentro da faixa abaixo pra cada envio), pra não mandar tudo de uma vez e reduzir o risco de bloqueio no WhatsApp.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Intervalo mínimo (segundos)</Label>
+            <Input
+              type="number"
+              min={10}
+              disabled={!editable}
+              value={form.pace_seconds_min}
+              onChange={(e) => setForm({ ...form, pace_seconds_min: Number(e.target.value) || 10 })}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Intervalo máximo (segundos)</Label>
+            <Input
+              type="number"
+              min={10}
+              disabled={!editable}
+              value={form.pace_seconds_max}
+              onChange={(e) => setForm({ ...form, pace_seconds_max: Number(e.target.value) || 10 })}
+            />
+          </div>
+        </div>
+      </div>
+
       {editable && (
         <div className="flex items-center gap-2">
           <Button
@@ -258,6 +290,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 owner_alert_message_template: form.owner_alert_message_template,
                 max_overdue_messages: form.max_overdue_messages,
                 no_card_message_template: form.no_card_message_template,
+                pace_seconds_min: form.pace_seconds_min,
+                pace_seconds_max: form.pace_seconds_max,
               })
             }
           >

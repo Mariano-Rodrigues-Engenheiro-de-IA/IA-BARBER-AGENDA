@@ -237,12 +237,15 @@ async function processTenant(
   const dueToday = overdueList.filter((o: any) => o.next_due_date === today);
   const pastDue = overdueList.filter((o: any) => o.next_due_date !== today);
 
-  // Intervalo entre cada mensagem enfileirada: entre 1 e 2 minutos,
-  // variando a cada uma (não fixo) — pedido explícito do usuário, pra não
-  // mandar tudo em rajada e reduzir risco de bloqueio no WhatsApp.
+  // Intervalo entre cada mensagem enfileirada, configurável no painel
+  // (pace_seconds_min/max) — padrão 60-120s, variando a cada uma (não
+  // fixo), pra não mandar tudo em rajada e reduzir risco de bloqueio no
+  // WhatsApp.
+  const paceMin = config.pace_seconds_min ?? 60;
+  const paceMax = Math.max(config.pace_seconds_max ?? 120, paceMin);
   let cursor = Date.now();
   const nextScheduledAt = (): Date => {
-    const jitterMs = (60 + Math.random() * 60) * 1000; // 60s a 120s
+    const jitterMs = (paceMin + Math.random() * (paceMax - paceMin)) * 1000;
     cursor += jitterMs;
     return new Date(cursor);
   };
