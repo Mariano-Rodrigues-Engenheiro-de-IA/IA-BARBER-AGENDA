@@ -111,7 +111,7 @@ export function useCelcashBilling(tenantId: string | undefined) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("celcash_billing_sent_log")
-        .select("celcash_customer_id, sent_at")
+        .select("celcash_customer_id, sent_at, is_continuation")
         .eq("tenant_id", tenantId!)
         .order("sent_at", { ascending: false })
         .limit(2000);
@@ -120,9 +120,12 @@ export function useCelcashBilling(tenantId: string | undefined) {
     },
   });
 
-  /** Por cliente: data do último disparo e quantos já recebeu no total. */
+  /** Por cliente: data do último disparo e quantos já recebeu no total.
+   * Ignora blocos de continuação (mensagem dividida em vários WhatsApp
+   * separados) — conta cobranças reais, não blocos de texto. */
   const dispatchHistory = new Map<string, { lastSentAt: string; count: number }>();
   for (const row of sentLog ?? []) {
+    if (row.is_continuation) continue;
     const existing = dispatchHistory.get(row.celcash_customer_id);
     if (existing) {
       existing.count += 1;
@@ -159,7 +162,9 @@ export function useCelcashBilling(tenantId: string | undefined) {
       toast.error("Ative a cobrança e salve antes de disparar.");
       return null;
     }
-    toast.success(`${data.queued} mensagem(ns) na fila (envio espaçado, 1-2min entre cada), ${data.skipped} pulada(s).`);
+    const paceMin = config?.pace_seconds_min ?? 60;
+    const paceMax = config?.pace_seconds_max ?? 120;
+    toast.success(`${data.queued} mensagem(ns) na fila (envio espaçado, ${paceMin}-${paceMax}s entre cada), ${data.skipped} pulada(s).`);
     queryClient.invalidateQueries({ queryKey: ["celcash-billing-sent-log", tenantId] });
     return data;
   };
