@@ -282,6 +282,7 @@ export type Database = {
           days_after_due: number
           due_today_active: boolean
           due_today_message_template: string
+          due_today_no_card_message_template: string
           id: string
           max_overdue_messages: number
           message_template: string
@@ -301,6 +302,7 @@ export type Database = {
           days_after_due?: number
           due_today_active?: boolean
           due_today_message_template?: string
+          due_today_no_card_message_template?: string
           id?: string
           max_overdue_messages?: number
           message_template?: string
@@ -320,6 +322,7 @@ export type Database = {
           days_after_due?: number
           due_today_active?: boolean
           due_today_message_template?: string
+          due_today_no_card_message_template?: string
           id?: string
           max_overdue_messages?: number
           message_template?: string
@@ -349,6 +352,7 @@ export type Database = {
           created_at: string
           error_message: string | null
           id: string
+          is_continuation: boolean
           message_text: string
           message_type: string
           name: string | null
@@ -365,6 +369,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          is_continuation?: boolean
           message_text: string
           message_type: string
           name?: string | null
@@ -381,6 +386,7 @@ export type Database = {
           created_at?: string
           error_message?: string | null
           id?: string
+          is_continuation?: boolean
           message_text?: string
           message_type?: string
           name?: string | null
@@ -406,6 +412,7 @@ export type Database = {
         Row: {
           celcash_customer_id: string
           id: string
+          is_continuation: boolean
           message_sent: string | null
           message_type: string
           next_due_date_at_send: string | null
@@ -417,6 +424,7 @@ export type Database = {
         Insert: {
           celcash_customer_id: string
           id?: string
+          is_continuation?: boolean
           message_sent?: string | null
           message_type?: string
           next_due_date_at_send?: string | null
@@ -428,6 +436,7 @@ export type Database = {
         Update: {
           celcash_customer_id?: string
           id?: string
+          is_continuation?: boolean
           message_sent?: string | null
           message_type?: string
           next_due_date_at_send?: string | null
