@@ -57,6 +57,13 @@
       "when": 1789756567335,
       "tag": "0007_celcash_overdue_no_card_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790001547978,
+      "tag": "0008_celcash_owner_alert",
+      "breakpoints": true
     }
   ]
 }
