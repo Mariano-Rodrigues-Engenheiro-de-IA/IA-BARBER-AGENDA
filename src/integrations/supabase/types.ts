@@ -283,7 +283,9 @@ export type Database = {
           due_today_active: boolean
           due_today_message_template: string
           id: string
+          max_overdue_messages: number
           message_template: string
+          no_card_message_template: string
           overdue_max_days: number | null
           repeat_every_days: number | null
           tenant_id: string
@@ -296,7 +298,9 @@ export type Database = {
           due_today_active?: boolean
           due_today_message_template?: string
           id?: string
+          max_overdue_messages?: number
           message_template?: string
+          no_card_message_template?: string
           overdue_max_days?: number | null
           repeat_every_days?: number | null
           tenant_id: string
@@ -309,7 +313,9 @@ export type Database = {
           due_today_active?: boolean
           due_today_message_template?: string
           id?: string
+          max_overdue_messages?: number
           message_template?: string
+          no_card_message_template?: string
           overdue_max_days?: number | null
           repeat_every_days?: number | null
           tenant_id?: string
