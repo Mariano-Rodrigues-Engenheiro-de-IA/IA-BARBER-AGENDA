@@ -131,6 +131,7 @@ Deno.serve(async (req) => {
           next_due_date_at_send: row.next_due_date_at_send,
           message_sent: row.message_text,
           message_type: row.message_type,
+          is_continuation: row.is_continuation ?? false,
         });
         await supabase.from("chat_messages").insert({
           tenant_id: row.tenant_id,

@@ -37,11 +37,11 @@ const DEFAULT_MESSAGE =
 const DEFAULT_DUE_TODAY_MESSAGE =
   "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje. Qualquer coisa, estamos por aqui 😊";
 const DEFAULT_DUE_TODAY_NO_CARD_MESSAGE =
-  "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje e não identificamos um cartão cadastrado. Pode atualizar seu cartão? Qualquer dúvida, estamos por aqui 😊";
+  "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje.\n---\nNão identificamos um cartão cadastrado. Pode atualizar seu cartão? Qualquer dúvida, estamos por aqui 😊";
 const DEFAULT_OWNER_ALERT_MESSAGE =
   "Atenção: o cliente {nome} está com {dias_atraso} dias de atraso na assinatura (valor: {valor}). Pode ser interessante entrar em contato diretamente.";
 const DEFAULT_NO_CARD_MESSAGE =
-  "Oi {nome}! Vimos que sua assinatura está em atraso e não identificamos um cartão cadastrado. Pode atualizar seu cartão pra regularizar? Qualquer dúvida, estamos por aqui 😊";
+  "Oi {nome}! Vimos que sua assinatura está em atraso.\n---\nNão identificamos um cartão cadastrado. Pode atualizar seu cartão pra regularizar? Qualquer dúvida, estamos por aqui 😊";
 
 /** Configuração + lista de inadimplentes + histórico de disparo, para a
  * seção "Cobrança automática" (Integrações, só quando celcash_enabled). */

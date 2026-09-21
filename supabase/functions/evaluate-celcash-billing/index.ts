@@ -68,6 +68,19 @@ function renderMessage(template: string, sub: { name: string | null; next_due_da
     .replace(/\{dias_atraso\}/gi, diasAtraso);
 }
 
+/** Divide uma mensagem renderizada em vários blocos — cada um vira uma
+ * mensagem de WhatsApp separada. Marcador: uma linha só com "---" (o
+ * usuário digita isso no textarea do template, onde quer quebrar).
+ * ⚠️ Adicionado (19/09), pedido do usuário: mensagem de "sem cartão"
+ * enviada em 2 blocos separados, em vez de 1 mensagem só. Genérico —
+ * funciona em qualquer template, não só o de sem cartão. */
+function splitIntoBlocks(text: string): string[] {
+  return text
+    .split(/\n\s*---\s*\n/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+}
+
 function daysSince(dateStr: string | null): number | null {
   if (!dateStr) return null;
   const d = new Date(dateStr + (dateStr.length === 10 ? "T00:00:00" : ""));
@@ -102,6 +115,11 @@ async function enqueueOne(
   // mantendo sub.celcash_customer_id só para controle de dedup/log (saber
   // sobre qual cliente inadimplente o aviso trata).
   destinationOverride?: { phone_e164: string; name?: string },
+  // true = esse bloco é uma CONTINUAÇÃO do bloco anterior (mesma
+  // "cobrança lógica", mensagem dividida em vários WhatsApp separados)
+  // — não conta como uma cobrança nova pro limite máximo nem pra
+  // checagem de "já mandei hoje".
+  isContinuation = false,
 ): Promise<void> {
   await supabase.from("celcash_billing_queue").insert({
     tenant_id: tenant.id,
@@ -113,7 +131,30 @@ async function enqueueOne(
     overdue_amount_cents_at_send: sub.overdue_amount_cents,
     next_due_date_at_send: sub.next_due_date,
     scheduled_at: scheduledAt.toISOString(),
+    is_continuation: isContinuation,
   });
+}
+
+/** Enfileira uma mensagem, dividindo em vários blocos quando o template
+ * tiver o marcador "---" — cada bloco vira 1 mensagem de WhatsApp,
+ * mandada poucos segundos depois da anterior (mesma pessoa, sem
+ * precisar do intervalo grande usado entre pessoas diferentes). Só o
+ * primeiro bloco conta pra dedup/limite (ver isContinuation). */
+async function enqueueMessage(
+  supabase: any,
+  tenant: any,
+  sub: any,
+  message: string,
+  messageType: "due_today" | "overdue" | "owner_alert",
+  firstScheduledAt: Date,
+  destinationOverride?: { phone_e164: string; name?: string },
+): Promise<void> {
+  const blocks = splitIntoBlocks(message);
+  let scheduledAt = firstScheduledAt;
+  for (let i = 0; i < blocks.length; i++) {
+    await enqueueOne(supabase, tenant, sub, blocks[i], messageType, scheduledAt, destinationOverride, i > 0);
+    scheduledAt = new Date(scheduledAt.getTime() + (2500 + Math.random() * 1500)); // 2.5-4s entre blocos
+  }
 }
 
 async function processTenant(
@@ -140,7 +181,7 @@ async function processTenant(
   const customerIds = overdueList.map((o: any) => o.celcash_customer_id);
   const { data: sentLogRows } = await supabase
     .from("celcash_billing_sent_log")
-    .select("celcash_customer_id, sent_at, message_type, next_due_date_at_send")
+    .select("celcash_customer_id, sent_at, message_type, next_due_date_at_send, is_continuation")
     .eq("tenant_id", tenant.id)
     .in("celcash_customer_id", customerIds)
     .order("sent_at", { ascending: false });
@@ -149,12 +190,14 @@ async function processTenant(
   // se o cron rodar de novo antes da fila anterior esvaziar.
   const { data: queuedRows } = await supabase
     .from("celcash_billing_queue")
-    .select("celcash_customer_id, message_type, next_due_date_at_send")
+    .select("celcash_customer_id, message_type, next_due_date_at_send, is_continuation")
     .eq("tenant_id", tenant.id)
     .in("celcash_customer_id", customerIds)
     .in("status", ["pending", "sent"]);
   const alreadyQueued = new Set<string>(
-    (queuedRows ?? []).map((r: any) => `${r.celcash_customer_id}::${r.message_type}::${r.next_due_date_at_send}`)
+    (queuedRows ?? [])
+      .filter((r: any) => !r.is_continuation)
+      .map((r: any) => `${r.celcash_customer_id}::${r.message_type}::${r.next_due_date_at_send}`)
   );
 
   // Último envio de "atrasado" por cliente — guarda também o vencimento
@@ -176,6 +219,7 @@ async function processTenant(
   // cobranças por dívida (pedido do usuário, 19/09: no máximo 5).
   const overdueSentCountByDebt = new Map<string, number>();
   for (const row of sentLogRows ?? []) {
+    if (row.is_continuation) continue; // conta como parte da mensagem anterior, não uma cobrança nova
     if (row.message_type === "overdue") {
       if (!lastOverdueSentByCustomer.has(row.celcash_customer_id)) {
         lastOverdueSentByCustomer.set(row.celcash_customer_id, { sentAt: row.sent_at, dueDate: row.next_due_date_at_send });
@@ -219,7 +263,7 @@ async function processTenant(
         ? config.due_today_no_card_message_template
         : config.due_today_message_template;
       const message = renderMessage(template, sub);
-      await enqueueOne(supabase, tenant, sub, message, "due_today", nextScheduledAt());
+      await enqueueMessage(supabase, tenant, sub, message, "due_today", nextScheduledAt());
       queued++;
     }
   }
@@ -260,7 +304,7 @@ async function processTenant(
       // — pedido do usuário, 19/09.
       const template = sub.no_card_on_file ? config.no_card_message_template : config.message_template;
       const message = renderMessage(template, sub);
-      await enqueueOne(supabase, tenant, sub, message, "overdue", nextScheduledAt());
+      await enqueueMessage(supabase, tenant, sub, message, "overdue", nextScheduledAt());
       queued++;
     }
   }
@@ -276,7 +320,7 @@ async function processTenant(
       if (alreadyQueued.has(`${sub.celcash_customer_id}::owner_alert::${sub.next_due_date}`)) { skipped++; continue; }
 
       const message = renderMessage(config.owner_alert_message_template, sub, daysOverdue);
-      await enqueueOne(supabase, tenant, sub, message, "owner_alert", nextScheduledAt(), {
+      await enqueueMessage(supabase, tenant, sub, message, "owner_alert", nextScheduledAt(), {
         phone_e164: config.owner_alert_phone_e164,
       });
       queued++;
