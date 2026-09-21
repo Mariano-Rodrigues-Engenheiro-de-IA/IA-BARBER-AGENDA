@@ -399,15 +399,29 @@ async function syncTenantOverdue(supabase: any, tenant: any) {
     const env = tenant.celcash_env || "sandbox";
     const token = await getToken(env, tenant.celcash_galax_id, tenant.celcash_galax_hash);
     // Precisa do teto de dias configurado (overdue_max_days) para a lista
-    // de inadimplentes já vir filtrada — ⚠️ decisão do usuário (18/09):
-    // "na lista é pra ter só quem vai receber o disparo" — o teto agora
-    // se aplica na sincronização, não só na hora de disparar.
+    // de inadimplentes já vir filtrada — decisão do usuário (18/09): "na
+    // lista é pra ter só quem vai receber o disparo" — o teto se aplica
+    // na sincronização, não só na hora de disparar.
+    //
+    // ⚠️ Corrigido (19/09), a partir de pergunta real do usuário: se o
+    // teto normal (overdue_max_days) for MENOR que o dia configurado
+    // pro aviso ao dono (owner_alert_days), a pessoa desaparecia da
+    // sincronização ANTES de completar os dias necessários pro aviso —
+    // o aviso nunca disparava, mesmo configurado corretamente, porque o
+    // Grupo 3 (evaluate-celcash-billing) só processa quem está na
+    // tabela sincronizada. Agora, quando o aviso ao dono está ativo, o
+    // teto da sincronização usa o MAIOR entre os dois (overdue_max_days
+    // e owner_alert_days) — a lista continua limitada, só o suficiente
+    // maior pra garantir que o aviso realmente consiga disparar.
     const { data: billingConfig } = await supabase
       .from("celcash_billing_config")
-      .select("overdue_max_days")
+      .select("overdue_max_days, owner_alert_active, owner_alert_days")
       .eq("tenant_id", tenant.id)
       .maybeSingle();
-    const overdueMaxDays: number | null = billingConfig?.overdue_max_days ?? null;
+    let overdueMaxDays: number | null = billingConfig?.overdue_max_days ?? null;
+    if (overdueMaxDays != null && billingConfig?.owner_alert_active && billingConfig?.owner_alert_days != null) {
+      overdueMaxDays = Math.max(overdueMaxDays, billingConfig.owner_alert_days);
+    }
     const todayForCutoff = new Date().toISOString().slice(0, 10);
     const { transactions: recentTransactions, diagnostics: transactionsDiagnostics } = await fetchRecentTransactions(
       env,
