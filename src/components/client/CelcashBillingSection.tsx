@@ -156,6 +156,27 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               }
             />
           </div>
+          <div className="space-y-2">
+            <Label>Máximo de cobranças por dívida</Label>
+            <Input
+              type="number"
+              min={1}
+              disabled={!editable}
+              value={form.max_overdue_messages}
+              onChange={(e) => setForm({ ...form, max_overdue_messages: Number(e.target.value) || 1 })}
+            />
+            <p className="text-xs text-muted-foreground">Depois desse número de mensagens pra mesma dívida, para de insistir automaticamente.</p>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Mensagem para quem não tem cartão cadastrado</Label>
+            <Textarea
+              disabled={!editable}
+              rows={3}
+              value={form.no_card_message_template}
+              onChange={(e) => setForm({ ...form, no_card_message_template: e.target.value })}
+            />
+            <p className="text-xs text-muted-foreground">Usada no lugar da mensagem normal quando o cliente não tem cartão cadastrado. Use {"{nome}"}, {"{vencimento}"} e {"{valor}"}.</p>
+          </div>
         </div>
       </div>
 
@@ -224,6 +245,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 owner_alert_days: form.owner_alert_days,
                 owner_alert_phone_e164: form.owner_alert_phone_e164,
                 owner_alert_message_template: form.owner_alert_message_template,
+                max_overdue_messages: form.max_overdue_messages,
+                no_card_message_template: form.no_card_message_template,
               })
             }
           >
@@ -292,7 +315,7 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                       <TableCell className="font-medium text-foreground">
                         {sub.name || "—"}
                         {sub.no_card_on_file && (
-                          <Badge variant="outline" className="ml-2">Sem cartão</Badge>
+                          <Badge variant="outline" className="ml-2 border-blue-300 bg-blue-50 text-blue-700">Sem cartão</Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-foreground">{sub.plan_name || "—"}</TableCell>

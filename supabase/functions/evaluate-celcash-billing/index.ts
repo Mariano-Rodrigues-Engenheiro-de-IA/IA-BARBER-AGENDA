@@ -171,11 +171,17 @@ async function processTenant(
   const dueTodayAlreadySent = new Set<string>();
   // Já avisou o dono sobre ESSA dívida específica (customer + vencimento)?
   const ownerAlertAlreadySent = new Set<string>();
+  // Quantas cobranças de "atrasado" já foram mandadas pra CADA dívida
+  // específica (customer + vencimento) — usado pro limite máximo de
+  // cobranças por dívida (pedido do usuário, 19/09: no máximo 5).
+  const overdueSentCountByDebt = new Map<string, number>();
   for (const row of sentLogRows ?? []) {
     if (row.message_type === "overdue") {
       if (!lastOverdueSentByCustomer.has(row.celcash_customer_id)) {
         lastOverdueSentByCustomer.set(row.celcash_customer_id, { sentAt: row.sent_at, dueDate: row.next_due_date_at_send });
       }
+      const debtKey = `${row.celcash_customer_id}::${row.next_due_date_at_send}`;
+      overdueSentCountByDebt.set(debtKey, (overdueSentCountByDebt.get(debtKey) ?? 0) + 1);
     } else if (row.message_type === "due_today") {
       dueTodayAlreadySent.add(`${row.celcash_customer_id}::${row.next_due_date_at_send}`);
     } else if (row.message_type === "owner_alert") {
@@ -230,6 +236,11 @@ async function processTenant(
         const daysSinceLastSent = daysSince(lastSent.sentAt.slice(0, 10));
         if (daysSinceLastSent === null || daysSinceLastSent < config.repeat_every_days) { skipped++; continue; }
       }
+      // Limite máximo de cobranças por dívida (padrão: 5) — depois disso,
+      // para de insistir automaticamente nessa mesma dívida específica.
+      const debtKey = `${sub.celcash_customer_id}::${sub.next_due_date}`;
+      const sentCount = overdueSentCountByDebt.get(debtKey) ?? 0;
+      if (sentCount >= config.max_overdue_messages) { skipped++; continue; }
       if (alreadyQueued.has(`${sub.celcash_customer_id}::overdue::${sub.next_due_date}`)) { skipped++; continue; }
 
       const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(sub.phone_e164, t.number));
@@ -239,7 +250,11 @@ async function processTenant(
         continue;
       }
 
-      const message = renderMessage(config.message_template, sub);
+      // Cliente sem cartão cadastrado recebe uma mensagem própria, que
+      // pede pra atualizar o cartão em vez de "regularizar" genericamente
+      // — pedido do usuário, 19/09.
+      const template = sub.no_card_on_file ? config.no_card_message_template : config.message_template;
+      const message = renderMessage(template, sub);
       await enqueueOne(supabase, tenant, sub, message, "overdue", nextScheduledAt());
       queued++;
     }

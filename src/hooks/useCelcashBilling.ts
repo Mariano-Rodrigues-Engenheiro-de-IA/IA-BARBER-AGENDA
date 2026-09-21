@@ -27,6 +27,8 @@ export type CelcashBillingConfig = {
   owner_alert_days: number;
   owner_alert_phone_e164: string | null;
   owner_alert_message_template: string;
+  max_overdue_messages: number;
+  no_card_message_template: string;
 };
 
 const DEFAULT_MESSAGE =
@@ -35,6 +37,8 @@ const DEFAULT_DUE_TODAY_MESSAGE =
   "Oi {nome}! Passando pra lembrar que sua assinatura vence hoje. Qualquer coisa, estamos por aqui 😊";
 const DEFAULT_OWNER_ALERT_MESSAGE =
   "Atenção: o cliente {nome} está com {dias_atraso} dias de atraso na assinatura (valor: {valor}). Pode ser interessante entrar em contato diretamente.";
+const DEFAULT_NO_CARD_MESSAGE =
+  "Oi {nome}! Vimos que sua assinatura está em atraso e não identificamos um cartão cadastrado. Pode atualizar seu cartão pra regularizar? Qualquer dúvida, estamos por aqui 😊";
 
 /** Configuração + lista de inadimplentes + histórico de disparo, para a
  * seção "Cobrança automática" (Integrações, só quando celcash_enabled). */
@@ -70,6 +74,8 @@ export function useCelcashBilling(tenantId: string | undefined) {
           owner_alert_days: 60,
           owner_alert_phone_e164: null,
           owner_alert_message_template: DEFAULT_OWNER_ALERT_MESSAGE,
+          max_overdue_messages: 5,
+          no_card_message_template: DEFAULT_NO_CARD_MESSAGE,
         }
       );
     },
