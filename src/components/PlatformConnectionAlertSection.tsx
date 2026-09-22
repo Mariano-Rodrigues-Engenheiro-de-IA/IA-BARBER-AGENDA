@@ -41,6 +41,35 @@ export function PlatformConnectionAlertSection() {
       </div>
 
       <div className="p-5 space-y-4">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          Esse aviso precisa de uma instância de WhatsApp dedicada, com um
+          número próprio conectado — crie uma instância nova na UAZAPI, conecte
+          um WhatsApp nela (escaneando o QR code lá mesmo), e cole a URL e o
+          Token dela abaixo.
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>URL da instância</Label>
+            <Input
+              type="text"
+              placeholder="https://..."
+              value={form.instance_url ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, instance_url: e.target.value || null })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Token da instância</Label>
+            <Input
+              type="password"
+              value={form.instance_token ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, instance_token: e.target.value || null })
+              }
+            />
+          </div>
+        </div>
         <div className="space-y-2">
           <Label>Seu número (com DDI, ex: 5521999999999)</Label>
           <Input
@@ -90,6 +119,8 @@ export function PlatformConnectionAlertSection() {
               owner_phone_e164: form.owner_phone_e164,
               connected_message_template: form.connected_message_template,
               disconnected_message_template: form.disconnected_message_template,
+              instance_url: form.instance_url,
+              instance_token: form.instance_token,
             });
             setSaving(false);
           }}

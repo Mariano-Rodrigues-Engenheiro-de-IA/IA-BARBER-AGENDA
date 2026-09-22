@@ -7,6 +7,8 @@ export type PlatformConnectionAlertConfig = {
   owner_phone_e164: string | null;
   connected_message_template: string;
   disconnected_message_template: string;
+  instance_url: string | null;
+  instance_token: string | null;
 };
 
 const DEFAULT_CONNECTED_MESSAGE =
@@ -26,7 +28,7 @@ export function usePlatformConnectionAlert() {
       const { data, error } = await supabase
         .from("platform_connection_alert_config")
         .select(
-          "active, owner_phone_e164, connected_message_template, disconnected_message_template",
+          "active, owner_phone_e164, connected_message_template, disconnected_message_template, instance_url, instance_token",
         )
         .eq("id", true)
         .maybeSingle();
@@ -37,6 +39,8 @@ export function usePlatformConnectionAlert() {
           owner_phone_e164: null,
           connected_message_template: DEFAULT_CONNECTED_MESSAGE,
           disconnected_message_template: DEFAULT_DISCONNECTED_MESSAGE,
+          instance_url: null,
+          instance_token: null,
         }
       );
     },

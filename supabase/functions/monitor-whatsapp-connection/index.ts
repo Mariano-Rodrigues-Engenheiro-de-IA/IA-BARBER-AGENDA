@@ -8,10 +8,15 @@
 // ⚠️ Desafio real considerado: se o WhatsApp de um cliente acabou de
 // CAIR, tentar mandar o aviso PELA INSTÂNCIA DAQUELE MESMO cliente
 // pode falhar (círculo vicioso). Por isso o aviso é SEMPRE mandado
-// pela instância CENTRAL (UAZAPI_URL/UAZAPI_TOKEN das variáveis de
-// ambiente), nunca pela instância do cliente que mudou de status —
-// resolve o problema de raiz, já que o número do Mariano não depende
-// de nenhum cliente específico estar de pé.
+// por uma instância DEDICADA (instance_url/instance_token,
+// configurados pelo usuário no próprio painel — Configurações >
+// Lembrete de conexão), nunca pela instância do cliente que mudou de
+// status — resolve o problema de raiz, já que o número que manda os
+// avisos não depende de nenhum cliente específico estar de pé.
+// ⚠️ Corrigido (22/09): antes usava UAZAPI_URL/UAZAPI_TOKEN das
+// variáveis de ambiente — um fallback genérico já compartilhado com
+// outros propósitos no sistema, sem garantia de qual número real
+// estava por trás. Agora exige uma instância própria e explícita.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
@@ -71,7 +76,7 @@ Deno.serve(async (req) => {
     const { data: platformConfig, error: cfgErr } = await supabase
       .from("platform_connection_alert_config")
       .select(
-        "active, owner_phone_e164, connected_message_template, disconnected_message_template",
+        "active, owner_phone_e164, connected_message_template, disconnected_message_template, instance_url, instance_token",
       )
       .eq("id", true)
       .maybeSingle();
@@ -93,13 +98,18 @@ Deno.serve(async (req) => {
       );
     }
 
-    const centralUazapiUrl = Deno.env.get("UAZAPI_URL");
-    const centralUazapiToken = Deno.env.get("UAZAPI_TOKEN");
+    // Instância dedicada configurada pelo próprio usuário no painel —
+    // não depende mais de UAZAPI_URL/UAZAPI_TOKEN (variável de ambiente
+    // genérica, compartilhada com outros propósitos no sistema, sem
+    // garantia de qual número real estava por trás).
+    const centralUazapiUrl = platformConfig.instance_url;
+    const centralUazapiToken = platformConfig.instance_token;
     if (!centralUazapiUrl || !centralUazapiToken) {
       return new Response(
         JSON.stringify({
           ok: false,
-          error: "instância central (UAZAPI_URL/UAZAPI_TOKEN) não configurada",
+          error:
+            "Configure a URL e o Token da instância dedicada no painel (Configurações > Lembrete de conexão) antes de ativar.",
         }),
         {
           status: 500,
