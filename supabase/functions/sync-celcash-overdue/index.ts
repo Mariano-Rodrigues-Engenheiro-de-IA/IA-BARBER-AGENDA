@@ -204,9 +204,18 @@ interface CelCashTransaction {
   payday?: string;
   status?: string;
   value?: number | string;
+  payedOutsideGalaxPay?: boolean;
 }
 
 function isOpenTransaction(transaction: CelCashTransaction): boolean {
+  // ⚠️ Corrigido (22/09), bug real reportado pelo usuário: cliente que
+  // pagou por fora (PIX direto pro dono, por exemplo) e teve isso
+  // marcado no painel do CelCash como "pago fora do GalaxPay" continuava
+  // sendo cobrado — o status FORMAL da transação (ex: "notSend",
+  // "denied") nunca muda sozinho quando o pagamento é registrado assim,
+  // só esse campo específico é atualizado. A lógica antiga só olhava
+  // status, nunca esse campo, então tratava a dívida como sempre aberta.
+  if (transaction.payedOutsideGalaxPay) return false;
   const status = String(transaction.status ?? "").toLowerCase();
   // Estados liquidados/cancelados não representam pagamento em aberto. Os
   // demais são preservados porque a CelCash possui estados de falha
