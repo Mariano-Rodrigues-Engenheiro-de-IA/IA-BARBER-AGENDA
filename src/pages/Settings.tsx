@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "sonner";
+import { PlatformConnectionAlertSection } from "@/components/PlatformConnectionAlertSection";
 
 export default function SettingsPage() {
   const { data: tenants, isLoading } = useTenants();
@@ -34,9 +35,12 @@ export default function SettingsPage() {
         <div className="p-5 border-b border-border flex items-center gap-2">
           <Archive className="w-4 h-4 text-muted-foreground" />
           <div>
-            <h3 className="font-semibold text-foreground">Empresas arquivadas</h3>
+            <h3 className="font-semibold text-foreground">
+              Empresas arquivadas
+            </h3>
             <p className="text-sm text-muted-foreground">
-              Empresas arquivadas ficam fora da lista principal. Desarquive para voltar a vê-las.
+              Empresas arquivadas ficam fora da lista principal. Desarquive para
+              voltar a vê-las.
             </p>
           </div>
         </div>
@@ -58,12 +62,18 @@ export default function SettingsPage() {
         ) : (
           <div className="divide-y divide-border">
             {archived.map((tenant) => (
-              <div key={tenant.id} className="p-4 flex items-center justify-between gap-3 flex-wrap">
+              <div
+                key={tenant.id}
+                className="p-4 flex items-center justify-between gap-3 flex-wrap"
+              >
                 <div>
                   <p className="font-medium text-foreground">{tenant.name}</p>
                   {(tenant as any).archived_at && (
                     <p className="text-xs text-muted-foreground">
-                      Arquivada em {new Date((tenant as any).archived_at).toLocaleDateString("pt-BR")}
+                      Arquivada em{" "}
+                      {new Date((tenant as any).archived_at).toLocaleDateString(
+                        "pt-BR",
+                      )}
                     </p>
                   )}
                 </div>
@@ -84,9 +94,7 @@ export default function SettingsPage() {
         )}
       </div>
 
-      <div className="glass-card p-8 text-center text-muted-foreground">
-        <p>Em breve: configurações de integração WhatsApp, gestão de administradores e mais.</p>
-      </div>
+      <PlatformConnectionAlertSection />
     </div>
   );
 }
