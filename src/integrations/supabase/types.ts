@@ -294,6 +294,7 @@ export type Database = {
           owner_alert_phone_e164: string | null
           pace_seconds_max: number
           pace_seconds_min: number
+          queue_paused: boolean
           repeat_every_days: number | null
           tenant_id: string
           updated_at: string
@@ -316,6 +317,7 @@ export type Database = {
           owner_alert_phone_e164?: string | null
           pace_seconds_max?: number
           pace_seconds_min?: number
+          queue_paused?: boolean
           repeat_every_days?: number | null
           tenant_id: string
           updated_at?: string
@@ -338,6 +340,7 @@ export type Database = {
           owner_alert_phone_e164?: string | null
           pace_seconds_max?: number
           pace_seconds_min?: number
+          queue_paused?: boolean
           repeat_every_days?: number | null
           tenant_id?: string
           updated_at?: string
