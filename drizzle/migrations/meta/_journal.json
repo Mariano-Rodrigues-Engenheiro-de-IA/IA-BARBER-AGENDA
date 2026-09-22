@@ -71,6 +71,13 @@
       "when": 1790080604001,
       "tag": "0009_fix_celcash_cron_placeholder_urls",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790083899108,
+      "tag": "0010_connection_alert_cron",
+      "breakpoints": true
     }
   ]
 }
