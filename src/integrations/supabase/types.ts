@@ -1047,6 +1047,39 @@ export type Database = {
         }
         Relationships: []
       }
+      platform_connection_alert_config: {
+        Row: {
+          active: boolean
+          connected_message_template: string
+          disconnected_message_template: string
+          id: boolean
+          instance_token: string | null
+          instance_url: string | null
+          owner_phone_e164: string | null
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          connected_message_template?: string
+          disconnected_message_template?: string
+          id?: boolean
+          instance_token?: string | null
+          instance_url?: string | null
+          owner_phone_e164?: string | null
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          connected_message_template?: string
+          disconnected_message_template?: string
+          id?: boolean
+          instance_token?: string | null
+          instance_url?: string | null
+          owner_phone_e164?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       provider_prompts: {
         Row: {
           content: string
@@ -1246,6 +1279,7 @@ export type Database = {
           frizzar_token: string | null
           id: string
           kanban_columns: Json | null
+          last_known_connection_status: string | null
           logo_url: string | null
           name: string
           onebeleza_celular: string | null
@@ -1300,6 +1334,7 @@ export type Database = {
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
+          last_known_connection_status?: string | null
           logo_url?: string | null
           name: string
           onebeleza_celular?: string | null
@@ -1354,6 +1389,7 @@ export type Database = {
           frizzar_token?: string | null
           id?: string
           kanban_columns?: Json | null
+          last_known_connection_status?: string | null
           logo_url?: string | null
           name?: string
           onebeleza_celular?: string | null
