@@ -5,13 +5,23 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Save, Send, RefreshCw } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Save, Send, RefreshCw, Pause, Play } from "lucide-react";
 import { useCelcashBilling } from "@/hooks/useCelcashBilling";
 
 function formatCents(cents: number | null | undefined) {
   if (!cents) return "—";
-  return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  return (cents / 100).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
 function formatDate(dateStr: string | null) {
@@ -43,10 +53,27 @@ function daysOverdueLabel(dateStr: string | null) {
 /** Seção "Cobrança automática" — só aparece se o tenant tiver celcash_enabled.
  * 2 disparos independentes (vence hoje / atrasados), cada um com seu
  * próprio liga/desliga e mensagem, + lista de inadimplentes com histórico. */
-export function CelcashBillingSection({ tenantId, editable }: { tenantId: string; editable: boolean }) {
-  const { config, overdueList, dispatchHistory, saveConfig, dispatchNow, syncNow, error } = useCelcashBilling(tenantId);
+export function CelcashBillingSection({
+  tenantId,
+  editable,
+}: {
+  tenantId: string;
+  editable: boolean;
+}) {
+  const {
+    config,
+    overdueList,
+    dispatchHistory,
+    queueProgress,
+    toggleQueuePause,
+    saveConfig,
+    dispatchNow,
+    syncNow,
+    error,
+  } = useCelcashBilling(tenantId);
   const [form, setForm] = useState(config);
   const [dispatching, setDispatching] = useState(false);
+  const [togglingPause, setTogglingPause] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
@@ -56,7 +83,9 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
   if (error) {
     return (
       <div className="glass-card p-5 space-y-2 border-destructive/40">
-        <h3 className="font-semibold text-destructive">Cobrança automática de inadimplentes</h3>
+        <h3 className="font-semibold text-destructive">
+          Cobrança automática de inadimplentes
+        </h3>
         <p className="text-sm text-muted-foreground">
           Não consegui carregar essa seção: {error.message}
         </p>
@@ -72,15 +101,20 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
       <div className="glass-card p-5 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold text-foreground">Lembrete de vencimento no dia</h3>
+            <h3 className="font-semibold text-foreground">
+              Lembrete de vencimento no dia
+            </h3>
             <p className="text-sm text-muted-foreground">
-              Manda uma mensagem só pra quem vence exatamente hoje, antes de virar atraso.
+              Manda uma mensagem só pra quem vence exatamente hoje, antes de
+              virar atraso.
             </p>
           </div>
           <Switch
             checked={!!form.due_today_active}
             disabled={!editable}
-            onCheckedChange={(checked) => setForm({ ...form, due_today_active: checked })}
+            onCheckedChange={(checked) =>
+              setForm({ ...form, due_today_active: checked })
+            }
           />
         </div>
         <div className="space-y-2">
@@ -89,9 +123,14 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             disabled={!editable}
             rows={3}
             value={form.due_today_message_template}
-            onChange={(e) => setForm({ ...form, due_today_message_template: e.target.value })}
+            onChange={(e) =>
+              setForm({ ...form, due_today_message_template: e.target.value })
+            }
           />
-          <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
+          <p className="text-xs text-muted-foreground">
+            Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o
+            primeiro nome, a data de vencimento e o valor em atraso.
+          </p>
         </div>
         <div className="space-y-2">
           <Label>Mensagem (sem cartão cadastrado)</Label>
@@ -99,9 +138,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
             disabled={!editable}
             rows={3}
             value={form.due_today_no_card_message_template}
-            onChange={(e) => setForm({ ...form, due_today_no_card_message_template: e.target.value })}
+            onChange={(e) =>
+              setForm({
+                ...form,
+                due_today_no_card_message_template: e.target.value,
+              })
+            }
           />
-          <p className="text-xs text-muted-foreground">Usada no lugar da mensagem acima quando o cliente não tem cartão cadastrado.</p>
+          <p className="text-xs text-muted-foreground">
+            Usada no lugar da mensagem acima quando o cliente não tem cartão
+            cadastrado.
+          </p>
         </div>
       </div>
 
@@ -109,9 +156,13 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
       <div className="glass-card p-5 space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="font-semibold text-foreground">Cobrança de atrasados</h3>
+            <h3 className="font-semibold text-foreground">
+              Cobrança de atrasados
+            </h3>
             <p className="text-sm text-muted-foreground">
-              Manda uma mensagem automática pra quem já está com a assinatura em atraso (exceto quem vence hoje, esses recebem só o lembrete acima).
+              Manda uma mensagem automática pra quem já está com a assinatura em
+              atraso (exceto quem vence hoje, esses recebem só o lembrete
+              acima).
             </p>
           </div>
           <Switch
@@ -128,9 +179,14 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               disabled={!editable}
               rows={3}
               value={form.message_template}
-              onChange={(e) => setForm({ ...form, message_template: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, message_template: e.target.value })
+              }
             />
-            <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o primeiro nome, a data de vencimento e o valor em atraso.</p>
+            <p className="text-xs text-muted-foreground">
+              Use {"{nome}"}, {"{vencimento}"} e {"{valor}"} para incluir o
+              primeiro nome, a data de vencimento e o valor em atraso.
+            </p>
           </div>
           <div className="space-y-2 md:col-span-2">
             <Label>Mensagem (sem cartão cadastrado)</Label>
@@ -138,9 +194,14 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               disabled={!editable}
               rows={3}
               value={form.no_card_message_template}
-              onChange={(e) => setForm({ ...form, no_card_message_template: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, no_card_message_template: e.target.value })
+              }
             />
-            <p className="text-xs text-muted-foreground">Usada no lugar da mensagem acima quando o cliente não tem cartão cadastrado.</p>
+            <p className="text-xs text-muted-foreground">
+              Usada no lugar da mensagem acima quando o cliente não tem cartão
+              cadastrado.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Disparar quantos dias depois do vencimento</Label>
@@ -149,30 +210,50 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               min={0}
               disabled={!editable}
               value={form.days_after_due}
-              onChange={(e) => setForm({ ...form, days_after_due: Number(e.target.value) || 0 })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  days_after_due: Number(e.target.value) || 0,
+                })
+              }
             />
           </div>
           <div className="space-y-2">
-            <Label>Repetir a cada quantos dias (deixe em branco pra mandar só 1 vez)</Label>
+            <Label>
+              Repetir a cada quantos dias (deixe em branco pra mandar só 1 vez)
+            </Label>
             <Input
               type="number"
               min={1}
               disabled={!editable}
               value={form.repeat_every_days ?? ""}
               onChange={(e) =>
-                setForm({ ...form, repeat_every_days: e.target.value ? Number(e.target.value) : null })
+                setForm({
+                  ...form,
+                  repeat_every_days: e.target.value
+                    ? Number(e.target.value)
+                    : null,
+                })
               }
             />
           </div>
           <div className="space-y-2 md:col-span-2">
-            <Label>Cobrar inadimplentes dos últimos quantos dias (deixe em branco pra não ter limite)</Label>
+            <Label>
+              Cobrar inadimplentes dos últimos quantos dias (deixe em branco pra
+              não ter limite)
+            </Label>
             <Input
               type="number"
               min={1}
               disabled={!editable}
               value={form.overdue_max_days ?? ""}
               onChange={(e) =>
-                setForm({ ...form, overdue_max_days: e.target.value ? Number(e.target.value) : null })
+                setForm({
+                  ...form,
+                  overdue_max_days: e.target.value
+                    ? Number(e.target.value)
+                    : null,
+                })
               }
             />
           </div>
@@ -183,9 +264,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               min={1}
               disabled={!editable}
               value={form.max_overdue_messages}
-              onChange={(e) => setForm({ ...form, max_overdue_messages: Number(e.target.value) || 1 })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  max_overdue_messages: Number(e.target.value) || 1,
+                })
+              }
             />
-            <p className="text-xs text-muted-foreground">Depois desse número de mensagens pra mesma dívida, para de insistir automaticamente.</p>
+            <p className="text-xs text-muted-foreground">
+              Depois desse número de mensagens pra mesma dívida, para de
+              insistir automaticamente.
+            </p>
           </div>
         </div>
       </div>
@@ -196,13 +285,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <div>
             <h3 className="font-semibold text-foreground">Aviso ao dono</h3>
             <p className="text-sm text-muted-foreground">
-              Manda uma mensagem pra você (não pro cliente) quando um assinante bate o limite de dias em atraso configurado abaixo. Manda só 1 vez por dívida.
+              Manda uma mensagem pra você (não pro cliente) quando um assinante
+              bate o limite de dias em atraso configurado abaixo. Manda só 1 vez
+              por dívida.
             </p>
           </div>
           <Switch
             checked={!!form.owner_alert_active}
             disabled={!editable}
-            onCheckedChange={(checked) => setForm({ ...form, owner_alert_active: checked })}
+            onCheckedChange={(checked) =>
+              setForm({ ...form, owner_alert_active: checked })
+            }
           />
         </div>
 
@@ -213,9 +306,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               disabled={!editable}
               rows={3}
               value={form.owner_alert_message_template}
-              onChange={(e) => setForm({ ...form, owner_alert_message_template: e.target.value })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  owner_alert_message_template: e.target.value,
+                })
+              }
             />
-            <p className="text-xs text-muted-foreground">Use {"{nome}"}, {"{dias_atraso}"} e {"{valor}"} para incluir o primeiro nome do cliente, os dias em atraso e o valor devido.</p>
+            <p className="text-xs text-muted-foreground">
+              Use {"{nome}"}, {"{dias_atraso}"} e {"{valor}"} para incluir o
+              primeiro nome do cliente, os dias em atraso e o valor devido.
+            </p>
           </div>
           <div className="space-y-2">
             <Label>Avisar a partir de quantos dias em atraso</Label>
@@ -224,7 +325,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               min={1}
               disabled={!editable}
               value={form.owner_alert_days}
-              onChange={(e) => setForm({ ...form, owner_alert_days: Number(e.target.value) || 0 })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  owner_alert_days: Number(e.target.value) || 0,
+                })
+              }
             />
           </div>
           <div className="space-y-2">
@@ -233,7 +339,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               type="text"
               disabled={!editable}
               value={form.owner_alert_phone_e164 ?? ""}
-              onChange={(e) => setForm({ ...form, owner_alert_phone_e164: e.target.value || null })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  owner_alert_phone_e164: e.target.value || null,
+                })
+              }
             />
           </div>
         </div>
@@ -244,7 +355,9 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
         <div>
           <h3 className="font-semibold text-foreground">Ritmo de envio</h3>
           <p className="text-sm text-muted-foreground">
-            Intervalo entre uma mensagem e outra (sorteado dentro da faixa abaixo pra cada envio), pra não mandar tudo de uma vez e reduzir o risco de bloqueio no WhatsApp.
+            Intervalo entre uma mensagem e outra (sorteado dentro da faixa
+            abaixo pra cada envio), pra não mandar tudo de uma vez e reduzir o
+            risco de bloqueio no WhatsApp.
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -255,7 +368,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               min={10}
               disabled={!editable}
               value={form.pace_seconds_min}
-              onChange={(e) => setForm({ ...form, pace_seconds_min: Number(e.target.value) || 10 })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  pace_seconds_min: Number(e.target.value) || 10,
+                })
+              }
             />
           </div>
           <div className="space-y-2">
@@ -265,7 +383,12 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
               min={10}
               disabled={!editable}
               value={form.pace_seconds_max}
-              onChange={(e) => setForm({ ...form, pace_seconds_max: Number(e.target.value) || 10 })}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  pace_seconds_max: Number(e.target.value) || 10,
+                })
+              }
             />
           </div>
         </div>
@@ -282,7 +405,8 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 repeat_every_days: form.repeat_every_days,
                 due_today_active: form.due_today_active,
                 due_today_message_template: form.due_today_message_template,
-                due_today_no_card_message_template: form.due_today_no_card_message_template,
+                due_today_no_card_message_template:
+                  form.due_today_no_card_message_template,
                 overdue_max_days: form.overdue_max_days,
                 owner_alert_active: form.owner_alert_active,
                 owner_alert_days: form.owner_alert_days,
@@ -301,8 +425,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
           <Button
             type="button"
             variant="outline"
-            disabled={(!form.active && !form.due_today_active && !form.owner_alert_active) || dispatching}
-            title={!form.active && !form.due_today_active && !form.owner_alert_active ? "Ative pelo menos um dos disparos e salve antes" : undefined}
+            disabled={
+              (!form.active &&
+                !form.due_today_active &&
+                !form.owner_alert_active) ||
+              dispatching
+            }
+            title={
+              !form.active && !form.due_today_active && !form.owner_alert_active
+                ? "Ative pelo menos um dos disparos e salve antes"
+                : undefined
+            }
             onClick={async () => {
               setDispatching(true);
               await dispatchNow();
@@ -315,9 +448,48 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
         </div>
       )}
 
+      {(queueProgress.pending > 0 || config?.queue_paused) && (
+        <div className="glass-card p-4 flex items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">
+              Andamento do disparo{config?.queue_paused ? " (pausado)" : ""}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {queueProgress.sentToday} enviada(s) hoje, {queueProgress.pending}{" "}
+              na fila esperando a vez.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant={config?.queue_paused ? "default" : "outline"}
+            size="sm"
+            disabled={togglingPause}
+            onClick={async () => {
+              setTogglingPause(true);
+              await toggleQueuePause(!config?.queue_paused);
+              setTogglingPause(false);
+            }}
+          >
+            {config?.queue_paused ? (
+              <>
+                <Play className="w-4 h-4 mr-2" />
+                Retomar
+              </>
+            ) : (
+              <>
+                <Pause className="w-4 h-4 mr-2" />
+                Pausar
+              </>
+            )}
+          </Button>
+        </div>
+      )}
+
       <div className="glass-card p-5 space-y-2">
         <div className="flex items-center justify-between">
-          <h4 className="font-medium text-sm text-foreground">Inadimplentes ({overdueList.length})</h4>
+          <h4 className="font-medium text-sm text-foreground">
+            Inadimplentes ({overdueList.length})
+          </h4>
           {editable && (
             <Button
               type="button"
@@ -330,13 +502,17 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                 setSyncing(false);
               }}
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`w-4 h-4 mr-2 ${syncing ? "animate-spin" : ""}`}
+              />
               {syncing ? "Sincronizando..." : "Sincronizar agora"}
             </Button>
           )}
         </div>
         {overdueList.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhum inadimplente encontrado no momento.</p>
+          <p className="text-sm text-muted-foreground">
+            Nenhum inadimplente encontrado no momento.
+          </p>
         ) : (
           <div className="overflow-x-auto rounded-xl border">
             <Table>
@@ -360,11 +536,20 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                       <TableCell className="font-medium text-foreground">
                         {sub.name || "—"}
                         {sub.no_card_on_file && (
-                          <Badge variant="outline" className="ml-2 border-blue-300 bg-blue-50 text-blue-700">Sem cartão</Badge>
+                          <Badge
+                            variant="outline"
+                            className="ml-2 border-blue-300 bg-blue-50 text-blue-700"
+                          >
+                            Sem cartão
+                          </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-foreground">{sub.plan_name || "—"}</TableCell>
-                      <TableCell className="text-foreground">{formatCents(sub.overdue_amount_cents)}</TableCell>
+                      <TableCell className="text-foreground">
+                        {sub.plan_name || "—"}
+                      </TableCell>
+                      <TableCell className="text-foreground">
+                        {formatCents(sub.overdue_amount_cents)}
+                      </TableCell>
                       <TableCell className="text-foreground">
                         {dueToday ? (
                           <Badge variant="default">Hoje</Badge>
@@ -379,8 +564,14 @@ export function CelcashBillingSection({ tenantId, editable }: { tenantId: string
                           </>
                         )}
                       </TableCell>
-                      <TableCell className="text-foreground">{history ? formatDate(history.lastSentAt.slice(0, 10)) : "—"}</TableCell>
-                      <TableCell className="text-foreground">{history?.count ?? 0}</TableCell>
+                      <TableCell className="text-foreground">
+                        {history
+                          ? formatDate(history.lastSentAt.slice(0, 10))
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-foreground">
+                        {history?.count ?? 0}
+                      </TableCell>
                     </TableRow>
                   );
                 })}

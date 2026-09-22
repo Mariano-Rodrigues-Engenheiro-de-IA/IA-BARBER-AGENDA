@@ -32,6 +32,7 @@ export type CelcashBillingConfig = {
   no_card_message_template: string;
   pace_seconds_min: number;
   pace_seconds_max: number;
+  queue_paused: boolean;
 };
 
 const DEFAULT_MESSAGE =
@@ -50,7 +51,11 @@ const DEFAULT_NO_CARD_MESSAGE =
 export function useCelcashBilling(tenantId: string | undefined) {
   const queryClient = useQueryClient();
 
-  const { data: config, isLoading: loadingConfig, error: configError } = useQuery({
+  const {
+    data: config,
+    isLoading: loadingConfig,
+    error: configError,
+  } = useQuery({
     queryKey: ["celcash-billing-config", tenantId],
     enabled: !!tenantId,
     queryFn: async (): Promise<CelcashBillingConfig> => {
@@ -84,19 +89,26 @@ export function useCelcashBilling(tenantId: string | undefined) {
           no_card_message_template: DEFAULT_NO_CARD_MESSAGE,
           pace_seconds_min: 60,
           pace_seconds_max: 120,
+          queue_paused: false,
         }
       );
     },
   });
 
-  const { data: overdueList, isLoading: loadingOverdue, error: overdueError } = useQuery({
+  const {
+    data: overdueList,
+    isLoading: loadingOverdue,
+    error: overdueError,
+  } = useQuery({
     queryKey: ["celcash-overdue-subscribers", tenantId],
     enabled: !!tenantId,
     staleTime: 60 * 1000,
     queryFn: async (): Promise<CelcashOverdueSubscriber[]> => {
       const { data, error } = await supabase
         .from("celcash_overdue_subscribers")
-        .select("id, celcash_customer_id, name, phone_e164, plan_name, overdue_amount_cents, next_due_date, no_card_on_file")
+        .select(
+          "id, celcash_customer_id, name, phone_e164, plan_name, overdue_amount_cents, next_due_date, no_card_on_file",
+        )
         .eq("tenant_id", tenantId!)
         .order("next_due_date", { ascending: true });
       if (error) throw error;
@@ -120,23 +132,61 @@ export function useCelcashBilling(tenantId: string | undefined) {
     },
   });
 
+  /** Andamento do disparo em curso — quantas já foram enviadas hoje,
+   * quantas ainda estão na fila esperando a vez. Atualiza sozinho a
+   * cada 15s enquanto a tela estiver aberta, pra dar a sensação de
+   * "ao vivo" sem precisar recarregar a página. */
+  const { data: queueProgress } = useQuery({
+    queryKey: ["celcash-billing-queue-progress", tenantId],
+    enabled: !!tenantId,
+    refetchInterval: 15 * 1000,
+    queryFn: async (): Promise<{ pending: number; sentToday: number }> => {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const [pendingRes, sentRes] = await Promise.all([
+        supabase
+          .from("celcash_billing_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("tenant_id", tenantId!)
+          .eq("status", "pending"),
+        supabase
+          .from("celcash_billing_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("tenant_id", tenantId!)
+          .eq("status", "sent")
+          .gte("scheduled_at", todayStart.toISOString()),
+      ]);
+      return { pending: pendingRes.count ?? 0, sentToday: sentRes.count ?? 0 };
+    },
+  });
+
   /** Por cliente: data do último disparo e quantos já recebeu no total.
    * Ignora blocos de continuação (mensagem dividida em vários WhatsApp
    * separados) — conta cobranças reais, não blocos de texto. */
-  const dispatchHistory = new Map<string, { lastSentAt: string; count: number }>();
+  const dispatchHistory = new Map<
+    string,
+    { lastSentAt: string; count: number }
+  >();
   for (const row of sentLog ?? []) {
     if (row.is_continuation) continue;
     const existing = dispatchHistory.get(row.celcash_customer_id);
     if (existing) {
       existing.count += 1;
     } else {
-      dispatchHistory.set(row.celcash_customer_id, { lastSentAt: row.sent_at, count: 1 });
+      dispatchHistory.set(row.celcash_customer_id, {
+        lastSentAt: row.sent_at,
+        count: 1,
+      });
     }
   }
 
   const saveConfig = async (patch: Partial<CelcashBillingConfig>) => {
     if (!tenantId) return false;
-    const next = { ...config, ...patch, tenant_id: tenantId } as CelcashBillingConfig;
+    const next = {
+      ...config,
+      ...patch,
+      tenant_id: tenantId,
+    } as CelcashBillingConfig;
     const { error } = await supabase
       .from("celcash_billing_config")
       .upsert(next, { onConflict: "tenant_id" });
@@ -145,15 +195,24 @@ export function useCelcashBilling(tenantId: string | undefined) {
       return false;
     }
     toast.success("Salvo");
-    queryClient.invalidateQueries({ queryKey: ["celcash-billing-config", tenantId] });
+    queryClient.invalidateQueries({
+      queryKey: ["celcash-billing-config", tenantId],
+    });
     return true;
   };
 
-  const dispatchNow = async (): Promise<{ sent: number; skipped: number; errors: number } | null> => {
+  const dispatchNow = async (): Promise<{
+    sent: number;
+    skipped: number;
+    errors: number;
+  } | null> => {
     if (!tenantId) return null;
-    const { data, error } = await supabase.functions.invoke("evaluate-celcash-billing", {
-      body: { tenant_id: tenantId },
-    });
+    const { data, error } = await supabase.functions.invoke(
+      "evaluate-celcash-billing",
+      {
+        body: { tenant_id: tenantId },
+      },
+    );
     if (error) {
       toast.error(error.message);
       return null;
@@ -164,16 +223,23 @@ export function useCelcashBilling(tenantId: string | undefined) {
     }
     const paceMin = config?.pace_seconds_min ?? 60;
     const paceMax = config?.pace_seconds_max ?? 120;
-    toast.success(`${data.queued} mensagem(ns) na fila (envio espaçado, ${paceMin}-${paceMax}s entre cada), ${data.skipped} pulada(s).`);
-    queryClient.invalidateQueries({ queryKey: ["celcash-billing-sent-log", tenantId] });
+    toast.success(
+      `${data.queued} mensagem(ns) na fila (envio espaçado, ${paceMin}-${paceMax}s entre cada), ${data.skipped} pulada(s).`,
+    );
+    queryClient.invalidateQueries({
+      queryKey: ["celcash-billing-sent-log", tenantId],
+    });
     return data;
   };
 
   const syncNow = async (): Promise<boolean> => {
     if (!tenantId) return false;
-    const { data, error } = await supabase.functions.invoke("sync-celcash-overdue", {
-      body: { tenant_id: tenantId },
-    });
+    const { data, error } = await supabase.functions.invoke(
+      "sync-celcash-overdue",
+      {
+        body: { tenant_id: tenantId },
+      },
+    );
     if (error) {
       toast.error(error.message);
       return false;
@@ -187,15 +253,42 @@ export function useCelcashBilling(tenantId: string | undefined) {
     const diagNote = diag?.error
       ? ` (endpoint de transações falhou: ${diag.error})`
       : ` (${diag?.total ?? 0} transações extras consultadas)`;
-    toast.success(`Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).${diagNote}`);
+    toast.success(
+      `Sincronizado: ${result?.overdue_upserted ?? 0} inadimplente(s) encontrado(s).${diagNote}`,
+    );
     // Log destacado com o diagnóstico completo — abrir o Console (F12) pra
     // ver a amostra bruta do endpoint /transactions e confirmar os nomes
     // reais dos campos, sem precisar de mais uma rodada de perguntas.
-    console.log("%c=== DIAGNÓSTICO SINCRONIZAÇÃO CELCASH ===", "background: #222; color: #6fae97; font-size: 14px; padding: 4px;");
+    console.log(
+      "%c=== DIAGNÓSTICO SINCRONIZAÇÃO CELCASH ===",
+      "background: #222; color: #6fae97; font-size: 14px; padding: 4px;",
+    );
     console.log("Motivo da parada:", diag?.stoppedReason);
     console.log("Total de transações buscadas:", diag?.total);
-    console.log("Amostra bruta da 1ª página (copia isso e manda pra Carol):", diag?.lastRawSample);
-    queryClient.invalidateQueries({ queryKey: ["celcash-overdue-subscribers", tenantId] });
+    console.log(
+      "Amostra bruta da 1ª página (copia isso e manda pra Carol):",
+      diag?.lastRawSample,
+    );
+    queryClient.invalidateQueries({
+      queryKey: ["celcash-overdue-subscribers", tenantId],
+    });
+    return true;
+  };
+
+  const toggleQueuePause = async (paused: boolean): Promise<boolean> => {
+    if (!tenantId) return false;
+    const { error } = await supabase
+      .from("celcash_billing_config")
+      .update({ queue_paused: paused })
+      .eq("tenant_id", tenantId);
+    if (error) {
+      toast.error(error.message);
+      return false;
+    }
+    toast.success(paused ? "Disparo pausado" : "Disparo retomado");
+    queryClient.invalidateQueries({
+      queryKey: ["celcash-billing-config", tenantId],
+    });
     return true;
   };
 
@@ -205,6 +298,8 @@ export function useCelcashBilling(tenantId: string | undefined) {
     overdueList: overdueList ?? [],
     loadingOverdue,
     dispatchHistory,
+    queueProgress: queueProgress ?? { pending: 0, sentToday: 0 },
+    toggleQueuePause,
     saveConfig,
     dispatchNow,
     syncNow,

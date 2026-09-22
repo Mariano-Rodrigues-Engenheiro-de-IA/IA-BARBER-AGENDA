@@ -11,7 +11,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type" };
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
+};
 
 /** Compara dois telefones brasileiros tolerando o "9" extra do celular. */
 function tolerantPhoneMatch(a: string, b: string): boolean {
@@ -19,16 +23,18 @@ function tolerantPhoneMatch(a: string, b: string): boolean {
   const db = String(b ?? "").replace(/\D/g, "");
   if (!da || !db) return false;
   if (da === db) return true;
-  const strip9 = (v: string) => (v.length === 13 && v.startsWith("55") ? v.slice(0, 4) + v.slice(5) : v);
+  const strip9 = (v: string) =>
+    v.length === 13 && v.startsWith("55") ? v.slice(0, 4) + v.slice(5) : v;
   return strip9(da) === strip9(db);
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS")
+    return new Response("ok", { headers: corsHeaders });
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
   // Mesmo padrão de autenticação do modo cron de evaluate-celcash-billing:
@@ -46,17 +52,22 @@ Deno.serve(async (req) => {
     if (cronSecret && providedSecret === cronSecret) {
       authorized = true;
     } else {
-      const { data: internalToken } = await supabase.rpc("get_internal_cron_token");
-      authorized = typeof internalToken === "string" && providedSecret === internalToken;
+      const { data: internalToken } = await supabase.rpc(
+        "get_internal_cron_token",
+      );
+      authorized =
+        typeof internalToken === "string" && providedSecret === internalToken;
     }
   }
   if (!authorized) {
     return new Response(JSON.stringify({ ok: false, error: "unauthorized" }), {
-      status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 401,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 
-  let sent = 0, errors = 0;
+  let sent = 0,
+    errors = 0;
   const deadline = Date.now() + 50_000; // roda a cada 1min, nunca deve chegar perto disso
 
   try {
@@ -70,38 +81,72 @@ Deno.serve(async (req) => {
 
     if (qErr) {
       return new Response(JSON.stringify({ ok: false, error: qErr.message }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    if (!dueRows?.length) {
-      return new Response(JSON.stringify({ ok: true, sent: 0, errors: 0, note: "queue_empty" }), {
+        status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    if (!dueRows?.length) {
+      return new Response(
+        JSON.stringify({ ok: true, sent: 0, errors: 0, note: "queue_empty" }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
 
-    const { data: allTenantsRaw } = await supabase.from("tenants").select("id, name, whatsapp_number");
+    const { data: allTenantsRaw } = await supabase
+      .from("tenants")
+      .select("id, name, whatsapp_number");
     const instanceNumbers = (allTenantsRaw ?? [])
       .filter((t: any) => t.whatsapp_number)
       .map((t: any) => ({ name: t.name, number: String(t.whatsapp_number) }));
 
+    // Tenants com a fila pausada (botão "Pausar" no painel) — pula as
+    // mensagens deles silenciosamente, sem marcar erro; continuam
+    // "pending" esperando a próxima rodada, retomam sozinhas quando o
+    // usuário clicar em "Retomar".
+    const { data: pausedRows } = await supabase
+      .from("celcash_billing_config")
+      .select("tenant_id")
+      .eq("queue_paused", true);
+    const pausedTenantIds = new Set(
+      (pausedRows ?? []).map((r: any) => r.tenant_id),
+    );
+
+    let paused = 0;
     for (const row of dueRows) {
       if (Date.now() > deadline) break; // resto fica pendente, próxima rodada (1min depois) pega
+
+      if (pausedTenantIds.has(row.tenant_id)) {
+        paused++;
+        continue;
+      }
 
       const tenant = row.tenants;
       const uazapiUrl = tenant?.uazapi_url || Deno.env.get("UAZAPI_URL");
       const uazapiToken = tenant?.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
       if (!tenant || tenant.status !== "active" || !uazapiUrl || !uazapiToken) {
-        await supabase.from("celcash_billing_queue")
-          .update({ status: "error", error_message: "tenant inativo ou sem credenciais UAZAPI" })
+        await supabase
+          .from("celcash_billing_queue")
+          .update({
+            status: "error",
+            error_message: "tenant inativo ou sem credenciais UAZAPI",
+          })
           .eq("id", row.id);
         errors++;
         continue;
       }
 
-      const selfInstance = instanceNumbers.find((t) => tolerantPhoneMatch(row.phone_e164, t.number));
+      const selfInstance = instanceNumbers.find((t) =>
+        tolerantPhoneMatch(row.phone_e164, t.number),
+      );
       if (selfInstance) {
-        await supabase.from("celcash_billing_queue")
-          .update({ status: "error", error_message: `número da instância "${selfInstance.name}"` })
+        await supabase
+          .from("celcash_billing_queue")
+          .update({
+            status: "error",
+            error_message: `número da instância "${selfInstance.name}"`,
+          })
           .eq("id", row.id);
         errors++;
         continue;
@@ -111,13 +156,21 @@ Deno.serve(async (req) => {
         const phoneDigits = String(row.phone_e164).replace(/\D/g, "");
         const sendRes = await fetch(`${uazapiUrl}/send/text`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            token: uazapiToken,
+          },
           body: JSON.stringify({ number: phoneDigits, text: row.message_text }),
         });
         const sendData = await sendRes.json().catch(() => ({}));
         if (!sendRes.ok) {
-          await supabase.from("celcash_billing_queue")
-            .update({ status: "error", error_message: JSON.stringify(sendData).slice(0, 500) })
+          await supabase
+            .from("celcash_billing_queue")
+            .update({
+              status: "error",
+              error_message: JSON.stringify(sendData).slice(0, 500),
+            })
             .eq("id", row.id);
           errors++;
           continue;
@@ -139,25 +192,34 @@ Deno.serve(async (req) => {
           role: "assistant",
           content: row.message_text,
         });
-        await supabase.from("celcash_billing_queue")
+        await supabase
+          .from("celcash_billing_queue")
           .update({ status: "sent", sent_at: new Date().toISOString() })
           .eq("id", row.id);
         sent++;
       } catch (sendErr: any) {
-        await supabase.from("celcash_billing_queue")
-          .update({ status: "error", error_message: String(sendErr?.message ?? sendErr).slice(0, 500) })
+        await supabase
+          .from("celcash_billing_queue")
+          .update({
+            status: "error",
+            error_message: String(sendErr?.message ?? sendErr).slice(0, 500),
+          })
           .eq("id", row.id);
         errors++;
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, sent, errors }), {
+    return new Response(JSON.stringify({ ok: true, sent, errors, paused }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
     console.error("[CelCashBillingQueue] erro geral:", e);
-    return new Response(JSON.stringify({ ok: false, error: e.message || String(e) }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ ok: false, error: e.message || String(e) }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });
