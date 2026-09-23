@@ -1,7 +1,3 @@
-// v2 — forçando deploy: essa function existe no repositório há um tempo,
-// mas nunca apareceu ativa na lista de Edge Functions do Supabase (o CRM
-// recebe 404 "function not found" ao chamar) — nunca foi implantada de
-// verdade.
 // Ponte entre projetos: permite que o CRM-BARBER consulte, ANTES de criar
 // uma instância UAZAPI nova, se esse número de telefone já tem uma
 // instância ativa aqui na IA — evitando ter duas sessões WhatsApp Web
@@ -16,15 +12,28 @@ function digitsOnly(s: string): string {
   return (s || "").replace(/\D/g, "");
 }
 
-/** Compara os últimos 10-11 dígitos (ignora código de país e eventuais
- * diferenças no 9º dígito) — tolerante a formatos diferentes entre os dois
- * sistemas (um pode salvar com "55" na frente, outro não). */
+/** Gera as variantes possíveis de um número brasileiro (DDD + local),
+ * cobrindo a ambiguidade do 9º dígito do celular: alguns cadastros
+ * antigos guardam sem o 9 (DDD + 8 dígitos), outros com (DDD + 9
+ * dígitos) - sem isso, "61983758823" e "6183758823" (o mesmo número,
+ * só que sem o 9) nunca batiam na comparação. */
+function phoneVariants(raw: string): string[] {
+  let d = digitsOnly(raw);
+  if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+  if (d.length !== 10 && d.length !== 11) return [d];
+  const ddd = d.slice(0, 2);
+  const local = d.slice(2);
+  if (local.length === 9) return [d, ddd + local.slice(1)];
+  if (local.length === 8) return [d, ddd + "9" + local];
+  return [d];
+}
+
+/** Compara dois números tolerando diferença de código de país e do 9º
+ * dígito do celular - formatos diferentes entre os dois sistemas. */
 function phonesMatch(a: string, b: string): boolean {
-  const da = digitsOnly(a);
-  const db = digitsOnly(b);
-  if (!da || !db) return false;
-  const tailLen = 10;
-  return da.slice(-tailLen) === db.slice(-tailLen);
+  const variantsA = phoneVariants(a);
+  const variantsB = phoneVariants(b);
+  return variantsA.some((va) => variantsB.includes(va));
 }
 
 Deno.serve(async (req) => {
