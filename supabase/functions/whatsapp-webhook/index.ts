@@ -7999,7 +7999,14 @@ async function callAIAgent(
     // ficava sem resposta nenhuma. Se a mensagem não é só um encerramento
     // ("ok", "valeu", emoji), a IA é obrigada a responder: segunda tentativa
     // com instrução explícita que anula a permissão de silêncio.
-    if (!finalResponse && !isPureAcknowledgementMessage(userMessage || "") && !buildDeterministicBookingConfirmation(logToolCalls)) {
+    // Exceção: mensagem automática de TERCEIROS (operadora, marketing, robô de
+    // outra empresa: "essa é uma mensagem automática", "número exclusivo para
+    // envio"...). Forçar resposta aí só cria conversa robô-com-robô.
+    const turnText = String(userMessage || "");
+    const looksThirdPartyAutomation =
+      /mensagem\s+autom[aá]tica|n[aã]o\s+(veremos|conseguimos\s+ver|monitoramos|responda)|n[uú]mero\s+[ée]?\s*exclusivo|oferta\s+exclusiva|n[aã]o\s+estamos\s+dispon[ií]veis\s+no\s+momento/i.test(turnText) ||
+      (/https?:\/\//i.test(turnText) && turnText.length > 120);
+    if (!finalResponse && !looksThirdPartyAutomation && !isPureAcknowledgementMessage(turnText) && !buildDeterministicBookingConfirmation(logToolCalls)) {
       const forceReplyReminder = {
         role: "system" as const,
         content: `OBRIGATÓRIO RESPONDER: a última mensagem do cliente ("${String(userMessage || "").slice(0, 300)}") NÃO é apenas um "ok/valeu" — é saudação, pergunta, pedido ou informação nova. Ficar em silêncio aqui é ERRO GRAVE: o cliente fica sem retorno. Escreva agora uma resposta curta e natural que atenda o que ele disse (se for saudação, cumprimente e pergunte como pode ajudar; se for pedido, avance o atendimento). É PROIBIDO devolver string vazia.`,
