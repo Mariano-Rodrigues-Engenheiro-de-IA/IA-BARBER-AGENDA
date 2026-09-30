@@ -4021,6 +4021,26 @@ function pickShortAckReply(state: AgentSessionState): string {
   return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
 }
 
+// ✅ Mensagem do cliente que é SÓ encerramento/agradecimento ("ok", "valeu",
+// "perfeito, até amanhã", emoji solto). Único caso (além da automação da casa)
+// em que ficar sem responder é aceitável. Saudação ("oi", "bom dia"), pergunta,
+// pedido ou "sim"/"não" NUNCA entram aqui — esses sempre exigem resposta.
+const PURE_ACK_TOKENS = new Set([
+  "ok", "okay", "okk", "blz", "blza", "beleza", "belezinha", "valeu", "vlw", "obg", "obgd", "obrigado", "obrigada",
+  "obrigadao", "obrigadaaa", "obrigadooo", "brigado", "brigada", "tmj", "uhum", "aham", "show", "top", "fechou",
+  "fechado", "combinado", "perfeito", "tranquilo", "certo", "certinho", "ta", "to", "bom", "joia", "entendi",
+  "ate", "amanha", "mais", "logo", "depois", "entao", "e", "de", "nada", "por", "otimo", "massa", "boa", "demais",
+]);
+
+export function isPureAcknowledgementMessage(text: string): boolean {
+  const norm = String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!norm) return String(text || "").trim().length > 0; // só emoji/pontuação
+  if (/\?/.test(String(text || ""))) return false;
+  const tokens = norm.split(" ").map((t) => t.replace(/(.)\1{2,}/g, "$1$1"));
+  return tokens.every((t) => PURE_ACK_TOKENS.has(t) || /^(k{2,}|rs+|ha(ha)+|he(he)+)$/.test(t) || PURE_ACK_TOKENS.has(t.replace(/(.)\1+$/, "$1")));
+}
+
 // 🤖 EXCEÇÃO LEGÍTIMA DA POLÍTICA ANTI-SILÊNCIO
 // A política anti-silêncio existe para o CLIENTE nunca ficar sem resposta. Ela
 // NÃO deve valer quando o texto que entrou na conversa não é um pedido de
