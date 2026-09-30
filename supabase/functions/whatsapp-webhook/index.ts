@@ -7992,6 +7992,27 @@ async function callAIAgent(
       console.warn(`[LeakDetected] Recovery also leaked, discarding: "${recoveredResponse.slice(0, 120)}"`);
       logErrors.push({ message: `Recovery response also leaked: "${recoveredResponse.slice(0, 120)}"`, level: "error" });
     }
+
+    // 🚫 ANTI-SILÊNCIO (30/09): a regra de não-repetição do prompt permite
+    // "string vazia", e a IA passou a usá-la para pedidos reais ("Quero cortar
+    // cabelo e barba", "Vc não tem horário hoje?", "Oi", "Bom dia") — o cliente
+    // ficava sem resposta nenhuma. Se a mensagem não é só um encerramento
+    // ("ok", "valeu", emoji), a IA é obrigada a responder: segunda tentativa
+    // com instrução explícita que anula a permissão de silêncio.
+    if (!finalResponse && !isPureAcknowledgementMessage(userMessage || "") && !buildDeterministicBookingConfirmation(logToolCalls)) {
+      const forceReplyReminder = {
+        role: "system" as const,
+        content: `OBRIGATÓRIO RESPONDER: a última mensagem do cliente ("${String(userMessage || "").slice(0, 300)}") NÃO é apenas um "ok/valeu" — é saudação, pergunta, pedido ou informação nova. Ficar em silêncio aqui é ERRO GRAVE: o cliente fica sem retorno. Escreva agora uma resposta curta e natural que atenda o que ele disse (se for saudação, cumprimente e pergunte como pode ajudar; se for pedido, avance o atendimento). É PROIBIDO devolver string vazia.`,
+      };
+      const forcedRaw = await requestFinalNaturalResponse([...messages, forceReplyReminder]);
+      const forced = stripInternalPrefixes(forcedRaw || "").trim();
+      if (forced && !isLeakedReasoningResponse(forced)) {
+        finalResponse = forced;
+        logErrors.push({ message: `Resposta vazia para mensagem com conteúdo — recuperada com instrução anti-silêncio.`, level: "warning" });
+      } else {
+        logErrors.push({ message: `Resposta vazia mesmo após instrução anti-silêncio (mensagem com conteúdo ficou sem resposta).`, level: "error" });
+      }
+    }
   }
 
   if (!finalResponse) {
