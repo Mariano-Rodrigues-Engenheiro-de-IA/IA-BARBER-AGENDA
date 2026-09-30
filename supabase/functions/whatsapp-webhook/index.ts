@@ -2397,6 +2397,38 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         if (waHasIaOff || dbHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
 
+          // Registro visível (30/09): antes a mensagem sumia sem rastro — não
+          // entrava no histórico nem no Monitor, indistinguível de "não chegou".
+          // Grava como contexto (processed=true, a IA não responde) e registra
+          // o motivo em agent_logs.
+          try {
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "user",
+              content: messageContent || (hasMedia ? "[Mídia recebida]" : ""),
+              message_id: messageId,
+              processed: true,
+            });
+          } catch (e) {
+            console.error("[IA OFF] falha ao gravar mensagem:", (e as Error)?.message);
+          }
+          try {
+            await supabase.from("agent_logs").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              user_message: (messageContent || "").slice(0, 500),
+              ai_response: "",
+              model_used: "discarded:ia_off",
+              errors: [{
+                level: "warning",
+                message: `IA não respondeu: contato com etiqueta IA OFF (${waHasIaOff ? "no WhatsApp" : "no painel"}). Remova a etiqueta para a IA voltar a responder.`,
+              }],
+            });
+          } catch (e) {
+            console.error("[IA OFF] falha ao registrar descarte:", (e as Error)?.message);
+          }
+
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -2912,7 +2944,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // uma execução já iniciada ainda conseguia responder alguns segundos depois.
       if (messageParts.length > 0) {
         try {
-          if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
+          // Exceção (30/09): se a etiqueta foi aplicada pela PRÓPRIA escalação
+          // desta rodada (escalar_humano), o aviso de transferência TEM que sair —
+          // antes a trava bloqueava a própria IA e o cliente ficava sem resposta
+          // (68 de 73 bloqueios em setembro eram exatamente isso).
+          const selfEscalatedThisTurn = (agentResult?.toolCalls || []).some((tc: any) =>
+            !tc?.blocked && tc?.result?.type === "escalate_human" && tc?.result?.success === true
+          );
+          if (selfEscalatedThisTurn) {
+            console.log(`[Outbound IA OFF Guard] Liberado para ${phoneNumber}: etiqueta aplicada pela própria escalação deste turno.`);
+          } else if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
             console.log(`[Outbound IA OFF Guard] Envio cancelado para ${phoneNumber}: IA OFF aplicada durante o processamento.`);
             await insertAgentLogResilient(supabase, {
               tenant_id: tenant.id,
@@ -11613,7 +11654,7 @@ Regras de uso do nome:
           const preview = r.text.length > 220 ? r.text.slice(0, 220) + "…" : r.text;
           return `- há ${minAgo} min: "${preview}"`;
         })
-        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada, como uma pessoa real que não fica respondendo cada balão.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
+        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada. ⚠️ A STRING VAZIA SÓ vale para encerramento puro (ok/valeu/emoji/fragmento repetido). Saudação ("oi", "bom dia"), pergunta, pedido de horário/serviço, cancelamento, "sim"/"não" ou qualquer informação nova SEMPRE exigem resposta — silenciar nesses casos é ERRO GRAVE.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
