@@ -2397,6 +2397,38 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         if (waHasIaOff || dbHasIaOff) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
 
+          // Registro visível (30/09): antes a mensagem sumia sem rastro — não
+          // entrava no histórico nem no Monitor, indistinguível de "não chegou".
+          // Grava como contexto (processed=true, a IA não responde) e registra
+          // o motivo em agent_logs.
+          try {
+            await supabase.from("chat_messages").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              role: "user",
+              content: messageContent || (hasMedia ? "[Mídia recebida]" : ""),
+              message_id: messageId,
+              processed: true,
+            });
+          } catch (e) {
+            console.error("[IA OFF] falha ao gravar mensagem:", (e as Error)?.message);
+          }
+          try {
+            await supabase.from("agent_logs").insert({
+              tenant_id: tenant.id,
+              phone_number: phoneNumber,
+              user_message: (messageContent || "").slice(0, 500),
+              ai_response: "",
+              model_used: "discarded:ia_off",
+              errors: [{
+                level: "warning",
+                message: `IA não respondeu: contato com etiqueta IA OFF (${waHasIaOff ? "no WhatsApp" : "no painel"}). Remova a etiqueta para a IA voltar a responder.`,
+              }],
+            });
+          } catch (e) {
+            console.error("[IA OFF] falha ao registrar descarte:", (e as Error)?.message);
+          }
+
           return new Response(JSON.stringify({ status: "ia_off" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
@@ -2912,7 +2944,16 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       // uma execução já iniciada ainda conseguia responder alguns segundos depois.
       if (messageParts.length > 0) {
         try {
-          if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
+          // Exceção (30/09): se a etiqueta foi aplicada pela PRÓPRIA escalação
+          // desta rodada (escalar_humano), o aviso de transferência TEM que sair —
+          // antes a trava bloqueava a própria IA e o cliente ficava sem resposta
+          // (68 de 73 bloqueios em setembro eram exatamente isso).
+          const selfEscalatedThisTurn = (agentResult?.toolCalls || []).some((tc: any) =>
+            !tc?.blocked && tc?.result?.type === "escalate_human" && tc?.result?.success === true
+          );
+          if (selfEscalatedThisTurn) {
+            console.log(`[Outbound IA OFF Guard] Liberado para ${phoneNumber}: etiqueta aplicada pela própria escalação deste turno.`);
+          } else if (await hasIaOffInDatabaseAtSendTime(supabase, tenant, phoneNumber)) {
             console.log(`[Outbound IA OFF Guard] Envio cancelado para ${phoneNumber}: IA OFF aplicada durante o processamento.`);
             await insertAgentLogResilient(supabase, {
               tenant_id: tenant.id,
@@ -4019,6 +4060,26 @@ function pickShortAckReply(state: AgentSessionState): string {
     if (!used.has(normalizeReplyForCompare(candidate))) return candidate;
   }
   return SHORT_ACK_REPLIES[Math.floor(Date.now() / 60000) % SHORT_ACK_REPLIES.length];
+}
+
+// ✅ Mensagem do cliente que é SÓ encerramento/agradecimento ("ok", "valeu",
+// "perfeito, até amanhã", emoji solto). Único caso (além da automação da casa)
+// em que ficar sem responder é aceitável. Saudação ("oi", "bom dia"), pergunta,
+// pedido ou "sim"/"não" NUNCA entram aqui — esses sempre exigem resposta.
+const PURE_ACK_TOKENS = new Set([
+  "ok", "okay", "okk", "blz", "blza", "beleza", "belezinha", "valeu", "vlw", "obg", "obgd", "obrigado", "obrigada",
+  "obrigadao", "obrigadaaa", "obrigadooo", "brigado", "brigada", "tmj", "uhum", "aham", "show", "top", "fechou",
+  "fechado", "combinado", "perfeito", "tranquilo", "certo", "certinho", "ta", "to", "bom", "joia", "entendi",
+  "ate", "amanha", "mais", "logo", "depois", "entao", "e", "de", "nada", "por", "otimo", "massa", "boa", "demais",
+]);
+
+export function isPureAcknowledgementMessage(text: string): boolean {
+  const norm = String(text || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!norm) return String(text || "").trim().length > 0; // só emoji/pontuação
+  if (/\?/.test(String(text || ""))) return false;
+  const tokens = norm.split(" ").map((t) => t.replace(/(.)\1{2,}/g, "$1$1"));
+  return tokens.every((t) => PURE_ACK_TOKENS.has(t) || /^(k{2,}|rs+|ha(ha)+|he(he)+)$/.test(t) || PURE_ACK_TOKENS.has(t.replace(/(.)\1+$/, "$1")));
 }
 
 // 🤖 EXCEÇÃO LEGÍTIMA DA POLÍTICA ANTI-SILÊNCIO
@@ -7972,6 +8033,34 @@ async function callAIAgent(
       console.warn(`[LeakDetected] Recovery also leaked, discarding: "${recoveredResponse.slice(0, 120)}"`);
       logErrors.push({ message: `Recovery response also leaked: "${recoveredResponse.slice(0, 120)}"`, level: "error" });
     }
+
+    // 🚫 ANTI-SILÊNCIO (30/09): a regra de não-repetição do prompt permite
+    // "string vazia", e a IA passou a usá-la para pedidos reais ("Quero cortar
+    // cabelo e barba", "Vc não tem horário hoje?", "Oi", "Bom dia") — o cliente
+    // ficava sem resposta nenhuma. Se a mensagem não é só um encerramento
+    // ("ok", "valeu", emoji), a IA é obrigada a responder: segunda tentativa
+    // com instrução explícita que anula a permissão de silêncio.
+    // Exceção: mensagem automática de TERCEIROS (operadora, marketing, robô de
+    // outra empresa: "essa é uma mensagem automática", "número exclusivo para
+    // envio"...). Forçar resposta aí só cria conversa robô-com-robô.
+    const turnText = String(userMessage || "");
+    const looksThirdPartyAutomation =
+      /mensagem\s+autom[aá]tica|n[aã]o\s+(veremos|conseguimos\s+ver|monitoramos|responda)|n[uú]mero\s+[ée]?\s*exclusivo|oferta\s+exclusiva|n[aã]o\s+estamos\s+dispon[ií]veis\s+no\s+momento/i.test(turnText) ||
+      (/https?:\/\//i.test(turnText) && turnText.length > 120);
+    if (!finalResponse && !looksThirdPartyAutomation && !isPureAcknowledgementMessage(turnText) && !buildDeterministicBookingConfirmation(logToolCalls)) {
+      const forceReplyReminder = {
+        role: "system" as const,
+        content: `OBRIGATÓRIO RESPONDER: a última mensagem do cliente ("${String(userMessage || "").slice(0, 300)}") NÃO é apenas um "ok/valeu" — é saudação, pergunta, pedido ou informação nova. Ficar em silêncio aqui é ERRO GRAVE: o cliente fica sem retorno. Escreva agora uma resposta curta e natural que atenda o que ele disse (se for saudação, cumprimente e pergunte como pode ajudar; se for pedido, avance o atendimento). É PROIBIDO devolver string vazia.`,
+      };
+      const forcedRaw = await requestFinalNaturalResponse([...messages, forceReplyReminder]);
+      const forced = stripInternalPrefixes(forcedRaw || "").trim();
+      if (forced && !isLeakedReasoningResponse(forced)) {
+        finalResponse = forced;
+        logErrors.push({ message: `Resposta vazia para mensagem com conteúdo — recuperada com instrução anti-silêncio.`, level: "warning" });
+      } else {
+        logErrors.push({ message: `Resposta vazia mesmo após instrução anti-silêncio (mensagem com conteúdo ficou sem resposta).`, level: "error" });
+      }
+    }
   }
 
   if (!finalResponse) {
@@ -11565,7 +11654,7 @@ Regras de uso do nome:
           const preview = r.text.length > 220 ? r.text.slice(0, 220) + "…" : r.text;
           return `- há ${minAgo} min: "${preview}"`;
         })
-        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada, como uma pessoa real que não fica respondendo cada balão.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
+        .join("\n")}\n\n🚨 REGRA CRÍTICA DE NÃO-REPETIÇÃO:\n- NÃO reenvie nenhuma das mensagens acima, nem uma versão parafraseada com o mesmo conteúdo.\n- Você NÃO é obrigada a responder toda mensagem do cliente. Se o cliente mandou várias mensagens fragmentadas que tratam do MESMO assunto que você acabou de responder, ou se a nova mensagem não traz pergunta/informação nova (ex: emoji solto, "ok", "entendi", "valeu", "kkk", uma mensagem quebrada repetindo o que ele já disse), responda APENAS se houver algo realmente novo a acrescentar. Caso contrário, devolva uma STRING VAZIA — o sistema simplesmente não envia nada. ⚠️ A STRING VAZIA SÓ vale para encerramento puro (ok/valeu/emoji/fragmento repetido). Saudação ("oi", "bom dia"), pergunta, pedido de horário/serviço, cancelamento, "sim"/"não" ou qualquer informação nova SEMPRE exigem resposta — silenciar nesses casos é ERRO GRAVE.\n- Se o cliente fez 2 ou 3 perguntas que basicamente pedem a mesma coisa, una tudo em UMA resposta nova — nunca repita um bloco que já mandou.\n- Antes de escrever, pergunte-se: "isso é diferente do que eu acabei de mandar?". Se a resposta for não, fique em silêncio (string vazia).\n`;
 
 
   const shortDayNames = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
