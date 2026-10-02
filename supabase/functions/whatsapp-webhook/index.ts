@@ -3951,7 +3951,7 @@ function buildActionSummary(toolName: string, args: any, result: any): string {
 const ACTION_LEDGER_TTL_MS = 30 * 60 * 1000; // 30 minutos
 const ACTION_LEDGER_MAX = 12;
 
-type RecentActionEntry = NonNullable<AgentSessionState["recentCompletedActions"]>;
+type RecentActionEntry = NonNullable<AgentSessionState["recentCompletedActions"]>[number];
 
 function pruneRecentActions(state: AgentSessionState): RecentActionEntry {
   const now = Date.now();
