@@ -28,3 +28,4 @@
 - [x] Corrigir corrida da IA OFF: impedir escalada que delega agendamento e distinguir etiqueta aplicada pela própria transferência silenciosa
 - [x] Corrigir caso 553dc6b9: detectar "já deixei reservado" sem escrita e reinjetar sem depender de snapshot
 - [x] Preservar no AppBarber o serviço/profissional/data escolhidos a partir dos slots oferecidos
+- [ ] Bemp: corrigir confirmação falsa após pergunta do atendente (plano aguardando aprovação)
