@@ -8166,12 +8166,27 @@ async function callAIAgent(
     const userIsShortConfirmation = isAffirmativeReply(userMessage || "")
       || isAffirmativeReply(_strippedUserMessage);
 
+    // ⚠️ Item 1 do plano Caroline/Robson (02/10, isolado - este trecho vale
+    // pra todos os providers que usam o guard, mas só a Bemp tinha os 2 casos
+    // reais comprovados): ANTES, qualquer mensagem [ATENDENTE HUMANO] isentava
+    // o guard só pelo PREFIXO, sem checar o conteúdo - diferente de como a IA
+    // é tratada (que passa por CONFIRMATION_DISPATCH_RE). Isso deixava passar
+    // o atendente OFERECENDO HORÁRIO NOVO ("Gostaria de agendar?", "17h com o
+    // Alan, podemos confirmar?") como se fosse reconfirmação de algo que já
+    // existe. Casos reais verificados direto em chat_messages: Caroline
+    // (26/09, 5521979845862, "Gostaria de agendar?" às 13:53:55) e Robson/Alan
+    // (01/10, 5521990396512, "17h com o Alan, podemos confirmar?" às
+    // 14:27:10) - nos dois, CONFIRMATION_DISPATCH_RE não bate (testado), então
+    // a correção abaixo mantém o guard ligado exatamente nesses casos.
+    const lastAssistantHumanMessageIsExistingBookingConfirmation =
+      lastAssistantWasHuman && CONFIRMATION_DISPATCH_RE.test(lastAssistantMessage);
+
     // Se o cliente respondeu "sim/ok/pode" a uma mensagem manual da barbearia
-    // OU a um disparo de confirmação, isso é confirmação de agendamento já
-    // existente. Não é fluxo de criação da IA, então este guard fica fora do
-    // caminho.
+    // (com conteúdo de confirmação de algo que já existe) OU a um disparo de
+    // confirmação da própria IA, isso é confirmação de agendamento já
+    // existente. Não é fluxo de criação, então este guard fica fora do caminho.
     const isHumanExistingBookingConfirmation =
-      (lastAssistantWasHuman || lastAssistantWasConfirmationDispatch) && userIsShortConfirmation;
+      (lastAssistantHumanMessageIsExistingBookingConfirmation || lastAssistantWasConfirmationDispatch) && userIsShortConfirmation;
 
     // Contexto estrutural de CRIAÇÃO NOVA: a ÚLTIMA mensagem da IA (não humana)
     // ofereceu/ancorou um horário e pediu confirmação; o cliente respondeu curto
@@ -8235,7 +8250,13 @@ async function callAIAgent(
     const CANCEL_CONTEXT_RE = /\bn[ãa]o\s+(?:foi\s+)?(?:cancel\w*|desmarc\w*)\b/i;
     const sentences: string[] = finalResponse.split(/(?<=[.!?])\s+/).map((s: string) => s.trim()).filter(Boolean);
     const LEGACY_CONFIRM_CLAIM_RE = /\b(?:(?:j[aá]\s+)?agendei|(?:j[aá]\s+)?reservei|(?:j[aá]\s+)?marquei|acabei\s+de\s+agendar|acabo\s+de\s+agendar|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|agendamento\s+(?:criado|feito|realizado)\s+com\s+sucesso|reserva\s+(?:criada|feita)\s+com\s+sucesso|prontinho[^.!?]{0,60}(?:agendei|criei|marcamos|reservei|marquei))\b/i;
-    const hasExplicitCreationClaim = provider === "appbarber"
+    // Item 2 do plano Caroline/Robson (02/10, isolado na Bemp): a lista antiga
+    // (LEGACY_CONFIRM_CLAIM_RE) só reconhece primeira pessoa ("agendei",
+    // "marquei") — "Seu horário está confirmado" (forma passiva, exatamente a
+    // frase que a Caroline e o Robson/Alan receberam) passava despercebida. A
+    // função do AppBarber já reconhece essa forma, sem gate de "resposta curta
+    // do cliente" — reaproveitada aqui tal como está, sem alterar o AppBarber.
+    const hasExplicitCreationClaim = (provider === "appbarber" || provider === "bemp")
       ? appBarberClaimsCompletedBooking(finalResponse) && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s))
       : sentences.some((s: string) => LEGACY_CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const hasImpliedFinalizationClaim = isNewBookingFinalStep
