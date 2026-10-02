@@ -3953,7 +3953,7 @@ const ACTION_LEDGER_MAX = 12;
 
 type RecentActionEntry = NonNullable<AgentSessionState["recentCompletedActions"]>[number];
 
-function pruneRecentActions(state: AgentSessionState): RecentActionEntry {
+function pruneRecentActions(state: AgentSessionState): RecentActionEntry[] {
   const now = Date.now();
   const arr = (state.recentCompletedActions || []).filter((a) => {
     const t = Date.parse(a.completedAt);
