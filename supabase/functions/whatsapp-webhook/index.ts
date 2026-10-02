@@ -3951,7 +3951,9 @@ function buildActionSummary(toolName: string, args: any, result: any): string {
 const ACTION_LEDGER_TTL_MS = 30 * 60 * 1000; // 30 minutos
 const ACTION_LEDGER_MAX = 12;
 
-function pruneRecentActions(state: AgentSessionState): AgentSessionState["recentCompletedActions"] {
+type RecentActionEntry = NonNullable<AgentSessionState["recentCompletedActions"]>[number];
+
+function pruneRecentActions(state: AgentSessionState): RecentActionEntry[] {
   const now = Date.now();
   const arr = (state.recentCompletedActions || []).filter((a) => {
     const t = Date.parse(a.completedAt);
@@ -3960,7 +3962,7 @@ function pruneRecentActions(state: AgentSessionState): AgentSessionState["recent
   return arr.slice(-ACTION_LEDGER_MAX);
 }
 
-function findRecentAction(state: AgentSessionState, dedupeKey: string, status: "success" | "failed" | "blocked" = "success"): { toolName: string; category: string; dedupeKey: string; status: string; completedAt: string; summary: string; resultId?: string | number | null } | null {
+function findRecentAction(state: AgentSessionState, dedupeKey: string, status: "success" | "failed" | "blocked" = "success"): RecentActionEntry | null {
   const list = pruneRecentActions(state);
   state.recentCompletedActions = list;
   for (let i = list.length - 1; i >= 0; i--) {
@@ -9630,7 +9632,7 @@ async function callAIAgent(
   // sem o cliente confirmar, troca a resposta por um pedido de paciência + flag interna
   // para o operador humano assumir. Evita irritar o cliente em loop.
   if (finalResponse) {
-    const timeTokens = (finalResponse.match(/\b\d{1,2}[:h]\d{2}\b/g) || []).map((t) => t.toLowerCase());
+    const timeTokens = (finalResponse.match(/\b\d{1,2}[:h]\d{2}\b/g) || []).map((t: string) => t.toLowerCase());
     if (timeTokens.length >= 3) {
       const signature = [...new Set(timeTokens)].sort().join(",");
       const history: string[] = Array.isArray((sessionState as any).lastTimeListings)
@@ -10905,7 +10907,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           };
         } catch (e) {
           console.error("[CustomTool] add_label error:", e);
-          return { error: `Erro ao adicionar etiqueta: ${e.message}` };
+          return { error: `Erro ao adicionar etiqueta: ${e instanceof Error ? e.message : String(e)}` };
         }
       }
 
@@ -10924,7 +10926,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           };
         } catch (e) {
           console.error("[CustomTool] remove_label error:", e);
-          return { error: `Erro ao remover etiqueta: ${e.message}` };
+          return { error: `Erro ao remover etiqueta: ${e instanceof Error ? e.message : String(e)}` };
         }
       }
 
