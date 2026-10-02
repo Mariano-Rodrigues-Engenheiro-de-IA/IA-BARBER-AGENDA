@@ -9,7 +9,6 @@ import {
   handleWebChatRequest,
 } from "./webchat/index.ts";
 
-import { buildTrinksPromptSection, buildOneBelezaPromptSection, buildNonePromptSection, buildFrizzarPromptSection, buildBempPromptSection, buildAppBarberPromptSection, buildGlobalPromptSection } from "../_shared/provider-prompts.ts";
 // PROVIDER FRIZZAR — módulo isolado (extraído em jul/2026 pra evitar que
 // mexer em outra API quebre a Frizzar). Regra: nada de Frizzar mora aqui.
 import {
@@ -11755,7 +11754,7 @@ ${recentRepliesBlock}
 ${simulatorBlock}
 ${humanAttendantBlock}
 ${existingBookingLookupBlock}
-${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : buildGlobalPromptSection(tenant)}
+${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : ""}
 ------------------------------------------
 
 
@@ -11882,22 +11881,12 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
 **SÓ PERGUNTE O QUE O CLIENTE NÃO DISSE.**`;
 
   // Provider-specific prompt sections
+  // Prompt do provedor vem só do painel (aba Prompts, tabela provider_prompts).
+  // Não há mais padrão de fábrica no código — pedido do Mariano (02/10), pra
+  // nunca mais existir dúvida sobre qual texto está valendo de verdade.
   let providerPrompt = "";
-
   if (typeof providerPromptOverride === "string" && providerPromptOverride.trim().length > 0) {
     providerPrompt = providerPromptOverride;
-  } else if (provider === "trinks") {
-    providerPrompt = buildTrinksPromptSection(tenant);
-  } else if (provider === "onebeleza") {
-    providerPrompt = buildOneBelezaPromptSection(tenant);
-  } else if (provider === "frizzar") {
-    providerPrompt = buildFrizzarPromptSection(tenant);
-  } else if (provider === "bemp") {
-    providerPrompt = buildBempPromptSection(tenant);
-  } else if (provider === "appbarber") {
-    providerPrompt = buildAppBarberPromptSection(tenant);
-  } else if (provider === "none") {
-    providerPrompt = buildNonePromptSection(tenant);
   }
 
   const customSection = customPrompt ? `\nINSTRUÇÕES ADICIONAIS DO ESTABELECIMENTO:\n${customPrompt}` : "";

@@ -1,5 +1,4 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 // A seguranca real dessas funcoes vem da autenticacao (JWT + checagem de
 // admin, verificada dentro do handler) - o CORS aqui so existe pra
@@ -98,7 +97,7 @@ Deno.serve(async (req) => {
         return {
           provider: p,
           label: PROVIDER_LABELS[p],
-          default_content: getDefaultProviderPrompt(p),
+          default_content: "", // sem padrão de fábrica no código; tudo vem do painel agora
           override_content: row?.content || "",
           has_override: !!(row?.content && String(row.content).trim().length > 0),
           updated_at: row?.updated_at || null,

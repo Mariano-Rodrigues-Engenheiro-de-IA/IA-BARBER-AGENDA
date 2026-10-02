@@ -23,7 +23,6 @@ import {
   SEVERITY_BY_CATEGORY,
   AUDIT_CATEGORIES,
 } from "./auditor.ts";
-import { getDefaultProviderPrompt } from "../_shared/provider-prompts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -38,9 +37,11 @@ const AUDITOR_MODEL = "gpt-5-mini";
 const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const MAX_ATTEMPTS = 6;
 
-// Prompt padrão vive em _shared/provider-prompts.ts (provider "auditor") e é
-// editável na aba Prompts do painel (tabela provider_prompts).
-const DEFAULT_SYSTEM_PROMPT = getDefaultProviderPrompt("auditor");
+// Prompt vem só do painel (aba Prompts, provider "auditor", tabela
+// provider_prompts) - sem padrão de fábrica no código. Pedido do Mariano
+// (02/10). Se a linha "auditor" estiver vazia no painel, a auditoria roda
+// com prompt vazio em vez de quebrar.
+const DEFAULT_SYSTEM_PROMPT = "";
 
 const RESPONSE_SCHEMA = {
   type: "object",
