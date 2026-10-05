@@ -40,6 +40,11 @@ import {
   type AppBarberIntentSnapshot,
 } from "./providers/appbarber/guard-core.ts";
 import {
+  adjustCountForDroppedPast,
+  appBarberTextSignalWindow,
+  dropPastAppBarberIntentItems,
+} from "./providers/appbarber/intent-filters.ts";
+import {
   buildBempTools,
   executeBempTool,
   evaluateSuccessfulBooking as evaluateBempBooking,
@@ -4752,7 +4757,18 @@ function appbarberIsClearlySingleBooking(params: {
   if (allMsgs.length === 0) return { single: false, reason: "janela vazia/indisponível" };
 
   const window = allMsgs.map((m: any) => String(m.content)).join("\n");
-  const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(window));
+  // Ajuste A (05/10, casos 9Cinco Ryan/Kaue): os sinais de "vários serviços"
+  // (ex: /\bos dois\b/) eram procurados na conversa inteira, inclusive nas
+  // falas da própria IA. A Carol perguntava "cabelo, barba ou os dois?" e o
+  // próprio texto dela disparava o sinal, mandando um pedido de SÓ cabelo pro
+  // classificador. O guard deve captar o pedido do CLIENTE: com resposta atual
+  // explícita, só as falas do cliente entram. Com resposta curta ("sim/pode")
+  // segue a conversa inteira, porque aí o pedido pode estar na oferta da IA.
+  // A checagem de nome próprio abaixo continua olhando a janela completa
+  // (não foi alterada).
+  const currentRequestIsExplicit = !!currentUserMessage && !isAffirmativeReply(currentUserMessage);
+  const textSignalWindow = appBarberTextSignalWindow(allMsgs, currentRequestIsExplicit);
+  const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(textSignalWindow));
   if (hit) return { single: false, reason: `texto: ${hit.source}` };
 
   if (appbarberFindsDifferentProperName(window, customerNameUsed)) {
@@ -5374,7 +5390,22 @@ async function classifyPendingBookings(params: {
       console.warn(`[MultiBookingGuard] classifier empty content (finish=${j?.choices?.[0]?.finish_reason})`);
       return fallback();
     }
-    const parsed = JSON.parse(raw);
+    const parsedRaw = JSON.parse(raw);
+    // Ajuste B (05/10, casos 9Cinco Ryan/Kaue): o classificador recebe as
+    // últimas 30 mensagens SEM filtro de data e contava como pendentes
+    // agendamentos de semanas atrás (Kaue: 10/09 e 26/09; Ryan: 02/10). Item
+    // com data anterior a hoje nunca está pendente. Só AppBarber; sem item no
+    // passado, `parsed` é o mesmo objeto de antes (nada muda).
+    const pastClean = params.provider === "appbarber"
+      ? dropPastAppBarberIntentItems(
+        parsedRaw,
+        new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(new Date()),
+      )
+      : { cleaned: parsedRaw, removed: 0, remaining: 0 };
+    const parsed = pastClean.cleaned as any;
+    if (pastClean.removed > 0) {
+      console.warn(`[MultiBookingGuard] ${pastClean.removed} item(ns) de data passada descartado(s) da intenção (appbarber); restam ${pastClean.remaining}.`);
+    }
     let n = Number(parsed?.total_bookings_requested);
     if (!Number.isFinite(n) || n < 1) return fallback();
     const dimension = (value: unknown): number => {
@@ -5400,7 +5431,12 @@ async function classifyPendingBookings(params: {
     // menciona um número maior, usa o maior dos dois (nunca o menor —
     // mesma lógica defensiva já usada no resto do guard).
     const reasoningText = String(parsed?.reasoning || "");
-    const reasoningN = extractBookingCountFromReasoning(reasoningText);
+    const reasoningNRaw = extractBookingCountFromReasoning(reasoningText);
+    // O texto do reasoning enumera também os itens antigos descartados acima;
+    // sem o mesmo ajuste ele reinflava o total (ex: "3 agendamentos").
+    const reasoningN = reasoningNRaw != null && pastClean.removed > 0
+      ? adjustCountForDroppedPast(reasoningNRaw, pastClean.removed, pastClean.remaining)
+      : reasoningNRaw;
     if (reasoningN != null) {
       if (Number.isFinite(reasoningN) && reasoningN > n) {
         console.warn(`[MultiBookingGuard] classifier inconsistente: total_bookings_requested=${n} mas reasoning menciona ${reasoningN}. Usando o maior.`);
@@ -5450,7 +5486,7 @@ async function classifyPendingBookings(params: {
     return {
       total,
       source: "llm",
-      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? " heur_ignored" : ""}`,
+      reasoning: `${String(parsed?.reasoning || "").slice(0, 160)} | llm=${capped} heur=${heuristic}${heuristic > capped ? " heur_ignored" : ""}${pastClean.removed > 0 ? ` past_dropped=${pastClean.removed}` : ""}`,
       intentShape,
       intentSnapshot,
     };
