@@ -8,7 +8,7 @@
 //  A) O filtro barato (appbarberIsClearlySingleBooking) procurava sinais de
 //     "vários serviços" (ex: /\bos dois\b/) na conversa INTEIRA, inclusive nas
 //     falas da própria IA. A Carol tinha perguntado "cabelo, barba ou os dois?"
-//     e isso disparou o sinal. -> appBarberTextSignalWindow
+//     e isso disparou o sinal. -> appBarberClientOnlyText
 //
 //  B) O classificador recebe as últimas 30 mensagens sem filtro de data e
 //     contou agendamentos de semanas atrás como pendentes (Kaue: 10/09 e
@@ -20,23 +20,16 @@ export type IntentHistoryMessage = { role?: string; content?: unknown };
 /**
  * Texto onde o filtro barato procura sinais textuais de múltiplos serviços.
  *
- * - Resposta atual EXPLÍCITA do cliente (ex: "só cabelo", "16h"): olha só o que
- *   o CLIENTE escreveu na janela. A fala da IA não é pedido do cliente.
- * - Resposta atual curta/afirmativa ("sim", "pode"): mantém a conversa inteira,
- *   porque aí o pedido pode estar na oferta que a IA fez e o cliente aceitou.
+ * Regra (decisão do dono, 05/10): o guard escuta SÓ o que o CLIENTE escreveu.
+ * Fala da IA nunca é pedido do cliente, então não entra, nem quando a resposta
+ * atual é curta ("sim", "pode"). Quando o cliente quer vários agendamentos ele
+ * diz isso explicitamente em alguma mensagem dele.
  */
-export function appBarberTextSignalWindow(
-  messages: IntentHistoryMessage[],
-  currentRequestIsExplicit: boolean,
-): string {
-  const usable = (messages || []).filter(
-    (m) =>
-      (m?.role === "user" || m?.role === "assistant") &&
-      typeof m?.content === "string" &&
-      m.content.trim(),
-  );
-  const chosen = currentRequestIsExplicit ? usable.filter((m) => m.role === "user") : usable;
-  return chosen.map((m) => String(m.content)).join("\n");
+export function appBarberClientOnlyText(messages: IntentHistoryMessage[]): string {
+  return (messages || [])
+    .filter((m) => m?.role === "user" && typeof m?.content === "string" && m.content.trim())
+    .map((m) => String(m.content))
+    .join("\n");
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

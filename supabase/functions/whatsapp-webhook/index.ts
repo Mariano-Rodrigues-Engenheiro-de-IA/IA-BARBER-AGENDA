@@ -41,7 +41,7 @@ import {
 } from "./providers/appbarber/guard-core.ts";
 import {
   adjustCountForDroppedPast,
-  appBarberTextSignalWindow,
+  appBarberClientOnlyText,
   dropPastAppBarberIntentItems,
 } from "./providers/appbarber/intent-filters.ts";
 import {
@@ -4703,12 +4703,13 @@ function appbarberIsClearlySingleBooking(params: {
     if (Number.isFinite(dur) && dur > 0) bookedDurationMinutes = dur;
   }
 
+  // Guard escuta só o CLIENTE (decisão 05/10): fala da IA não é pedido.
   const conversationText = (messages || [])
-    .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string")
+    .filter((m: any) => m?.role === "user" && typeof m?.content === "string")
     .map((m: any) => String(m.content))
     .join("\n");
   // Um pedido novo e explícito não pode herdar serviços/slots de pedidos já
-  // concluídos na mesma conversa. Confirmações curtas ainda usam o contexto.
+  // concluídos na mesma conversa. Confirmações curtas usam as falas do cliente.
   const currentRequestEvidence = currentUserMessage && !isAffirmativeReply(currentUserMessage)
     ? currentUserMessage
     : conversationText;
@@ -4756,18 +4757,13 @@ function appbarberIsClearlySingleBooking(params: {
     .filter((m: any) => (m?.role === "user" || m?.role === "assistant") && typeof m?.content === "string" && m.content.trim());
   if (allMsgs.length === 0) return { single: false, reason: "janela vazia/indisponível" };
 
-  const window = allMsgs.map((m: any) => String(m.content)).join("\n");
-  // Ajuste A (05/10, casos 9Cinco Ryan/Kaue): os sinais de "vários serviços"
-  // (ex: /\bos dois\b/) eram procurados na conversa inteira, inclusive nas
-  // falas da própria IA. A Carol perguntava "cabelo, barba ou os dois?" e o
-  // próprio texto dela disparava o sinal, mandando um pedido de SÓ cabelo pro
-  // classificador. O guard deve captar o pedido do CLIENTE: com resposta atual
-  // explícita, só as falas do cliente entram. Com resposta curta ("sim/pode")
-  // segue a conversa inteira, porque aí o pedido pode estar na oferta da IA.
-  // A checagem de nome próprio abaixo continua olhando a janela completa
-  // (não foi alterada).
-  const currentRequestIsExplicit = !!currentUserMessage && !isAffirmativeReply(currentUserMessage);
-  const textSignalWindow = appBarberTextSignalWindow(allMsgs, currentRequestIsExplicit);
+  // Guard escuta só o CLIENTE (decisão do dono, 05/10, casos 9Cinco Ryan/Kaue):
+  // a pergunta da IA "cabelo, barba ou os dois?" disparava o sinal /os dois/
+  // num pedido de SÓ cabelo. Quando o cliente quer vários agendamentos ele diz
+  // explicitamente; por isso sinais textuais e checagem de nome próprio olham
+  // apenas as falas dele (role "user"). Vale só para AppBarber.
+  const window = appBarberClientOnlyText(allMsgs);
+  const textSignalWindow = window;
   const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(textSignalWindow));
   if (hit) return { single: false, reason: `texto: ${hit.source}` };
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adjustCountForDroppedPast,
-  appBarberTextSignalWindow,
+  appBarberClientOnlyText,
   dropPastAppBarberIntentItems,
 } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/intent-filters";
 import { buildAppBarberIntentSnapshot } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/guard-core";
@@ -28,13 +28,18 @@ describe("Ajuste A - sinais de multi-serviço só nas falas do cliente", () => {
   ];
 
   it("Ryan e Kaue: com resposta explícita, a pergunta da própria IA não vira sinal", () => {
-    expect(OS_DOIS.test(appBarberTextSignalWindow(ryan, true))).toBe(false);
-    expect(OS_DOIS.test(appBarberTextSignalWindow(kaue, true))).toBe(false);
+    expect(OS_DOIS.test(appBarberClientOnlyText(ryan))).toBe(false);
+    expect(OS_DOIS.test(appBarberClientOnlyText(kaue))).toBe(false);
   });
 
-  it("antes do ajuste (janela inteira) o sinal disparava, o que causou o bug", () => {
-    expect(OS_DOIS.test(appBarberTextSignalWindow(ryan, false))).toBe(true);
-    expect(OS_DOIS.test(appBarberTextSignalWindow(kaue, false))).toBe(true);
+  it("respostas curtas do cliente ('Sim, só cabelo', 'Pode ser só cabelo') também ignoram a IA", () => {
+    for (const reply of ["Sim, só cabelo", "Pode ser só cabelo", "Claro, só cabelo", "Beleza, cabelo"]) {
+      const msgs = [
+        { role: "assistant", content: "Para qual serviço: cabelo, barba ou os dois?" },
+        { role: "user", content: reply },
+      ];
+      expect(OS_DOIS.test(appBarberClientOnlyText(msgs))).toBe(false);
+    }
   });
 
   it("cliente que ESCREVE 'os dois' continua sendo detectado", () => {
@@ -42,7 +47,7 @@ describe("Ajuste A - sinais de multi-serviço só nas falas do cliente", () => {
       { role: "assistant", content: "Para qual serviço: cabelo, barba ou os dois?" },
       { role: "user", content: "os dois" },
     ];
-    expect(OS_DOIS.test(appBarberTextSignalWindow(msgs, true))).toBe(true);
+    expect(OS_DOIS.test(appBarberClientOnlyText(msgs))).toBe(true);
   });
 
   it("pedido parcelado do cliente ('pra mim e pro meu filho' ... várias msgs depois '16h') continua detectado", () => {
@@ -51,20 +56,20 @@ describe("Ajuste A - sinais de multi-serviço só nas falas do cliente", () => {
       { role: "assistant", content: "Claro! Qual dia?" },
       { role: "user", content: "16h" },
     ];
-    const text = appBarberTextSignalWindow(msgs, true);
+    const text = appBarberClientOnlyText(msgs);
     expect(/\bpro meu\b/i.test(text)).toBe(true);
   });
 
-  it("resposta curta ('pode') mantém a conversa inteira, a oferta da IA continua valendo", () => {
+  it("oferta de 'os dois' feita só pela IA, com cliente respondendo 'pode', não vira sinal", () => {
     const msgs = [
       { role: "assistant", content: "Posso agendar os dois: cabelo e barba?" },
       { role: "user", content: "pode" },
     ];
-    expect(OS_DOIS.test(appBarberTextSignalWindow(msgs, false))).toBe(true);
+    expect(OS_DOIS.test(appBarberClientOnlyText(msgs))).toBe(false);
   });
 
   it("ignora mensagens vazias ou sem texto", () => {
-    expect(appBarberTextSignalWindow([{ role: "user", content: "  " }, { role: "user", content: 5 as unknown }], true)).toBe("");
+    expect(appBarberClientOnlyText([{ role: "user", content: "  " }, { role: "user", content: 5 as unknown }])).toBe("");
   });
 });
 
