@@ -4763,6 +4763,8 @@ function appbarberIsClearlySingleBooking(params: {
   // explicitamente; por isso sinais textuais e checagem de nome próprio olham
   // apenas as falas dele (role "user"). Vale só para AppBarber.
   const window = appBarberClientOnlyText(allMsgs);
+  // Sem nenhuma fala do cliente na janela não há o que ouvir: não libera.
+  if (!window.trim()) return { single: false, reason: "janela sem mensagens do cliente" };
   const textSignalWindow = window;
   const hit = APPBARBER_MULTI_TEXT_SIGNALS.find((re) => re.test(textSignalWindow));
   if (hit) return { single: false, reason: `texto: ${hit.source}` };

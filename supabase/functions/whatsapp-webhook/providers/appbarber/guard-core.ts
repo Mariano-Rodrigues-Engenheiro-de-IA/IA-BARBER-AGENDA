@@ -99,11 +99,15 @@ const nullableText = (value: unknown, maxLength = 120): string | null => {
   return text ? text.slice(0, maxLength) : null;
 };
 
-/** Detecta afirmação de reserva concluída; a legitimidade é validada pelo orquestrador. */
+/**
+ * Detecta afirmação de reserva concluída;
+ * (05/10, caso 9Cinco 5544999295422) inclui o serviço como sujeito: "Seu cabelo
+ * e barba ficam confirmados pra sexta" não era reconhecido, só "seu horário".
+ * a legitimidade é validada pelo orquestrador. */
 export function appBarberClaimsCompletedBooking(value: unknown): boolean {
   const text = String(value ?? "").trim();
   if (!text) return false;
-  const completedClaim = /\b(?:(?:j[aá]\s+)?(?:agendei|reservei|marquei)|(?:j[aá]\s+)?deixei(?:\s+(?:seu|o))?\s+(?:hor[aá]rio\s+)?(?:agendad[oa]|reservad[oa]|marcad[oa]|confirmad[oa])|acabe[io]\s+de\s+(?:agendar|reservar|marcar)|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|(?:(?:seu|o)\s+(?:hor[aá]rio|agendamento)|(?:sua|a)\s+reserva)[^.!?]{0,80}\b(?:est[aá]|ficou|foi)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|(?:agendamento|reserva|hor[aá]rio)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|^\s*(?:agendad[oa]|confirmad[oa]|reservad[oa]|remarcad[oa]))\b/i;
+  const completedClaim = /\b(?:(?:j[aá]\s+)?(?:agendei|reservei|marquei)|(?:j[aá]\s+)?deixei(?:\s+(?:seu|o))?\s+(?:hor[aá]rio\s+)?(?:agendad[oa]|reservad[oa]|marcad[oa]|confirmad[oa])|acabe[io]\s+de\s+(?:agendar|reservar|marcar)|criei\s+(?:o\s+)?(?:seu\s+)?agendamento|criei\s+(?:a\s+)?(?:sua\s+)?reserva|marcamos\s+(?:seu|o)\s+hor[aá]rio|(?:(?:seu|o)\s+(?:hor[aá]rio|agendamento)|(?:sua|a)\s+reserva)[^.!?]{0,80}\b(?:est[aá]|ficou|foi)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|(?:seu|sua|seus|suas)\s+[^.!?,]{0,40}?\b(?:ficam?|ficou|ficaram|est[aá]|est[aã]o|foi|foram)\s+(?:agendad|confirmad|marcad|reservad)[oa]s?|(?:agendamento|reserva|hor[aá]rio)\s+(?:agendad[oa]|confirmad[oa]|marcad[oa]|reservad[oa])|^\s*(?:agendad[oa]|confirmad[oa]|reservad[oa]|remarcad[oa]))\b/i;
   const negated = /\bn[ãa]o\s+(?:foi\s+|est[áa]\s+|ficou\s+|consegui\s+)?(?:agend|reserv|marc|confirm)/i;
   return text
     .split(/(?<=[.!?])\s+/)

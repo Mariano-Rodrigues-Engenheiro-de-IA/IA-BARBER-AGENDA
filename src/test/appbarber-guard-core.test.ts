@@ -16,6 +16,11 @@ describe("AppBarber guard core — confirmação fantasma", () => {
     "Já agendei seu corte para sábado.",
     "Seu horário ficou marcado para as 10h.",
     "Agendado! Te espero sábado.",
+    // caso real 05/10 (9Cinco): serviço como sujeito
+    "Perfeito! Seu cabelo e barba ficam confirmados pra sexta às 19h30. Te esperamos 🤝😁",
+    "Perfeito! Seu cabelo e barba estão confirmados para amanhã às 18h30 com o *Natan*.",
+    "Seu corte ficou agendado para sábado às 10h.",
+    "Sua barba foi marcada para sexta.",
   ])("detecta afirmação concluída: %s", (text) => {
     expect(appBarberClaimsCompletedBooking(text)).toBe(true);
   });
@@ -24,6 +29,9 @@ describe("AppBarber guard core — confirmação fantasma", () => {
     "Posso deixar reservado às 10h?",
     "Não consegui reservar esse horário.",
     "Tenho 10h disponível. Qual prefere?",
+    "Seu cabelo e barba ficam confirmados se você aceitar o valor?",
+    "Seu cabelo não ficou agendado, esse horário não existe.",
+    "Seu cabelo está ótimo, pode vir quando quiser.",
   ])("não confunde oferta, pergunta ou falha: %s", (text) => {
     expect(appBarberClaimsCompletedBooking(text)).toBe(false);
   });
