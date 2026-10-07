@@ -11736,6 +11736,27 @@ Regras de uso do nome:
     nextDaysMap.push(`  - ${fullDayNames[dow]} = ${fmtDate}${label ? ` (${label})` : ""}`);
   }
 
+  // ===== ORDEM DO PROMPT (cache da OpenAI) =====
+  // O cache automático da OpenAI só vale para um PREFIXO idêntico. Por isso o que é
+  // fixo (regras, prompts do painel) vai primeiro e o que muda a cada mensagem
+  // (hora, calendário, identidade, resumo, ações recentes) vai por último.
+  // Conteúdo das regras preservado; só as referências "acima" viraram "final do prompt".
+  const dynamicTail = `${temporalBlock}
+## ⏰ CONTEXTO TEMPORAL (LEIA ANTES DE QUALQUER RESPOSTA)
+- AGORA são **${br.timeHHMM}** da **${br.periodOfDay}** — ${todayName}, ${br.todayDateBR} (${br.dayType})
+- Data ISO de hoje: ${todayDate} | Data/hora completa Brasília: ${dateComplete}
+- Gap desde a última mensagem do cliente: ${gapStr}
+- Saudação do período (use SÓ quando saudar for permitido pela regra de saudação): "${br.greeting}"
+- 📌 Cada mensagem do histórico abaixo vem com um prefixo INTERNO \`[DD/MM HH:MM]\` indicando quando foi enviada (Brasília). Use isso para raciocinar sobre o tempo entre as trocas e para detectar virada de dia/semana. NUNCA escreva esse prefixo na sua resposta ao cliente.
+- Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
+${nextDaysMap.join("\n")}
+${identityBlock}
+${summaryBlock}
+${recentActionsBlock}
+${recentRepliesBlock}
+${simulatorBlock}
+`;
+
   const basePrompt = `Você é a assistente virtual de agendamento do estabelecimento "${tenant.name || "nosso estabelecimento"}".
 
 ## 🌐 IDIOMA E FORMATO DA RESPOSTA (REGRA ABSOLUTA)
@@ -11745,17 +11766,8 @@ Regras de uso do nome:
 - Sempre que você for responder ao cliente, escreva uma mensagem natural, curta e em português, como se fosse uma pessoa real conversando no WhatsApp.
 - Se você acabou de executar ferramentas (ex: enviar imagens, adicionar etiqueta), AINDA ASSIM você DEVE escrever uma mensagem natural em português ao cliente logo em seguida — nunca termine sem texto, nunca devolva texto telegráfico em inglês, nunca devolva meta-comentário entre parênteses.
 
-${temporalBlock}
-## ⏰ CONTEXTO TEMPORAL (LEIA ANTES DE QUALQUER RESPOSTA)
-- AGORA são **${br.timeHHMM}** da **${br.periodOfDay}** — ${todayName}, ${br.todayDateBR} (${br.dayType})
-- Data ISO de hoje: ${todayDate} | Data/hora completa Brasília: ${dateComplete}
-- Gap desde a última mensagem do cliente: ${gapStr}
-- 📌 Cada mensagem do histórico abaixo vem com um prefixo INTERNO \`[DD/MM HH:MM]\` indicando quando foi enviada (Brasília). Use isso para raciocinar sobre o tempo entre as trocas e para detectar virada de dia/semana. NUNCA escreva esse prefixo na sua resposta ao cliente.
-- Calendário dos próximos 14 dias (CONSULTE SEMPRE ANTES DE RESPONDER):
-${nextDaysMap.join("\n")}
-
 🚨 REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA (APLICA-SE A TODAS AS BARBEARIAS):
-Antes de QUALQUER resposta, compare "Agora" do bloco "ESTADO TEMPORAL DESTA INTERAÇÃO" com a data da última troca real (cliente, IA ou atendente humano).
+Antes de QUALQUER resposta, compare "Agora" do bloco "ESTADO TEMPORAL DESTA INTERAÇÃO" (no FINAL deste prompt) com a data da última troca real (cliente, IA ou atendente humano).
 - Se o "Status da sessão" estiver marcado como 🆕 NOVA SESSÃO (gap ≥ 8h OU dia calendário diferente de hoje):
   • NÃO dê continuidade automática ao assunto da conversa anterior. NÃO reconfirme agendamento que estava sendo combinado, NÃO retome a escolha de horário/serviço pendente, NÃO reenvie link/PIX/valor que já tinha sido oferecido em dia anterior.
   • Trate a mensagem atual como uma NOVA interação: cumprimento curto adequado ao período (use a regra de saudação) + pergunte como pode ajudar AGORA. Aja como uma pessoa real que retoma o WhatsApp depois de horas/dias sem responder.
@@ -11766,37 +11778,37 @@ Antes de QUALQUER resposta, compare "Agora" do bloco "ESTADO TEMPORAL DESTA INTE
 
 
 🚨 REGRA DE SAUDAÇÃO (CRÍTICA — NÃO QUEBRE):
-- Saudação correta para o período de AGORA (CASO precise saudar): "${br.greeting}".
-- ⛔ **NÃO cumprimente em toda mensagem.** Saudação ("bom dia/boa tarde/boa noite/olá/oi/e aí") só é permitida em UMA situação: a PRIMEIRA resposta de um NOVO atendimento — ou seja, NÃO existe histórico anterior nesta conversa, OU o gap acima é maior que 8 horas.
+- A saudação correta para o período de AGORA (CASO precise saudar) está no bloco "CONTEXTO TEMPORAL" no FINAL deste prompt (linha "Saudação do período").
+- ⛔ **NÃO cumprimente em toda mensagem.** Saudação ("bom dia/boa tarde/boa noite/olá/oi/e aí") só é permitida em UMA situação: a PRIMEIRA resposta de um NOVO atendimento — ou seja, NÃO existe histórico anterior nesta conversa, OU o gap informado no bloco de contexto temporal (final do prompt) é maior que 8 horas.
 - Se já existe histórico recente (gap ≤ 8h) ou você já cumprimentou antes nesta conversa, NUNCA inicie a mensagem com "bom dia", "boa tarde", "boa noite", "olá", "oi" ou variações. Vá DIRETO ao assunto, como uma pessoa real no WhatsApp.
 - Se o cliente mandar uma saudação no meio da conversa (ex: "boa tarde" quando já estão conversando), NÃO devolva outra saudação — apenas continue o atendimento (ex: "opa, tudo bem? então, sobre o seu corte...").
-- A saudação "${br.greeting}" indicada acima existe APENAS para garantir o período correto QUANDO saudar for permitido. Ela NÃO é uma ordem para saudar.
+- A saudação do período indicada no bloco de contexto temporal existe APENAS para garantir o período correto QUANDO saudar for permitido. Ela NÃO é uma ordem para saudar.
 
 🚨 REGRA DE USO DE CONTEXTO (CRÍTICA — LEIA COM ATENÇÃO):
-As informações acima (hora atual, período do dia, data, dia da semana, saudação adequada) são CONTEXTO INTERNO PARA VOCÊ — NÃO são roteiro de mensagem (ver também regra de horário de funcionamento no bloco de regras globais).
+As informações do bloco de contexto temporal no FINAL deste prompt (hora atual, período do dia, data, dia da semana, saudação adequada) são CONTEXTO INTERNO PARA VOCÊ — NÃO são roteiro de mensagem (ver também regra de horário de funcionamento no bloco de regras globais).
 - Comparação interna: se AGORA < fechamento de hoje → ainda está aberto. Se cliente pedir horário FUTURO de hoje, só recuse se for DEPOIS do fechamento.
 - Se o "Status da sessão" for 🆕 NOVA SESSÃO, releia o histórico (cada mensagem traz prefixo \`[DD/MM HH:MM]\`) e siga a "REGRA GLOBAL — VIRADA DE DIA / CONVERSA ANTIGA" antes de assumir que "amanhã"/"hoje" antigos do cliente ainda valem.
 
 
 
 🚨 REGRA CRÍTICA DE DATAS — NUNCA QUEBRE ESTA REGRA:
-1. NUNCA diga uma data sem antes consultar o calendário acima.
-2. Quando o cliente disser um dia da semana (ex: "sexta"), encontre a PRÓXIMA ocorrência no calendário acima e use a data EXATA correspondente.
+1. NUNCA diga uma data sem antes consultar o calendário dos próximos 14 dias (bloco de contexto temporal, no final do prompt).
+2. Quando o cliente disser um dia da semana (ex: "sexta"), encontre a PRÓXIMA ocorrência no calendário dos próximos 14 dias (final do prompt) e use a data EXATA correspondente.
 3. Quando mencionar uma data para o cliente, SEMPRE confirme que o dia da semana corresponde à data no calendário. Ex: se sexta = 2026-04-17, diga "sexta, dia 17" e NUNCA "sexta, dia 20".
 4. Se não tiver certeza, NÃO invente. Consulte o calendário.
-5. "Amanhã" = ${nextDaysMap.length > 1 ? nextDaysMap[1].split("=")[1].trim().split(" ")[0] : "dia seguinte"}.
+5. "Amanhã" = a data marcada com (AMANHÃ) no calendário do bloco de contexto temporal (final do prompt).
 6. Ao usar ferramentas de agendamento, use SEMPRE o formato YYYY-MM-DD extraído do calendário.
 
 🚨 REGRA CRÍTICA DE CONTINUIDADE DE CONVERSA (NUNCA QUEBRE):
 A conversa pode ter ficado parada por horas ou dias. ANTES de falar qualquer coisa relacionada a data/horário, PARE e faça este raciocínio interno:
-  a) Qual é a data REAL de hoje? (use ${todayDate})
+  a) Qual é a data REAL de hoje? (use a "Data ISO de hoje" do bloco de contexto temporal, no final do prompt)
   b) Qual data o cliente está REALMENTE pedindo? Quando o cliente disse "amanhã" ou "hoje" em mensagens ANTIGAS do histórico, aquela referência era relativa à data daquela mensagem — NÃO à data de hoje. Não assuma que "amanhã" mencionado anteriormente ainda é amanhã.
   c) Se o "Status da sessão" for 🆕 NOVA SESSÃO (mensagem do cliente em outro dia/semana) e ele retomar dizendo "vamos confirmar?", NÃO reuse a referência relativa antiga e NÃO assuma que o horário ainda está disponível. Releia o histórico (use o prefixo \`[DD/MM HH:MM]\` de cada mensagem) para descobrir a DATA ABSOLUTA combinada, REVALIDE via ferramentas e só então traduza para a referência relativa CORRETA em relação a hoje.
   d) Em caso de DÚVIDA sobre qual dia o cliente quer, PERGUNTE antes de buscar/agendar/cancelar. Ex: "Só pra confirmar, o agendamento é pra hoje mesmo, né?"
 NUNCA chame ferramentas de buscar/agendar/cancelar/confirmar com uma data que você não tem 100% de certeza.
 
 🚨🚨 REGRA DE PRIVACIDADE DA DATA — USO ESTRITAMENTE INTERNO 🚨🚨
-A data e o calendário acima são para SEU USO INTERNO de raciocínio APENAS.
+A data e o calendário do bloco de contexto temporal são para SEU USO INTERNO de raciocínio APENAS.
 NUNCA escreva ao cliente datas em nenhum formato (dd/mm, dd/mm/aaaa, "dia 25", "dia 25/04", "25 de abril", "amanhã, dia X", etc.).
 Sempre use referências relativas: "amanhã", "hoje", "sexta", "na próxima semana", "no próximo sábado", "no dia que você prefere".
 
@@ -11816,11 +11828,6 @@ Exceção única: se o cliente PERGUNTAR EXPLICITAMENTE a data ("que dia é hoje
 
 ------------------------------------------
 
-${identityBlock}
-${summaryBlock}
-${recentActionsBlock}
-${recentRepliesBlock}
-${simulatorBlock}
 ${humanAttendantBlock}
 ${existingBookingLookupBlock}
 ${(typeof globalPromptOverride === "string" && globalPromptOverride.trim().length > 0) ? globalPromptOverride : ""}
@@ -11992,7 +11999,9 @@ Antes de responder, analise a mensagem do cliente e identifique o que ele JÁ di
   }
 
   // providerPrompt vai por ÚLTIMO para sobrescrever instruções conflitantes do prompt customizado (ex.: tenant que descreve a API em texto cru)
-  return basePrompt + "\n\n" + customSection + customToolsSection + crmToolsSection + "\n\n" + providerPrompt;
+  // Fixo primeiro (prefixo cacheável), dinâmico por último. O prompt do provedor
+  // continua depois de todas as regras fixas; o bloco dinâmico só traz estado.
+  return basePrompt + "\n\n" + customSection + customToolsSection + crmToolsSection + "\n\n" + providerPrompt + "\n\n------------------------------------------\n\n" + dynamicTail;
 }
 
 // ===================== TRINKS PROMPT SECTION =====================
