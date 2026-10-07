@@ -92,6 +92,7 @@ import {
 } from "./providers/onebeleza/index.ts";
 // PROVIDER TRINKS — módulo isolado (extraído em jul/2026 na mesma linha do
 // Frizzar/AppBarber). Nada de Trinks deve morar neste arquivo.
+import { compactTraceBodies, sumOpenAiTotalTokens } from "./trace-compact.ts";
 import {
   buildTrinksTools,
   executeTrinksTool,
@@ -1150,9 +1151,17 @@ globalThis.fetch = async (input: any, init?: any) => {
       const clone = res.clone();
       text = await clone.text();
     } catch { text = null; }
-    const resTrunc = truncateTraceBody(redactTraceText(text));
-    entry.response_body = resTrunc.body;
-    entry.truncated = reqTrunc.truncated || resTrunc.truncated;
+    // OpenAI/UAZAPI: grava resumo/usage em vez do corpo (ver trace-compact.ts).
+    const compact = compactTraceBodies(url, reqBody, text);
+    if (compact) {
+      entry.request_body = compact.request_body;
+      entry.response_body = compact.response_body;
+      entry.truncated = false;
+    } else {
+      const resTrunc = truncateTraceBody(redactTraceText(text));
+      entry.response_body = resTrunc.body;
+      entry.truncated = reqTrunc.truncated || resTrunc.truncated;
+    }
     bucket.push(entry);
     return res;
   } catch (e: any) {
@@ -2978,6 +2987,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
               duration_ms: Date.now() - tDebounceEnd,
               session_blocked: true,
               http_trace: getHttpTraceCapped(),
+        total_tokens: sumOpenAiTotalTokens(getHttpTraceCapped()) || null,
             });
             return new Response(JSON.stringify({ status: "ia_off_before_send" }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -3004,6 +3014,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
             duration_ms: Date.now() - tDebounceEnd,
             session_blocked: true,
             http_trace: getHttpTraceCapped(),
+        total_tokens: sumOpenAiTotalTokens(getHttpTraceCapped()) || null,
           });
           return new Response(JSON.stringify({ status: "ia_off_guard_unavailable" }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -3090,6 +3101,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         duration_ms: totalResponseMs,
         session_blocked: agentResult?.sessionBlocked || false,
         http_trace: getHttpTraceCapped(),
+        total_tokens: sumOpenAiTotalTokens(getHttpTraceCapped()) || null,
       });
 
 
