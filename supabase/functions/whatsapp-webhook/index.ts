@@ -2313,9 +2313,18 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           if (fallbackIds.length) console.log(`[IA OFF Check] Fallback resolved IA OFF label IDs from UAZAPI: ${JSON.stringify(fallbackIds)}`);
         }
 
-        const allConfiguredFlagIds = kanbanCols
-          .filter((c: any) => c.type === "flag")
-          .map((c: any) => String(c.label_id));
+        // (10/10) Inclui os IDs do IA OFF resolvidos pelo fallback da UAZAPI.
+        // Antes, tenant SEM coluna "flag" no kanban (ex.: Future & Cut) tinha
+        // essa lista vazia, o bloco de reconciliação abaixo nunca rodava e a
+        // flag IA OFF gravada no banco (ex.: pela escalação da IA) nunca era
+        // removida, mesmo com a etiqueta já retirada no WhatsApp — o contato
+        // ficava mudo para sempre ("IA não respondeu ... no painel").
+        const allConfiguredFlagIds = [...new Set([
+          ...kanbanCols
+            .filter((c: any) => c.type === "flag")
+            .map((c: any) => String(c.label_id)),
+          ...iaOffLabelIds,
+        ])];
 
 
 
