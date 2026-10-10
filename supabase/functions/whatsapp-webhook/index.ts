@@ -2331,13 +2331,20 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // Read DB state
         const { data: leadData } = await supabase
           .from("crm_leads")
-          .select("id, flag_labels")
+          .select("id, flag_labels, updated_at")
           .eq("tenant_id", tenant.id)
           .eq("phone_number", phoneNumber)
           .limit(1);
 
         const flagLabels: string[] = leadData?.[0]?.flag_labels || [];
-        const dbHasIaOff = flagLabels.some((f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f));
+        const isIaOffFlag = (f: string) => iaOffLabelIds.includes(f) || /ia\s*off/i.test(f);
+        const dbHasIaOff = flagLabels.some(isIaOffFlag);
+        // (10/10) Flag gravada há menos de 60s: a UAZAPI pode ainda não refletir a
+        // etiqueta recém-colocada pelo atendente. Nesse caso o banco continua mandando.
+        const leadUpdatedMs = leadData?.[0]?.updated_at ? Date.parse(leadData[0].updated_at) : NaN;
+        const dbFlagIsRecent = Number.isFinite(leadUpdatedMs) && (Date.now() - leadUpdatedMs) < 60_000;
+        // Preenchido só quando a reconciliação gravou com sucesso no banco.
+        let reconciledFlags: string[] | null = null;
 
         // Read live WhatsApp state from payload.
         // ⚠️ UAZAPI nem sempre envia wa_label no evento "messages". Quando vier vazio,
@@ -2388,13 +2395,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           const currentSorted = [...flagLabels].sort().join(",");
           const desiredSorted = [...desiredFlags].sort().join(",");
 
-          if (currentSorted !== desiredSorted) {
+          // Flag IA OFF recém-gravada no banco e ainda ausente no WhatsApp: não apaga agora.
+          const keepFreshDbIaOff = dbHasIaOff && !waHasIaOff && dbFlagIsRecent;
+
+          if (currentSorted !== desiredSorted && !keepFreshDbIaOff) {
             try {
               if (leadData?.[0]) {
-                await supabase.from("crm_leads")
+                const { error: reconErr } = await supabase.from("crm_leads")
                   .update({ flag_labels: desiredFlags, updated_at: new Date().toISOString() })
                   .eq("id", leadData[0].id);
-                console.log(`[FlagSync] Reconciled flags for ${phoneNumber}: [${currentSorted}] → [${desiredSorted}]`);
+                if (!reconErr) reconciledFlags = desiredFlags;
+                console.log(`[FlagSync] Reconciled flags for ${phoneNumber}: [${currentSorted}] → [${desiredSorted}] ok=${!reconErr}`);
               } else if (desiredFlags.length > 0) {
                 const { createClient } = await import("https://esm.sh/@supabase/supabase-js@2");
                 const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -2416,7 +2427,17 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         // mensagem. A UAZAPI pode demorar alguns segundos para refletir uma etiqueta;
         // por isso uma leitura live vazia nunca libera, no mesmo request, uma flag que
         // ainda estava presente no DB quando a mensagem chegou.
-        if (waHasIaOff || dbHasIaOff) {
+        // (10/10) Se a reconciliação acabou de limpar a flag do banco com o WhatsApp
+        // confirmado (waLabelsKnown), a decisão usa o estado reconciliado: não descarta
+        // a mensagem por causa de uma flag que acabou de ser apagada como obsoleta.
+        const dbHasIaOffEffective = reconciledFlags !== null
+          ? reconciledFlags.some(isIaOffFlag)
+          : dbHasIaOff;
+        if (dbHasIaOff && !dbHasIaOffEffective) {
+          console.log(`[IA OFF Check] released_by_reconcile phone=${phoneNumber} tenant=${tenant.name}`);
+        }
+
+        if (waHasIaOff || dbHasIaOffEffective) {
           console.log(`IA OFF flag detected for ${phoneNumber} in tenant ${tenant.name} (waHasIaOff=${waHasIaOff}, waLabelsKnown=${waLabelsKnown}), skipping AI`);
 
           // Registro visível (30/09): antes a mensagem sumia sem rastro — não
