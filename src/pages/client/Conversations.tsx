@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
+import { splitTextWithLinks } from "@/lib/linkify";
 
 // Strip internal tags that should never be shown to end-user
 function cleanContent(raw: string): string {
@@ -494,7 +495,23 @@ export default function ClientConversations() {
                                   : "bg-[hsl(var(--wa-bubble-in))] text-[hsl(var(--wa-bubble-in-fg))] rounded-tl-none"
                               }`}
                             >
-                              <div className="whitespace-pre-wrap break-words pr-12">{text}</div>
+                              <div className="whitespace-pre-wrap break-words pr-12">
+                                {splitTextWithLinks(text).map((p, i) =>
+                                  p.type === "link" ? (
+                                    <a
+                                      key={i}
+                                      href={p.value}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="underline underline-offset-2 text-sky-500 hover:text-sky-400 break-all"
+                                    >
+                                      {p.value}
+                                    </a>
+                                  ) : (
+                                    <span key={i}>{p.value}</span>
+                                  ),
+                                )}
+                              </div>
                               <div
                                 className={`text-[10px] absolute bottom-1 right-2 ${
                                   isOut ? "text-[hsl(var(--wa-bubble-out-fg))]/70" : "text-muted-foreground"
