@@ -8475,7 +8475,12 @@ async function callAIAgent(
               messages,
               tools: buildToolsForProvider(provider, tenant),
               tool_choice: round === 0 ? "required" : "auto",
-              max_completion_tokens: _isGpt5Reinject ? 1500 : 700,
+              // ⚠️ 13/10 (caso 9Cinco 554498603038): sem reasoning_effort o gpt-5-mini
+              // usa esforço médio e gastou os 1500 tokens só raciocinando
+              // (finish_reason "length", sem texto nem ferramenta). Mesmo ajuste da
+              // chamada principal: esforço "low" e limite de 4096.
+              max_completion_tokens: _isGpt5Reinject ? 4096 : 700,
+              ...(_isGpt5Reinject ? { reasoning_effort: "low" } : {}),
             };
             const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), `phantom-confirmation-reinject-r${round + 1}`);
             if (!retryResp.ok) break;
@@ -8548,9 +8553,9 @@ async function callAIAgent(
         }
 
         if (!recovered) {
-          // Fallback sem promessa de retorno (a IA não reabre conversa sozinha):
-          // convida o cliente a continuar no mesmo turno.
-          finalResponse = "Só um instante que eu confiro seu horário na agenda agora.";
+          // Fallback honesto: a IA não conseguiu concluir, então transfere de verdade
+          // (etiqueta IA OFF + aviso ao atendente) e só então avisa o cliente.
+          finalResponse = await buildGuardFailureFallback(tenant, phoneNumber, logToolCalls, "PhantomConfirmationGuard: reinjeção não recuperou a resposta");
           guardOverrideResponse = true;
         }
       }
@@ -8737,7 +8742,8 @@ async function callAIAgent(
                 messages,
                 tools: buildToolsForProvider(provider, tenant),
                 tool_choice: "auto",
-                max_completion_tokens: _isGpt5Stale ? 1500 : 700,
+                max_completion_tokens: _isGpt5Stale ? 4096 : 700,
+                ...(_isGpt5Stale ? { reasoning_effort: "low" } : {}),
               }),
               `stale-confirmation-reinject-r${round + 1}`,
             );
@@ -8794,7 +8800,7 @@ async function callAIAgent(
           console.error(`[StaleConfirmationGuard] reinject exception: ${(e as Error)?.message}`);
         }
         if (!staleRecovered) {
-          finalResponse = "Só um instante que eu confiro seu horário na agenda agora.";
+          finalResponse = await buildGuardFailureFallback(tenant, phoneNumber, logToolCalls, "StaleConfirmationGuard: reinjeção não recuperou a resposta");
           guardOverrideResponse = true;
         }
       }
@@ -10806,6 +10812,36 @@ function buildCustomToolFilename(toolName: string, toolType: string, mediaUrl: s
   return `${toolName || "arquivo"}.${extensionByMime[normalizedContentType] || fallbackExtension}`;
 }
 
+/**
+ * Fallback dos guards de confirmação quando a reinjeção não recupera a resposta.
+ * Antes: "Só um instante que eu confiro seu horário" — promessa que ninguém cumpria
+ * (caso 9Cinco 13/10: cliente ficou 16 min sem resposta). Agora a transferência é
+ * REAL: executa a ferramenta escalate_human do tenant (etiqueta IA OFF + aviso ao
+ * atendente) e registra a chamada em logToolCalls — o que libera o envio na trava
+ * de saída (selfEscalatedThisTurn). Só diz "vou transferir" se a escalação deu certo;
+ * sem ferramenta de escalação (ou se falhar) pede desculpas sem prometer nada.
+ */
+async function buildGuardFailureFallback(
+  tenant: any,
+  phoneNumber: string,
+  logToolCalls: any[],
+  motivo: string,
+): Promise<string> {
+  const transferMsg = "Ops, tive um probleminha aqui. Só um instante que vou transferir seu atendimento para alguém da equipe 🙏";
+  const noPromiseMsg = "Ops, tive um probleminha aqui e não consegui concluir isso agora. Pode tentar me mandar de novo em instantes?";
+  try {
+    const escalateTool = (getEnabledCustomTools(tenant) || []).find((t: any) => t?.type === "escalate_human");
+    if (!escalateTool) return noPromiseMsg;
+    const args = { motivo: `IA não conseguiu concluir a resposta (${motivo}). Cliente aguardando.` };
+    const result = await executeCustomTool(tenant, escalateTool, phoneNumber, args);
+    logToolCalls.push({ name: escalateTool.name, args, result });
+    return result?.success === true && !result?.blocked ? transferMsg : noPromiseMsg;
+  } catch (e) {
+    console.error(`[GuardFallback] escalação falhou: ${(e as Error)?.message}`);
+    return noPromiseMsg;
+  }
+}
+
 async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string, toolArgs?: any): Promise<any> {
   const uazapiUrl = tenant.uazapi_url || Deno.env.get("UAZAPI_URL");
   const uazapiToken = tenant.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
@@ -11330,7 +11366,11 @@ function isAffirmativeReply(value: string): boolean {
   const normalized = normalizeUserFacingText(raw);
   if (!normalized) return false;
 
-  const FIXED_LIST_RE = /^(sim|s|ok|okay|pode|pode sim|pode ser|pode confirmar|confirmo|confirmo sim|confirmado|positivo|isso|isso mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|sim pode|pode cancelar|sim pode cancelar)$/;
+  // ⚠️ 13/10 (caso 9Cinco 554498603038): "Simm" (letra repetida, comum no WhatsApp)
+  // não casava com "sim", então a resposta a um disparo de confirmação de agendamento
+  // existente não era vista como confirmação e o PhantomConfirmationGuard disparou.
+  // "s+i+m+" aceita sim/simm/siiim sem afrouxar o resto da lista.
+  const FIXED_LIST_RE = /^(s+i+m+|s|ok|okay|pode|pode s+i+m+|pode ser|pode confirmar|confirmo|confirmo s+i+m+|confirmado|positivo|isso|isso mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|s+i+m+ pode|pode cancelar|s+i+m+ pode cancelar)$/;
   if (FIXED_LIST_RE.test(normalized)) return true;
 
   // ⚠️ Ampliado (10/09): a versão original só reconhecia a mensagem INTEIRA
@@ -11353,7 +11393,7 @@ function isAffirmativeReply(value: string): boolean {
   if (/\b(amanh[ãa]|hoje|depois\s+de\s+amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|semana\s+que\s+vem|de\s+manh[ãa]|[àa]\s+tarde|[àa]\s+noite|mais\s+tarde|mais\s+cedo)\b/.test(normalized)) return false; // dia/período alternativo
   if (/\b(outro|outra|outros|outras)\b/.test(normalized)) return false; // outro horário/profissional/dia
 
-  const AFFIRMATIVE_MARKER_RE = /\b(sim|pode(?:\s+(?:ser|confirmar|sim))?|confirmo|confirmado|confirma|positivo|isso\s+mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|claro|com\s+certeza|manda\s+ver|bora|vamos)\b/;
+  const AFFIRMATIVE_MARKER_RE = /\b(s+i+m+|pode(?:\s+(?:ser|confirmar|s+i+m+))?|confirmo|confirmado|confirma|positivo|isso\s+mesmo|certo|beleza|perfeito|fechado|combinado|show|tranquilo|claro|com\s+certeza|manda\s+ver|bora|vamos)\b/;
   return AFFIRMATIVE_MARKER_RE.test(normalized);
 }
 
