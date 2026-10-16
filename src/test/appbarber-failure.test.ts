@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { classifyAppBarberFailure } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/index";
+import { appBarberClaimsCompletedBooking } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/guard-core";
 
 /**
  * Testes de regressão do classificador de falhas do AppBarber.
@@ -93,6 +94,43 @@ describe("future_appointments_limit — regressão do vazamento de 25/08", () =>
   });
 });
 
+describe("subscription_payment_pending — regressão de 16/10/2026 (9Cinco, criados=0 e IA confirmou)", () => {
+  const API_MSG = "Este estabelecimento não permite agendamentos enquando existir uma pendência no pagamento da sua assinatura.";
+
+  it("reconhece pela mensagem da API", () => {
+    const r = classifyAppBarberFailure(422, undefined, err(API_MSG));
+    expect(r.reason).toBe("subscription_payment_pending");
+  });
+
+  it("reconhece pelo errorCode 20074 mesmo se o texto mudar", () => {
+    const r = classifyAppBarberFailure(422, undefined, { errorCode: 20074, message: "texto novo qualquer" });
+    expect(r.reason).toBe("subscription_payment_pending");
+  });
+
+  it("não repete o agendamento, mas NÃO escala humano e NÃO oferece outro horário", () => {
+    const r = classifyAppBarberFailure(422, undefined, err(API_MSG));
+    expect(r.retryable).toBe(false);
+    expect(r.recoverable).toBe(true);
+    expect(r.recoveryDirective).toMatch(/NÃO chame listar_horarios/);
+    expect(r.recoveryDirective).toMatch(/NÃO diga que agendou/);
+    expect(r.recoveryDirective).toMatch(/não consegue verificar/i);
+    expect(r.clientMessage).toMatch(/pagamento do seu plano/i);
+    expect(r.clientMessage).not.toBe(r.recoveryDirective);
+  });
+
+  it("422 de choque de horário continua genérico (não foi capturado pela regra nova)", () => {
+    const r = classifyAppBarberFailure(422, undefined, err("Horário indisponível para este profissional"));
+    expect(r.reason).toBe("conflict_422");
+    expect(r.retryable).toBe(true);
+    expect(r.clientMessage).toBeUndefined();
+  });
+
+  it("o 422 de limite de agendamentos futuros continua com a regra anterior", () => {
+    const r = classifyAppBarberFailure(422, undefined, err("O limite de agendamentos futuros foi excedido"));
+    expect(r.reason).toBe("future_appointments_limit");
+  });
+});
+
 describe("invariante: clientMessage nunca vaza vocabulário interno", () => {
   // Qualquer texto que possa sair literalmente no WhatsApp do cliente.
   // Se um caso novo for adicionado ao classificador com linguagem de agente,
@@ -100,6 +138,7 @@ describe("invariante: clientMessage nunca vaza vocabulário interno", () => {
   const casos: Array<[string, number, string]> = [
     ["future_appointments_limit", 422, "O limite de agendamentos futuros foi excedido"],
     ["establishment_inactive", 400, "Estabelecimento inativo"],
+    ["subscription_payment_pending", 422, "Este estabelecimento não permite agendamentos enquando existir uma pendência no pagamento da sua assinatura."],
   ];
 
   // Nome do fornecedor, nomes de ferramenta, jargão de API e imperativos
@@ -154,6 +193,7 @@ describe("invariante: clientMessage não pode disparar os guards de confirmaçã
   const casos: Array<[string, number, string]> = [
     ["future_appointments_limit", 422, "O limite de agendamentos futuros foi excedido"],
     ["establishment_inactive", 400, "Estabelecimento inativo"],
+    ["subscription_payment_pending", 422, "Este estabelecimento não permite agendamentos enquando existir uma pendência no pagamento da sua assinatura."],
   ];
 
   it.each(casos)("%s não casa com IMPLICIT_CONFIRMATION_RE", (_n, status, msg) => {
@@ -164,6 +204,18 @@ describe("invariante: clientMessage não pode disparar os guards de confirmaçã
   it.each(casos)("%s não casa com IMPLIED_FINALIZATION_RE", (_n, status, msg) => {
     const { clientMessage } = classifyAppBarberFailure(status, undefined, err(msg));
     if (clientMessage) expect(clientMessage).not.toMatch(IMPLIED_FINALIZATION_RE);
+  });
+
+  it.each(casos)("%s não é lido como 'reserva concluída' (appBarberClaimsCompletedBooking)", (_n, status, msg) => {
+    const { clientMessage } = classifyAppBarberFailure(status, undefined, err(msg));
+    if (clientMessage) expect(appBarberClaimsCompletedBooking(clientMessage)).toBe(false);
+  });
+
+  it.each(casos)("%s não casa com o PromiseToContinueGuard", (_n, status, msg) => {
+    const { clientMessage } = classifyAppBarberFailure(status, undefined, err(msg));
+    if (clientMessage) {
+      expect(clientMessage).not.toMatch(/(?:ainda\s+falta|falta\s+concluir|vou\s+continuar\s+tentando|continuar\s+tentando\s+por\s+aqui)/i);
+    }
   });
 
   it("a mensagem oferece TROCAR ou MANTER, como o prompt V33 especifica", () => {

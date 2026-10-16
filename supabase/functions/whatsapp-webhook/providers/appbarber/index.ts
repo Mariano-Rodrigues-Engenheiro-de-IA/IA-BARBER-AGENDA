@@ -122,6 +122,44 @@ export function classifyAppBarberFailure(
         "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto.",
     };
   }
+  // 4b) Pendência no pagamento da assinatura/plano do cliente (errorCode 20074):
+  //     "Este estabelecimento não permite agendamentos enquanto existir uma
+  //     pendência no pagamento da sua assinatura."
+  //     NÃO é choque de horário. Sem esta regra o 422 caía em `conflict_422` e a
+  //     IA recebia o hint "chame listar_horarios e ofereça outro horário" — que
+  //     descreve a falha errada — e confirmou ao cliente um agendamento que não
+  //     existia (9Cinco, 16/10/2026 13:21, criados=0).
+  //     Mesmo desenho de `future_appointments_limit`: retryable=false (repetir o
+  //     mesmo agendamento bate no mesmo bloqueio) + recoverable=true (existe
+  //     caminho de saída — o cliente regulariza — então o BookingGuard NÃO
+  //     injeta "chame escalar_humano" e não pausa a conversa à toa).
+  if (
+    parsed?.errorCode === 20074
+    || /pend[eê]ncia\s+(?:no|do)\s+pagamento\s+d[aeo]\s+(?:sua\s+|seu\s+)?(?:assinatura|plano)/i.test(msg)
+  ) {
+    return {
+      retryable: false,
+      recoverable: true,
+      reason: "subscription_payment_pending",
+      // AUDIÊNCIA: cliente. Pode sair literalmente no WhatsApp.
+      // ⚠️ Passa por IMPLICIT_CONFIRMATION_RE, IMPLIED_FINALIZATION_RE e
+      // appBarberClaimsCompletedBooking: evitar "confirmado", "marcado",
+      // "te esperamos", "tudo certo", "até lá" (ver invariantes em
+      // src/test/appbarber-failure.test.ts).
+      clientMessage:
+        "Não consegui fazer o seu agendamento agora porque o pagamento do seu plano está pendente. "
+        + "Assim que regularizar, é só me avisar por aqui que eu tento de novo. 😉",
+      // AUDIÊNCIA: modelo. Nunca chega ao cliente.
+      recoveryDirective:
+        "O sistema BLOQUEOU este agendamento porque o cliente tem pendência no pagamento da assinatura (plano). "
+        + "NÃO é choque de horário: NÃO chame listar_horarios, NÃO ofereça outro horário e NÃO repita criar_agendamento agora. "
+        + "O agendamento NÃO foi criado: NÃO diga que agendou, NÃO diga que confirmou, NÃO diga que deixou reservado. "
+        + "Responda com suas palavras: explique que não foi possível agendar porque o pagamento do plano está pendente "
+        + "e que, assim que ele regularizar, pode avisar aqui que você tenta de novo. "
+        + "Se o cliente disser que vai pagar ou que já pagou, NÃO afirme que o pagamento foi recebido (você não consegue verificar). "
+        + "Só chame criar_agendamento outra vez depois que ele avisar que regularizou.",
+    };
+  }
   if (status === 422) return { retryable: true, reason: "conflict_422" };
 
   // 5) 429 e 5xx são transitórios por definição.
