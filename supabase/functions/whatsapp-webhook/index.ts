@@ -1,5 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  isUnreadableCustomerPhone,
+  PHONE_DEPENDENT_BOOKING_LOOKUP_TOOLS,
+  UNREADABLE_PHONE_INSTRUCTION_PT,
+} from "./phone-readability.ts";
 // MODO ECONÔMICO / SITE DE CHAT — módulo isolado (jul/2026).
 import {
   ensureWebChatSession,
@@ -2981,6 +2986,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       let tFirstSend = 0;
       let firstSendError: string | null = null;
+      const failedSendParts: Array<{ text: string; error: string }> = [];
 
       // Última barreira imediatamente antes da saída. A etiqueta pode ser aplicada
       // enquanto a IA está pensando, depois do recheck pós-debounce. Sem esta trava,
@@ -3065,8 +3071,13 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           tFirstSend = Date.now();
           if (!send.ok) firstSendError = `${send.error} (após ${send.attempts} tentativa(s))`;
         }
-        if (!send.ok) console.error(`UAZAPI send falhou parte ${i + 1}: ${send.error}`);
-
+        if (!send.ok) {
+          console.error(`UAZAPI send falhou parte ${i + 1}: ${send.error}`);
+          // Envio NÃO entregue: não gravar como mensagem da IA (o histórico faria
+          // parecer que o cliente recebeu) e registrar para avisar o atendente.
+          failedSendParts.push({ text: part, error: `${send.error} (após ${send.attempts} tentativa(s))` });
+          continue;
+        }
 
         // Persist the part with the real message_id (so the fromMe echo gets deduped)
         try {
@@ -3080,6 +3091,24 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           });
         } catch (persistErr: any) {
           console.error(`Failed to persist assistant part ${i + 1}:`, persistErr?.message || persistErr);
+        }
+      }
+
+      // ===== Envio falhou: avisa o atendente humano (a IA "respondeu", o cliente não recebeu) =====
+      if (failedSendParts.length > 0) {
+        try {
+          const humanTool = getEnabledCustomTools(tenant).find((ct: any) => ct.type === "escalate_human");
+          const humanNumber = String(humanTool?.config?.human_number || "").trim();
+          if (humanNumber) {
+            const alertText = `⚠️ *Resposta da IA NÃO entregue*\n\n` +
+              `👤 *Cliente:* ${phoneNumber}\n` +
+              `❌ *Falha:* ${failedSendParts[0].error}\n` +
+              `💬 *Mensagem que a IA tentou enviar:*\n${failedSendParts.map((p) => p.text).join("\n").slice(0, 600)}\n\n` +
+              `Se o número acima tem 14+ dígitos, é um contato sem telefone real (LID) e o WhatsApp não aceita o envio: fale com o cliente direto pelo app.`;
+            await uazapiSendTextWithRetry(uazapiUrl, uazapiToken, humanNumber, alertText, 2);
+          }
+        } catch (alertErr: any) {
+          console.error("[SendFailureAlert] falha ao avisar atendente:", alertErr?.message || alertErr);
         }
       }
 
@@ -3098,6 +3127,9 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
       const logErrors: LogEntry[] = [...(agentResult?.errors || [])];
       if (firstSendError) logErrors.push({ message: firstSendError, level: "error" });
+      for (const failed of failedSendParts.slice(1)) {
+        logErrors.push({ message: `Parte não entregue: ${failed.error}`, level: "error" });
+      }
 
       await insertAgentLogResilient(supabase, {
         tenant_id: tenant.id,
@@ -6626,6 +6658,28 @@ async function callAIAgent(
 
       let toolResult: any;
       let wasBlocked = false;
+
+      // ===== TRAVA DE NÚMERO ILEGÍVEL (LID) — busca de agendamento por telefone =====
+      // Contato que chegou só com o LID do WhatsApp não tem telefone real: a busca
+      // voltaria vazia e a IA diria "não encontrei agendamento" (falso). Aqui a busca
+      // não roda e a IA recebe o MOTIVO (nunca descartar em silêncio).
+      if (
+        PHONE_DEPENDENT_BOOKING_LOOKUP_TOOLS.has(toolCall.function.name) &&
+        isUnreadableCustomerPhone(phoneNumber)
+      ) {
+        console.warn(`[UnreadablePhoneGuard] ${toolCall.function.name} NÃO executada: contato ${phoneNumber} é um LID (sem telefone real).`);
+        toolResult = {
+          success: false,
+          blocked: true,
+          reason: "customer_phone_unreadable",
+          error: "Número do cliente ilegível: não foi possível consultar agendamentos.",
+          instruction_pt: UNREADABLE_PHONE_INSTRUCTION_PT,
+        };
+        wasBlocked = true;
+        messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(toolResult) });
+        logToolCalls.push({ name: toolCall.function.name, args: parsedArgs, result: toolResult, blocked: true, round: rounds, started_at: __toolStartedAt, duration_ms: Date.now() - __toolStartedMs, trace_from: __traceStartSeq, trace_to: getHttpTrace().length } as any);
+        continue;
+      }
 
       // ===== GLOBAL ACTION LEDGER GUARD (cross-provider, cross-tool) =====
       // Blocks the AI from re-executing the SAME mutating action when the same
