@@ -7,8 +7,8 @@
 //     tinha acabado de digitar nome nenhum;
 //  2) o cliente digitava o nome junto com outras linhas no mesmo bloco de mensagens
 //     ("Que estava disponível\nVilmar Boeira"), e o bloco inteiro não parece nome.
-// Aqui o nome só passa quando é comprovável: igual ao nome do perfil ou formado por
-// palavras que o próprio cliente escreveu. A IA continua sem poder inventar nome.
+// Aqui o nome passa quando é igual ao perfil ou aparece completo na mesma sequência
+// de palavras do texto do cliente, nunca pela combinação de palavras soltas.
 
 const normalize = (value: unknown): string =>
   String(value ?? "")
@@ -19,7 +19,7 @@ const normalize = (value: unknown): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-/** O nome que a IA passou é comprovável pela conversa (perfil do WhatsApp ou palavras do cliente)? */
+/** O nome corresponde ao perfil ou a uma sequência completa no texto do cliente? */
 export function isNameBackedByConversation(
   argNome: unknown,
   senderName: unknown,
@@ -31,8 +31,7 @@ export function isNameBackedByConversation(
   const sender = normalize(senderName);
   if (sender && arg === sender) return true;
 
-  const tokens = arg.split(" ").filter((t) => t.length >= 2);
-  if (tokens.length < 2) return false;
-  const words = new Set(normalize(userMessage).split(" ").filter(Boolean));
-  return tokens.every((t) => words.has(t));
+  const tokens = arg.split(" ");
+  if (tokens.length < 2 || tokens.some((token) => token.length < 2)) return false;
+  return ` ${normalize(userMessage)} `.includes(` ${arg} `);
 }

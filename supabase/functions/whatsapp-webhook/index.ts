@@ -6644,7 +6644,9 @@ async function callAIAgent(
           } catch { /* ignore */ }
           const blockedResult = {
             error: "NOME_NAO_COLETADO",
-            message: "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana, saudações ('bom dia'). Se a resposta do cliente for uma frase longa, saudação, pergunta ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática.",
+            message: provider === "onebeleza"
+              ? "Você ainda não tem um nome válido do cliente. NÃO chame cadastrar_cliente. Responda ao cliente APENAS: 'Pra finalizar, me diz só seu nome e sobrenome?' e AGUARDE a próxima mensagem. Critérios de nome válido: 2 a 4 palavras, só letras, sem verbos, sem palavras como 'corte', 'barba', 'horário', 'quero', 'tem', dias da semana, saudações ('bom dia'). Se a resposta do cliente for uma frase longa, saudação, pergunta ou parecer transcrição de áudio, NÃO use como nome — peça de novo de forma simpática."
+              : "O nome informado não passou na validação. Critérios: 2 a 4 palavras válidas; o nome deve corresponder ao perfil do WhatsApp ou aparecer completo na mesma sequência de palavras no texto do cliente, sem combinar palavras soltas. Se o nome do perfil estiver disponível, NÃO peça o nome ao cliente: use-o conforme o prompt do estabelecimento, sem inventar ou completar sobrenomes, respeitando os critérios de validação. Se o perfil não for utilizável ou não houver nome disponível, siga o prompt do estabelecimento; nunca peça o nome quando o prompt proibir. Se não for possível concluir, siga a regra de falhas do prompt e escale para humano quando houver a ferramenta, sem expor detalhes técnicos ao cliente.",
             blocked: true,
             attemptsSoFar: sessionState.nameRejectionCount,
           };

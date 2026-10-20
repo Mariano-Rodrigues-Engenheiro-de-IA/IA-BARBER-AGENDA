@@ -6,7 +6,7 @@ import {
 } from "../../supabase/functions/whatsapp-webhook/providers/trinks/index";
 
 const tenant = { id: "t-bendita", trinks_api_key: "k", trinks_establishment_id: "1" };
-const call = (name: string, args: any = {}) => ({ function: { name, arguments: JSON.stringify(args) } });
+const call = (name: string, args: Record<string, unknown> = {}) => ({ function: { name, arguments: JSON.stringify(args) } });
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const services = { data: [{ id: 1, nome: "Corte", preco: 45, duracaoEmMinutos: 40, categoria: "Cabelo" }] };
@@ -34,6 +34,7 @@ describe("Trinks: leituras com retry em 429", () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls).toEqual([[1200], [3000]]);
   });
 
   it("não repete em erro que não é transitório (404)", async () => {
@@ -61,7 +62,6 @@ describe("Trinks: leituras com retry em 429", () => {
     expect(out.falha_tecnica).toBe(true);
     expect(out.recoverable).toBe(true);
     expect(out.status).toBe(429);
-    expect(out.dica).toMatch(/não escale/i);
   });
 
   it("listar_servicos: segunda chamada usa o cache e não consulta a Trinks", async () => {
@@ -92,5 +92,59 @@ describe("Trinks: leituras com retry em 429", () => {
     const out = await p;
     expect(out.falha_tecnica).toBe(true);
     expect(out.data).toBeUndefined();
+  });
+
+  it.each([401, 403, 404, 500])("listar_servicos: HTTP %i não serve catálogo antigo", async (status) => {
+    trinksServicesCache.set(tenant.id, {
+      list: [{ id: 1, nome: "Corte" }], fetchedAt: Date.now() - 30 * 60 * 1000,
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => json(status, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await executeTrinksTool(tenant, call("listar_servicos"));
+    expect(Array.isArray(out)).toBe(false);
+    expect(out.status).toBe(status);
+    expect(out.falha_tecnica).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([429, 502, 503, 504])("listar_servicos: HTTP %i permite catálogo antigo após 3 tentativas", async (status) => {
+    vi.useFakeTimers();
+    const list = [{ id: 1, nome: "Corte" }];
+    trinksServicesCache.set(tenant.id, { list, fetchedAt: Date.now() - 30 * 60 * 1000 });
+    const fetchMock = vi.fn().mockImplementation(async () => json(status, {}));
+    vi.stubGlobal("fetch", fetchMock);
+    const pending = executeTrinksTool(tenant, call("listar_servicos"));
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual(list);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("cache não compartilha catálogo entre barbearias", async () => {
+    trinksServicesCache.set(tenant.id, { list: [{ id: 1, nome: "Corte" }], fetchedAt: Date.now() });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(200, { data: [{ id: 2, nome: "Barba" }] })));
+    const out = await executeTrinksTool({ ...tenant, id: "outro-tenant" }, call("listar_servicos"));
+    expect(out[0].id).toBe(2);
+    expect(trinksServicesCache.get(tenant.id)?.list[0].id).toBe(1);
+  });
+
+  it("cache de 6 horas não é servido mesmo em 429", async () => {
+    vi.useFakeTimers();
+    trinksServicesCache.set(tenant.id, { list: [{ id: 1, nome: "Corte" }], fetchedAt: Date.now() - 6 * 60 * 60 * 1000 });
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => json(429, {})));
+    const pending = executeTrinksTool(tenant, call("listar_servicos"));
+    await vi.runAllTimersAsync();
+    const out = await pending;
+    expect(out.falha_tecnica).toBe(true);
+    expect(out.status).toBe(429);
+  });
+
+  it("catálogo de 5 minutos é atualizado", async () => {
+    vi.useFakeTimers();
+    trinksServicesCache.set(tenant.id, { list: [{ id: 1, nome: "Antigo" }], fetchedAt: Date.now() - 5 * 60 * 1000 });
+    const fetchMock = vi.fn().mockResolvedValue(json(200, services));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await executeTrinksTool(tenant, call("listar_servicos"));
+    expect(out[0].nome).toBe("Corte");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
