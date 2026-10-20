@@ -47,6 +47,48 @@ function getBrasiliaDate(): { todayDate: string; hours: number; minutes: number 
 
 // ===================== TRINKS TOOLS =====================
 
+// ===================== LEITURAS COM RETRY + CACHE DE SERVIÇOS =====================
+// Bug real 19/10/2026 (Bendita Barber Club): a Trinks respondeu 429 (Too Many Requests)
+// duas vezes seguidas em /servicos, sem nenhuma nova tentativa; a IA escalou (IA OFF) e o
+// cliente ficou ~3h sem resposta. As escritas (criar/cancelar/editar) já tinham retry; as
+// LEITURAS não. Aqui: GET com backoff em 429/502/503/504 e cache curto da lista de serviços.
+
+const TRINKS_READ_BACKOFF_MS = [1200, 3000];
+const TRINKS_SERVICES_TTL_MS = 5 * 60 * 1000;
+const TRINKS_SERVICES_STALE_MAX_MS = 6 * 60 * 60 * 1000;
+
+export const trinksServicesCache = new Map<string, { list: any[]; fetchedAt: number }>();
+
+export async function trinksGetWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  label: string,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<Response> {
+  const maxAttempts = TRINKS_READ_BACKOFF_MS.length + 1;
+  let res: Response;
+  let attempt = 0;
+  while (true) {
+    attempt++;
+    res = await fetch(url, { headers });
+    const transient = res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504;
+    if (!transient || attempt >= maxAttempts) return res;
+    const wait = TRINKS_READ_BACKOFF_MS[attempt - 1] ?? 3000;
+    console.log(`[Trinks] ${label}: HTTP ${res.status}, aguardando ${wait}ms antes de retry ${attempt + 1}/${maxAttempts}`);
+    await sleep(wait);
+  }
+}
+
+function trinksReadFailure(label: string, status: number): Record<string, unknown> {
+  return {
+    error: `Não foi possível consultar ${label} agora (HTTP ${status} da Trinks).`,
+    status,
+    recoverable: true,
+    falha_tecnica: true,
+    dica: `Foi uma falha técnica temporária da Trinks, NÃO uma resposta sobre o cliente ou a agenda. Tente chamar a ferramenta de novo; se continuar falhando, peça ao cliente só um instante e tente mais uma vez — não escale para humano na primeira falha.`,
+  };
+}
+
 export function buildTrinksTools(tenant: any) {
   if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return undefined;
 
@@ -458,9 +500,11 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
 
         const url = `${baseUrl}/clientes?telefone=${tel}`;
         console.log(`buscar_cliente URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const res = await trinksGetWithRetry(url, headers, "buscar_cliente");
         const text = await res.text();
         console.log(`buscar_cliente response (${res.status}):`, text.slice(0, 500));
+        // 429/5xx persistente NÃO pode virar "cliente não encontrado" (a IA cadastraria em duplicidade).
+        if (res.status === 429 || res.status >= 500) return trinksReadFailure("o cadastro do cliente", res.status);
         try { return JSON.parse(text); } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
       }
 
@@ -498,7 +542,8 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
       }
 
       case "listar_profissionais": {
-        const res = await fetch(`${baseUrl}/profissionais`, { headers });
+        const res = await trinksGetWithRetry(`${baseUrl}/profissionais`, headers, "listar_profissionais");
+        if (!res.ok) return trinksReadFailure("a lista de profissionais", res.status);
         const data = await res.json();
         const list = data?.data || data;
         if (Array.isArray(list)) {
@@ -517,11 +562,24 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
       }
 
       case "listar_servicos": {
-        const res = await fetch(`${baseUrl}/servicos?somenteVisiveisCliente=true`, { headers });
+        const cachedServices = trinksServicesCache.get(tenant.id);
+        if (cachedServices && Date.now() - cachedServices.fetchedAt < TRINKS_SERVICES_TTL_MS) {
+          return cachedServices.list;
+        }
+        const res = await trinksGetWithRetry(`${baseUrl}/servicos?somenteVisiveisCliente=true`, headers, "listar_servicos");
+        if (!res.ok) {
+          // Catálogo muda pouco: com a Trinks limitando, serve a última lista conhecida (até 6h)
+          // em vez de travar o atendimento.
+          if (cachedServices && Date.now() - cachedServices.fetchedAt < TRINKS_SERVICES_STALE_MAX_MS) {
+            console.warn(`[Trinks] listar_servicos HTTP ${res.status} — usando lista em cache de ${Math.round((Date.now() - cachedServices.fetchedAt) / 60000)} min`);
+            return cachedServices.list;
+          }
+          return trinksReadFailure("a lista de serviços", res.status);
+        }
         const data = await res.json();
         const list = data?.data || data;
         if (Array.isArray(list)) {
-          return list.map((s: any) => ({
+          const mappedServices = list.map((s: any) => ({
             id: s.id || s.Id,
             nome: s.nome || s.Nome,
             descricao: s.descricao || s.Descricao || "",
@@ -529,13 +587,16 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
             duracaoEmMinutos: s.duracaoEmMinutos || s.DuracaoEmMinutos || s.duracao,
             categoria: s.categoria || s.Categoria,
           }));
+          trinksServicesCache.set(tenant.id, { list: mappedServices, fetchedAt: Date.now() });
+          return mappedServices;
         }
         return data;
       }
 
       case "listar_servicos_profissional": {
         const profId = args.profissionalId;
-        const res = await fetch(`${baseUrl}/profissionais/${profId}/servicos`, { headers });
+        const res = await trinksGetWithRetry(`${baseUrl}/profissionais/${profId}/servicos`, headers, "listar_servicos_profissional");
+        if (!res.ok) return trinksReadFailure("os serviços do profissional", res.status);
         const data = await res.json();
         const list = data?.data || data;
         if (Array.isArray(list)) {
@@ -552,7 +613,7 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
       case "listar_horarios": {
         const url = `${baseUrl}/agendamentos/profissionais/${args.data}?servicoDuracao=${args.servicoDuracao}`;
         console.log(`listar_horarios URL: ${url}`);
-        const res = await fetch(url, { headers });
+        const res = await trinksGetWithRetry(url, headers, "listar_horarios");
         const text = await res.text();
         console.log(`listar_horarios response (${res.status}):`, text.slice(0, 1000));
         // ⚠️ Ponta aberta 4.5 da auditoria (10/09): em HTTP de erro (429/5xx) o
