@@ -2,8 +2,9 @@
 
 ## Conferência e publicação — 20/10
 - [x] Conferir commits 10b40ed e 2be833e contra código e casos reais
-- [ ] Ajustar validação de nomes e instruções contraditórias — aguardando aprovação da mudança de comportamento
-- [ ] Publicar somente whatsapp-webhook e confirmar versão, horário e resultado — bloqueado pela conferência
+- [ ] Aplicar apenas nome sequencial mantendo perfil, cache antigo só em 429/502/503/504 e textos de bloqueio/dica; não editar prompts nem regras protegidas
+- [ ] Ampliar testes (nome separado e cache com 401), executar suíte e validar sintaxe
+- [ ] Publicar somente whatsapp-webhook e informar commit gerenciado, horário e resultado; sincronização com main gerenciada pelo Lovable
 
 - [x] Auditar todos os guards e o fluxo AppBarber contra situações cotidianas amplas
 - [x] Projetar estado determinístico de intenção, execução e pendências sem depender de palavras-chave
