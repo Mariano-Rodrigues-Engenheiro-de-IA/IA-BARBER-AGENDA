@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Conferência e publicação — 20/10
-- [ ] Conferir commits 10b40ed e 2be833e contra código e casos reais
-- [ ] Ajustar apenas riscos concretos pequenos, testar e validar sintaxe
-- [ ] Publicar somente whatsapp-webhook e confirmar versão, horário e resultado
+- [x] Conferir commits 10b40ed e 2be833e contra código e casos reais
+- [ ] Ajustar validação de nomes e instruções contraditórias — aguardando aprovação da mudança de comportamento
+- [ ] Publicar somente whatsapp-webhook e confirmar versão, horário e resultado — bloqueado pela conferência
 
 - [x] Auditar todos os guards e o fluxo AppBarber contra situações cotidianas amplas
 - [x] Projetar estado determinístico de intenção, execução e pendências sem depender de palavras-chave
