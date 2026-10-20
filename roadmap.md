@@ -4,7 +4,8 @@
 - [x] Conferir commits 10b40ed e 2be833e contra código e casos reais
 - [x] Aplicar apenas nome sequencial mantendo perfil, cache antigo só em 429/502/503/504 e textos de bloqueio/dica; não editar prompts nem regras protegidas
 - [x] Ampliar testes (nome separado e cache com 401), executar suíte e validar sintaxe — 162 passaram, 17 ignorados; Deno OK
-- [ ] Publicar somente whatsapp-webhook e informar commit gerenciado, horário e resultado; sincronização com main gerenciada pelo Lovable
+- [x] Publicar somente whatsapp-webhook — fonte c598f817, deploy concluído entre 19:03:02 e 19:03:24 UTC, sem erro; requisição com segredo inválido rejeitada com 401
+- [ ] Confirmar chegada do commit c598f817 à main remota — sincronização gerenciada pelo Lovable; referência main local ainda em a00c8ef
 
 - [x] Auditar todos os guards e o fluxo AppBarber contra situações cotidianas amplas
 - [x] Projetar estado determinístico de intenção, execução e pendências sem depender de palavras-chave
