@@ -17,6 +17,24 @@ describe("isNameBackedByConversation", () => {
   it("só um sobrenome da conversa não basta", () => {
     expect(isNameBackedByConversation("Pedro Boeira", "", "Vilmar Boeira")).toBe(false);
   });
+  it("barra Carlos e Silva separados por outras palavras", () => {
+    expect(isNameBackedByConversation("Carlos Silva", "", "Quero atendimento com Carlos; meu irmão é Silva.")).toBe(false);
+  });
+  it("barra palavras em ordem invertida", () => {
+    expect(isNameBackedByConversation("Carlos Silva", "", "Silva Carlos")).toBe(false);
+  });
+  it("não usa uma única ocorrência para inventar nome repetido", () => {
+    expect(isNameBackedByConversation("José José", "", "Quero falar com José amanhã")).toBe(false);
+  });
+  it("aceita nome completo na sequência com espaços e acentos normalizados", () => {
+    expect(isNameBackedByConversation("João Álvares", "", "Meu nome é JOAO   ALVARES, pode marcar")).toBe(true);
+  });
+  it("não confunde parte de sobrenome com o sobrenome completo", () => {
+    expect(isNameBackedByConversation("Carlos Silva", "", "Carlos Silvano")).toBe(false);
+  });
+  it("preserva igualdade com perfil contendo emoji", () => {
+    expect(isNameBackedByConversation("Vini Bocchi", "Vini Bocchi 😎", "Quero cortar amanhã")).toBe(true);
+  });
   it("nome de uma palavra só não passa pela conversa", () => {
     expect(isNameBackedByConversation("Carlos", "", "Carlos")).toBe(false);
   });

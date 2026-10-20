@@ -56,6 +56,8 @@ function getBrasiliaDate(): { todayDate: string; hours: number; minutes: number 
 const TRINKS_READ_BACKOFF_MS = [1200, 3000];
 const TRINKS_SERVICES_TTL_MS = 5 * 60 * 1000;
 const TRINKS_SERVICES_STALE_MAX_MS = 6 * 60 * 60 * 1000;
+const isTrinksTransientReadStatus = (status: number): boolean =>
+  status === 429 || status === 502 || status === 503 || status === 504;
 
 export const trinksServicesCache = new Map<string, { list: any[]; fetchedAt: number }>();
 
@@ -71,7 +73,7 @@ export async function trinksGetWithRetry(
   while (true) {
     attempt++;
     res = await fetch(url, { headers });
-    const transient = res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504;
+    const transient = isTrinksTransientReadStatus(res.status);
     if (!transient || attempt >= maxAttempts) return res;
     const wait = TRINKS_READ_BACKOFF_MS[attempt - 1] ?? 3000;
     console.log(`[Trinks] ${label}: HTTP ${res.status}, aguardando ${wait}ms antes de retry ${attempt + 1}/${maxAttempts}`);
@@ -85,7 +87,7 @@ function trinksReadFailure(label: string, status: number): Record<string, unknow
     status,
     recoverable: true,
     falha_tecnica: true,
-    dica: `Foi uma falha técnica temporária da Trinks, NÃO uma resposta sobre o cliente ou a agenda. Tente chamar a ferramenta de novo; se continuar falhando, peça ao cliente só um instante e tente mais uma vez — não escale para humano na primeira falha.`,
+    dica: `A consulta falhou; isto NÃO significa cliente inexistente, catálogo vazio ou falta de vagas. As tentativas automáticas aplicáveis já terminaram. Não repita a operação nem prossiga o agendamento com dados não consultados. Siga a regra de falhas do prompt: se houver ferramenta de escalar humano, chame-a imediatamente com o motivo e avise o cliente de forma tranquila, sem expor erros ou detalhes técnicos.`,
   };
 }
 
@@ -570,7 +572,7 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
         if (!res.ok) {
           // Catálogo muda pouco: com a Trinks limitando, serve a última lista conhecida (até 6h)
           // em vez de travar o atendimento.
-          if (cachedServices && Date.now() - cachedServices.fetchedAt < TRINKS_SERVICES_STALE_MAX_MS) {
+          if (isTrinksTransientReadStatus(res.status) && cachedServices && Date.now() - cachedServices.fetchedAt < TRINKS_SERVICES_STALE_MAX_MS) {
             console.warn(`[Trinks] listar_servicos HTTP ${res.status} — usando lista em cache de ${Math.round((Date.now() - cachedServices.fetchedAt) / 60000)} min`);
             return cachedServices.list;
           }
@@ -625,7 +627,7 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
             status: res.status,
             recoverable: true,
             falha_tecnica: true,
-            dica: `NÃO afirme que não há vaga em ${args.data} — foi falha técnica na consulta. Tente novamente em alguns segundos ou ofereça verificar outro dia.`,
+            dica: `NÃO afirme que não há vaga em ${args.data}: a consulta falhou e as tentativas automáticas aplicáveis já terminaram. Não repita a operação nem prossiga o agendamento. Siga a regra de falhas do prompt: se houver ferramenta de escalar humano, chame-a imediatamente com o motivo e avise o cliente de forma tranquila, sem expor erros ou detalhes técnicos.`,
           };
         }
         try {
