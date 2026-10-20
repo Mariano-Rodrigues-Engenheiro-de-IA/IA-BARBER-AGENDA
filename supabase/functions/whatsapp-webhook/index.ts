@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isNameBackedByConversation } from "./client-name-guard.ts";
 import {
   isUnreadableCustomerPhone,
   PHONE_DEPENDENT_BOOKING_LOOKUP_TOOLS,
@@ -6571,6 +6572,11 @@ async function callAIAgent(
         // Isso impede o cenário "cliente manda 'Bom dia, está precisando de produtos?'
         // e a IA já cadastra com essa frase no mesmo turno".
         const userMsgLooksLikeName = looksLikeRealName(userMessage);
+        // Fora da One Beleza (regra dela fica como está), também vale o nome do perfil do
+        // WhatsApp ou um nome formado só por palavras que o próprio cliente escreveu, mesmo
+        // dentro de um bloco de várias mensagens (IA não pode inventar nome).
+        const nameBackedByConversation = provider !== "onebeleza" && argNomeOk &&
+          isNameBackedByConversation(argNome, senderName, userMessage);
         const hasNamePrefix = /(?:meu nome|me chamo|sou o\b|sou a\b|pode me chamar)/i.test(String(userMessage || ""));
         const userJustSentName = userMsgLooksLikeName || hasNamePrefix;
         const blockedByFlow = provider === "onebeleza"
@@ -6613,8 +6619,9 @@ async function callAIAgent(
               },
             };
           }
-        } else if (argNomeOk && userJustSentName) {
-          // Só aceita o nome que a IA passou se o cliente acabou de mandar algo que parece nome.
+        } else if (argNomeOk && (userJustSentName || nameBackedByConversation)) {
+          // Só aceita o nome que a IA passou se o cliente acabou de mandar algo que parece nome
+          // (ou, fora da One Beleza, se o nome é comprovável pela conversa/perfil do WhatsApp).
           const cleaned = sanitizeClientName(argNome);
           parsedArgs = { ...parsedArgs, nome: cleaned };
           sessionState.explicitClientName = cleaned;
