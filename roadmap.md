@@ -1,5 +1,13 @@
 # Roadmap
 
+## Conferência e publicação — 21/10 (commit a219968, main 81f1c17)
+- [x] Sincronizar main 81f1c17 — marcadores trinksSenderLocalPhone, resolveProfileNameForRegistration e profileNameToRegister presentes
+- [x] Conferir a219968 contra logs reais: bloqueios "Sergio" (12:46 UTC) e "nicolasdaniel57035" (11:59 UTC) confirmados; telefone errado 169999628080 apareceu 1x; demais buscar_cliente com telefone correto
+- [x] Verificar prompts Thallys/Bendita: TIPO 2 proíbe cadastro de acompanhante (usa clienteId da conversa); presente da Bendita escala humano — ajuste A não quebra fluxo legítimo
+- [x] One Beleza idêntica; nome inventado segue barrado; perfil sem nome utilizável segue escalando
+- [x] npx vitest run: 171 aprovados, 17 ignorados; deno check OK
+- [x] Publicar somente whatsapp-webhook — deploy 21/10 17:37 UTC (14:37 Brasília), sem erro; segredo inválido rejeitado com 401
+
 ## Conferência e publicação — 20/10
 - [x] Conferir commits 10b40ed e 2be833e contra código e casos reais
 - [x] Aplicar apenas nome sequencial mantendo perfil, cache antigo só em 429/502/503/504 e textos de bloqueio/dica; não editar prompts nem regras protegidas
