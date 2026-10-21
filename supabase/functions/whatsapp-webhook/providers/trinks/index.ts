@@ -91,6 +91,19 @@ function trinksReadFailure(label: string, status: number): Record<string, unknow
   };
 }
 
+// ===================== TELEFONE DA CONVERSA (buscar_cliente / cadastrar_cliente) =====================
+// Bug real 21/10/2026 (Thallys, contato 5516999628080): a IA digitou o telefone com um
+// "9" a mais ("169999628080"), buscar_cliente voltou vazio e o cliente foi tratado como
+// novo. O telefone certo já é conhecido (é o da conversa), então não depende do modelo.
+// Só vale para número legível (somente dígitos); ids como "SIM:<id>" e LIDs não entram.
+export function trinksSenderLocalPhone(phoneNumber: unknown): string | null {
+  const raw = String(phoneNumber ?? "").trim();
+  if (!/^\+?\d+$/.test(raw)) return null;
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("55") && digits.length >= 12) digits = digits.slice(2);
+  return digits.length === 10 || digits.length === 11 ? digits : null;
+}
+
 export function buildTrinksTools(tenant: any) {
   if (!tenant.trinks_api_key || !tenant.trinks_establishment_id) return undefined;
 
@@ -482,6 +495,17 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
   const funcName = toolCall.function.name;
   let args: any = {};
   try { args = JSON.parse(toolCall.function.arguments || "{}"); } catch { /* empty */ }
+
+  if (funcName === "buscar_cliente" || funcName === "cadastrar_cliente") {
+    const senderLocal = trinksSenderLocalPhone(phoneNumber);
+    if (senderLocal) {
+      const given = String(args.telefone ?? "").replace(/\D/g, "").replace(/^55(?=\d{10,11}$)/, "");
+      if (given !== senderLocal) {
+        console.warn(`[Trinks] ${funcName}: telefone da IA "${args.telefone ?? ""}" difere do da conversa — usando ${senderLocal}`);
+      }
+      args.telefone = senderLocal;
+    }
+  }
 
   const baseUrl = "https://api.trinks.com/v1";
   const headers: Record<string, string> = {

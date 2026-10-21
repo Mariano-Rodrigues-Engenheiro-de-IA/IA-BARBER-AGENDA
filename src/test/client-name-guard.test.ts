@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isNameBackedByConversation } from "../../supabase/functions/whatsapp-webhook/client-name-guard";
+import {
+  isNameBackedByConversation,
+  profileNameForRegistration,
+  resolveProfileNameForRegistration,
+} from "../../supabase/functions/whatsapp-webhook/client-name-guard";
 
 describe("isNameBackedByConversation", () => {
   it("caso Thallys 20/10: nome do perfil do WhatsApp passa", () => {
@@ -41,5 +45,30 @@ describe("isNameBackedByConversation", () => {
   it("vazio nunca passa", () => {
     expect(isNameBackedByConversation("", "Vini Bocchi", "oi")).toBe(false);
     expect(isNameBackedByConversation(null, null, null)).toBe(false);
+  });
+});
+
+describe("nome do perfil de uma palavra só / com números (caso Thallys 21/10)", () => {
+  it("'Sergio' (1 palavra) vira nome de cadastro", () => {
+    expect(profileNameForRegistration("Sergio")).toBe("Sergio");
+    expect(resolveProfileNameForRegistration("Sergio", "Sergio")).toBe("Sergio");
+  });
+  it("apelido com números perde os números", () => {
+    expect(profileNameForRegistration("nicolasdaniel57035")).toBe("Nicolasdaniel");
+    expect(resolveProfileNameForRegistration("nicolasdaniel57035", "nicolasdaniel57035")).toBe("Nicolasdaniel");
+    expect(resolveProfileNameForRegistration("Nicolasdaniel", "nicolasdaniel57035")).toBe("Nicolasdaniel");
+  });
+  it("emojis e símbolos saem; minúsculas viram capitalizadas", () => {
+    expect(profileNameForRegistration("fer giga 🔥")).toBe("Fer Giga");
+  });
+  it("sem nome utilizável no perfil → null (continua escalando)", () => {
+    expect(profileNameForRegistration("🔥🔥")).toBeNull();
+    expect(profileNameForRegistration("12345")).toBeNull();
+    expect(profileNameForRegistration("")).toBeNull();
+    expect(profileNameForRegistration(undefined)).toBeNull();
+  });
+  it("nome inventado pela IA que não é o do perfil continua barrado", () => {
+    expect(resolveProfileNameForRegistration("Carlos", "Sergio")).toBeNull();
+    expect(resolveProfileNameForRegistration("Joao", "")).toBeNull();
   });
 });

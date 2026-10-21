@@ -3,6 +3,7 @@ import {
   trinksGetWithRetry,
   trinksServicesCache,
   executeTrinksTool,
+  trinksSenderLocalPhone,
 } from "../../supabase/functions/whatsapp-webhook/providers/trinks/index";
 
 const tenant = { id: "t-bendita", trinks_api_key: "k", trinks_establishment_id: "1" };
@@ -146,5 +147,47 @@ describe("Trinks: leituras com retry em 429", () => {
     const out = await executeTrinksTool(tenant, call("listar_servicos"));
     expect(out[0].nome).toBe("Corte");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Trinks: telefone sempre o da conversa (caso Thallys 21/10)", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("trinksSenderLocalPhone: normaliza e ignora o que não é número legível", () => {
+    expect(trinksSenderLocalPhone("5516999628080")).toBe("16999628080");
+    expect(trinksSenderLocalPhone("16999628080")).toBe("16999628080");
+    expect(trinksSenderLocalPhone("SIM:3f2a-0000")).toBeNull();
+    expect(trinksSenderLocalPhone("32281125241048")).toBeNull(); // LID
+    expect(trinksSenderLocalPhone("")).toBeNull();
+    expect(trinksSenderLocalPhone(undefined)).toBeNull();
+  });
+
+  it("buscar_cliente com telefone errado da IA consulta o número da conversa", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json(200, { data: [{ id: 1 }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await executeTrinksTool(tenant, call("buscar_cliente", { telefone: "169999628080" }), "5516999628080");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("telefone=16999628080");
+  });
+
+  it("cadastrar_cliente usa o telefone da conversa no corpo", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json(200, { id: 9 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await executeTrinksTool(tenant, call("cadastrar_cliente", { nome: "Sergio", telefone: "169999628080" }), "5516999628080");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.telefones[0]).toMatchObject({ ddd: "16", numero: "999628080" });
+  });
+
+  it("sem número legível (simulador/LID) mantém o telefone que a IA passou", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(json(200, { data: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await executeTrinksTool(tenant, call("buscar_cliente", { telefone: "27999277010" }), "SIM:abc");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("telefone=27999277010");
   });
 });

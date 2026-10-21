@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { isNameBackedByConversation } from "./client-name-guard.ts";
+import { isNameBackedByConversation, resolveProfileNameForRegistration } from "./client-name-guard.ts";
 import {
   isUnreadableCustomerPhone,
   PHONE_DEPENDENT_BOOKING_LOOKUP_TOOLS,
@@ -6577,6 +6577,9 @@ async function callAIAgent(
         // dentro de um bloco de várias mensagens (IA não pode inventar nome).
         const nameBackedByConversation = provider !== "onebeleza" && argNomeOk &&
           isNameBackedByConversation(argNome, senderName, userMessage);
+        const profileNameToRegister = provider !== "onebeleza" && !argNomeOk
+          ? resolveProfileNameForRegistration(argNome, senderName)
+          : null;
         const hasNamePrefix = /(?:meu nome|me chamo|sou o\b|sou a\b|pode me chamar)/i.test(String(userMessage || ""));
         const userJustSentName = userMsgLooksLikeName || hasNamePrefix;
         const blockedByFlow = provider === "onebeleza"
@@ -6629,6 +6632,15 @@ async function callAIAgent(
             ...toolCall,
             function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
           };
+        } else if (profileNameToRegister) {
+          // Fora da One Beleza: a IA está cadastrando o nome do perfil do WhatsApp (1 palavra ou
+          // com números). Usa a versão limpa (sem números/símbolos), como o prompt manda.
+          parsedArgs = { ...parsedArgs, nome: profileNameToRegister };
+          toolCallToExecute = {
+            ...toolCall,
+            function: { ...toolCall.function, arguments: JSON.stringify(parsedArgs) },
+          };
+          console.log(`[CadastrarCliente] nome do perfil aceito para cadastro: "${argNome}" → "${profileNameToRegister}"`);
         } else {
           console.log(`[CadastrarCliente] BLOCKED — sem nome válido. explicit="${explicit || ""}" arg="${argNome}" userMsg="${String(userMessage || "").slice(0, 80)}" argNomeOk=${argNomeOk} userJustSentName=${userJustSentName}`);
           sessionState.nameRejectionCount = (sessionState.nameRejectionCount || 0) + 1;
