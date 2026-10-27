@@ -2,8 +2,8 @@
 
 ## Conferência e publicação — 27/10 (commit 46fe5ae)
 - [x] Confirmar HEAD, main local e main remota em 46fe5ae, sem divergência nem mudanças locais
-- [ ] Revisar remarcação e grade completa; testar e validar sintaxe
-- [ ] Publicar somente whatsapp-webhook e conferir marcador e consulta real read-only
+- [x] Revisar remarcação e grade completa; excluir extras de remarcação da criação e bloquear grade vazia/profissional ausente; 187 testes passaram, 17 ignorados; deno check e diff check OK
+- [x] Publicar somente whatsapp-webhook — fonte cac26d8, 27/10 entre 03:14:56 e 03:15:12 UTC, sem erro; pacote contém agendamentoIdRemarcar; consulta autenticada no simulador retornou 3 profissionais da Bendita, incluindo William 10h–17h, sem erro nem escrita de reserva
 
 ## Conferência e publicação — 21/10 (commit a219968, main 81f1c17)
 - [x] Sincronizar main 81f1c17 — marcadores trinksSenderLocalPhone, resolveProfileNameForRegistration e profileNameToRegister presentes
