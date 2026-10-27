@@ -11,12 +11,15 @@
 //   - fetchActiveAppointmentsByPhone (helper usado no atalho de cancelamento)
 //   - todos os helpers trinks*       (phoneVariants, resolveClienteIds, etc.)
 //   - caches in-process trinksKnownProfs / trinksLastListed
+//   (cálculo puro de horários livres fica em ./slots.ts, na mesma pasta)
 //
 // Dependências para fora do módulo: NENHUMA. Os utilitários pequenos
 // (`normalizeUserFacingText`, `getBrasiliaDate`) são duplicados localmente pra
 // manter o provider realmente independente — mesma filosofia dos módulos
 // frizzar/ e appbarber/ ("1 projeto por API").
 // ============================================================================
+
+import { inferirPasso, liberarJanelaDoCliente } from "./slots.ts";
 
 // ===================== HELPERS LOCAIS (duplicados de index.ts) =====================
 
@@ -171,12 +174,13 @@ export function buildTrinksTools(tenant: any) {
       type: "function",
       function: {
         name: "listar_horarios",
-        description: "Lista os horários disponíveis dos profissionais em uma data. Retorna lista de profissionais com seus horariosVagos. Use APENAS horariosVagos, IGNORE intervalosVagos.",
+        description: "Lista os horários disponíveis dos profissionais em uma data. Retorna lista de profissionais com seus horariosVagos (SUGESTÕES, já organizadas para não deixar buracos na agenda) e intervalosVagos (blocos livres reais). Ofereça ao cliente os horariosVagos. Se o cliente pedir um horário específico que NÃO está em horariosVagos, confira em intervalosVagos: ele só é válido se o serviço inteiro (horário + duração) couber dentro de um bloco livre do profissional e começar numa das marcações da grade que a Trinks usa (hoje de 20 em 20 minutos); se couber, pode agendar nele. REMARCAÇÃO: se o cliente quer MUDAR um agendamento que ele já tem, passe agendamentoIdRemarcar (id vindo de buscar_agendamento) para que o horário atual dele conte como livre.",
         parameters: {
           type: "object",
           properties: {
             data: { type: "string", description: "Data no formato YYYY-MM-DD" },
             servicoDuracao: { type: "integer", description: "Duração do serviço em minutos (obtido de listar_servicos)" },
+            agendamentoIdRemarcar: { type: "integer", description: "Só em REMARCAÇÃO: id do agendamento atual do cliente (de buscar_agendamento). Faz o horário que ele já ocupa contar como livre." },
           },
           required: ["data", "servicoDuracao"],
         },
@@ -657,6 +661,49 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
         try {
           const parsed = JSON.parse(text);
 
+          // ===== REMARCAÇÃO: o horário atual do cliente conta como livre =====
+          // A Trinks mostra o agendamento atual do cliente como ocupado, então não
+          // oferece horários que invadem a própria janela dele (ex.: tem 18:00-19:00
+          // e quer 17:20). Só vale quando a IA passa o id do agendamento que está
+          // sendo remarcado, e o código CONFERE na Trinks que ele é do cliente.
+          let remarcacaoInfo: Record<string, unknown> | null = null;
+          if (args.agendamentoIdRemarcar && phoneNumber) {
+            try {
+              const profs0 = (parsed?.data || parsed) as any[];
+              const ids = await trinksResolveClienteIds(baseUrl, headers, phoneNumber);
+              const ativos = await trinksListActiveByClienteIds(baseUrl, headers, ids, phoneNumber);
+              const alvo = ativos.find((a: any) => Number(a?.id) === Number(args.agendamentoIdRemarcar));
+              const dataAlvo = String(alvo?.dataHoraInicio || "").slice(0, 10);
+              if (!alvo) {
+                remarcacaoInfo = { aviso: `Agendamento ${args.agendamentoIdRemarcar} não encontrado entre os ativos deste cliente; nada foi liberado.` };
+              } else if (dataAlvo !== args.data) {
+                remarcacaoInfo = { aviso: `O agendamento atual é de ${dataAlvo}, não de ${args.data}: nenhum horário foi liberado (mudança de dia usa a agenda normal).` };
+              } else if (Array.isArray(profs0)) {
+                const profId = Number(alvo?.profissional?.id);
+                const prof = profs0.find((p: any) => Number(p?.id || p?.Id) === profId);
+                const inicio = String(alvo.dataHoraInicio).slice(11, 16);
+                const dur = Number(alvo.duracaoEmMinutos);
+                const durServ = Number(args.servicoDuracao);
+                if (prof && /^\d{2}:\d{2}$/.test(inicio) && dur > 0 && durServ > 0) {
+                  const r = liberarJanelaDoCliente(prof, { inicio, duracao: dur }, durServ, inferirPasso(profs0));
+                  prof.horariosVagos = r.horariosVagos;
+                  prof.intervalosVagos = r.intervalosVagos;
+                  const [hh, mm] = inicio.split(":").map(Number);
+                  const fimMin = hh * 60 + mm + dur;
+                  const fim = `${String(Math.floor(fimMin / 60)).padStart(2, "0")}:${String(fimMin % 60).padStart(2, "0")}`;
+                  remarcacaoInfo = {
+                    agendamentoId: Number(alvo.id),
+                    profissionalId: profId,
+                    profissional: alvo.profissional?.nome || prof.nome || "",
+                    janelaLiberada: { inicio, fim },
+                    horariosAcrescentados: r.acrescentados,
+                  };
+                  console.log(`[Trinks] remarcação: liberada janela ${inicio}-${fim} de ${profId}; +${r.acrescentados.length} horários`);
+                }
+              }
+            } catch (e) { console.warn("[Trinks] falha ao liberar janela da remarcação:", (e as Error).message); }
+          }
+
           const br = getBrasiliaDate();
           const todayStr = br.todayDate;
           const currentHHMM = `${String(br.hours).padStart(2, '0')}:${String(br.minutes).padStart(2, '0')}`;
@@ -673,6 +720,24 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
               }
             }
           }
+
+          // Horários livres COMPLETOS (grade real da Trinks), guardados ANTES do filtro
+          // anti-buraco. O filtro só decide o que SUGERIR; a trava de criar_agendamento
+          // valida contra a grade completa, senão recusa horários que estão livres.
+          const slotsCompletosPorProf = new Map<number, Set<string>>();
+          try {
+            const profsFull = (parsed?.data || parsed) as any[];
+            if (Array.isArray(profsFull)) {
+              for (const prof of profsFull) {
+                const pid = Number(prof?.id || prof?.Id);
+                if (!Number.isFinite(pid)) continue;
+                slotsCompletosPorProf.set(
+                  pid,
+                  new Set<string>(Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : []),
+                );
+              }
+            }
+          } catch { /* sem cache completo: cai no comportamento anterior */ }
 
           // ===== FILTRO ANTI-BURACO (greedy slot packing) =====
           // Para cada profissional, mantém um slot e descarta os próximos que
@@ -719,7 +784,7 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
               for (const prof of profissionais) {
                 const pid = Number(prof?.id || prof?.Id);
                 if (!Number.isFinite(pid)) continue;
-                const slots = new Set<string>(
+                const slots = slotsCompletosPorProf.get(pid) ?? new Set<string>(
                   Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : []
                 );
                 slotsByProf.set(pid, slots);
@@ -771,6 +836,15 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
               (parsed as any).dica = dica;
             }
           } catch (e) { console.warn("[Trinks] falha ao consolidar horários:", (e as Error).message); }
+
+          if (remarcacaoInfo) {
+            (parsed as any).remarcacao = remarcacaoInfo;
+            const j = remarcacaoInfo.janelaLiberada as { inicio: string; fim: string } | undefined;
+            const extra = j
+              ? ` REMARCAÇÃO: o horário atual do cliente (${j.inicio}-${j.fim} com ${remarcacaoInfo.profissional}) foi LIBERADO e já está incluído nos horariosVagos/intervalosVagos desse profissional. Para mover, use editar_agendamento (NÃO crie outro agendamento nem cancele antes). Se o horário que o cliente quer não está nas sugestões, confira em intervalosVagos se cabe inteiro antes de dizer que não há vaga.`
+              : ` REMARCAÇÃO: ${remarcacaoInfo.aviso}`;
+            (parsed as any).dica = `${(parsed as any).dica || ""}${extra}`.trim();
+          }
 
           return parsed;
         } catch { return { error: `Status ${res.status}`, raw: text.slice(0, 200) }; }
