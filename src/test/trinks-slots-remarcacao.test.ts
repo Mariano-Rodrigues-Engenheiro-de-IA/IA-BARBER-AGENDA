@@ -122,6 +122,28 @@ describe("listar_horarios na REMARCAÇÃO (caso Bendita 26/10)", () => {
     expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
     expect(res.remarcacao.aviso).toContain("2026-11-02");
   });
+
+  it("mesmo id retornado pela API com OUTRO dono não libera a janela", async () => {
+    stubTrinks(brutoBendita);
+    const fallbackFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => String(url).includes("/agendamentos?")
+      ? json(200, { data: [{ ...agendamentoAtual, cliente: { id: 999, nome: "Outro cliente" } }] })
+      : fallbackFetch(url)));
+    const res = await executeTrinksTool(tenant, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
+    expect(res.remarcacao.janelaLiberada).toBeUndefined();
+  });
+
+  it("agendamento cancelado não libera a janela", async () => {
+    stubTrinks(brutoBendita);
+    const fallbackFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => String(url).includes("/agendamentos?")
+      ? json(200, { data: [{ ...agendamentoAtual, status: { id: 5, nome: "Cancelado" } }] })
+      : fallbackFetch(url)));
+    const res = await executeTrinksTool(tenant, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
+    expect(res.remarcacao.janelaLiberada).toBeUndefined();
+  });
 });
 
 describe("trava de criar_agendamento usa a grade COMPLETA (não só as sugestões)", () => {
