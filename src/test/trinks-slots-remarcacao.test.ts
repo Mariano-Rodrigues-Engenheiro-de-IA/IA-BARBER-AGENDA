@@ -177,6 +177,16 @@ describe("trava de criar_agendamento usa a grade COMPLETA (não só as sugestõe
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
   });
 
+  it("profissional ausente na grade consultada não autoriza criar_agendamento", async () => {
+    const fetchMock = stubTrinks({ data: [{ id: 782064, horariosVagos: ["16:20"], intervalosVagos: [{ inicio: "16:20", fim: "18:00" }] }] });
+    const t = { ...tenant, id: "t-prof-ausente" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T16:20:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).toEqual([]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
+  });
+
   it("16:30 (fora da grade) continua bloqueado, e a lista devolvida inclui 16:20 que antes o filtro escondia", async () => {
     stubTrinks(brutoBendita);
     const tenant2 = { ...tenant, id: "t-bendita-trava" };
