@@ -122,6 +122,28 @@ describe("listar_horarios na REMARCAÇÃO (caso Bendita 26/10)", () => {
     expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
     expect(res.remarcacao.aviso).toContain("2026-11-02");
   });
+
+  it("mesmo id retornado pela API com OUTRO dono não libera a janela", async () => {
+    stubTrinks(brutoBendita);
+    const fallbackFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => String(url).includes("/agendamentos?")
+      ? json(200, { data: [{ ...agendamentoAtual, cliente: { id: 999, nome: "Outro cliente" } }] })
+      : fallbackFetch(url)));
+    const res = await executeTrinksTool(tenant, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
+    expect(res.remarcacao.janelaLiberada).toBeUndefined();
+  });
+
+  it("agendamento cancelado não libera a janela", async () => {
+    stubTrinks(brutoBendita);
+    const fallbackFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => String(url).includes("/agendamentos?")
+      ? json(200, { data: [{ ...agendamentoAtual, status: { id: 5, nome: "Cancelado" } }] })
+      : fallbackFetch(url)));
+    const res = await executeTrinksTool(tenant, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    expect(prof(res, 764030).intervalosVagos).toEqual([{ inicio: "10:00", fim: "18:00" }]);
+    expect(res.remarcacao.janelaLiberada).toBeUndefined();
+  });
 });
 
 describe("trava de criar_agendamento usa a grade COMPLETA (não só as sugestões)", () => {
@@ -132,6 +154,37 @@ describe("trava de criar_agendamento usa a grade COMPLETA (não só as sugestõe
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("17:20 liberado para REMARCAR não autoriza CRIAR outra reserva na janela ocupada", async () => {
+    const fetchMock = stubTrinks(brutoBendita);
+    const t = { ...tenant, id: "t-rem-nao-criar" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T17:20:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).not.toContain("17:20");
+    expect(res.horariosDisponiveis).toContain("16:20");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
+  });
+
+  it("grade vazia também bloqueia criar_agendamento fora da grade", async () => {
+    const fetchMock = stubTrinks({ data: [{ id: 764030, horariosVagos: [], intervalosVagos: [] }] });
+    const t = { ...tenant, id: "t-grade-vazia" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T16:30:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).toEqual([]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
+  });
+
+  it("profissional ausente na grade consultada não autoriza criar_agendamento", async () => {
+    const fetchMock = stubTrinks({ data: [{ id: 782064, horariosVagos: ["16:20"], intervalosVagos: [{ inicio: "16:20", fim: "18:00" }] }] });
+    const t = { ...tenant, id: "t-prof-ausente" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T16:20:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).toEqual([]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
   });
 
   it("16:30 (fora da grade) continua bloqueado, e a lista devolvida inclui 16:20 que antes o filtro escondia", async () => {
