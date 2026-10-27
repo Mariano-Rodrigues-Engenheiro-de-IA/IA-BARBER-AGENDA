@@ -191,3 +191,42 @@ describe("Trinks: telefone sempre o da conversa (caso Thallys 21/10)", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("telefone=27999277010");
   });
 });
+
+describe("caso real 26/10 (Thallys): falha de listar_servicos não manda escalar remarcação/cancelamento", () => {
+  beforeEach(() => {
+    trinksServicesCache.clear();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("dica orienta seguir com editar_agendamento usando os dados de buscar_agendamento, e ainda escalar se for agendamento novo", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(429, { message: "Too Many Requests" })));
+    const p = executeTrinksTool(tenant, call("listar_servicos"));
+    await vi.runAllTimersAsync();
+    const out: any = await p;
+    expect(out.falha_tecnica).toBe(true);
+    expect(out.recoverable).toBe(true);
+    expect(out.status).toBe(429);
+    expect(out.dica).toContain("REMARCANDO");
+    expect(out.dica).toContain("editar_agendamento");
+    expect(out.dica).toContain("buscar_agendamento");
+    expect(out.dica).toContain("NOVO"); // agendamento novo continua seguindo a regra de escalar
+    expect(out.dica).toContain("NÃO significa catálogo vazio");
+  });
+
+  it("as outras leituras da Trinks mantêm o aviso anterior (escalar imediatamente)", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json(429, { message: "Too Many Requests" })));
+    const p = executeTrinksTool(tenant, call("listar_profissionais"));
+    await vi.runAllTimersAsync();
+    const out: any = await p;
+    expect(out.falha_tecnica).toBe(true);
+    expect(out.dica).toContain("chame-a imediatamente");
+  });
+});

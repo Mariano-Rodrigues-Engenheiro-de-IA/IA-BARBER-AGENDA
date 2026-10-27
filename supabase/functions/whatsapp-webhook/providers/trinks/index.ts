@@ -604,7 +604,13 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
             console.warn(`[Trinks] listar_servicos HTTP ${res.status} — usando lista em cache de ${Math.round((Date.now() - cachedServices.fetchedAt) / 60000)} min`);
             return cachedServices.list;
           }
-          return trinksReadFailure("a lista de serviços", res.status);
+          // Caso real 26/10 (Thallys, 10:34): numa REMARCAÇÃO já confirmada pelo cliente, o 429 daqui
+          // fez a IA escalar para humano, embora servicoId/duração/valor já estivessem em
+          // buscar_agendamento. Remarcar/cancelar não depende do catálogo.
+          return {
+            ...trinksReadFailure("a lista de serviços", res.status),
+            dica: `A consulta falhou; isto NÃO significa catálogo vazio nem falta de vagas. As tentativas automáticas aplicáveis já terminaram. Não repita a operação. Se você está REMARCANDO ou CANCELANDO um agendamento que o cliente já tem, NÃO precisa desta lista: use servicoId, duracaoEmMinutos, valor e profissionalId que já vieram de buscar_agendamento e siga com editar_agendamento/cancelar_agendamento — só escale se essa ação também falhar. Se for um agendamento NOVO que depende do catálogo, siga a regra de falhas do prompt: chame a ferramenta de escalar humano com o motivo e avise o cliente de forma tranquila, sem expor erros técnicos.`,
+          };
         }
         const data = await res.json();
         const list = data?.data || data;

@@ -11090,7 +11090,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         // normalmente, no fluxo de resposta.
         return {
           success: true,
-          message: "Atendimento escalado para humano (etiqueta aplicada e atendente avisado). Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso, curto e natural, com o contexto da conversa.",
+          message: "Atendimento escalado para humano (etiqueta aplicada e atendente avisado). Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso, curto e natural, com o contexto da conversa. Se o que o cliente pediu (agendar, remarcar ou cancelar) NÃO foi concluído, diga isso com clareza: que ainda NÃO foi feito e que a equipe vai finalizar e confirmar. NUNCA escreva \"marquei\", \"remarquei\", \"agendei\" ou \"cancelei\" (nem \"marquei com a equipe\") quando a ação não foi executada de verdade.",
           client_notified: false,
           type: toolType,
         };
