@@ -134,6 +134,27 @@ describe("trava de criar_agendamento usa a grade COMPLETA (não só as sugestõe
     vi.restoreAllMocks();
   });
 
+  it("17:20 liberado para REMARCAR não autoriza CRIAR outra reserva na janela ocupada", async () => {
+    const fetchMock = stubTrinks(brutoBendita);
+    const t = { ...tenant, id: "t-rem-nao-criar" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60, agendamentoIdRemarcar: 540689802 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T17:20:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).not.toContain("17:20");
+    expect(res.horariosDisponiveis).toContain("16:20");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
+  });
+
+  it("grade vazia também bloqueia criar_agendamento fora da grade", async () => {
+    const fetchMock = stubTrinks({ data: [{ id: 764030, horariosVagos: [], intervalosVagos: [] }] });
+    const t = { ...tenant, id: "t-grade-vazia" };
+    await executeTrinksTool(t, call("listar_horarios", { data: "2026-11-02", servicoDuracao: 60 }), "556199841310");
+    const res = await executeTrinksTool(t, call("criar_agendamento", { servicoId: 1, profissionalId: 764030, dataHoraInicio: "2026-11-02T16:30:00", duracaoEmMinutos: 60, valor: 130, clienteId: 91311552 }), "556199841310");
+    expect(res.blocked).toBe(true);
+    expect(res.horariosDisponiveis).toEqual([]);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/agendamentos"))).toBe(false);
+  });
+
   it("16:30 (fora da grade) continua bloqueado, e a lista devolvida inclui 16:20 que antes o filtro escondia", async () => {
     stubTrinks(brutoBendita);
     const tenant2 = { ...tenant, id: "t-bendita-trava" };

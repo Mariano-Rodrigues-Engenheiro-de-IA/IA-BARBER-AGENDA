@@ -733,7 +733,11 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
                 if (!Number.isFinite(pid)) continue;
                 slotsCompletosPorProf.set(
                   pid,
-                  new Set<string>(Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : []),
+                  new Set<string>((Array.isArray(prof.horariosVagos) ? prof.horariosVagos.map((h: string) => String(h).slice(0, 5)) : [])
+                    // A janela própria continua ocupada para uma NOVA reserva.
+                    // Os inícios acrescentados só autorizam editar_agendamento.
+                    .filter((h: string) => pid !== remarcacaoInfo?.profissionalId ||
+                      !(remarcacaoInfo?.horariosAcrescentados as string[] | undefined)?.includes(h))),
                 );
               }
             }
@@ -1011,7 +1015,7 @@ export async function executeTrinksTool(tenant: any, toolCall: any, phoneNumber?
               };
             }
             const slotsProf = Number.isFinite(profId) ? slotsCache.slotsByProf.get(profId) : undefined;
-            if (slotsProf && slotsProf.size > 0 && !slotsProf.has(horaReq)) {
+            if (slotsProf && !slotsProf.has(horaReq)) {
               console.warn(`[Trinks] BLOQUEIO horário fora da grade: prof=${profId} hora=${horaReq} disponíveis=${[...slotsProf].join(",")}`);
               return {
                 error: `Horário ${horaReq} não está disponível em ${dataReq} para o profissional ${profId}. Escolha um dos horários abaixo e tente novamente.`,
