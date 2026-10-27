@@ -1,5 +1,10 @@
 # Roadmap
 
+## Conferência e publicação — 27/10 (commit 46fe5ae)
+- [x] Confirmar HEAD, main local e main remota em 46fe5ae, sem divergência nem mudanças locais
+- [ ] Revisar remarcação e grade completa; testar e validar sintaxe
+- [ ] Publicar somente whatsapp-webhook e conferir marcador e consulta real read-only
+
 ## Conferência e publicação — 21/10 (commit a219968, main 81f1c17)
 - [x] Sincronizar main 81f1c17 — marcadores trinksSenderLocalPhone, resolveProfileNameForRegistration e profileNameToRegister presentes
 - [x] Conferir a219968 contra logs reais: bloqueios "Sergio" (12:46 UTC) e "nicolasdaniel57035" (11:59 UTC) confirmados; telefone errado 169999628080 apareceu 1x; demais buscar_cliente com telefone correto
