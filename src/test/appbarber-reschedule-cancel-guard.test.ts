@@ -92,10 +92,94 @@ describe("pontos de apoio no código (cache de horários e reinjeção)", () => 
     // o filtro roda antes de a lista nova ser acrescentada (e mesmo quando slotOptions fica vazia)
     expect(trecho.indexOf(".filter(")).toBeLessThan(trecho.indexOf("if (slotOptions.length > 0)"));
   });
-  it("criar_agendamento com sucesso registra o horário criado nas opções da sessão", () => {
-    expect(app).toContain("Registra o horário recém-criado entre as opções conhecidas da sessão");
+  it("RescheduleGuard: criação cancelada depois, no mesmo turno, não conta como reserva sobrevivente", () => {
+    expect(idx).toContain("_cancelledInvoices");
+    expect(idx).toContain("_cancelledInvoices.has(String(createdInvoice))");
+  });
+  it("a reinjeção protege em código a comanda nova e limpa a proteção depois", () => {
+    expect(idx).toContain("appbarberProtectedInvoiceCodes = [Number(newInvoice)]");
+    expect(idx).toContain("delete (sessionState as any).appbarberProtectedInvoiceCodes");
   });
   it("a reinjeção da phantom_cancel_guard manda passar novo_horario, serviço e profissional", () => {
     expect(idx).toContain('novo_horario="${newStart}", novo_service_code=${newSvcCode || "?"}, novo_professional_code=${newProfCode || "?"}');
+  });
+});
+
+// Sequências reproduzidas na revisão da Lovable (31/10), executando a ferramenta de verdade com fetch simulado.
+describe("revisão da Lovable: sequências que deixavam o cliente sem reserva", () => {
+  const create = (args: any, sessionState: any) =>
+    executeAppBarberTool(tenant, { function: { name: "criar_agendamento", arguments: JSON.stringify(args) } }, "5544998571542", sessionState);
+  const createArgs = { start_date: "2026-11-03", start_time: "10:30", service_code: SVC, customer_name: "Ryan Lucas", customer_phone: "44998571542", professional_code: CLEITON, service_duration_minutes: 30 };
+  const apiOk = () => vi.fn().mockImplementation(async (url: string, init?: any) => {
+    const method = (init?.method || "GET").toUpperCase();
+    if (method === "POST") {
+      return new Response(JSON.stringify({ data: { result: "Horário agendado com sucesso!", invoice_code: 249442320, scheduling_code: 362190979, appointment_code: 362190979 } }), { status: 200 });
+    }
+    if (method === "DELETE") return new Response(JSON.stringify({ data: { result: "Comanda cancelada com sucesso!" } }), { status: 200 });
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  });
+
+  it("criar com sucesso NÃO coloca a reserva na lista de horários livres; registra como evidência ativa", async () => {
+    vi.stubGlobal("fetch", apiOk());
+    const st: any = { appbarberSlotOptions: [] };
+    const r: any = await create(createArgs, st);
+    expect(r.ok).toBe(true);
+    expect(st.appbarberSlotOptions).toEqual([]);
+    expect(st.appbarberCreatedBookings).toEqual([expect.objectContaining({ invoice_code: 249442320, professional_code: CLEITON, start_date: "2026-11-03", start_time: "10:30", active: true })]);
+  });
+
+  it("não dá para cancelar a única reserva usando ela mesma como destino (cache vazio)", async () => {
+    vi.stubGlobal("fetch", apiOk());
+    const st: any = { appbarberSlotOptions: [] };
+    await create(createArgs, st);
+    const r: any = await call({ invoice_code: 249442320, reason: "Remarcação", novo_horario: "2026-11-03 10:30", novo_service_code: SVC, novo_professional_code: CLEITON }, st);
+    expect(r.blocked).toBe(true);
+    expect(r.reason).toBe("reschedule_new_slot_not_available");
+  });
+
+  it("recuperação legítima: reserva nova ativa autoriza cancelar OUTRA comanda (a antiga)", async () => {
+    vi.stubGlobal("fetch", apiOk());
+    const st: any = { appbarberSlotOptions: [] };
+    await create(createArgs, st);
+    const r: any = await call({ invoice_code: 246698285, reason: "Remarcação", novo_horario: "2026-11-03 10:30", novo_service_code: SVC, novo_professional_code: CLEITON }, st);
+    expect(r.blocked).not.toBe(true);
+    expect(r.ok).toBe(true);
+  });
+
+  it("reserva cancelada deixa de valer como evidência", async () => {
+    vi.stubGlobal("fetch", apiOk());
+    const st: any = { appbarberSlotOptions: [] };
+    await create(createArgs, st);
+    await call({ invoice_code: 249442320, reason: "Cancelamento solicitado pelo cliente" }, st);
+    expect(st.appbarberCreatedBookings[0].active).toBe(false);
+    const r: any = await call({ invoice_code: 246698285, reason: "Remarcação", novo_horario: "2026-11-03 10:30", novo_service_code: SVC, novo_professional_code: CLEITON }, st);
+    expect(r.blocked).toBe(true);
+  });
+
+  it("comanda protegida pela recuperação não pode ser cancelada", async () => {
+    const f = vi.fn(); vi.stubGlobal("fetch", f);
+    const r: any = await call({ invoice_code: 249442320, reason: "Cancelamento" }, { appbarberSlotOptions: slots, appbarberProtectedInvoiceCodes: [249442320] });
+    expect(r.blocked).toBe(true);
+    expect(r.reason).toBe("protected_new_booking");
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("consulta que voltou vazia (sem vagas) mantém a validação da criação ligada", async () => {
+    const f = vi.fn(); vi.stubGlobal("fetch", f);
+    const r: any = await create({ ...createArgs, start_time: "11:00" }, { appbarberSlotOptions: [], appbarberSlotsQueried: true });
+    expect(r.blocked).toBe(true);
+    expect(r.reason).toBe("no_availability_check");
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("os campos novos ligam a trava mesmo com motivo que o texto não reconhece", async () => {
+    const f = vi.fn(); vi.stubGlobal("fetch", f);
+    for (const reason of ["Cliente pediu para mudar o horário", "Pedido do cliente"]) {
+      const r: any = await call({ invoice_code: 249442320, reason, novo_horario: "2026-11-03 11:00", novo_service_code: SVC, novo_professional_code: CLEITON }, { appbarberSlotOptions: [] });
+      expect(r.blocked).toBe(true);
+    }
+    const r2: any = await call({ invoice_code: 249442320, reason: "Cliente pediu para mudar o horário" }, { appbarberSlotOptions: [] });
+    expect(r2.blocked).toBe(true);
+    expect(f).not.toHaveBeenCalled();
   });
 });

@@ -389,6 +389,17 @@ export function buildAppBarberTools(tenant: any) {
   ];
 }
 
+// Marca como inativa a reserva criada nesta sessão que foi cancelada (ou todas, se não se sabe qual comanda
+// teve o item removido): reserva cancelada não pode servir de evidência de horário novo.
+function deactivateCreatedBookings(sessionState: any, invoiceCode: number | null | undefined): void {
+  try {
+    const list = (sessionState?.appbarberCreatedBookings || []) as any[];
+    for (const b of list) {
+      if (!invoiceCode || b.invoice_code === invoiceCode) b.active = false;
+    }
+  } catch { /* estado auxiliar */ }
+}
+
 export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumber?: string, sessionState?: any): Promise<any> {
   const funcName = toolCall.function.name;
   let args: any = {};
@@ -937,7 +948,9 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           const wantedDate = String(args.start_date).slice(0, 10);
           const wantedTime = String(args.start_time).slice(0, 5);
           const pc = Number(args.professional_code);
-          if (slotOptions.length > 0) {
+          // Também vale quando já houve consulta de horários na turno e ela voltou vazia (sem vagas):
+          // limpar o último escopo não pode desligar a validação.
+          if (slotOptions.length > 0 || (sessionState as any)?.appbarberSlotsQueried === true) {
             const hasChecked = slotOptions.some((s) =>
               s.service_code === primaryServiceCode &&
               s.professional_code === pc &&
@@ -1153,21 +1166,27 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             details: parsed?.data ?? parsed?.details,
           };
         }
-        // Registra o horário recém-criado entre as opções conhecidas da sessão: a recuperação
-        // "novo já criado, falta cancelar o antigo" (phantom_cancel_guard) precisa validar o novo_horario
-        // mesmo quando a criação passou sem opções rastreadas (trava de criação só vale com slotOptions>0).
+        // Evidência de reserva CRIADA e ainda ativa (não é disponibilidade: não entra em appbarberSlotOptions).
+        // A recuperação "novo já criado, falta cancelar o antigo" (phantom_cancel_guard) usa isso pra validar o
+        // novo_horario do cancelamento quando o cache de horários livres não o cobre. Uma reserva só serve de
+        // evidência enquanto estiver ativa e nunca para autorizar o cancelamento dela mesma.
         try {
           if (sessionState && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(body.start_date || ""))) {
-            const _opts = (((sessionState as any).appbarberSlotOptions) || []) as any[];
-            const _d = String(body.start_date).slice(0, 10);
-            const _t = String(body.start_date).slice(11, 16);
-            const _pc = Number(args.professional_code);
-            if (!_opts.some((o) => o.service_code === primaryServiceCode && o.professional_code === _pc && o.start_date === _d && String(o.start_time).slice(0, 5) === _t)) {
-              _opts.push({ service_code: primaryServiceCode, service_name: "", duration_minutes: null, professional_code: _pc, professional_name: "", start_date: _d, start_time: _t });
-              (sessionState as any).appbarberSlotOptions = _opts.slice(-500);
+            const _inv = Number((parsed?.data ?? parsed)?.invoice_code);
+            if (_inv > 0) {
+              const _list = (((sessionState as any).appbarberCreatedBookings) || []) as any[];
+              _list.push({
+                invoice_code: _inv,
+                service_code: primaryServiceCode,
+                professional_code: Number(args.professional_code),
+                start_date: String(body.start_date).slice(0, 10),
+                start_time: String(body.start_date).slice(11, 16),
+                active: true,
+              });
+              (sessionState as any).appbarberCreatedBookings = _list.slice(-20);
             }
           }
-        } catch { /* observabilidade/estado auxiliar: nunca derruba a criação */ }
+        } catch { /* estado auxiliar: nunca derruba a criação */ }
         return {
           ok: true,
           appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
@@ -1393,6 +1412,22 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           }
         }
 
+        // 🛡️ Comanda protegida: durante a recuperação "novo já criado, falta cancelar o antigo" o webhook
+        // marca a comanda nova; cancelá-la deixaria o cliente sem reserva. Proibição em código, não só em prompt.
+        {
+          const protectedCodes = (((sessionState as any)?.appbarberProtectedInvoiceCodes) || []) as number[];
+          const reqProtected = toPositiveInteger(args.invoice_code);
+          if (reqProtected && protectedCodes.includes(reqProtected)) {
+            return {
+              error: `A comanda ${reqProtected} é o agendamento NOVO que acabou de ser criado e não pode ser cancelada agora. Cancele o agendamento ANTIGO do cliente.`,
+              blocked: true,
+              reason: "protected_new_booking",
+              recoverable: true,
+              recoveryDirective: "NÃO cancele a comanda nova. Use o invoice_code do agendamento antigo, listado em listar_agendamentos. Se houver mais de um candidato, pergunte ao cliente qual cancelar.",
+            };
+          }
+        }
+
         // 🛡️ Remarcação: não cancela o horário atual sem antes confirmar que o NOVO existe.
         // Caso 554498571542 (9Cinco, 28/10): a IA cancelou a comanda que o cliente acabara de
         // ganhar (ter 10h30) e só depois tentou criar 11h00, que não estava em available_times —
@@ -1403,7 +1438,11 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // O texto do motivo é uma heurística de intenção (não garantia); cancelamento puro não passa por aqui.
         // Sem nenhuma consulta de horários na sessão a remarcação também é bloqueada (recuperável):
         // não há confirmação de que o horário novo existe.
-        if (/remarc|reagend|troca\w*\s+(?:o\s+|de\s+)?(?:hor|dia|profission)|mudan\w+\s+de\s+hor/i.test(reason)) {
+        // Os campos estruturados também ligam a trava, independente do texto do motivo.
+        if (
+          /remarc|reagend|troca\w*\s+(?:o\s+|de\s+)?(?:hor|dia|profission)|mudan\w+\s+de\s+hor|mudar\s+(?:o\s+)?hor/i.test(reason)
+          || !!args.novo_horario || !!args.novo_service_code || !!args.novo_professional_code
+        ) {
           const slotOptions = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
             service_code: number;
             professional_code: number;
@@ -1428,12 +1467,24 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           }
           const wantedDate = m[1];
           const wantedTime = m[2];
-          const exists = slotOptions.some((so) =>
+          const reqInvoice = toPositiveInteger(args.invoice_code);
+          const existsInSlots = slotOptions.some((so) =>
             so.service_code === newSvc &&
             so.professional_code === newProf &&
             so.start_date === wantedDate &&
             String(so.start_time).slice(0, 5) === wantedTime
           );
+          // Reserva criada e ainda ativa com exatamente esse serviço/profissional/data/hora, e que NÃO é a
+          // própria comanda que está sendo cancelada (senão cancelar a única reserva se autoriza).
+          const existsAsActiveBooking = ((((sessionState as any)?.appbarberCreatedBookings) || []) as any[]).some((b) =>
+            b.active === true &&
+            b.invoice_code !== reqInvoice &&
+            b.service_code === newSvc &&
+            b.professional_code === newProf &&
+            b.start_date === wantedDate &&
+            String(b.start_time).slice(0, 5) === wantedTime
+          );
+          const exists = existsInSlots || existsAsActiveBooking;
           if (!exists) {
             const sameDay = Array.from(new Set(slotOptions
               .filter((so) => so.service_code === newSvc && so.professional_code === newProf && so.start_date === wantedDate)
@@ -1494,6 +1545,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           }
           let parsed: any = null; try { parsed = JSON.parse(text); } catch { /* keep null */ }
           if (res.ok) {
+            deactivateCreatedBookings(sessionState, toPositiveInteger(args.invoice_code));
             return {
               ok: true,
               invoice_item_code: args.invoice_item_code,
@@ -1582,6 +1634,7 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
           }
           return { error: baseErr, status: res.status, details: parsed?.data ?? parsed?.details };
         }
+        deactivateCreatedBookings(sessionState, toPositiveInteger(args.invoice_code));
         return {
           ok: true,
           invoice_code: args.invoice_code,

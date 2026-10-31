@@ -7778,6 +7778,7 @@ async function callAIAgent(
               }
             }
             if (_scopes.size > 0) {
+              (sessionState as any).appbarberSlotsQueried = true;
               (sessionState as any).appbarberSlotOptions = (((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>)
                 .filter((slot) => !(slot.start_date === startDate && _scopes.has(`${slot.service_code}:${slot.professional_code}`)));
             }
@@ -8798,6 +8799,8 @@ async function callAIAgent(
                   "3) Se o cliente NÃO pediu para remarcar (queria um horário a mais), não cancele nada e reescreva dizendo 'agendado', nunca 'remarcado'.\n" +
                   "4) Só diga 'remarcado' depois que cancelar_agendamento retornar sucesso.",
               });
+              // Em código: a comanda nova não pode ser cancelada durante esta recuperação.
+              if (Number(newInvoice) > 0) (sessionState as any).appbarberProtectedInvoiceCodes = [Number(newInvoice)];
               const _isGpt5Cancel = modelUsed.includes("gpt-5");
               let anyToolExecuted = false;
               let assistantText = "";
@@ -8891,6 +8894,7 @@ async function callAIAgent(
             } catch (e) {
               console.error(`[PhantomCancelGuard] reinject exception: ${(e as Error)?.message}`);
             }
+            delete (sessionState as any).appbarberProtectedInvoiceCodes;
           }
           if (!cancelRecovered) {
             // Sem recuperar (ou sem agendamento criado no turno): nunca deixa a
@@ -9115,11 +9119,22 @@ async function callAIAgent(
       const r: any = tc.result || {};
       return !!r.error || r.blocked === true || r.success === false;
     });
+    // Uma criação só conta como reserva sobrevivente se a comanda dela não foi cancelada depois no mesmo turno.
+    const _cancelledInvoices = new Set<string>();
+    for (const tc of (logToolCalls || [])) {
+      if (!_reschedCancelNames.has(tc?.name)) continue;
+      const r: any = tc.result || {};
+      if (r.error || r.blocked === true) continue;
+      const code = r.invoice_code ?? tc.args?.invoice_code;
+      if (code !== undefined && code !== null) _cancelledInvoices.add(String(code));
+    }
     const bookingOk = (logToolCalls || []).some((tc) => {
       if (!_reschedBookingNames.has(tc?.name)) return false;
       const r: any = tc.result || {};
       if (r.error || r.blocked === true) return false;
       if (r.success === false) return false;
+      const createdInvoice = r?.raw?.invoice_code;
+      if (createdInvoice !== undefined && createdInvoice !== null && _cancelledInvoices.has(String(createdInvoice))) return false;
       return true;
     });
     if (cancelOk && bookingFailed && !bookingOk) {
