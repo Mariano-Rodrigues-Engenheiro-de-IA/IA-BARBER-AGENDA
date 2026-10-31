@@ -7762,6 +7762,27 @@ async function callAIAgent(
             }
           }
 
+          // Uma consulta bem-sucedida SUBSTITUI as opções antigas do mesmo escopo (serviço + profissional + data),
+          // inclusive quando volta vazia: horário que já foi ocupado não pode continuar valendo como "livre"
+          // (agora também autoriza cancelar na remarcação, ação destrutiva).
+          if (serviceCode && startDate) {
+            const _scopes = new Set<string>();
+            if (toolCall.function.name === "listar_horarios" && Array.isArray((toolResult as any)?.available_times)) {
+              const _pc = toPositiveInteger(parsedArgs?.professional_code ?? (toolResult as any)?.professional_code) ?? 0;
+              _scopes.add(`${serviceCode}:${_pc}`);
+            }
+            if (toolCall.function.name === "listar_horarios_geral" && Array.isArray((toolResult as any)?.profissionais)) {
+              for (const prof of (toolResult as any).profissionais) {
+                const _pc = toPositiveInteger(prof?.professional_code);
+                if (_pc && Array.isArray(prof?.available_times)) _scopes.add(`${serviceCode}:${_pc}`);
+              }
+            }
+            if (_scopes.size > 0) {
+              (sessionState as any).appbarberSlotOptions = (((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>)
+                .filter((slot) => !(slot.start_date === startDate && _scopes.has(`${slot.service_code}:${slot.professional_code}`)));
+            }
+          }
+
           if (slotOptions.length > 0) {
             (sessionState as any).appbarberSlotOptions = dedupeByKey(
               [...(((sessionState as any).appbarberSlotOptions || []) as NonNullable<AgentSessionState["appbarberSlotOptions"]>), ...slotOptions].slice(-500),
@@ -8746,6 +8767,8 @@ async function callAIAgent(
           if (_createdCall && !guardOverrideResponse) {
             const newInvoice = String(_createdCall.result?.raw?.invoice_code ?? "");
             const newStart = String(_createdCall.result?.start_date ?? "");
+            const newSvcCode = Number(_createdCall.result?.service_code ?? _createdCall.args?.service_code ?? 0) || 0;
+            const newProfCode = Number(_createdCall.result?.professional_code ?? _createdCall.args?.professional_code ?? 0) || 0;
             const lookupCall = [...(logToolCalls || [])].reverse().find((tc: any) =>
               tc && tc.name === "listar_agendamentos" && tc.result && !tc.result.error && Array.isArray(tc.result.appointments)) as any;
             const candidates: string[] = [];
@@ -8770,7 +8793,7 @@ async function callAIAgent(
                     ? "Agendamentos ativos do cliente que podem ser o ANTIGO:\n" + candidates.join("\n") + "\n"
                     : "Não há lista de agendamentos desta conversa: chame listar_agendamentos para ver o que o cliente tem.\n") +
                   "1) Se o cliente PEDIU para remarcar/trocar/mudar e UM único agendamento corresponde ao horário antigo, chame cancelar_agendamento com o invoice_code dele" +
-                  (newStart ? ` e novo_horario="${newStart}" (o horário novo que acabou de ser criado)` : "") + ".\n" +
+                  (newStart ? ` e novo_horario="${newStart}", novo_service_code=${newSvcCode || "?"}, novo_professional_code=${newProfCode || "?"} (o horário novo que acabou de ser criado)` : "") + ".\n" +
                   "2) Se houver mais de um candidato possível, NÃO cancele nenhum: diga que o novo horário já está marcado e pergunte qual dos horários antigos deve ser cancelado.\n" +
                   "3) Se o cliente NÃO pediu para remarcar (queria um horário a mais), não cancele nada e reescreva dizendo 'agendado', nunca 'remarcado'.\n" +
                   "4) Só diga 'remarcado' depois que cancelar_agendamento retornar sucesso.",

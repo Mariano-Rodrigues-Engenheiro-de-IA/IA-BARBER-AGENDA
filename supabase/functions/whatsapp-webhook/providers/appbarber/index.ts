@@ -120,7 +120,7 @@ export function classifyAppBarberFailure(
         "ativo por vez, prefere remarcar para [DIA/HORA NOVO] ou manter como está?' " +
         "Só depois da resposta dele, se for trocar, " +
         "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto. " +
-        "Ao cancelar PARA REMARCAR, passe em cancelar_agendamento o novo_horario ('YYYY-MM-DD HH:MM') que já apareceu em available_times — " +
+        "Ao cancelar PARA REMARCAR, passe em cancelar_agendamento novo_horario ('YYYY-MM-DD HH:MM'), novo_service_code e novo_professional_code do horário NOVO, que já apareceram em available_times — " +
         "se o horário que o cliente quer não estiver em available_times, NÃO cancele o atual: ofereça os que estão livres.",
     };
   }
@@ -378,6 +378,8 @@ export function buildAppBarberTools(tenant: any) {
             customer_phone: { type: "string", description: "Telefone local do cliente SEM DDI 55 (só dígitos). Padrão: telefone da conversa removendo o prefixo 55." },
             reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp'). Se for para REMARCAR/TROCAR, escreva 'Remarcação ...' e informe novo_horario." },
             novo_horario: { type: "string", description: "OBRIGATÓRIO quando o cancelamento é para remarcar/trocar de horário: data e hora do NOVO horário, formato 'YYYY-MM-DD HH:MM', que JÁ apareceu em available_times de listar_horarios. Não cancele o atual antes de confirmar que o novo existe." },
+            novo_service_code: { type: "number", description: "OBRIGATÓRIO junto com novo_horario: service_code do serviço do horário NOVO (o mesmo que será usado em criar_agendamento)." },
+            novo_professional_code: { type: "number", description: "OBRIGATÓRIO junto com novo_horario: professional_code do profissional do horário NOVO (o mesmo que será usado em criar_agendamento). Não deduza pelo agendamento antigo: o cliente pode trocar de profissional." },
             confirm_cancel_all_items: { type: "boolean", description: "Obrigatório = true quando a comanda alvo tem 2+ serviços e a intenção é realmente cancelar TODOS eles de uma vez (não usar quando só 1 dos serviços deve ser movido/cancelado — nesse caso use invoice_item_code + cancel_scope='item')." },
           },
           required: [],
@@ -1151,6 +1153,21 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             details: parsed?.data ?? parsed?.details,
           };
         }
+        // Registra o horário recém-criado entre as opções conhecidas da sessão: a recuperação
+        // "novo já criado, falta cancelar o antigo" (phantom_cancel_guard) precisa validar o novo_horario
+        // mesmo quando a criação passou sem opções rastreadas (trava de criação só vale com slotOptions>0).
+        try {
+          if (sessionState && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(String(body.start_date || ""))) {
+            const _opts = (((sessionState as any).appbarberSlotOptions) || []) as any[];
+            const _d = String(body.start_date).slice(0, 10);
+            const _t = String(body.start_date).slice(11, 16);
+            const _pc = Number(args.professional_code);
+            if (!_opts.some((o) => o.service_code === primaryServiceCode && o.professional_code === _pc && o.start_date === _d && String(o.start_time).slice(0, 5) === _t)) {
+              _opts.push({ service_code: primaryServiceCode, service_name: "", duration_minutes: null, professional_code: _pc, professional_name: "", start_date: _d, start_time: _t });
+              (sessionState as any).appbarberSlotOptions = _opts.slice(-500);
+            }
+          }
+        } catch { /* observabilidade/estado auxiliar: nunca derruba a criação */ }
         return {
           ok: true,
           appointment_id: parsed?.data?.appointment_code || parsed?.data?.scheduling_code || parsed?.data?.id || parsed?.appointment_code || parsed?.scheduling_code || null,
@@ -1381,53 +1398,60 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         // ganhar (ter 10h30) e só depois tentou criar 11h00, que não estava em available_times —
         // a trava de criação barrou e o cliente ficou sem nenhum horário. Cancelar e criar não é
         // atômico na AppBarber, então a checagem tem que vir ANTES do cancelamento.
-        // Só vale quando o motivo é de remarcação; cancelamento puro não passa por aqui.
-        // Mesmo critério da trava de criação: sem nenhuma opção rastreada na sessão, não bloqueia.
-        if (/remarc|reagend|troc|mudar|alterar/i.test(reason)) {
+        // A validação usa o MESMO critério da criação (serviço + profissional + data + hora):
+        // só a data/hora deixaria passar um horário livre de outro profissional que a criação barra.
+        // O texto do motivo é uma heurística de intenção (não garantia); cancelamento puro não passa por aqui.
+        // Sem nenhuma consulta de horários na sessão a remarcação também é bloqueada (recuperável):
+        // não há confirmação de que o horário novo existe.
+        if (/remarc|reagend|troca\w*\s+(?:o\s+|de\s+)?(?:hor|dia|profission)|mudan\w+\s+de\s+hor/i.test(reason)) {
           const slotOptions = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
             service_code: number;
             professional_code: number;
             start_date: string;
             start_time: string;
           }>;
-          if (slotOptions.length > 0) {
-            const m = String(args.novo_horario || "").match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
-            if (!m) {
-              console.warn(`[AppBarber] cancelar_agendamento BLOCKED: remarcação sem novo_horario`);
-              return {
-                error: "Para remarcar, informe novo_horario ('YYYY-MM-DD HH:MM') do horário NOVO que já apareceu em available_times. O horário atual NÃO foi cancelado.",
-                blocked: true,
-                reason: "reschedule_missing_new_slot",
-                recoverable: true,
-                recoveryDirective:
-                  "O cancelamento NÃO foi feito. Antes de cancelar para remarcar, confirme o horário novo: se ainda não consultou, chame listar_horarios para a data pedida; "
-                  + "se o horário que o cliente quer aparecer em available_times, chame cancelar_agendamento de novo com novo_horario preenchido e depois criar_agendamento. "
-                  + "Se não aparecer, ofereça ao cliente os horários que aparecem e NÃO cancele o atual.",
-              };
-            }
-            const wantedDate = m[1];
-            const wantedTime = m[2];
-            const exists = slotOptions.some((so) => so.start_date === wantedDate && String(so.start_time).slice(0, 5) === wantedTime);
-            if (!exists) {
-              const sameDay = Array.from(new Set(slotOptions
-                .filter((so) => so.start_date === wantedDate)
-                .map((so) => String(so.start_time).slice(0, 5)))).sort();
-              console.warn(`[AppBarber] cancelar_agendamento BLOCKED: novo horário ${wantedDate} ${wantedTime} não está em appbarberSlotOptions`);
-              return {
-                error: `O horário novo ${wantedDate} ${wantedTime} não aparece nos horários disponíveis consultados. O horário atual do cliente NÃO foi cancelado.`,
-                blocked: true,
-                reason: "reschedule_new_slot_not_available",
-                recoverable: true,
-                horarios_consultados_no_dia: sameDay,
-                recoveryDirective:
-                  `NÃO cancele o agendamento atual. O horário ${wantedTime} de ${wantedDate} não está disponível`
-                  + (sameDay.length ? ` (horários consultados nesse dia: ${sameDay.join(", ")})` : " (não há consulta de horários para esse dia — chame listar_horarios)")
-                  + ". Diga ao cliente, com naturalidade, que esse horário não está livre, ofereça os que aparecem em available_times (ou consulte outro dia/profissional) e só cancele depois que ele escolher um horário disponível.",
-              };
-            }
+          const m = String(args.novo_horario || "").match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+          const newSvc = toPositiveInteger(args.novo_service_code);
+          const newProf = toPositiveInteger(args.novo_professional_code);
+          if (!m || !newSvc || !newProf) {
+            console.warn(`[AppBarber] cancelar_agendamento BLOCKED: remarcação sem novo_horario/novo_service_code/novo_professional_code`);
+            return {
+              error: "Para remarcar, informe novo_horario ('YYYY-MM-DD HH:MM'), novo_service_code e novo_professional_code do horário NOVO, que já apareceram em available_times. O horário atual NÃO foi cancelado.",
+              blocked: true,
+              reason: "reschedule_missing_new_slot",
+              recoverable: true,
+              recoveryDirective:
+                "O cancelamento NÃO foi feito. Antes de cancelar para remarcar, confirme o horário novo: se ainda não consultou, chame listar_horarios para a data, o serviço e o profissional pedidos; "
+                + "se o horário que o cliente quer aparecer em available_times, chame cancelar_agendamento de novo com novo_horario, novo_service_code e novo_professional_code e depois criar_agendamento. "
+                + "Se não aparecer, ofereça ao cliente os horários que aparecem e NÃO cancele o atual.",
+            };
+          }
+          const wantedDate = m[1];
+          const wantedTime = m[2];
+          const exists = slotOptions.some((so) =>
+            so.service_code === newSvc &&
+            so.professional_code === newProf &&
+            so.start_date === wantedDate &&
+            String(so.start_time).slice(0, 5) === wantedTime
+          );
+          if (!exists) {
+            const sameDay = Array.from(new Set(slotOptions
+              .filter((so) => so.service_code === newSvc && so.professional_code === newProf && so.start_date === wantedDate)
+              .map((so) => String(so.start_time).slice(0, 5)))).sort();
+            console.warn(`[AppBarber] cancelar_agendamento BLOCKED: novo horário svc=${newSvc} prof=${newProf} ${wantedDate} ${wantedTime} não confirmado em appbarberSlotOptions`);
+            return {
+              error: `O horário novo ${wantedDate} ${wantedTime} (service_code=${newSvc}, professional_code=${newProf}) não foi confirmado nos horários disponíveis consultados. O horário atual do cliente NÃO foi cancelado.`,
+              blocked: true,
+              reason: "reschedule_new_slot_not_available",
+              recoverable: true,
+              horarios_consultados_no_dia: sameDay,
+              recoveryDirective:
+                `NÃO cancele o agendamento atual. O horário ${wantedTime} de ${wantedDate} não está confirmado como livre para esse serviço e profissional`
+                + (sameDay.length ? ` (horários consultados nesse dia para eles: ${sameDay.join(", ")})` : " (não há consulta de horários para esse dia/serviço/profissional — chame listar_horarios)")
+                + ". Consulte listar_horarios se ainda não consultou; se o horário não estiver livre, diga ao cliente com naturalidade, ofereça os que aparecem em available_times (ou outro dia/profissional) e só cancele depois que ele escolher um horário disponível.",
+            };
           }
         }
-
 
         // Guard-rail: se for cancelar ITEM mas a comanda só tem 1 serviço, força cancelar comanda inteira.
         // Isso evita o fluxo "tenta item → falha → tenta comanda" observado em produção.
