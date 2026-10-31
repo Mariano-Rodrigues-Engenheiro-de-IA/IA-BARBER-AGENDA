@@ -8800,6 +8800,30 @@ async function callAIAgent(
                   if (tResult && !tResult.error && !tResult.blocked) {
                     logToolCalls.push({ name: tc?.function?.name, args: parseToolArguments(tc.function?.arguments), result: tResult });
                   }
+                  // Ledger de ações: o loop principal grava sucesso de ferramenta mutante; aqui
+                  // o cancelamento feito na reinjeção ficaria invisível pra cancelInLedger e o
+                  // guard dispararia de novo no turno seguinte ("já está remarcado!").
+                  try {
+                    const _mut = isMutatingToolName(tc?.function?.name, tenant);
+                    const _r: any = tResult || {};
+                    const _http = typeof _r.status === "number" ? _r.status : null;
+                    const _ok = !_r.error && !_r.blocked && _r.success !== false
+                      && !(Array.isArray(_r.Errors) && _r.Errors.length > 0)
+                      && !(_http !== null && _http >= 400);
+                    if (_mut.mutating && _ok) {
+                      const _args = parseToolArguments(tc.function?.arguments);
+                      recordCompletedAction(sessionState, {
+                        toolName: tc?.function?.name,
+                        category: _mut.category,
+                        dedupeKey: buildDedupeKey(tc?.function?.name, _args),
+                        status: "success",
+                        summary: buildActionSummary(tc?.function?.name, _args, _r),
+                        resultId: _r?.id ?? _r?.agendamentoId ?? _r?.appointment_id ?? null,
+                      });
+                    }
+                  } catch (e) {
+                    console.warn(`[PhantomCancelGuard] ledger record failed: ${(e as any)?.message || e}`);
+                  }
                 }
               }
               // Resposta final: com ferramenta executada, pede o texto ao modelo; sem

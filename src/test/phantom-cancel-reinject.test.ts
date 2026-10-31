@@ -37,4 +37,8 @@ describe("phantom_cancel_guard (remarcação sem cancelar)", () => {
     expect(bloco).toContain("cancelSucceededThisTurn");
     expect(bloco).toContain("cancelInLedger");
   });
+  it("cancelamento feito na reinjeção entra no ledger (senão o guard dispara de novo no turno seguinte)", () => {
+    expect(bloco).toContain("recordCompletedAction(sessionState");
+    expect(bloco).toContain("isMutatingToolName(tc?.function?.name, tenant)");
+  });
 });
