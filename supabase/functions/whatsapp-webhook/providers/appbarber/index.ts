@@ -1417,6 +1417,17 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
         {
           const protectedCodes = (((sessionState as any)?.appbarberProtectedInvoiceCodes) || []) as number[];
           const reqProtected = toPositiveInteger(args.invoice_code);
+          // Cancelamento por item pode chegar só com invoice_item_code (sem a comanda): não dá pra provar que o
+          // item não é da reserva nova. Durante a proteção, só cancelamento da comanda inteira, identificada.
+          if (protectedCodes.length > 0 && (String(args.cancel_scope || "").toLowerCase() === "item" || (args.invoice_item_code && !args.invoice_code))) {
+            return {
+              error: "Durante esta recuperação não é possível cancelar por item: cancele a comanda ANTIGA inteira com invoice_code.",
+              blocked: true,
+              reason: "protected_item_scope",
+              recoverable: true,
+              recoveryDirective: "Use cancelar_agendamento com o invoice_code da comanda ANTIGA (cancel_scope invoice). Se a comanda antiga tiver 2+ serviços e o cliente só quer mover um, NÃO cancele nada agora: explique a situação ao cliente e peça para a equipe ajustar.",
+            };
+          }
           if (reqProtected && protectedCodes.includes(reqProtected)) {
             return {
               error: `A comanda ${reqProtected} é o agendamento NOVO que acabou de ser criado e não pode ser cancelada agora. Cancele o agendamento ANTIGO do cliente.`,
@@ -1484,7 +1495,18 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
             b.start_date === wantedDate &&
             String(b.start_time).slice(0, 5) === wantedTime
           );
-          const exists = existsInSlots || existsAsActiveBooking;
+          // O horário de destino não pode estar ocupado pela PRÓPRIA comanda que está sendo cancelada:
+          // criar não retira o horário do cache de livres, então sem esta checagem o cache autorizaria
+          // cancelar a única reserva criada naquele mesmo horário (reproduzido na revisão da Lovable).
+          const destinationOccupiedBySelf = !!reqInvoice && ((((sessionState as any)?.appbarberCreatedBookings) || []) as any[]).some((b) =>
+            b.active === true &&
+            b.invoice_code === reqInvoice &&
+            b.service_code === newSvc &&
+            b.professional_code === newProf &&
+            b.start_date === wantedDate &&
+            String(b.start_time).slice(0, 5) === wantedTime
+          );
+          const exists = !destinationOccupiedBySelf && (existsInSlots || existsAsActiveBooking);
           if (!exists) {
             const sameDay = Array.from(new Set(slotOptions
               .filter((so) => so.service_code === newSvc && so.professional_code === newProf && so.start_date === wantedDate)

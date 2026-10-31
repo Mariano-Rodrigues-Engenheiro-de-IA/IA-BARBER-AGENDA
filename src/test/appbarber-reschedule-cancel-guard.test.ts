@@ -182,4 +182,37 @@ describe("revisão da Lovable: sequências que deixavam o cliente sem reserva", 
     expect(r2.blocked).toBe(true);
     expect(f).not.toHaveBeenCalled();
   });
+
+  it("horário que CONSTA na consulta não autoriza cancelar a própria reserva recém-criada (cache de livres não é retirado)", async () => {
+    vi.stubGlobal("fetch", apiOk());
+    const st: any = { appbarberSlotOptions: [{ service_code: SVC, professional_code: CLEITON, start_date: "2026-11-03", start_time: "10:30", duration_minutes: 30 }], appbarberSlotsQueried: true };
+    const c: any = await create(createArgs, st);
+    expect(c.ok).toBe(true);
+    const r: any = await call({ invoice_code: 249442320, reason: "Remarcação", novo_horario: "2026-11-03 10:30", novo_service_code: SVC, novo_professional_code: CLEITON }, st);
+    expect(r.blocked).toBe(true);
+    expect(r.reason).toBe("reschedule_new_slot_not_available");
+    // mas o horário consultado continua valendo para cancelar OUTRA comanda
+    const r2: any = await call({ invoice_code: 246698285, reason: "Remarcação", novo_horario: "2026-11-03 10:30", novo_service_code: SVC, novo_professional_code: CLEITON }, st);
+    expect(r2.blocked).not.toBe(true);
+  });
+
+  it("durante a proteção, cancelamento por item é bloqueado (com ou sem a comanda informada)", async () => {
+    const f = vi.fn(); vi.stubGlobal("fetch", f);
+    const st = { appbarberSlotOptions: slots, appbarberProtectedInvoiceCodes: [249442320] };
+    const semComanda: any = await call({ cancel_scope: "item", invoice_item_code: 304276971, reason: "Remarcação" }, st);
+    const comOutraComanda: any = await call({ cancel_scope: "item", invoice_code: 246698285, invoice_item_code: 304276971, reason: "Cancelamento" }, st);
+    for (const r of [semComanda, comOutraComanda]) {
+      expect(r.blocked).toBe(true);
+      expect(r.reason).toBe("protected_item_scope");
+      expect(r.recoverable).toBe(true);
+    }
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("fora da proteção, cancelamento por item segue como antes", async () => {
+    const f = okFetch(); vi.stubGlobal("fetch", f);
+    const r: any = await call({ cancel_scope: "item", invoice_item_code: 304276971, reason: "Cancelamento solicitado pelo cliente via WhatsApp" }, { appbarberSlotOptions: slots });
+    expect(r.blocked).not.toBe(true);
+    expect(f).toHaveBeenCalled();
+  });
 });
