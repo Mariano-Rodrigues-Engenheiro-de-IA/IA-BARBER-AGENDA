@@ -1693,11 +1693,12 @@ export const phantomGuardConfig = {
   // no index.ts). Só o AppBarber por enquanto — os outros providers seguem sem
   // o campo e portanto sem a checagem.
   cancelToolNames: ["cancelar_agendamento"],
-  // 👁️ MODO OBSERVAÇÃO: detecta e registra em agent_logs, mas NÃO altera a
-  // resposta. Manter assim por 1-2 semanas para medir a taxa de disparo antes
-  // de ligar o bloqueio de verdade — bloquear cancelamento legítimo por engano
-  // seria pior que o bug que estamos caçando.
-  shadow: true,
+  // ATIVO desde 31/10/2026 (era sombra). Medição 24–31/10 na 9Cinco: 4 remarcações,
+  // 2 erradas (criou o novo, não cancelou o antigo, disse "remarcado") e a sombra
+  // pegou exatamente essas 2. Agora, quando o turno criou agendamento e a IA alega
+  // remarcação sem cancelar, o webhook reinjeta o motivo + comandas reais pra IA
+  // cancelar o antigo (ou perguntar qual) — nunca descarta em silêncio.
+  shadow: false,
   // Ferramentas que a IA pode legitimamente precisar chamar na reinjeção para
   // completar o fluxo (ex: nunca listou horários antes de prometer). Se ela
   // chamar qualquer uma delas, o turno é considerado recuperado e a IA responde

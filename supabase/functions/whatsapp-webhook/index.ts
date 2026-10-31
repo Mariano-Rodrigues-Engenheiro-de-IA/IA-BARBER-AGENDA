@@ -8719,8 +8719,135 @@ async function callAIAgent(
           },
         });
         if (!isShadow) {
-          finalResponse = "Deixa eu confirmar esse cancelamento aqui rapidinho e já te retorno.";
-          guardOverrideResponse = true;
+          // Remarcação fantasma: o agendamento NOVO já foi criado neste turno, mas o
+          // antigo não foi cancelado e a IA disse "remarcado". Mensagem genérica aqui
+          // deixaria o cliente com dois horários — então reinjeta o motivo e os dados
+          // reais (comanda nova que NÃO pode ser cancelada + comandas candidatas a
+          // antiga) pra IA concluir o cancelamento ou ser honesta com o cliente.
+          const _bookNames = new Set(_phantomCfg.bookingToolNames || []);
+          const _createdCall = (logToolCalls || []).find((tc: any) => {
+            if (!tc || !_bookNames.has(tc.name)) return false;
+            const r = tc.result;
+            return !!r && typeof r === "object" && r.ok === true && !r.error && r.blocked !== true;
+          }) as any;
+          let cancelRecovered = false;
+          if (_createdCall && !guardOverrideResponse) {
+            const newInvoice = String(_createdCall.result?.raw?.invoice_code ?? "");
+            const newStart = String(_createdCall.result?.start_date ?? "");
+            const lookupCall = [...(logToolCalls || [])].reverse().find((tc: any) =>
+              tc && tc.name === "listar_agendamentos" && tc.result && !tc.result.error && Array.isArray(tc.result.appointments)) as any;
+            const candidates: string[] = [];
+            for (const a of (lookupCall?.result?.appointments || [])) {
+              const code = String(a?.invoice_code ?? "");
+              if (!code || code === newInvoice) continue;
+              candidates.push(`- comanda ${code}: ${a?.service_description || "serviço"} em ${a?.scheduling_start || "data não informada"}`);
+            }
+            logErrors.push({
+              message: `Resposta alegava remarcação mas o agendamento antigo não foi cancelado (novo: comanda ${newInvoice || "?"} ${newStart}) — tentando reinjeção antes de responder.`,
+              level: "warning",
+            });
+            try {
+              messages.push({
+                role: "system",
+                content:
+                  "[SISTEMA — INTERNO, NÃO RESPONDER AO CLIENTE ESTE TEXTO] Você disse ao cliente que o horário foi remarcado, " +
+                  "mas só criou o agendamento NOVO" + (newInvoice ? ` (comanda ${newInvoice}${newStart ? `, ${newStart}` : ""})` : "") +
+                  " e NÃO cancelou o antigo. O cliente está com dois horários. Corrija agora, sem inventar nada.\n" +
+                  "NUNCA cancele a comanda nova" + (newInvoice ? ` (${newInvoice})` : "") + ".\n" +
+                  (candidates.length
+                    ? "Agendamentos ativos do cliente que podem ser o ANTIGO:\n" + candidates.join("\n") + "\n"
+                    : "Não há lista de agendamentos desta conversa: chame listar_agendamentos para ver o que o cliente tem.\n") +
+                  "1) Se o cliente PEDIU para remarcar/trocar/mudar e UM único agendamento corresponde ao horário antigo, chame cancelar_agendamento com o invoice_code dele.\n" +
+                  "2) Se houver mais de um candidato possível, NÃO cancele nenhum: diga que o novo horário já está marcado e pergunte qual dos horários antigos deve ser cancelado.\n" +
+                  "3) Se o cliente NÃO pediu para remarcar (queria um horário a mais), não cancele nada e reescreva dizendo 'agendado', nunca 'remarcado'.\n" +
+                  "4) Só diga 'remarcado' depois que cancelar_agendamento retornar sucesso.",
+              });
+              const _isGpt5Cancel = modelUsed.includes("gpt-5");
+              let anyToolExecuted = false;
+              let assistantText = "";
+              for (let round = 0; round < 2; round++) {
+                const retryResp = await fetchAIWithRetry(
+                  JSON.stringify({
+                    model: modelUsed,
+                    messages,
+                    tools: buildToolsForProvider(provider, tenant),
+                    tool_choice: "auto",
+                    max_completion_tokens: _isGpt5Cancel ? 4096 : 700,
+                    ...(_isGpt5Cancel ? { reasoning_effort: "low" } : {}),
+                  }),
+                  `phantom-cancel-reinject-r${round + 1}`,
+                );
+                if (!retryResp.ok) break;
+                const retryJson = await retryResp.json();
+                const retryMsg = retryJson?.choices?.[0]?.message;
+                const pendingToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
+                assistantText = String(retryMsg?.content || "").trim();
+                if (pendingToolCalls.length === 0) break;
+                messages.push(retryMsg);
+                for (const tc of pendingToolCalls) {
+                  let tResult: any;
+                  try {
+                    tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+                  } catch (e) {
+                    tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
+                  }
+                  messages.push({
+                    role: "tool",
+                    tool_call_id: tc.id,
+                    content: typeof tResult === "string" ? tResult : JSON.stringify(tResult ?? {}),
+                  });
+                  anyToolExecuted = true;
+                  if (tResult && !tResult.error && !tResult.blocked) {
+                    logToolCalls.push({ name: tc?.function?.name, args: parseToolArguments(tc.function?.arguments), result: tResult });
+                  }
+                }
+              }
+              // Resposta final: com ferramenta executada, pede o texto ao modelo; sem
+              // ferramenta, usa o texto da própria reinjeção (ex.: pergunta de qual cancelar).
+              if (anyToolExecuted) {
+                try {
+                  const finalResp = await fetchAIWithRetry(
+                    JSON.stringify({ model: modelUsed, messages, max_completion_tokens: 500 }),
+                    "phantom-cancel-final-answer",
+                  );
+                  if (finalResp.ok) {
+                    const finalJson = await finalResp.json();
+                    const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
+                    if (finalMsgText) {
+                      finalResponse = finalMsgText;
+                      guardOverrideResponse = true;
+                      cancelRecovered = true;
+                    }
+                  }
+                } catch (e) {
+                  console.error(`[PhantomCancelGuard] final-answer exception: ${(e as Error)?.message}`);
+                }
+              }
+              if (!cancelRecovered && assistantText) {
+                finalResponse = assistantText;
+                guardOverrideResponse = true;
+                cancelRecovered = true;
+              }
+            } catch (e) {
+              console.error(`[PhantomCancelGuard] reinject exception: ${(e as Error)?.message}`);
+            }
+          }
+          if (!cancelRecovered) {
+            // Sem recuperar (ou sem agendamento criado no turno): nunca deixa a
+            // alegação falsa seguir; transfere de verdade e avisa o cliente.
+            finalResponse = await buildGuardFailureFallback(tenant, phoneNumber, logToolCalls, "PhantomCancelGuard: reinjeção não recuperou a resposta");
+            guardOverrideResponse = true;
+          }
+          logToolCalls.push({
+            name: "__phantom_guard__",
+            args: { phase: "response_guard" },
+            result: {
+              layer: "phantom_cancel_guard",
+              provider,
+              acao: cancelRecovered ? "reinjected_no_cancel" : "blocked_no_cancel_fallback",
+              claim: trecho,
+            },
+          });
         }
       }
     }
