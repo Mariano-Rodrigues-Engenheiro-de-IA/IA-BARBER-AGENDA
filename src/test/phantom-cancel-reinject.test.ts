@@ -41,4 +41,15 @@ describe("phantom_cancel_guard (remarcação sem cancelar)", () => {
     expect(bloco).toContain("recordCompletedAction(sessionState");
     expect(bloco).toContain("isMutatingToolName(tc?.function?.name, tenant)");
   });
+
+  it("resposta final das reinjeções não usa mais 500 tokens fixos (gpt-5-mini gastava tudo raciocinando)", () => {
+    for (const label of ["phantom-confirmation-final-answer", "phantom-cancel-final-answer", "stale-confirmation-final-answer"]) {
+      const k = idx.indexOf(label);
+      expect(k).toBeGreaterThan(-1);
+      expect(idx.slice(Math.max(0, k - 260), k)).toContain("finalAnswerTokenLimits(modelUsed)");
+    }
+    const fn = idx.slice(idx.indexOf("function finalAnswerTokenLimits"), idx.indexOf("function finalAnswerTokenLimits") + 400);
+    expect(fn).toContain("max_completion_tokens: 4096");
+    expect(fn).toContain('reasoning_effort: "low"');
+  });
 });

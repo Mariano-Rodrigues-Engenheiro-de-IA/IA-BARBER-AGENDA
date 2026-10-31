@@ -4919,6 +4919,18 @@ const PHANTOM_GUARD_CONFIG_BY_PROVIDER: Record<string, PhantomGuardConfig> = {
   onebeleza: onebelezaPhantomGuardConfig,
   frizzar: frizzarPhantomGuardConfig,
 };
+// Resposta final (texto puro) das reinjeções dos guards. gpt-5-mini conta o raciocínio
+// interno DENTRO de max_completion_tokens: com 500 ele gastou tudo pensando
+// (finish_reason "length", content vazio) em 4 de 4 reinjeções da 9Cinco entre 26 e
+// 30/10 — a IA já tinha consultado serviços/horários, mas sem texto o guard caía no
+// "Ops, tive um probleminha" + transferência. Mesmo ajuste das reinjeções com
+// ferramenta (limite 4096 + esforço "low").
+function finalAnswerTokenLimits(model: string): Record<string, unknown> {
+  return String(model || "").includes("gpt-5")
+    ? { max_completion_tokens: 4096, reasoning_effort: "low" }
+    : { max_completion_tokens: 500 };
+}
+
 function getPhantomGuardConfig(provider: string): PhantomGuardConfig | null {
   const cfg = PHANTOM_GUARD_CONFIG_BY_PROVIDER[provider];
   return cfg && cfg.enabled ? cfg : null;
@@ -8603,7 +8615,7 @@ async function callAIAgent(
             // texto puro (sem tools) pra ela responder com base neles — confirmando,
             // oferecendo alternativa ou pedindo o dado que falta.
             try {
-              const finalBody = { model: modelUsed, messages, max_completion_tokens: 500 };
+              const finalBody = { model: modelUsed, messages, ...finalAnswerTokenLimits(modelUsed) };
               const finalResp = await fetchAIWithRetry(JSON.stringify(finalBody), "phantom-confirmation-final-answer");
               if (finalResp.ok) {
                 const finalJson = await finalResp.json();
@@ -8831,7 +8843,7 @@ async function callAIAgent(
               if (anyToolExecuted) {
                 try {
                   const finalResp = await fetchAIWithRetry(
-                    JSON.stringify({ model: modelUsed, messages, max_completion_tokens: 500 }),
+                    JSON.stringify({ model: modelUsed, messages, ...finalAnswerTokenLimits(modelUsed) }),
                     "phantom-cancel-final-answer",
                   );
                   if (finalResp.ok) {
@@ -9001,7 +9013,7 @@ async function callAIAgent(
           if (anyToolExecuted) {
             try {
               const finalResp = await fetchAIWithRetry(
-                JSON.stringify({ model: modelUsed, messages, max_completion_tokens: 500 }),
+                JSON.stringify({ model: modelUsed, messages, ...finalAnswerTokenLimits(modelUsed) }),
                 "stale-confirmation-final-answer",
               );
               if (finalResp.ok) {
