@@ -1440,9 +1440,8 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
   // Validates a shared secret to prevent forged webhook events.
   // Configure UAZAPI to send the secret either as `?token=...` query param
   // or as `x-webhook-token` / `x-uazapi-token` header.
-  // If WHATSAPP_WEBHOOK_SECRET is not configured, we log a warning but accept
-  // the request (to avoid downtime during rollout). Set the secret + configure
-  // UAZAPI to enforce validation.
+  // WHATSAPP_WEBHOOK_SECRET é OBRIGATÓRIO: se não estiver configurado, o webhook recusa tudo
+  // (fail-closed). Nunca voltar a aceitar requisição sem assinatura.
   const webhookSecret = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
   if (webhookSecret) {
     const url = new URL(req.url);
@@ -1467,10 +1466,11 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       });
     }
   } else {
-    console.warn(
-      "WHATSAPP_WEBHOOK_SECRET not set — webhook is accepting unsigned requests. " +
-      "Set the secret and configure UAZAPI to send it as ?token=... or x-webhook-token header."
-    );
+    console.error("WHATSAPP_WEBHOOK_SECRET não configurado — webhook recusando a requisição (fail-closed).");
+    return new Response(JSON.stringify({ error: "Webhook secret not configured" }), {
+      status: 503,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 
   const supabase = createClient(
@@ -3321,7 +3321,11 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 // forjada recebe 401 e nunca chega a ser processada em background.
 function webhookSecretOk(req: Request): boolean {
   const webhookSecret = Deno.env.get("WHATSAPP_WEBHOOK_SECRET");
-  if (!webhookSecret) return true; // mesmo comportamento do handler (loga aviso lá)
+  // Fail-closed: sem o segredo configurado NINGUÉM é autenticado (regra do projeto: nunca opcional).
+  if (!webhookSecret) {
+    console.error("WHATSAPP_WEBHOOK_SECRET não configurado — webhook recusando todas as requisições (fail-closed).");
+    return false;
+  }
   const url = new URL(req.url);
   const provided =
     url.searchParams.get("token") ||
