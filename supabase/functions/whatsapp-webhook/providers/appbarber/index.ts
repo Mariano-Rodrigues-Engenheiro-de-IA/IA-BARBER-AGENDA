@@ -119,7 +119,9 @@ export function classifyAppBarberFailure(
         "sobrancelha marcados com o [PROFISSIONAL] para amanhã às 14h. Como só é possível ter 1 agendamento " +
         "ativo por vez, prefere remarcar para [DIA/HORA NOVO] ou manter como está?' " +
         "Só depois da resposta dele, se for trocar, " +
-        "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto.",
+        "chame cancelar_agendamento e em seguida criar_agendamento. Não tente criar outro horário direto. " +
+        "Ao cancelar PARA REMARCAR, passe em cancelar_agendamento o novo_horario ('YYYY-MM-DD HH:MM') que já apareceu em available_times — " +
+        "se o horário que o cliente quer não estiver em available_times, NÃO cancele o atual: ofereça os que estão livres.",
     };
   }
   // 4b) Pendência no pagamento da assinatura/plano do cliente (errorCode 20074):
@@ -374,7 +376,8 @@ export function buildAppBarberTools(tenant: any) {
             invoice_item_code: { type: "number", description: "Opcional — invoice_item_code obtido em listar_agendamentos para remover apenas um item da comanda." },
             cancel_scope: { type: "string", enum: ["invoice", "item"], description: "Padrão invoice. Use item apenas quando for remover um item específico da comanda." },
             customer_phone: { type: "string", description: "Telefone local do cliente SEM DDI 55 (só dígitos). Padrão: telefone da conversa removendo o prefixo 55." },
-            reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp')." },
+            reason: { type: "string", description: "Motivo do cancelamento (ex: 'Cancelamento solicitado pelo cliente via WhatsApp'). Se for para REMARCAR/TROCAR, escreva 'Remarcação ...' e informe novo_horario." },
+            novo_horario: { type: "string", description: "OBRIGATÓRIO quando o cancelamento é para remarcar/trocar de horário: data e hora do NOVO horário, formato 'YYYY-MM-DD HH:MM', que JÁ apareceu em available_times de listar_horarios. Não cancele o atual antes de confirmar que o novo existe." },
             confirm_cancel_all_items: { type: "boolean", description: "Obrigatório = true quando a comanda alvo tem 2+ serviços e a intenção é realmente cancelar TODOS eles de uma vez (não usar quando só 1 dos serviços deve ser movido/cancelado — nesse caso use invoice_item_code + cancel_scope='item')." },
           },
           required: [],
@@ -1370,6 +1373,58 @@ export async function executeAppBarberTool(tenant: any, toolCall: any, phoneNumb
               ownership_mismatch: true,
               validInvoiceCodes: validCodes,
             };
+          }
+        }
+
+        // 🛡️ Remarcação: não cancela o horário atual sem antes confirmar que o NOVO existe.
+        // Caso 554498571542 (9Cinco, 28/10): a IA cancelou a comanda que o cliente acabara de
+        // ganhar (ter 10h30) e só depois tentou criar 11h00, que não estava em available_times —
+        // a trava de criação barrou e o cliente ficou sem nenhum horário. Cancelar e criar não é
+        // atômico na AppBarber, então a checagem tem que vir ANTES do cancelamento.
+        // Só vale quando o motivo é de remarcação; cancelamento puro não passa por aqui.
+        // Mesmo critério da trava de criação: sem nenhuma opção rastreada na sessão, não bloqueia.
+        if (/remarc|reagend|troc|mudar|alterar/i.test(reason)) {
+          const slotOptions = (((sessionState as any)?.appbarberSlotOptions) || []) as Array<{
+            service_code: number;
+            professional_code: number;
+            start_date: string;
+            start_time: string;
+          }>;
+          if (slotOptions.length > 0) {
+            const m = String(args.novo_horario || "").match(/(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+            if (!m) {
+              console.warn(`[AppBarber] cancelar_agendamento BLOCKED: remarcação sem novo_horario`);
+              return {
+                error: "Para remarcar, informe novo_horario ('YYYY-MM-DD HH:MM') do horário NOVO que já apareceu em available_times. O horário atual NÃO foi cancelado.",
+                blocked: true,
+                reason: "reschedule_missing_new_slot",
+                recoverable: true,
+                recoveryDirective:
+                  "O cancelamento NÃO foi feito. Antes de cancelar para remarcar, confirme o horário novo: se ainda não consultou, chame listar_horarios para a data pedida; "
+                  + "se o horário que o cliente quer aparecer em available_times, chame cancelar_agendamento de novo com novo_horario preenchido e depois criar_agendamento. "
+                  + "Se não aparecer, ofereça ao cliente os horários que aparecem e NÃO cancele o atual.",
+              };
+            }
+            const wantedDate = m[1];
+            const wantedTime = m[2];
+            const exists = slotOptions.some((so) => so.start_date === wantedDate && String(so.start_time).slice(0, 5) === wantedTime);
+            if (!exists) {
+              const sameDay = Array.from(new Set(slotOptions
+                .filter((so) => so.start_date === wantedDate)
+                .map((so) => String(so.start_time).slice(0, 5)))).sort();
+              console.warn(`[AppBarber] cancelar_agendamento BLOCKED: novo horário ${wantedDate} ${wantedTime} não está em appbarberSlotOptions`);
+              return {
+                error: `O horário novo ${wantedDate} ${wantedTime} não aparece nos horários disponíveis consultados. O horário atual do cliente NÃO foi cancelado.`,
+                blocked: true,
+                reason: "reschedule_new_slot_not_available",
+                recoverable: true,
+                horarios_consultados_no_dia: sameDay,
+                recoveryDirective:
+                  `NÃO cancele o agendamento atual. O horário ${wantedTime} de ${wantedDate} não está disponível`
+                  + (sameDay.length ? ` (horários consultados nesse dia: ${sameDay.join(", ")})` : " (não há consulta de horários para esse dia — chame listar_horarios)")
+                  + ". Diga ao cliente, com naturalidade, que esse horário não está livre, ofereça os que aparecem em available_times (ou consulte outro dia/profissional) e só cancele depois que ele escolher um horário disponível.",
+              };
+            }
           }
         }
 

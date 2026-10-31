@@ -8769,7 +8769,8 @@ async function callAIAgent(
                   (candidates.length
                     ? "Agendamentos ativos do cliente que podem ser o ANTIGO:\n" + candidates.join("\n") + "\n"
                     : "Não há lista de agendamentos desta conversa: chame listar_agendamentos para ver o que o cliente tem.\n") +
-                  "1) Se o cliente PEDIU para remarcar/trocar/mudar e UM único agendamento corresponde ao horário antigo, chame cancelar_agendamento com o invoice_code dele.\n" +
+                  "1) Se o cliente PEDIU para remarcar/trocar/mudar e UM único agendamento corresponde ao horário antigo, chame cancelar_agendamento com o invoice_code dele" +
+                  (newStart ? ` e novo_horario="${newStart}" (o horário novo que acabou de ser criado)` : "") + ".\n" +
                   "2) Se houver mais de um candidato possível, NÃO cancele nenhum: diga que o novo horário já está marcado e pergunte qual dos horários antigos deve ser cancelado.\n" +
                   "3) Se o cliente NÃO pediu para remarcar (queria um horário a mais), não cancele nada e reescreva dizendo 'agendado', nunca 'remarcado'.\n" +
                   "4) Só diga 'remarcado' depois que cancelar_agendamento retornar sucesso.",

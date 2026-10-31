@@ -60,4 +60,8 @@ describe("phantom_cancel_guard (remarcação sem cancelar)", () => {
     expect(trecho).toContain("max_completion_tokens: _isGpt5Resched ? 4096 : 700");
     expect(trecho).toContain('reasoning_effort: "low"');
   });
+
+  it("a reinjeção manda passar novo_horario no cancelamento (a trava de remarcação exige esse campo)", () => {
+    expect(bloco).toContain('novo_horario="${newStart}"');
+  });
 });
