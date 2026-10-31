@@ -9112,7 +9112,17 @@ async function callAIAgent(
             "PROIBIDO: pedir dados ao cliente, escalar pra humano, ou dizer que vai chamar alguém. Você resolve aqui.",
         };
         messages.push(nudge);
-        const retryBody = { model: modelUsed, messages, tools: buildToolsForProvider(provider, tenant), tool_choice: "auto", max_completion_tokens: 700 };
+        // gpt-5-mini conta o raciocínio dentro do limite: com 700 ele pode gastar tudo pensando
+        // e não sair nem tool_call nem texto (cliente fica sem agendamento após o cancelamento).
+        const _isGpt5Resched = modelUsed.includes("gpt-5");
+        const retryBody = {
+          model: modelUsed,
+          messages,
+          tools: buildToolsForProvider(provider, tenant),
+          tool_choice: "auto",
+          max_completion_tokens: _isGpt5Resched ? 4096 : 700,
+          ...(_isGpt5Resched ? { reasoning_effort: "low" } : {}),
+        };
         const retryResp = await fetchAIWithRetry(JSON.stringify(retryBody), "reschedule-guard-reinject");
         if (retryResp.ok) {
           const retryJson = await retryResp.json();

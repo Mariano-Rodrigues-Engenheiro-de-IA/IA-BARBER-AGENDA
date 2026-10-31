@@ -52,4 +52,12 @@ describe("phantom_cancel_guard (remarcação sem cancelar)", () => {
     expect(fn).toContain("max_completion_tokens: 4096");
     expect(fn).toContain('reasoning_effort: "low"');
   });
+
+  it("reinjeção do RescheduleGuard (cancelou o antigo, novo falhou) não usa 700 tokens fixos", () => {
+    const k = idx.indexOf('"reschedule-guard-reinject"');
+    expect(k).toBeGreaterThan(-1);
+    const trecho = idx.slice(k - 700, k);
+    expect(trecho).toContain("max_completion_tokens: _isGpt5Resched ? 4096 : 700");
+    expect(trecho).toContain('reasoning_effort: "low"');
+  });
 });
