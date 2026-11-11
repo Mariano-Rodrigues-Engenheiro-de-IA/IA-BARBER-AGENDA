@@ -1293,13 +1293,22 @@ async function uazapiSendTextWithRetry(
   let lastStatus: number | null = null;
   let lastError: string | null = null;
   const delay = typingDelayMs(text);
+  // Contato LID (14+ dígitos, sem telefone real): a UAZAPI trata dígitos puros como
+  // telefone (@s.whatsapp.net) e falha com "failed to resolve LID for PN ... recipient
+  // is not on WhatsApp" (500 nas 3 tentativas — bug real 06/11, 9Cinco). Nas tentativas
+  // antes da última, envia para o JID "<lid>@lid"; a última volta ao formato antigo,
+  // então o pior caso é idêntico ao comportamento anterior.
+  const lidDigits = isUnreadableCustomerPhone(number) && /^\d+$/.test(String(number).trim())
+    ? String(number).trim()
+    : null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       if (attempt === 1) await uazapiTypingPresence(uazapiUrl, uazapiToken, number, delay);
+      const sendTarget = lidDigits && attempt < attempts ? `${lidDigits}@lid` : number;
       const res = await fetch(`${uazapiUrl}/send/text`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay: attempt === 1 ? delay : 0, readchat: false }),
+        body: JSON.stringify({ number: sendTarget, text, delay: attempt === 1 ? delay : 0, readchat: false }),
       });
       const data = await res.json().catch(() => ({} as any));
       lastStatus = res.status;
