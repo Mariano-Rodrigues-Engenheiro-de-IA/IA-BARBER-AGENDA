@@ -11,3 +11,7 @@
 ## WhatsApp transport
 
 - Keep the authorized shared LID transport policy in `_shared/uazapi-transport.ts`, reused by webhook sends and follow-ups; preserve request-scoped JIDs without changing customer identity, because delivery identifiers are not customer phone numbers.
+
+## Escalation responses
+
+- Apply post-escalation internal-text replacement inside `callAIAgent` before reply persistence and memory extraction, using existing execution evidence without mutating the action ledger, because sent text and stored context must agree.

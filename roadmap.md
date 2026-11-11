@@ -1,8 +1,8 @@
 # Roadmap
 
 ## Correções autorizadas — 11/11
-- [ ] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
-- [ ] Pós-escalação: instrução direta e proteção antes do estado/memória, preservando ações concluídas
+- [x] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
+- [x] Pós-escalação: instrução direta e proteção antes do estado/memória, preservando ações concluídas
 - [ ] Adicionar testes, validar Deno e suíte; publicar somente as funções alteradas
 - [ ] Informar versões publicadas e limites de prova; commits separados dependem do versionamento gerenciado pelo Lovable
 
