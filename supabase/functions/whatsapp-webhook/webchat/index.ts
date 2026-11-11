@@ -1,3 +1,4 @@
+import { uazapiRequest } from "../../_shared/uazapi-transport.ts";
 // ===================== MODO ECONÔMICO / SITE DE CHAT =====================
 // Módulo isolado. Tudo que é específico do canal WEB (site próprio da empresa)
 // mora aqui — nada de lógica de provider ou de guards de agendamento.
@@ -100,7 +101,7 @@ export async function sendEconomicModeInvite(opts: {
   const headers = { "Content-Type": "application/json", token: opts.uazapiToken };
 
   try {
-    const resp = await fetch(`${base}/send/menu`, {
+    const resp = await uazapiRequest(`${base}/send/menu`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -122,7 +123,7 @@ export async function sendEconomicModeInvite(opts: {
   }
 
   try {
-    const resp = await fetch(`${base}/send/text`, {
+    const resp = await uazapiRequest(`${base}/send/text`, {
       method: "POST",
       headers,
       body: JSON.stringify({ number: opts.number, text: `${opts.text}\n\n👉 ${opts.url}` }),
