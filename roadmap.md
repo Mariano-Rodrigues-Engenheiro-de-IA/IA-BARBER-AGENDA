@@ -1,5 +1,11 @@
 # Roadmap
 
+## Correções autorizadas — 11/11
+- [ ] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
+- [ ] Pós-escalação: instrução direta e proteção antes do estado/memória, preservando ações concluídas
+- [ ] Adicionar testes, validar Deno e suíte; publicar somente as funções alteradas
+- [ ] Informar versões publicadas e limites de prova; commits separados dependem do versionamento gerenciado pelo Lovable
+
 ## Conferência e publicação — 27/10 (commit 46fe5ae)
 - [x] Confirmar HEAD, main local e main remota em 46fe5ae, sem divergência nem mudanças locais
 - [x] Revisar remarcação e grade completa; excluir extras de remarcação da criação e bloquear grade vazia/profissional ausente; 187 testes passaram, 17 ignorados; deno check e diff check OK

@@ -7,3 +7,7 @@
 ## Trinks availability
 
 - Keep pure slot calculations in the existing Trinks `slots.ts` module and provider orchestration in its `index.ts`; creation validates the full API grid without rescheduling-only additions, because a client's occupied window is free only when editing that booking.
+
+## WhatsApp transport
+
+- Keep the authorized shared LID transport policy in `_shared/uazapi-transport.ts`, reused by webhook sends and follow-ups; preserve request-scoped JIDs without changing customer identity, because delivery identifiers are not customer phone numbers.
