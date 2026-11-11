@@ -1,3 +1,4 @@
+import { uazapiRequest } from "../_shared/uazapi-transport.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 const corsHeaders = {
@@ -264,7 +265,7 @@ Deno.serve(async (req) => {
         "Oi! Vi que te mandei o link pra agendar, conseguiu marcar certinho? Se tiver qualquer dúvida, tô aqui! 😊";
 
       try {
-        const sendRes = await fetch(`${uazapiUrl}/send/text`, {
+        const sendRes = await uazapiRequest(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify({ number: followUp.phone_number, text: message }),

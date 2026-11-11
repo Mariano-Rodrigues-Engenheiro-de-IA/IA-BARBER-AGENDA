@@ -1,3 +1,4 @@
+import { uazapiRequest, withUazapiTransport, inboundLidEvidence } from "../_shared/uazapi-transport.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isNameBackedByConversation, resolveProfileNameForRegistration } from "./client-name-guard.ts";
@@ -1266,7 +1267,7 @@ async function uazapiTypingPresence(
   presence: "composing" | "recording" = "composing",
 ): Promise<void> {
   try {
-    const response = await fetch(`${uazapiUrl}/message/presence`, {
+    const response = await uazapiRequest(`${uazapiUrl}/message/presence`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
       body: JSON.stringify({ number, presence, delay: ms }),
@@ -1289,34 +1290,20 @@ async function uazapiSendTextWithRetry(
   text: string,
   attempts = 3,
 ): Promise<{ ok: boolean; status: number | null; data: any; error: string | null; attempts: number }> {
-  const transient = new Set([408, 429, 500, 502, 503, 504]);
-  let lastStatus: number | null = null;
-  let lastError: string | null = null;
   const delay = typingDelayMs(text);
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      if (attempt === 1) await uazapiTypingPresence(uazapiUrl, uazapiToken, number, delay);
-      const res = await fetch(`${uazapiUrl}/send/text`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
-        body: JSON.stringify({ number, text, delay: attempt === 1 ? delay : 0, readchat: false }),
-      });
-      const data = await res.json().catch(() => ({} as any));
-      lastStatus = res.status;
-      if (res.ok) return { ok: true, status: res.status, data, error: null, attempts: attempt };
-      lastError = `UAZAPI status ${res.status}`;
-      if (!transient.has(res.status) || attempt === attempts) {
-        return { ok: false, status: res.status, data, error: lastError, attempts: attempt };
-      }
-    } catch (e: any) {
-      lastError = `UAZAPI fetch error: ${e?.message || String(e)}`;
-      if (attempt === attempts) return { ok: false, status: lastStatus, data: null, error: lastError, attempts: attempt };
-    }
-    const backoff = attempt === 1 ? 800 : 2500;
-    console.warn(`[UAZAPI] envio falhou (${lastError}) — tentativa ${attempt}/${attempts}, aguardando ${backoff}ms`);
-    await new Promise((r) => setTimeout(r, backoff));
+  await uazapiTypingPresence(uazapiUrl, uazapiToken, number, delay);
+  let calls = 0;
+  try {
+    const res = await uazapiRequest(`${uazapiUrl}/send/text`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
+      body: JSON.stringify({ number, text, delay, readchat: false }),
+    }, { attempts, fetcher: (input, init) => { calls++; return fetch(input, init); } });
+    const data: unknown = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, data, error: res.ok ? null : `UAZAPI status ${res.status}`, attempts: calls };
+  } catch (error: unknown) {
+    return { ok: false, status: null, data: null, error: `UAZAPI fetch error: ${error instanceof Error ? error.message : String(error)}`, attempts: calls };
   }
-  return { ok: false, status: lastStatus, data: null, error: lastError, attempts };
 }
 
 const handleWebhookRequest = async (req: Request): Promise<Response> => {
@@ -1549,6 +1536,11 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
         ? (messagePeerPhone || extractOutboundPeerPhone(payload, msg, ownerNumberForRouting) || initiallyResolvedPhone)
         : initiallyResolvedPhone;
       const isGroupMessage = String(remoteJid || "").endsWith("@g.us");
+      if (phoneNumber && !fromMe) {
+        const evidence = inboundLidEvidence(phoneNumber, payload, msg);
+        if (evidence) console.log("[LidInboundEvidence]", JSON.stringify(evidence));
+      }
+
 
 
       console.log(
@@ -1629,7 +1621,7 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
           const uazapiToken = tenantForReset.uazapi_token || Deno.env.get("UAZAPI_TOKEN");
           if (uazapiUrl && uazapiToken) {
             try {
-              await fetch(`${uazapiUrl}/send/text`, {
+              await uazapiRequest(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
                 body: JSON.stringify({ number: phoneNumber, text: "🔄 Memória limpa! Pode começar uma nova conversa.", delay: 1000 }),
@@ -3399,7 +3391,7 @@ async function serveWebhookInBackground(req: Request): Promise<Response> {
   const work = (async () => {
     const started = Date.now();
     try {
-      const res = await httpTraceStore.run([], () => handleWebhookRequest(replay));
+      const res = await httpTraceStore.run([], () => withUazapiTransport(() => handleWebhookRequest(replay)));
       if (!res.ok) {
         console.error(`[Background] webhook terminou com status ${res.status} em ${Date.now() - started}ms`);
       } else {
@@ -3425,7 +3417,7 @@ Deno.serve((req) => {
   const mode = req.headers.get("x-mode");
   // Webchat e simulador PRECISAM da resposta no corpo HTTP — não podem ir pra background.
   if (req.method === "OPTIONS" || mode === "webchat" || mode === "simulator") {
-    return httpTraceStore.run([], () => handleWebhookRequest(req));
+    return httpTraceStore.run([], () => withUazapiTransport(() => handleWebhookRequest(req)));
   }
   return serveWebhookInBackground(req);
 });
@@ -11229,7 +11221,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         if (!text) return { error: "Texto/URL não configurado nesta ferramenta." };
         const delay = typingDelayMs(text);
         await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
-        const res = await fetch(`${uazapiUrl}/send/text`, {
+        const res = await uazapiRequest(`${uazapiUrl}/send/text`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify({ number: phoneNumber, text, delay, readchat: false }),
@@ -11281,7 +11273,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
             `💬 *Últimas mensagens:*\n${lastClientMsg || "(sem mensagens)"}`;
 
           try {
-            const humanRes = await fetch(`${uazapiUrl}/send/text`, {
+            const humanRes = await uazapiRequest(`${uazapiUrl}/send/text`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
               body: JSON.stringify({ number: humanNumber, text: summaryText, delay: 1000 }),
@@ -11406,7 +11398,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
           await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
         }
 
-        const res = await fetch(`${uazapiUrl}/send/media`, {
+        const res = await uazapiRequest(`${uazapiUrl}/send/media`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify(sendPayload),
@@ -11426,7 +11418,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const locName = config.name || "";
         const locAddress = config.address || locName || "";
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { error: "Coordenadas não configuradas." };
-        const res = await fetch(`${uazapiUrl}/send/location`, {
+        const res = await uazapiRequest(`${uazapiUrl}/send/location`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify({ number: phoneNumber, latitude: lat, longitude: lng, name: locName, address: locAddress }),
@@ -11449,7 +11441,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         const pixPayload: any = { number: phoneNumber, pixType, pixKey };
         if (config.pix_name) pixPayload.pixName = config.pix_name;
         if (config.merchant_name) pixPayload.merchantName = config.merchant_name;
-        const res = await fetch(`${uazapiUrl}/send/pix-button`, {
+        const res = await uazapiRequest(`${uazapiUrl}/send/pix-button`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify(pixPayload),
@@ -11471,7 +11463,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         if (!contactPhone) return { error: "Telefone do contato não configurado. Não tente novamente — peça ao admin configurar.", blocked: true };
         const contactBody: any = { number: phoneNumber, fullName, phoneNumber: contactPhone };
         if (organization) contactBody.organization = organization;
-        const res = await fetch(`${uazapiUrl}/send/contact`, {
+        const res = await uazapiRequest(`${uazapiUrl}/send/contact`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
           body: JSON.stringify(contactBody),
@@ -11502,7 +11494,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               if (!itemConfig.text) { results.push({ type: "text", skipped: true }); continue; }
               const delay = typingDelayMs(itemConfig.text);
               await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, delay);
-              res = await fetch(`${uazapiUrl}/send/text`, {
+              res = await uazapiRequest(`${uazapiUrl}/send/text`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
                 body: JSON.stringify({ number: phoneNumber, text: itemConfig.text, delay, readchat: false }),
@@ -11521,7 +11513,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
                 sendPayload.delay = 3500;
                 await uazapiTypingPresence(uazapiUrl, uazapiToken, phoneNumber, 3500, "recording");
               }
-              res = await fetch(`${uazapiUrl}/send/media`, {
+              res = await uazapiRequest(`${uazapiUrl}/send/media`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
                 body: JSON.stringify(sendPayload),
@@ -11532,7 +11524,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
               const lat = Number(itemConfig.latitude);
               const lng = Number(itemConfig.longitude);
               if (!Number.isFinite(lat) || !Number.isFinite(lng)) { results.push({ type: "location", skipped: true }); continue; }
-              res = await fetch(`${uazapiUrl}/send/location`, {
+              res = await uazapiRequest(`${uazapiUrl}/send/location`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json", "token": uazapiToken },
                 body: JSON.stringify({ number: phoneNumber, latitude: lat, longitude: lng, name: itemConfig.name || "", address: itemConfig.address || "" }),
