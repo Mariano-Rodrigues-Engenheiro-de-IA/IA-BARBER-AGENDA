@@ -3,8 +3,8 @@
 ## Correções autorizadas — 11/11
 - [x] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
 - [x] Pós-escalação: instrução direta e proteção antes do estado/memória, preservando ações concluídas
-- [ ] Adicionar testes, validar Deno e suíte; publicar somente as funções alteradas
-- [ ] Informar versões publicadas e limites de prova; commits separados dependem do versionamento gerenciado pelo Lovable
+- [x] Adicionar testes: 266 aprovados, 17 ignorados; Deno e diff OK; publicar whatsapp-webhook e process-followups em 11/11 ~00:40 UTC; credencial inválida rejeitada com 401
+- [x] Informar versões: LID até fe1703c (inclui e50112c/a7b37cc/184f13c), pós-escalação 1d09c63/263b8b8/9f29057; sem envio real nem prova operacional de entrega @lid; versionamento gerenciado gerou commits separados por edição, não um único commit por correção
 
 ## Conferência e publicação — 27/10 (commit 46fe5ae)
 - [x] Confirmar HEAD, main local e main remota em 46fe5ae, sem divergência nem mudanças locais
