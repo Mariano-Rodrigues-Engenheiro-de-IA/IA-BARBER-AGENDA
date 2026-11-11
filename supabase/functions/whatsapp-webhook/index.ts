@@ -2983,6 +2983,34 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
 
 
 
+      // Trava pós-escalação (10/11): depois de escalar_humano a IA às vezes trata a
+      // instrução da ferramenta como tarefa dela e devolve texto INTERNO ("Vou preparar
+      // a resposta ao cliente."), que ia direto para o cliente. Se a escalação deste
+      // turno deu certo e o texto fala do cliente em 3ª pessoa / de "preparar resposta",
+      // troca por um aviso fixo e seguro (que não afirma nenhuma ação concluída).
+      try {
+        const escalatedOk = (agentResult?.toolCalls || []).some((tc: any) =>
+          !tc?.blocked && tc?.result?.type === "escalate_human" && tc?.result?.success === true
+        );
+        const txt = String(aiResponse || "").trim();
+        if (escalatedOk && txt && txt.length <= 220) {
+          const falaDoClienteEm3a = /\b(ao|para o|pro|do|o)\s+cliente\b/i.test(txt);
+          const preparaResposta = /\b(vou|irei|vamos|preciso)\s+(preparar|enviar|redigir|escrever|montar|elaborar|mandar|formular)\b[^.!?\n]{0,40}\b(resposta|aviso|mensagem)\b/i.test(txt);
+          if (falaDoClienteEm3a || preparaResposta) {
+            console.log(`[PostEscalationGuard] Texto interno substituído para ${phoneNumber}: ${JSON.stringify(txt)}`);
+            if (Array.isArray(agentResult?.errors)) {
+              agentResult.errors.push({
+                level: "warning",
+                message: `Texto interno após escalação substituído por aviso fixo: ${txt.slice(0, 160)}`,
+              });
+            }
+            aiResponse = "Já passei seu pedido para a nossa equipe. Eles vão te responder por aqui em instantes, tá bom? 🙏";
+          }
+        }
+      } catch (postEscErr: any) {
+        console.error("[PostEscalationGuard] erro:", postEscErr?.message || postEscErr);
+      }
+
       const messageParts = splitIntoMessages(aiResponse);
 
       let tFirstSend = 0;
