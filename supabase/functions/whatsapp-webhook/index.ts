@@ -1300,9 +1300,9 @@ function hasPostEscalationInternalText(text: string): boolean {
 
 function postEscalationReply(text: string, escalated: boolean, completed: string[], pendingBooking: boolean): string {
   if (!escalated || !hasPostEscalationInternalText(text)) return text;
-  const done = completed.length ? `Acoes ja concluidas: ${completed.join("; ")}. ` : "";
+  const done = completed.length ? `Ações já concluídas: ${completed.join("; ")}. ` : "";
   const pending = pendingBooking
-    ? "O pedido de agendamento, remarcacao ou cancelamento ainda nao foi concluido. A equipe vai finalizar e confirmar por aqui."
+    ? "Seu pedido de agendamento, remarcação ou cancelamento ainda não foi concluído por completo. A equipe vai finalizar e confirmar por aqui."
     : "A equipe vai analisar seu pedido e confirmar por aqui.";
   return `${done}Já passei seu pedido para a nossa equipe. ${pending}`;
 }
@@ -10144,7 +10144,14 @@ async function callAIAgent(
       && !(typeof tc.result.status === "number" && tc.result.status >= 400));
     for (const tc of completedEdits) completed.push(buildActionSummary(tc.name, tc.args, tc.result));
     const context = [userMessage, ...logToolCalls.filter((tc) => tc.result?.type === "escalate_human").map((tc) => tc.args?.motivo || "")].join(" ");
-    const pendingBooking = /agend|remarc|reagend|cancel|desmarc/i.test(context) && completed.length === 0;
+    const failedBooking = logToolCalls.some((tc) => ["agendar", "criar_agendamento", "editar_agendamento", "cancelar_agendamento", "desmarcar_agendamento"].includes(tc.name)
+      && (tc.blocked || tc.result?.blocked || tc.result?.error || tc.result?.success === false
+        || (Array.isArray(tc.result?.Errors) && tc.result.Errors.length > 0)
+        || (typeof tc.result?.status === "number" && tc.result.status >= 400)));
+    const rescheduleIncomplete = /remarc|reagend/i.test(context) && !completedEdits.some((tc) => tc.name === "editar_agendamento")
+      && !(successfulBooking.count > 0 && completedEdits.some((tc) => tc.name !== "editar_agendamento"));
+    const pendingBooking = /agend|remarc|reagend|cancel|desmarc/i.test(context)
+      && (completed.length === 0 || failedBooking || rescheduleIncomplete);
     const original = finalResponse;
     finalResponse = postEscalationReply(finalResponse || "", true, completed, pendingBooking);
     logErrors.push({ level: "warning", message: `[PostEscalationGuard] Texto interno substituído antes de estado/memória: ${String(original).slice(0, 160)}` });
