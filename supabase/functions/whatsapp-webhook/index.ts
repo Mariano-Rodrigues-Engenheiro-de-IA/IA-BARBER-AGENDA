@@ -1283,6 +1283,30 @@ async function uazapiTypingPresence(
   await new Promise((resolve) => setTimeout(resolve, 350));
 }
 
+// PostEscalationGuard v2: classify internal drafting, not any mention of another customer.
+function hasPostEscalationInternalText(text: string): boolean {
+  const t = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return [
+    /\b(vou|irei|vamos|preciso)\s+(preparar|redigir|escrever|montar|elaborar|formular|finalizar)\b[^.!?\n]{0,100}\b(resposta|aviso|mensagem)\b/,
+    /\b(vou|irei|vamos|preciso)\s+(enviar|mandar)\s+(?:a\s+|uma\s+)?resposta\b/,
+    /\b(vou|irei|vamos)\s+(enviar|mandar)\s+(?:a\s+|uma\s+)?mensagem\s+de\s+encerramento\b/,
+    /\b(resposta|mensagem|aviso)\s+(ao|para o|pro|pra|do)\s+cliente\b/,
+    /\b(voce quer|quer que eu)\s+(?:uma\s+)?resposta final\b/,
+    /\b(vou|irei|preciso|devo)\s+responder\b[^.!?\n]{0,70}\b(regras|instrucoes|ao cliente)\b/,
+    /\bvoce e chatgpt\b|\bobrigad[oa] por escalar\b/,
+    /\bpelo que vejo,?\s+o cliente\b/,
+  ].some((pattern) => pattern.test(t));
+}
+
+function postEscalationReply(text: string, escalated: boolean, completed: string[], pendingBooking: boolean): string {
+  if (!escalated || !hasPostEscalationInternalText(text)) return text;
+  const done = completed.length ? `Ações já concluídas: ${completed.join("; ")}. ` : "";
+  const pending = pendingBooking
+    ? "Seu pedido de agendamento, remarcação ou cancelamento ainda não foi concluído por completo. A equipe vai finalizar e confirmar por aqui."
+    : "A equipe vai analisar seu pedido e confirmar por aqui.";
+  return `${done}Já passei seu pedido para a nossa equipe. ${pending}`;
+}
+
 async function uazapiSendTextWithRetry(
   uazapiUrl: string,
   uazapiToken: string,
@@ -2974,34 +2998,6 @@ const handleWebhookRequest = async (req: Request): Promise<Response> => {
       }
 
 
-
-      // Trava pós-escalação (10/11): depois de escalar_humano a IA às vezes trata a
-      // instrução da ferramenta como tarefa dela e devolve texto INTERNO ("Vou preparar
-      // a resposta ao cliente."), que ia direto para o cliente. Se a escalação deste
-      // turno deu certo e o texto fala do cliente em 3ª pessoa / de "preparar resposta",
-      // troca por um aviso fixo e seguro (que não afirma nenhuma ação concluída).
-      try {
-        const escalatedOk = (agentResult?.toolCalls || []).some((tc: any) =>
-          !tc?.blocked && tc?.result?.type === "escalate_human" && tc?.result?.success === true
-        );
-        const txt = String(aiResponse || "").trim();
-        if (escalatedOk && txt && txt.length <= 220) {
-          const falaDoClienteEm3a = /\b(ao|para o|pro|do|o)\s+cliente\b/i.test(txt);
-          const preparaResposta = /\b(vou|irei|vamos|preciso)\s+(preparar|enviar|redigir|escrever|montar|elaborar|mandar|formular)\b[^.!?\n]{0,40}\b(resposta|aviso|mensagem)\b/i.test(txt);
-          if (falaDoClienteEm3a || preparaResposta) {
-            console.log(`[PostEscalationGuard] Texto interno substituído para ${phoneNumber}: ${JSON.stringify(txt)}`);
-            if (Array.isArray(agentResult?.errors)) {
-              agentResult.errors.push({
-                level: "warning",
-                message: `Texto interno após escalação substituído por aviso fixo: ${txt.slice(0, 160)}`,
-              });
-            }
-            aiResponse = "Já passei seu pedido para a nossa equipe. Eles vão te responder por aqui em instantes, tá bom? 🙏";
-          }
-        }
-      } catch (postEscErr: any) {
-        console.error("[PostEscalationGuard] erro:", postEscErr?.message || postEscErr);
-      }
 
       const messageParts = splitIntoMessages(aiResponse);
 
@@ -10137,6 +10133,31 @@ async function callAIAgent(
     }
   }
 
+  // Apply before reply history and CRM extraction; all later consumers receive the same text.
+  const postEscalated = logToolCalls.some((tc) => !tc.blocked && tc.result?.type === "escalate_human" && tc.result?.success === true);
+  if (postEscalated && hasPostEscalationInternalText(finalResponse || "")) {
+    const successfulBooking = countSuccessfulBookingsInTurn(logToolCalls, provider, sessionState);
+    const completed = successfulBooking.breakdown.map((item) => item.summary);
+    const completedEdits = logToolCalls.filter((tc) => ["editar_agendamento", "cancelar_agendamento", "desmarcar_agendamento"].includes(tc.name)
+      && !tc.blocked && tc.result && !tc.result.error && !tc.result.blocked && tc.result.success !== false
+      && !(Array.isArray(tc.result.Errors) && tc.result.Errors.length)
+      && !(typeof tc.result.status === "number" && tc.result.status >= 400));
+    for (const tc of completedEdits) completed.push(buildActionSummary(tc.name, tc.args, tc.result));
+    const context = [userMessage, ...logToolCalls.filter((tc) => tc.result?.type === "escalate_human").map((tc) => tc.args?.motivo || "")].join(" ");
+    const failedBooking = logToolCalls.some((tc) => ["agendar", "criar_agendamento", "editar_agendamento", "cancelar_agendamento", "desmarcar_agendamento"].includes(tc.name)
+      && (tc.blocked || tc.result?.blocked || tc.result?.error || tc.result?.success === false
+        || (Array.isArray(tc.result?.Errors) && tc.result.Errors.length > 0)
+        || (typeof tc.result?.status === "number" && tc.result.status >= 400)));
+    const rescheduleIncomplete = /remarc|reagend/i.test(context) && !completedEdits.some((tc) => tc.name === "editar_agendamento")
+      && !(successfulBooking.count > 0 && completedEdits.some((tc) => tc.name !== "editar_agendamento"));
+    const pendingBooking = /agend|remarc|reagend|cancel|desmarc/i.test(context)
+      && (completed.length === 0 || failedBooking || rescheduleIncomplete);
+    const original = finalResponse;
+    finalResponse = postEscalationReply(finalResponse || "", true, completed, pendingBooking);
+    logErrors.push({ level: "warning", message: `[PostEscalationGuard] Texto interno substituído antes de estado/memória: ${String(original).slice(0, 160)}` });
+    console.log(`[PostEscalationGuard] replaced before persistence for ${phoneNumber}`);
+  }
+
   if (finalResponse) {
     recordAssistantReply(sessionState, finalResponse);
     if (!simulatorMode) await saveConversationState(supabase, tenant.id, phoneNumber, sessionState);
@@ -11326,7 +11347,7 @@ async function executeCustomTool(tenant: any, toolDef: any, phoneNumber: string,
         // normalmente, no fluxo de resposta.
         return {
           success: true,
-          message: "Atendimento escalado para humano (etiqueta aplicada e atendente avisado). Nenhuma mensagem foi enviada ao cliente: escreva você mesmo o aviso, curto e natural, com o contexto da conversa. Se o que o cliente pediu (agendar, remarcar ou cancelar) NÃO foi concluído, diga isso com clareza: que ainda NÃO foi feito e que a equipe vai finalizar e confirmar. NUNCA escreva \"marquei\", \"remarquei\", \"agendei\" ou \"cancelei\" (nem \"marquei com a equipe\") quando a ação não foi executada de verdade.",
+          message: "Atendimento escalado para humano (etiqueta aplicada e atendente avisado). Nenhuma mensagem foi enviada ao cliente. RESULTADO OPERACIONAL: solicitação encaminhada para atendimento humano; isto NÃO conclui agendamento, remarcação ou cancelamento. RESPOSTA DIRETA AO CLIENTE: fale com você/seu, nunca sobre o cliente em terceira pessoa. Informe o encaminhamento sem anunciar preparação, redação ou envio de uma resposta e sem prometer prazo. Se o que o cliente pediu (agendar, remarcar ou cancelar) NÃO foi concluído, diga isso com clareza: que ainda NÃO foi feito e que a equipe vai finalizar e confirmar. NUNCA escreva \"marquei\", \"remarquei\", \"agendei\" ou \"cancelei\" (nem \"marquei com a equipe\") quando a ação não foi executada de verdade.",
           client_notified: false,
           type: toolType,
         };
