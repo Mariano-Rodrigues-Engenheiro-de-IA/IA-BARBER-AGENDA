@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { transformSync } from "esbuild";
@@ -20,17 +21,15 @@ async function run(staffAccess: boolean, accessError = false) {
     from: (table: string) => {
       const chain = {
         select: () => chain,
-        eq: async () => ({ error: null }),
+        eq: (_field: string, _value: string) => chain,
         maybeSingle: async () => ({ data: table === "tenant_users" ? null : { id: "lead", flag_labels: flags } }),
         single: async () => ({ data: { id: "alex-tenant", uazapi_url: "https://instance.test", uazapi_token: "test-only" } }),
         update: (patch: { flag_labels: string[] }) => { flags = patch.flag_labels; return chain; },
       };
-      // Queries chain eq before resolving single/maybeSingle.
-      chain.eq = (() => chain) as unknown as typeof chain.eq;
       return chain;
     },
   };
-  const send = vi.fn(async () => new Response("{}", { status: 200 }));
+  const send = vi.fn(async (_url: string, _init: RequestInit) => new Response("{}", { status: 200 }));
   new Function("createClient", "Deno", "fetch", script)(
     () => client,
     { env: { get: () => "test-only" }, serve: (fn: typeof handler) => { handler = fn; } },
