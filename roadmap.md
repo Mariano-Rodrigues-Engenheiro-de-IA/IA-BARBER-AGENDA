@@ -2,9 +2,9 @@
 
 ## IA OFF — contato Alex prótese capilar
 - [x] Conferir CRM, configurações, webhook, ferramentas, follow-ups, cobrança e políticas existentes
-- [ ] Reconhecer no move-crm-lead o acesso de colaborador já concedido à empresa, sem mudar permissões
-- [ ] Testar autorização e preservação das outras etiquetas; publicar somente move-crm-lead
-- [ ] Remover IA OFF do contato solicitado e verificar WhatsApp e painel
+- [x] Reconhecer no move-crm-lead o acesso de colaborador já concedido à empresa, sem mudar permissões
+- [x] Três testes aprovados; Deno validado; publicada somente move-crm-lead
+- [x] IA OFF 29 removida; WhatsApp confirma ausência nas duas formas do telefone, etiquetas 31/20/7 preservadas e painel sem a flag
 
 ## Correções autorizadas — 11/11
 - [x] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
