@@ -1,5 +1,11 @@
 # Roadmap
 
+## IA OFF — contato Alex prótese capilar
+- [x] Conferir CRM, configurações, webhook, ferramentas, follow-ups, cobrança e políticas existentes
+- [ ] Reconhecer no move-crm-lead o acesso de colaborador já concedido à empresa, sem mudar permissões
+- [ ] Testar autorização e preservação das outras etiquetas; publicar somente move-crm-lead
+- [ ] Remover IA OFF do contato solicitado e verificar WhatsApp e painel
+
 ## Correções autorizadas — 11/11
 - [x] LID: destino/presença/fallback compartilhados, demais envios e follow-ups, evidência restrita do evento, sem unir identidades
 - [x] Pós-escalação: instrução direta e proteção antes do estado/memória, preservando ações concluídas

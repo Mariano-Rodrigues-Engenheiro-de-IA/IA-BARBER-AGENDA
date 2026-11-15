@@ -86,8 +86,14 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ===== AUTHORIZATION: caller must be admin OR belong to the target tenant =====
-    if (!isAdmin && callerTenantId !== tenantId) {
+    // Reuse the same existing tenant-scoped staff grant as crm_leads RLS.
+    // This recognizes granted access; it does not grant access to other tenants.
+    const { data: staffAccess, error: staffAccessError } = !isAdmin && callerTenantId !== tenantId
+      ? await supabase.rpc("staff_has_tenant_access", { _user_id: userId, _tenant_id: tenantId })
+      : { data: false, error: null };
+
+    // ===== AUTHORIZATION: admin, tenant member, or already-authorized staff =====
+    if (!isAdmin && callerTenantId !== tenantId && (staffAccessError || staffAccess !== true)) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
