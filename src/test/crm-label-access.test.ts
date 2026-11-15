@@ -1,11 +1,10 @@
-// @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { transformSync } from "esbuild";
+import ts from "typescript";
 
 const source = readFileSync("supabase/functions/move-crm-lead/index.ts", "utf8")
   .replace(/^import .*;\s*/m, "");
-const script = transformSync(source, { loader: "ts", format: "cjs" }).code;
+const script = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 
 async function run(staffAccess: boolean, accessError = false) {
   let handler: ((request: Request) => Promise<Response>) | undefined;
