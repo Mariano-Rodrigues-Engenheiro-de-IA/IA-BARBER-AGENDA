@@ -101,7 +101,7 @@ export function trinksHasPositiveCreation(call: TrinksGuardCall): boolean {
 export function trinksRecoveryClaimBlockReason(text: string, calls: TrinksGuardCall[], claimsCompletion: boolean): string | null {
   if (!claimsCompletion) return null;
   const times = trinksGuardTimes(text);
-  const isoDates = text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+  const isoDates: string[] = Array.from(text.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g), (m) => m[0]);
   const namedDays = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
   const normalized = normalizeUserFacingText(text);
   const statedDays = namedDays.filter((d) => new RegExp(`\\b${d}\\b`).test(normalized));
