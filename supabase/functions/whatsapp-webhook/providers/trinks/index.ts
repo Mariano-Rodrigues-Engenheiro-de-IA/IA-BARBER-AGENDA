@@ -55,7 +55,7 @@ type TrinksGuardMessage = { role: string; content: string; created_at?: string }
 type TrinksGuardCall = { name?: string; blocked?: boolean; args?: Record<string, unknown>; result?: unknown };
 const trinksGuardRecord = (value: unknown): Record<string, unknown> | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
-const TRINKS_NON_CREATION_RE = /\b(remarc\w*|cancel\w*|desmarc\w*|alter\w*|mudan[cç]a|trocar|retir\w*|produto\w*|fita\w*|pomada\w*|voc[eê]\s+agendou|j[aá]\s+(?:tenho|tem|est[aá])\s+agendado|lembrete)\b/i;
+const TRINKS_NON_CREATION_RE = /\b(remarc\w*|cancel\w*|desmarc\w*|alter\w*|mudan[cç]a|trocar|retir\w*|produto\w*|fita\w*|pomada\w*|voc[eê]\s+agendou|j[aá]\s+(?:tenho|tem|est[aá])\s+agendado|(?:confirmar|confirma[cç][aã]o)\s+(?:seu|o)\s+hor[aá]rio|lembrete)\b/i;
 export function trinksActiveCompletionClaim(text: string): boolean {
   return text.split(/(?<=[.!?])\s+/).some((s) =>
     /\b(?:j[aá]\s+)?(?:deixei|deixamos)\b[^.!?]{0,160}\b(?:confirmad[oa]|reservad[oa]|marcad[oa]|agendad[oa]|garantid[oa])\b/i.test(s)
