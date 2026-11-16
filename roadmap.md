@@ -1,10 +1,10 @@
 # Roadmap
 
 ## Trinks — confirmação fantasma, corte aprovado 16/11
-- [ ] Detectar forma ativa e oferta recente com escolha única, sem autorizar criação
-- [ ] Revalidar saída da reinjeção com escrita positiva/consulta compatível, preservando os demais providers
-- [ ] Cobrir fixtures reais e exclusões; suíte completa e Deno; publicar somente whatsapp-webhook
-- [ ] Informar hashes gerenciados, arquivos, resultados e limites de verificação
+- [x] Detectar forma ativa e oferta recente com escolha única, sem autorizar criação
+- [x] Revalidar saída da reinjeção com escrita positiva/consulta compatível, preservando os demais providers
+- [x] Fixtures reais, exclusões e fluxo real com IA simulada; 306 testes passaram, 17 ignorados; Deno e build OK; publicada somente whatsapp-webhook (fonte até e01ac2e, SHA-256 fb08dd70c55d37c92e9adc6f4f188acf5bbb199ed5cfb4155739317bd7d1c2d0); segredo inválido rejeitado com 401
+- [x] Informar commits gerenciados e limites: consulta autenticada ao simulador Thallys recusada com 403; sem mensagem real ou escrita de reserva, comportamento da IA no ar não comprovado
 
 ## IA OFF — contato Alex prótese capilar
 - [x] Conferir CRM, configurações, webhook, ferramentas, follow-ups, cobrança e políticas existentes
