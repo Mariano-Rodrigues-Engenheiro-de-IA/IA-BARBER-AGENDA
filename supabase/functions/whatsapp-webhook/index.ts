@@ -109,6 +109,11 @@ import {
   extractBookedServiceNames as extractTrinksBookedServiceNames,
   phantomGuardConfig as trinksPhantomGuardConfig,
   bookingGuardsConfig as trinksBookingGuardsConfig,
+  trinksActiveCompletionClaim,
+  trinksRecentOfferSelection,
+  trinksHasPositiveCreation,
+  trinksRecoveryClaimBlockReason,
+  trinksPhantomRecoveryInstruction,
 } from "./providers/trinks/index.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -8323,6 +8328,8 @@ async function callAIAgent(
   if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomCfg) {
 
     const lastAssistantMessage = getLastAssistantMessage(history) || "";
+    // TRINKS: oferta recente só corrige a resposta; nunca autoriza criação.
+    const trinksOfferSelection = provider === "trinks" ? trinksRecentOfferSelection(history, userMessage || "") : null;
     const lastAssistantWasHuman = /^\s*\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(lastAssistantMessage);
     // 2ª fonte de legitimidade (item 3 da auditoria set/2026): DISPARO DE
     // CONFIRMAÇÃO de agendamento PRÉ-EXISTENTE — "Você agendou [SERVIÇO] com
@@ -8463,8 +8470,9 @@ async function callAIAgent(
     // do cliente" — reaproveitada aqui tal como está, sem alterar o AppBarber.
     const hasExplicitCreationClaim = (provider === "appbarber" || provider === "bemp")
       ? appBarberClaimsCompletedBooking(finalResponse) && sentences.some((s: string) => !CANCEL_CONTEXT_RE.test(s))
-      : sentences.some((s: string) => LEGACY_CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
-    const hasImpliedFinalizationClaim = isNewBookingFinalStep
+      : sentences.some((s: string) => LEGACY_CONFIRM_CLAIM_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"))
+        || (provider === "trinks" && trinksActiveCompletionClaim(finalResponse));
+    const hasImpliedFinalizationClaim = (isNewBookingFinalStep || !!trinksOfferSelection)
       && sentences.some((s: string) => IMPLIED_FINALIZATION_RE.test(s) && !CANCEL_CONTEXT_RE.test(s) && !s.endsWith("?"));
     const claimsNewBookingConfirmed = !isHumanExistingBookingConfirmation
       && (hasExplicitCreationClaim || hasImpliedFinalizationClaim);
@@ -8497,6 +8505,8 @@ async function callAIAgent(
       );
       const recentBookingSuccess = provider === "appbarber"
         ? successfulWriteThisTurn
+        : provider === "trinks" && trinksOfferSelection
+        ? (logToolCalls || []).some((tc) => trinksHasPositiveCreation(tc))
         : (sessionState.recentCompletedActions || []).some((a) => a.category === "booking" && a.status === "success");
 
       // 2ª fonte de legitimidade: busca recente bem-sucedida de agendamento
@@ -8540,7 +8550,7 @@ async function callAIAgent(
       const _sessionSlots = ((sessionState as any)?.appbarberSlotOptions || []) as Array<{ start_time?: string }>;
       const _responseTimes = new Set<string>((String(finalResponse).match(/\b([01]?\d|2[0-3]):[0-5]\d\b/g) || []).map((t) => t.padStart(5, "0")));
       const responseCitesSearchedSlot = _sessionSlots.some((s) => s?.start_time && _responseTimes.has(String(s.start_time).slice(0, 5)));
-      const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot;
+      const hasStructuredNewBookingEvidence = isNewBookingFinalStep || availabilitySearchThisTurn || responseCitesSearchedSlot || !!trinksOfferSelection;
 
       if (provider !== "appbarber" && !recentBookingSuccess && !lookupLegit && !hasStructuredNewBookingEvidence) {
         console.warn(`[PhantomConfirmationGuard] SHADOW: texto parecia promessa de criação, mas sem 2ª fonte estruturada (final_step=${isNewBookingFinalStep} availability_tool=${availabilitySearchThisTurn} cita_slot=${responseCitesSearchedSlot}). Resposta mantida.`);
@@ -8575,6 +8585,11 @@ async function callAIAgent(
               "3) Se faltar algum dado que só o cliente pode dar, pergunte de forma natural — sem prometer que já está agendado.\n" +
               "Nunca responda ao cliente afirmando agendamento criado sem retorno positivo de " + _bookingNames + ".",
           };
+          if (provider === "trinks") {
+            nudge.content = "[SISTEMA — INTERNO] A resposta foi bloqueada porque prometeu conclusão de criação nova sem escrita comprovada. "
+              + trinksPhantomRecoveryInstruction
+              + (trinksOfferSelection ? ` Apenas escolha detectada: ${trinksOfferSelection.selectedTime}. Consulte o necessário, apresente resumo e pergunte se pode confirmar; NÃO crie agora.` : "");
+          }
           messages.push(nudge);
 
           // Até 3 rodadas de ferramentas: a IA pode precisar de listar_servicos →
@@ -8589,6 +8604,18 @@ async function callAIAgent(
           let anyToolExecuted = false;
           let pendingToolCalls: any[] = [];
           let assistantText = "";
+          // TRINKS: a mesma validação cobre todas as saídas textuais da recuperação.
+          const acceptRecoveredText = (text: string): boolean => {
+            if (provider !== "trinks") return true;
+            const claims = appBarberClaimsCompletedBooking(text) || trinksActiveCompletionClaim(text)
+              || text.split(/(?<=[.!?])\s+/).some((s) => IMPLIED_FINALIZATION_RE.test(s) && !s.endsWith("?") && !/\b(n[ãa]o|ainda|quando|se)\b/i.test(s));
+            const reason = trinksRecoveryClaimBlockReason(text, logToolCalls, claims);
+            if (!reason) return true;
+            messages.push({ role: "system", content: "[SISTEMA — INTERNO] Texto bloqueado: " + reason });
+            logErrors.push({ message: "Trinks PhantomConfirmationGuard: " + reason, level: "warning" });
+            logToolCalls.push({ name: "__phantom_guard__", args: { phase: "recovery_exit" }, result: { provider, blocked: true, reason } });
+            return false;
+          };
 
           for (let round = 0; round < 3; round++) {
             // ⚠️ Corrigido (10/09, caso real Ricardo Trento): max_completion_tokens
@@ -8603,7 +8630,7 @@ async function callAIAgent(
               model: modelUsed,
               messages,
               tools: buildToolsForProvider(provider, tenant),
-              tool_choice: round === 0 ? "required" : "auto",
+              tool_choice: provider === "trinks" ? "auto" : round === 0 ? "required" : "auto",
               // ⚠️ 13/10 (caso 9Cinco 554498603038): sem reasoning_effort o gpt-5-mini
               // usa esforço médio e gastou os 1500 tokens só raciocinando
               // (finish_reason "length", sem texto nem ferramenta). Mesmo ajuste da
@@ -8617,13 +8644,23 @@ async function callAIAgent(
             const retryMsg = retryJson?.choices?.[0]?.message;
             pendingToolCalls = Array.isArray(retryMsg?.tool_calls) ? retryMsg.tool_calls : [];
             assistantText = String(retryMsg?.content || "").trim();
-            if (pendingToolCalls.length === 0) break;
+            if (pendingToolCalls.length === 0) {
+              if (provider === "trinks" && assistantText && !acceptRecoveredText(assistantText)) {
+                assistantText = "";
+                continue;
+              }
+              break;
+            }
 
             messages.push(retryMsg);
             for (const tc of pendingToolCalls) {
               let tResult: any;
               try {
-                tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+                if (provider === "trinks" && trinksOfferSelection && tc?.function?.name === "criar_agendamento") {
+                  tResult = { blocked: true, error: "Escolha de horário não autoriza criação. Apresente resumo (serviço, profissional, data/hora, valor) e aguarde confirmação explícita posterior; não foi criado agendamento." };
+                } else {
+                  tResult = await executeToolForProvider(provider, tenant, tc, phoneNumber, { supabase, simulatorMode, sessionState });
+                }
               } catch (e) {
                 tResult = { error: `Erro ao executar ${tc?.function?.name}: ${(e as Error)?.message || "erro desconhecido"}` };
               }
@@ -8634,9 +8671,11 @@ async function callAIAgent(
               });
               const tname = tc?.function?.name;
               anyToolExecuted = true;
-              const ok = tResult && !tResult.error && !tResult.blocked;
+              const ok = provider === "trinks" && bookingNamesSet.has(tname)
+                ? trinksHasPositiveCreation({ name: tname, result: tResult })
+                : tResult && !tResult.error && !tResult.blocked;
               if (bookingNamesSet.has(tname) && ok) anyBookingSucceeded = true;
-              if (ok && (bookingNamesSet.has(tname) || searchNamesSet.has(tname))) {
+              if (provider === "trinks" || (ok && (bookingNamesSet.has(tname) || searchNamesSet.has(tname)))) {
                 logToolCalls.push({ name: tname, args: parseToolArguments(tc.function?.arguments), result: tResult });
               }
             }
@@ -8645,14 +8684,14 @@ async function callAIAgent(
 
           if (anyBookingSucceeded) {
             const det = buildDeterministicBookingConfirmation(logToolCalls);
-            if (det) {
+            if (det && acceptRecoveredText(det)) {
               finalResponse = det;
               guardOverrideResponse = true;
               recovered = true;
             }
           }
 
-          if (!recovered && anyToolExecuted) {
+          if (!recovered && (anyToolExecuted || (provider === "trinks" && assistantText))) {
             // A IA já viu resultados reais de ferramenta. Fecha com uma rodada de
             // texto puro (sem tools) pra ela responder com base neles — confirmando,
             // oferecendo alternativa ou pedindo o dado que falta.
@@ -8662,7 +8701,7 @@ async function callAIAgent(
               if (finalResp.ok) {
                 const finalJson = await finalResp.json();
                 const finalMsgText = finalJson?.choices?.[0]?.message?.content?.trim();
-                if (finalMsgText) {
+                if (finalMsgText && acceptRecoveredText(finalMsgText)) {
                   finalResponse = finalMsgText;
                   guardOverrideResponse = true;
                   recovered = true;
@@ -8671,7 +8710,7 @@ async function callAIAgent(
             } catch (e) {
               console.error(`[PhantomConfirmationGuard] final-answer exception: ${(e as Error)?.message}`);
             }
-            if (!recovered && assistantText) {
+            if (!recovered && assistantText && acceptRecoveredText(assistantText)) {
               finalResponse = assistantText;
               guardOverrideResponse = true;
               recovered = true;

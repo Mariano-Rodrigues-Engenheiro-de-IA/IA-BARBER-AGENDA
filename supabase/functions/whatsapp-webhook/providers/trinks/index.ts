@@ -50,6 +50,80 @@ function getBrasiliaDate(): { todayDate: string; hours: number; minutes: number 
 
 // ===================== TRINKS TOOLS =====================
 
+// TRINKS — confirmação fantasma: predicados puros, sem executar ações.
+type TrinksGuardMessage = { role: string; content: string; created_at?: string };
+type TrinksGuardCall = { name?: string; blocked?: boolean; args?: Record<string, unknown>; result?: unknown };
+const trinksGuardRecord = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const TRINKS_NON_CREATION_RE = /\b(remarc\w*|cancel\w*|desmarc\w*|alter\w*|mudan[cç]a|trocar|retir\w*|produto\w*|fita\w*|pomada\w*|voc[eê]\s+agendou|j[aá]\s+(?:tenho|tem|est[aá])\s+agendado|(?:confirmar|confirma[cç][aã]o)\s+(?:seu|o)\s+hor[aá]rio|lembrete)\b/i;
+export function trinksActiveCompletionClaim(text: string): boolean {
+  return text.split(/(?<=[.!?])\s+/).some((s) =>
+    /\b(?:j[aá]\s+)?(?:deixei|deixamos)\b[^.!?]{0,160}\b(?:confirmad[oa]|reservad[oa]|marcad[oa]|agendad[oa]|garantid[oa])\b/i.test(s)
+    && !/\b(n[ãa]o|ainda|quando|se|para\s+(?:finalizar|confirmar))\b/i.test(s) && !s.endsWith("?"));
+}
+function trinksGuardTimes(text: string): string[] {
+  return [...new Set(Array.from(text.matchAll(/\b([01]?\d|2[0-3])\s*[:h]\s*([0-5]\d)?\b/gi), (m) => `${m[1].padStart(2, "0")}:${m[2] || "00"}`))];
+}
+export function trinksRecentOfferSelection(history: TrinksGuardMessage[], userText: string): { offer: string; selectedTime: string } | null {
+  // O histórico pode terminar com as partes já processadas da entrada atual.
+  let end = history.length - 1;
+  while (end >= 0 && history[end]?.role === "user") end--;
+  const last = history[end];
+  if (!last || last.role !== "assistant" || /\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(last.content)) return null;
+  const parts: string[] = [];
+  const lastAt = last.created_at ? Date.parse(last.created_at) : NaN;
+  const currentAt = history[history.length - 1]?.created_at;
+  if (currentAt && Number.isFinite(lastAt) && Date.parse(currentAt) - lastAt > 10 * 60 * 1000) return null;
+  for (let i = end; i >= 0 && parts.length < 6; i--) {
+    const m = history[i];
+    if (m.role !== "assistant" || /\[\s*ATENDENTE\s+HUMANO\s*\]/i.test(m.content)) break;
+    const at = m.created_at ? Date.parse(m.created_at) : NaN;
+    // Partes enviadas em sequência; não puxar uma oferta antiga de outra rodada.
+    if (Number.isFinite(lastAt) && Number.isFinite(at) && lastAt - at > 90 * 1000) break;
+    parts.unshift(m.content);
+  }
+  const offer = parts.join("\n");
+  if (TRINKS_NON_CREATION_RE.test(`${offer}\n${userText}`)) return null;
+  if (!/\b(?:tenho|temos|dispon[ií]ve\w*|hor[aá]rios?\s+(?:livres?|vagos?)|op[cç][oõ]es)\b/i.test(offer)
+    || !/\b(?:qual\s+(?:prefere|hor[aá]rio|op[cç][aã]o)|pode\s+ser|quer\s+(?:qual|esse)|escolh\w*)\b/i.test(offer)) return null;
+  const offered = trinksGuardTimes(offer);
+  const selected = trinksGuardTimes(userText);
+  if (selected.length !== 1 || !offered.includes(selected[0])) return null;
+  return { offer, selectedTime: selected[0] };
+}
+export function trinksHasPositiveCreation(call: TrinksGuardCall): boolean {
+  const r = trinksGuardRecord(call.result);
+  if (call.name !== "criar_agendamento" || call.blocked || !r || r.error || r.code || r.blocked || r.success === false) return false;
+  const data = trinksGuardRecord(r.data);
+  const id = r.id ?? r.agendamentoId ?? data?.id;
+  return (typeof id === "number" || typeof id === "string") && Number.isInteger(Number(id)) && Number(id) > 0;
+}
+export function trinksRecoveryClaimBlockReason(text: string, calls: TrinksGuardCall[], claimsCompletion: boolean): string | null {
+  if (!claimsCompletion) return null;
+  const times = trinksGuardTimes(text);
+  const isoDates: string[] = Array.from(text.matchAll(/\b\d{4}-\d{2}-\d{2}\b/g), (m) => m[0]);
+  const namedDays = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+  const normalized = normalizeUserFacingText(text);
+  const statedDays = namedDays.filter((d) => new RegExp(`\\b${d}\\b`).test(normalized));
+  const matches = (date: unknown): boolean => typeof date === "string"
+    && times.length === 1 && times[0] === date.slice(11, 16)
+    && (isoDates.length === 0 || isoDates.includes(date.slice(0, 10)))
+    && (statedDays.length === 0 || statedDays.includes(namedDays[new Date(`${date.slice(0, 10)}T12:00:00Z`).getUTCDay()]));
+  if (calls.some((c) => trinksHasPositiveCreation(c) && matches(c.args?.dataHoraInicio))) return null;
+  // buscar_agendamento retorna somente reservas ativas em data; inativos são separados.
+  if (calls.some((c) => {
+    const r = trinksGuardRecord(c.result);
+    return c.name === "buscar_agendamento" && !c.blocked && r && !r.error && !r.blocked
+      && Array.isArray(r.data) && r.data.some((a: unknown) => {
+        const booking = trinksGuardRecord(a);
+        return booking && Number(booking.id) > 0 && matches(booking.dataHoraInicio);
+      });
+  })) return null;
+  return "A resposta afirma conclusão sem criar_agendamento com ID positivo e horário correspondente, nem buscar_agendamento com reserva ativa compatível. Listar serviços/horários ou um retorno sem error não comprova reserva. Apresente o resumo e peça confirmação/dados; não diga que já foi agendado.";
+}
+export const trinksPhantomRecoveryInstruction =
+  "TRINKS: escolher um horário NÃO autoriza criar_agendamento. Se houve apenas escolha (mesmo com pergunta sobre serviços), consulte os dados que faltarem, apresente resumo com serviço, profissional, data/horário e valor reais, e AGUARDE confirmação explícita posterior ao resumo. Não execute criar_agendamento nesta recuperação de mera escolha. Nunca invente IDs, duração ou valor. Se já houve resumo e confirmação explícita, use somente dados reais. Só afirme conclusão com ID retornado pela criação ou consulta de reserva ativa correspondente; se faltar dado, pergunte sem prometer conclusão ou retorno futuro.";
+
 // ===================== LEITURAS COM RETRY + CACHE DE SERVIÇOS =====================
 // Bug real 19/10/2026 (Bendita Barber Club): a Trinks respondeu 429 (Too Many Requests)
 // duas vezes seguidas em /servicos, sem nenhuma nova tentativa; a IA escalou (IA OFF) e o
