@@ -1,5 +1,11 @@
 # Roadmap
 
+## Trinks — confirmação fantasma, corte aprovado 16/11
+- [ ] Detectar forma ativa e oferta recente com escolha única, sem autorizar criação
+- [ ] Revalidar saída da reinjeção com escrita positiva/consulta compatível, preservando os demais providers
+- [ ] Cobrir fixtures reais e exclusões; suíte completa e Deno; publicar somente whatsapp-webhook
+- [ ] Informar hashes gerenciados, arquivos, resultados e limites de verificação
+
 ## IA OFF — contato Alex prótese capilar
 - [x] Conferir CRM, configurações, webhook, ferramentas, follow-ups, cobrança e políticas existentes
 - [x] Reconhecer no move-crm-lead o acesso de colaborador já concedido à empresa, sem mudar permissões

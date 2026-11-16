@@ -7,6 +7,7 @@
 ## Trinks availability
 
 - Keep pure slot calculations in the existing Trinks `slots.ts` module and provider orchestration in its `index.ts`; creation validates the full API grid without rescheduling-only additions, because a client's occupied window is free only when editing that booking.
+- Keep Trinks phantom-confirmation predicates in its existing provider module and gate recovery in the existing dispatcher; a slot selection corrects wording but never authorizes creation, and recovered completion claims require a returned booking ID or a matching active lookup.
 
 ## WhatsApp transport
 
