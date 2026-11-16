@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   trinksActiveCompletionClaim,
   trinksRecentOfferSelection,
   trinksHasPositiveCreation,
   trinksRecoveryClaimBlockReason,
   phantomGuardConfig,
+  trinksPhantomRecoveryInstruction,
 } from "../../supabase/functions/whatsapp-webhook/providers/trinks/index";
 import { appBarberClaimsCompletedBooking } from "../../supabase/functions/whatsapp-webhook/providers/appbarber/guard-core";
 
@@ -13,6 +15,65 @@ const history = [{ role: "assistant", content: offer, created_at: "2026-11-16T11
 const selection = "18:40 e cabelo e orelha ok?";
 const creation = (result: unknown, time = "2026-11-18T18:40:00") => ({
   name: "criar_agendamento", args: { dataHoraInicio: time }, result,
+});
+
+// Execute o bloco real do dispatcher com transporte/IA simulados: nenhuma escrita externa.
+const source = readFileSync(new URL("../../supabase/functions/whatsapp-webhook/index.ts", import.meta.url), "utf8");
+const start = source.indexOf("  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomCfg)");
+const end = source.indexOf("  // ============================================================================\n  // 🛡️ PHANTOM CANCEL/RESCHEDULE GUARD", start);
+async function runGuard(provider: string, responses: Array<Record<string, unknown>>) {
+  const logToolCalls: Array<Record<string, unknown>> = [];
+  const messages: Array<Record<string, unknown>> = [];
+  const execute = vi.fn().mockResolvedValue([{ id: 1, nome: "Corte", preco: 45 }]);
+  const fallback = vi.fn().mockResolvedValue("Não consegui concluir; pedido encaminhado à equipe.");
+  const fetchAI = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: responses.shift() || {} }] }), { status: 200 }));
+  const dependencies = {
+    provider, history, userMessage: selection, _bookingAttempts: 0, _phantomCfg: phantomGuardConfig,
+    sessionState: { recentCompletedActions: [] }, logToolCalls, messages, logErrors: [],
+    tenant: {}, phoneNumber: "5516997503361", supabase: {}, simulatorMode: true, modelUsed: "gpt-5-mini",
+    trinksRecentOfferSelection, trinksActiveCompletionClaim, trinksHasPositiveCreation,
+    trinksRecoveryClaimBlockReason, trinksPhantomRecoveryInstruction, appBarberClaimsCompletedBooking,
+    getLastAssistantMessage: () => offer, isAffirmativeReply: () => false,
+    isBookingTimeConfirmationPrompt: () => false, isActiveBookingLookupStillValid: () => false,
+    responseCitesLookupBooking: () => false, buildToolsForProvider: () => [],
+    fetchAIWithRetry: fetchAI, executeToolForProvider: execute,
+    parseToolArguments: (s: string) => JSON.parse(s), buildDeterministicBookingConfirmation: () => null,
+    finalAnswerTokenLimits: () => ({}), buildGuardFailureFallback: fallback,
+  };
+  const fn = new Function(...Object.keys(dependencies), `return (async () => {
+    let finalResponse = "Já deixei confirmado pra quarta às 18h40";
+    let guardOverrideResponse = false;
+    ${source.slice(start, end)}
+    return { finalResponse, guardOverrideResponse };
+  })();`);
+  const result = await fn(...Object.values(dependencies)) as { finalResponse: string; guardOverrideResponse: boolean };
+  return { result, execute, fallback, messages, logToolCalls, fetchAI };
+}
+describe("Trinks — fluxo real do PhantomConfirmationGuard", () => {
+  it("471d0a10: bloqueia criar na escolha e devolve motivo à IA, retornando resumo", async () => {
+    const tool = { id: "c1", type: "function", function: { name: "criar_agendamento", arguments: "{}" } };
+    const summary = "Quarta às 18h40 com Vinicius: corte + depilação de orelha, R$ 60. Posso confirmar?";
+    const flow = await runGuard("trinks", [{ tool_calls: [tool] }, { content: summary }, { content: summary }]);
+    expect(flow.execute).not.toHaveBeenCalled();
+    expect(flow.logToolCalls.some((c) => c.name === "criar_agendamento" && (c.result as { blocked?: boolean }).blocked)).toBe(true);
+    expect(flow.messages.some((m) => m.role === "tool" && String(m.content).includes("Escolha de horário não autoriza criação"))).toBe(true);
+    expect(flow.result.finalResponse).toBe(summary);
+    expect(flow.fallback).not.toHaveBeenCalled();
+  });
+  it("listar_* não destrava promessa: todas as saídas inválidas caem no fallback", async () => {
+    const tool = { id: "c1", type: "function", function: { name: "listar_servicos", arguments: "{}" } };
+    const claim = "Já deixei confirmado pra quarta às 18h40";
+    const flow = await runGuard("trinks", [{ tool_calls: [tool] }, { content: claim }, { content: claim }, { content: claim }]);
+    expect(flow.execute).toHaveBeenCalledTimes(1);
+    expect(flow.fallback).toHaveBeenCalledTimes(1);
+    expect(flow.result.finalResponse).not.toBe(claim);
+    expect(flow.messages.some((m) => m.role === "system" && String(m.content).includes("Texto bloqueado"))).toBe(true);
+  });
+  it.each(["frizzar", "onebeleza", "bemp"])("não aplica o novo caminho ao provider %s", async (provider) => {
+    const flow = await runGuard(provider, []);
+    expect(flow.fetchAI).not.toHaveBeenCalled();
+    expect(flow.result.finalResponse).toBe("Já deixei confirmado pra quarta às 18h40");
+  });
 });
 
 describe("Trinks — corte de confirmação fantasma", () => {
