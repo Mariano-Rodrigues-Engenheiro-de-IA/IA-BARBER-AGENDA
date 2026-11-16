@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import ts from "typescript";
 import {
   trinksActiveCompletionClaim,
   trinksRecentOfferSelection,
@@ -18,7 +20,7 @@ const creation = (result: unknown, time = "2026-11-18T18:40:00") => ({
 });
 
 // Execute o bloco real do dispatcher com transporte/IA simulados: nenhuma escrita externa.
-const source = readFileSync(new URL("../../supabase/functions/whatsapp-webhook/index.ts", import.meta.url), "utf8");
+const source = readFileSync(resolve(__dirname, "../../supabase/functions/whatsapp-webhook/index.ts"), "utf8");
 const start = source.indexOf("  if (finalResponse && !guardOverrideResponse && _bookingAttempts === 0 && _phantomCfg)");
 const end = source.indexOf("  // ============================================================================\n  // 🛡️ PHANTOM CANCEL/RESCHEDULE GUARD", start);
 async function runGuard(provider: string, responses: Array<Record<string, unknown>>) {
@@ -40,12 +42,13 @@ async function runGuard(provider: string, responses: Array<Record<string, unknow
     parseToolArguments: (s: string) => JSON.parse(s), buildDeterministicBookingConfirmation: () => null,
     finalAnswerTokenLimits: () => ({}), buildGuardFailureFallback: fallback,
   };
-  const fn = new Function(...Object.keys(dependencies), `return (async () => {
+  const body = ts.transpileModule(`async function exercise() {
     let finalResponse = "Já deixei confirmado pra quarta às 18h40";
     let guardOverrideResponse = false;
     ${source.slice(start, end)}
     return { finalResponse, guardOverrideResponse };
-  })();`);
+  }`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const fn = new Function(...Object.keys(dependencies), `${body}\n return exercise();`);
   const result = await fn(...Object.values(dependencies)) as { finalResponse: string; guardOverrideResponse: boolean };
   return { result, execute, fallback, messages, logToolCalls, fetchAI };
 }
