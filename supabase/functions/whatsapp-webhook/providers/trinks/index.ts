@@ -102,9 +102,13 @@ export function trinksRecoveryClaimBlockReason(text: string, calls: TrinksGuardC
   if (!claimsCompletion) return null;
   const times = trinksGuardTimes(text);
   const isoDates = text.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+  const namedDays = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
+  const normalized = normalizeUserFacingText(text);
+  const statedDays = namedDays.filter((d) => new RegExp(`\\b${d}\\b`).test(normalized));
   const matches = (date: unknown): boolean => typeof date === "string"
     && times.length === 1 && times[0] === date.slice(11, 16)
-    && (isoDates.length === 0 || isoDates.includes(date.slice(0, 10)));
+    && (isoDates.length === 0 || isoDates.includes(date.slice(0, 10)))
+    && (statedDays.length === 0 || statedDays.includes(namedDays[new Date(`${date.slice(0, 10)}T12:00:00Z`).getUTCDay()]));
   if (calls.some((c) => trinksHasPositiveCreation(c) && matches(c.args?.dataHoraInicio))) return null;
   // buscar_agendamento retorna somente reservas ativas em data; inativos são separados.
   if (calls.some((c) => {
